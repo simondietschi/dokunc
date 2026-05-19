@@ -26,6 +26,9 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-dokunc <no-reply@example.com>}
+      UPLOAD_DIR: /app/uploads
+    volumes:
+      - uploads:/app/uploads
     ports:
       - "3000:3000"
       - "3001:3001"
@@ -60,3 +63,4 @@ services:
 volumes:
   db_data:
   redis_data:
+  uploads:

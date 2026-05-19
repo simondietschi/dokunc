@@ -94,8 +94,10 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 - [x] Mitgliederverwaltung + tokenbasierte E-Mail-Einladungen (SHA-256-Hash,
       Konstantzeit-Vergleich, Ablauf, Einmaligkeit, E-Mail-Bindung)
 - [x] Unit-Tests (Vitest) + freundliche Error-Boundaries
-- [ ] Ausbaustufen: Slash-Menü, Diagramme (draw.io/Excalidraw/Mermaid),
-      Kommentare, Embeds, PDF, S3, SSO
+- [x] Rich-Editor: Slash-Menü („/"), Tabellen, Aufgabenlisten, Bilder
+      (sicherer Upload), Callouts, Mermaid-Diagramme, YouTube-Embeds,
+      Highlight/Link — gemeinsames Schema für Client & Collab-Server
+- [ ] Ausbaustufen: draw.io & Excalidraw, Kommentare, PDF-Export, S3, SSO
 
 ## 7. Setup
 

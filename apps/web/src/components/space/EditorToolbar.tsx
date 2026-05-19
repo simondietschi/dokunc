@@ -11,9 +11,13 @@ import {
   Heading3,
   List,
   ListOrdered,
+  ListChecks,
   Quote,
   Code2,
   Minus,
+  Highlighter,
+  Link2,
+  Table as TableIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -74,6 +78,23 @@ export function EditorToolbar({ editor }: { editor: Editor | null }) {
       <Btn label="Code" on={() => c.toggleCode().run()} active={editor.isActive("code")}>
         <Code className="h-4 w-4" />
       </Btn>
+      <Btn label="Markieren" on={() => c.toggleHighlight().run()} active={editor.isActive("highlight")}>
+        <Highlighter className="h-4 w-4" />
+      </Btn>
+      <Btn
+        label="Link"
+        on={() => {
+          if (editor.isActive("link")) {
+            c.unsetLink().run();
+            return;
+          }
+          const url = window.prompt("Link-URL:");
+          if (url) c.setLink({ href: url }).run();
+        }}
+        active={editor.isActive("link")}
+      >
+        <Link2 className="h-4 w-4" />
+      </Btn>
       <Sep />
       <Btn label="Aufzählung" on={() => c.toggleBulletList().run()} active={editor.isActive("bulletList")}>
         <List className="h-4 w-4" />
@@ -81,11 +102,18 @@ export function EditorToolbar({ editor }: { editor: Editor | null }) {
       <Btn label="Nummerierte Liste" on={() => c.toggleOrderedList().run()} active={editor.isActive("orderedList")}>
         <ListOrdered className="h-4 w-4" />
       </Btn>
+      <Btn label="Aufgabenliste" on={() => c.toggleTaskList().run()} active={editor.isActive("taskList")}>
+        <ListChecks className="h-4 w-4" />
+      </Btn>
       <Btn label="Zitat" on={() => c.toggleBlockquote().run()} active={editor.isActive("blockquote")}>
         <Quote className="h-4 w-4" />
       </Btn>
       <Btn label="Codeblock" on={() => c.toggleCodeBlock().run()} active={editor.isActive("codeBlock")}>
         <Code2 className="h-4 w-4" />
+      </Btn>
+      <Sep />
+      <Btn label="Tabelle einfügen" on={() => c.insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}>
+        <TableIcon className="h-4 w-4" />
       </Btn>
       <Btn label="Trennlinie" on={() => c.setHorizontalRule().run()}>
         <Minus className="h-4 w-4" />

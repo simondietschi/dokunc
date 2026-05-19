@@ -2,17 +2,54 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useEditor, EditorContent } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
+import {
+  useEditor,
+  EditorContent,
+  ReactNodeViewRenderer,
+  type Editor,
+} from "@tiptap/react";
 import Placeholder from "@tiptap/extension-placeholder";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
+import { richExtensions } from "@dokunc/editor";
+import type { Range } from "@tiptap/core";
 import * as Y from "yjs";
 import { History, Trash2 } from "lucide-react";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
+import { CalloutView } from "@/components/editor/CalloutView";
+import { MermaidView } from "@/components/editor/MermaidView";
+import { createSlashCommands } from "@/components/editor/SlashCommands";
 import { cn } from "@/lib/cn";
 import { renamePageAction, deletePageAction } from "../../actions";
+
+/** Datei wählen, hochladen, als Bild einfügen. */
+function pickAndUploadImage(editor: Editor, range?: Range) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = "image/png,image/jpeg,image/gif,image/webp";
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    let chain = editor.chain().focus();
+    if (range) chain = chain.deleteRange(range);
+    if (!file) {
+      chain.run();
+      return;
+    }
+    const body = new FormData();
+    body.set("file", file);
+    try {
+      const res = await fetch("/api/upload", { method: "POST", body });
+      if (!res.ok) throw new Error();
+      const { url } = (await res.json()) as { url: string };
+      chain.setImage({ src: url }).run();
+    } catch {
+      chain.run();
+      alert("Upload fehlgeschlagen.");
+    }
+  };
+  input.click();
+}
 
 const CARET_COLORS = [
   "#5e60e8",
@@ -70,19 +107,32 @@ export function CollaborativeEditor({
     [],
   );
 
+  const slash = useMemo(
+    () =>
+      createSlashCommands({
+        onImage: (e, r) => pickAndUploadImage(e, r),
+      }),
+    [],
+  );
+
   const editor = useEditor({
     editable,
     immediatelyRender: false,
     extensions: [
-      StarterKit.configure({ undoRedo: false }),
+      ...richExtensions({
+        callout: () => ReactNodeViewRenderer(CalloutView),
+        mermaid: () => ReactNodeViewRenderer(MermaidView),
+      }),
       Placeholder.configure({
-        placeholder: "Schreib etwas Großartiges…",
+        placeholder: 'Schreib etwas — tippe "/" für Befehle…',
+        includeChildren: true,
       }),
       Collaboration.configure({ document: ydoc, field: "default" }),
       CollaborationCaret.configure({
         provider,
         user: { name: userName, color },
       }),
+      slash,
     ],
     editorProps: {
       attributes: { class: "mx-auto max-w-[760px] px-6 pb-40" },

@@ -7,13 +7,13 @@ import { jwtVerify } from "jose";
 import { Redis } from "ioredis";
 import * as Y from "yjs";
 import { prisma } from "@dokunc/db";
-import { baseExtensions, COLLAB_FIELD } from "@dokunc/editor";
+import { richExtensions, COLLAB_FIELD } from "@dokunc/editor";
 
 const PORT = Number(process.env.COLLAB_PORT ?? 3001);
 const SECRET = new TextEncoder().encode(
   process.env.APP_SECRET ?? "change-me-please-change-me-please-32+",
 );
-const extensions = baseExtensions();
+const extensions = richExtensions();
 
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
 const VERSION_INTERVAL_MS = 2 * 60 * 1000;

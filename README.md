@@ -9,7 +9,8 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 
 - Auth & Benutzer (Registrierung, Login, Session)
 - Spaces mit Rollen/Berechtigungen (OWNER/ADMIN/MEMBER/VIEWER)
-- Verschachtelter Seitenbaum + TipTap-Editor
+- Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
+  Aufgabenlisten, Bilder, Callouts, Mermaid-Diagramme, YouTube-Embeds)
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - Postgres-Volltextsuche
 - Versionsverlauf + Wiederherstellen

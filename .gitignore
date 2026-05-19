@@ -12,3 +12,4 @@ coverage/
 .turbo/
 next-env.d.ts
 packages/db/src/generated/
+uploads/
