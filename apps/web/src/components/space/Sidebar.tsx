@@ -9,6 +9,7 @@ import {
   Search,
   ChevronLeft,
   FileText,
+  Users,
 } from "lucide-react";
 import type { TreeNode } from "@/lib/page-tree";
 import { cn } from "@/lib/cn";
@@ -25,6 +26,7 @@ type Props = {
   userName: string;
   tree: TreeNode[];
   canManage: boolean;
+  canManageSpace: boolean;
 };
 
 export function Sidebar({
@@ -34,7 +36,9 @@ export function Sidebar({
   userName,
   tree,
   canManage,
+  canManageSpace,
 }: Props) {
+  const pathname = usePathname();
   return (
     <aside className="flex w-[280px] shrink-0 flex-col border-r border-line bg-subtle/40">
       <div className="flex items-center justify-between px-4 pb-2 pt-4">
@@ -84,13 +88,28 @@ export function Sidebar({
       </nav>
 
       {canManage && (
-        <form action={createPageAction} className="px-3 py-2">
+        <form action={createPageAction} className="px-3 pt-2">
           <input type="hidden" name="slug" value={slug} />
           <button className="flex w-full items-center gap-2 rounded-lg border border-dashed border-line-strong px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:border-accent/50 hover:text-ink">
             <Plus className="h-3.5 w-3.5" />
             Neue Seite
           </button>
         </form>
+      )}
+
+      {canManageSpace && (
+        <Link
+          href={`/s/${slug}/members`}
+          className={cn(
+            "mx-3 mt-2 flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
+            pathname === `/s/${slug}/members`
+              ? "bg-surface text-ink shadow-soft"
+              : "text-muted hover:bg-surface/70 hover:text-ink",
+          )}
+        >
+          <Users className="h-3.5 w-3.5" />
+          Mitglieder
+        </Link>
       )}
 
       <div className="flex items-center justify-between border-t border-line px-3 py-3">

@@ -4,6 +4,7 @@ loadEnv({ path: new URL("../../../.env", import.meta.url).pathname });
 import { Server } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
 import { jwtVerify } from "jose";
+import { Redis } from "ioredis";
 import * as Y from "yjs";
 import { prisma } from "@dokunc/db";
 import { baseExtensions, COLLAB_FIELD } from "@dokunc/editor";
@@ -16,7 +17,33 @@ const extensions = baseExtensions();
 
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
 const VERSION_INTERVAL_MS = 2 * 60 * 1000;
-const lastVersionAt = new Map<string, number>();
+
+const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
+  maxRetriesPerRequest: 2,
+  lazyConnect: true,
+});
+redis.on("error", (e: Error) => console.warn("[collab] Redis:", e.message));
+
+/**
+ * Throttle für History-Snapshots — multi-instanz- und neustartfest.
+ * Atomares SET NX PX: nur der erste Aufruf im Intervall darf einen
+ * Snapshot schreiben; der Schlüssel verfällt automatisch.
+ * Bei Redis-Ausfall wird zugunsten der History-Integrität erlaubt.
+ */
+async function shouldSnapshot(pageId: string): Promise<boolean> {
+  try {
+    const res = await redis.set(
+      `dokunc:snapshot:${pageId}`,
+      "1",
+      "PX",
+      VERSION_INTERVAL_MS,
+      "NX",
+    );
+    return res === "OK";
+  } catch {
+    return true;
+  }
+}
 
 async function authorize(token: string | undefined, pageId: string) {
   if (!token) throw new Error("Kein Token");
@@ -46,7 +73,7 @@ const server = new Server({
       data.token,
       data.documentName,
     );
-    data.connection.readOnly = readOnly;
+    data.connectionConfig.readOnly = readOnly;
     return { userId };
   },
 
@@ -96,16 +123,13 @@ const server = new Server({
       }),
     ]);
 
-    const now = Date.now();
-    const last = lastVersionAt.get(pageId) ?? 0;
-    if (now - last > VERSION_INTERVAL_MS) {
-      lastVersionAt.set(pageId, now);
+    if (await shouldSnapshot(pageId)) {
       const page = await prisma.page.findUnique({
         where: { id: pageId },
         select: { title: true },
       });
       const userId =
-        (data.context?.userId as string | undefined) ?? undefined;
+        (data.lastContext?.userId as string | undefined) ?? undefined;
       await prisma.pageVersion.create({
         data: {
           pageId,

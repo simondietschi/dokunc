@@ -38,6 +38,7 @@ model Space {
 
   members SpaceMember[]
   pages   Page[]
+  invitations SpaceInvitation[]
 }
 
 model SpaceMember {
@@ -89,6 +90,27 @@ model PageVersion {
   author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
 
   @@index([pageId])
+}
+
+/// Tokenbasierte E-Mail-Einladung in einen Space.
+/// Sicherheit: es wird nur der SHA-256-Hash des Tokens gespeichert,
+/// nie das Token selbst (analog zu Passwort-Reset-Tokens).
+model SpaceInvitation {
+  id          String    @id @default(cuid())
+  spaceId     String
+  email       String
+  role        SpaceRole @default(MEMBER)
+  tokenHash   String    @unique
+  invitedById String?
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  space Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+
+  /// Höchstens eine offene Einladung pro E-Mail/Space.
+  @@unique([spaceId, email])
+  @@index([spaceId])
 }
 
 /// Von Hocuspocus verwalteter Yjs-Dokumentstatus

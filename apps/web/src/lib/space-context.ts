@@ -1,7 +1,7 @@
 import "server-only";
 import { notFound, redirect } from "next/navigation";
 import { prisma, type Space, type SpaceRole } from "@dokunc/db";
-import { requireUser, getMembership } from "@/lib/current-user";
+import { requireUser } from "@/lib/current-user";
 import { can, type Action } from "@/lib/permissions";
 import { str } from "@/lib/form";
 
@@ -11,11 +11,22 @@ type Access = {
   role: SpaceRole;
 };
 
-/** Gemeinsame Auflösung: angemeldeter User + Space + dessen Rolle. */
+/**
+ * Gemeinsame Auflösung: angemeldeter User + Space + dessen Rolle.
+ * Space und Mitgliedschaft werden in EINER Query geladen.
+ */
 async function resolve(slug: string) {
   const user = await requireUser();
-  const space = await prisma.space.findUnique({ where: { slug } });
-  const role = space ? await getMembership(user.id, space.id) : null;
+  const space = await prisma.space.findUnique({
+    where: { slug },
+    include: {
+      members: {
+        where: { userId: user.id },
+        select: { role: true },
+      },
+    },
+  });
+  const role = space?.members[0]?.role ?? null;
   return { user, space, role };
 }
 

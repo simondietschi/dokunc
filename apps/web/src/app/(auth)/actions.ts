@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@dokunc/db";
 import { createSession, destroySession } from "@/lib/session";
+import { safeNext } from "@/lib/safe-redirect";
 
 const registerSchema = z.object({
   name: z.string().min(2, "Name zu kurz"),
@@ -20,9 +21,12 @@ const loginSchema = z.object({
 export type ActionState = { error?: string } | undefined;
 
 /** Session anlegen und in die App leiten (gemeinsamer Abschluss von Login/Register). */
-async function startSession(userId: string): Promise<never> {
+async function startSession(
+  userId: string,
+  next?: unknown,
+): Promise<never> {
   await createSession(userId);
-  redirect("/spaces");
+  redirect(safeNext(next));
 }
 
 export async function registerAction(
@@ -43,7 +47,7 @@ export async function registerAction(
   const user = await prisma.user.create({
     data: { name, email, passwordHash: await bcrypt.hash(password, 10) },
   });
-  return startSession(user.id);
+  return startSession(user.id, formData.get("next"));
 }
 
 export async function loginAction(
@@ -65,7 +69,7 @@ export async function loginAction(
   ) {
     return { error: "Falsche Zugangsdaten" };
   }
-  return startSession(user.id);
+  return startSession(user.id, formData.get("next"));
 }
 
 export async function logoutAction() {

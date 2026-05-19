@@ -8,13 +8,22 @@ import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Input";
 import { Logo } from "@/components/ui/Logo";
 
-export function AuthForm({ mode }: { mode: "login" | "register" }) {
+export function AuthForm({
+  mode,
+  next,
+}: {
+  mode: "login" | "register";
+  next?: string;
+}) {
   const action = mode === "login" ? loginAction : registerAction;
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
     action,
     undefined,
   );
   const isLogin = mode === "login";
+  const switchHref = `${isLogin ? "/register" : "/login"}${
+    next ? `?next=${encodeURIComponent(next)}` : ""
+  }`;
 
   return (
     <div>
@@ -32,6 +41,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       </p>
 
       <form action={formAction} className="mt-8 space-y-4">
+        {next && <input type="hidden" name="next" value={next} />}
         {!isLogin && (
           <Field label="Name">
             <Input name="name" type="text" placeholder="Alex Muster" required />
@@ -82,7 +92,7 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
       <p className="mt-6 text-center text-sm text-muted">
         {isLogin ? "Noch kein Konto? " : "Schon registriert? "}
         <Link
-          href={isLogin ? "/register" : "/login"}
+          href={switchHref}
           className="font-medium text-accent hover:underline"
         >
           {isLogin ? "Registrieren" : "Anmelden"}

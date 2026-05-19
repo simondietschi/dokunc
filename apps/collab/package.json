@@ -16,6 +16,7 @@
     "@tiptap/core": "3.23.5",
     "@tiptap/starter-kit": "3.23.5",
     "dotenv": "17.4.2",
+    "ioredis": "5.10.1",
     "jose": "6.2.3",
     "yjs": "13.6.30"
   },

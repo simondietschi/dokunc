@@ -19,6 +19,13 @@ services:
       NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-ws://localhost:3001}
       COLLAB_PORT: 3001
       NODE_ENV: production
+      # E-Mail (Einladungen) — optional, ohne SMTP_HOST nur Log-Fallback
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-dokunc <no-reply@example.com>}
     ports:
       - "3000:3000"
       - "3001:3001"
