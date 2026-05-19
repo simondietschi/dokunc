@@ -23,11 +23,30 @@ model User {
   passwordHash String
   /// Instanz-Admin (die erste registrierte Person).
   isAdmin      Boolean  @default(false)
+  /// Deaktivierte Konten können sich nicht anmelden.
+  isActive     Boolean  @default(true)
+  /// Wird bei "überall abmelden" / Passwortwechsel erhöht -> alte JWTs ungültig.
+  tokenVersion Int      @default(0)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  memberships  SpaceMember[]
-  pageVersions PageVersion[]
+  memberships   SpaceMember[]
+  pageVersions  PageVersion[]
+  passwordResets PasswordResetToken[]
+}
+
+/// Tokenbasierter Passwort-Reset (nur SHA-256-Hash gespeichert).
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Space {

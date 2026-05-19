@@ -2,8 +2,15 @@ packages:
   - "apps/*"
   - "packages/*"
 
-onlyBuiltDependencies:
-  - "@prisma/engines"
-  - prisma
-  - esbuild
-  - sharp
+# pnpm 11 würde brandneue Pakete blocken. Da hier bewusst stets die
+# neuesten Versionen verwendet werden, ist die Karenzzeit deaktiviert.
+# (Tradeoff: kein automatischer Schutz vor frisch kompromittierten
+#  Releases — Abhängigkeiten sind exakt gepinnt + Lockfile-geprüft.)
+minimumReleaseAge: 0
+
+# Erlaubte Postinstall-Build-Skripte (pnpm 11).
+allowBuilds:
+  "@prisma/engines": true
+  esbuild: true
+  prisma: true
+  sharp: true

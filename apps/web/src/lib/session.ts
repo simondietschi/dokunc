@@ -7,8 +7,10 @@ const SECRET = new TextEncoder().encode(getAppSecret());
 const COOKIE = "dokunc_session";
 const EXPIRES = process.env.JWT_EXPIRES_IN ?? "7d";
 
-export async function createSession(userId: string) {
-  const token = await new SignJWT({})
+export type SessionClaims = { sub: string; tv: number };
+
+export async function createSession(userId: string, tokenVersion: number) {
+  const token = await new SignJWT({ tv: tokenVersion })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
     .setIssuedAt()
@@ -30,16 +32,22 @@ export async function destroySession() {
   store.delete(COOKIE);
 }
 
-export async function getUserId(): Promise<string | null> {
+/** Verifizierte Claims (sub + Token-Version) oder null. */
+export async function getSessionClaims(): Promise<SessionClaims | null> {
   const store = await cookies();
   const token = store.get(COOKIE)?.value;
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, SECRET);
-    return payload.sub ?? null;
+    if (!payload.sub) return null;
+    return { sub: payload.sub, tv: Number(payload.tv ?? 0) };
   } catch {
     return null;
   }
+}
+
+export async function getUserId(): Promise<string | null> {
+  return (await getSessionClaims())?.sub ?? null;
 }
 
 /** Roh-Token für den Collab-WebSocket (Client-seitig benötigt). */

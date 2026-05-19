@@ -4,7 +4,8 @@ services:
     image: caddy:2
     restart: unless-stopped
     depends_on:
-      - app
+      app:
+        condition: service_healthy
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
     volumes:
@@ -50,6 +51,18 @@ services:
     expose:
       - "3000"
       - "3001"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    mem_limit: 1g
+    cpus: 1.5
 
   db:
     image: postgres:18

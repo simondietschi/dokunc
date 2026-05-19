@@ -1,5 +1,6 @@
 import "server-only";
 import nodemailer, { type Transporter } from "nodemailer";
+import { log } from "./log";
 
 let cached: Transporter | null | undefined;
 
@@ -70,8 +71,9 @@ export async function sendInvitationEmail(opts: {
   const t = transport();
   if (!t) {
     // Dev-Fallback: kein SMTP konfiguriert.
-    console.info(
-      `[mail] SMTP nicht konfiguriert. Einladungslink für ${opts.to}:\n${opts.inviteUrl}`,
+    log.warn(
+      { to: opts.to, url: opts.inviteUrl },
+      "SMTP nicht konfiguriert — Einladungslink nur im Log",
     );
     return;
   }

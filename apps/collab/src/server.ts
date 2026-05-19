@@ -5,9 +5,15 @@ import { Server } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
 import { jwtVerify } from "jose";
 import { Redis } from "ioredis";
+import pino from "pino";
 import * as Y from "yjs";
 import { prisma } from "@dokunc/db";
 import { richExtensions, COLLAB_FIELD } from "@dokunc/editor";
+
+const log = pino({
+  level: process.env.LOG_LEVEL ?? "info",
+  base: { app: "dokunc-collab" },
+});
 
 const PORT = Number(process.env.COLLAB_PORT ?? 3001);
 
@@ -34,7 +40,7 @@ const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: 2,
   lazyConnect: true,
 });
-redis.on("error", (e: Error) => console.warn("[collab] Redis:", e.message));
+redis.on("error", (e: Error) => log.warn({ err: e.message }, "redis"));
 
 /**
  * Throttle für History-Snapshots — multi-instanz- und neustartfest.
@@ -167,6 +173,5 @@ function extractText(node: unknown): string {
 }
 
 server.listen().then(() => {
-  // eslint-disable-next-line no-console
-  console.log(`[collab] Hocuspocus läuft auf ws://localhost:${PORT}`);
+  log.info({ port: PORT }, "Hocuspocus läuft");
 });

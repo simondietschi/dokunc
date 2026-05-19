@@ -26,9 +26,10 @@ export type ActionState = { error?: string } | undefined;
 /** Session anlegen und in die App leiten (gemeinsamer Abschluss von Login/Register). */
 async function startSession(
   userId: string,
+  tokenVersion: number,
   next?: unknown,
 ): Promise<never> {
-  await createSession(userId);
+  await createSession(userId, tokenVersion);
   redirect(safeNext(next));
 }
 
@@ -81,7 +82,7 @@ export async function registerAction(
       isAdmin: decision.isAdmin,
     },
   });
-  return startSession(user.id, formData.get("next"));
+  return startSession(user.id, user.tokenVersion, formData.get("next"));
 }
 
 export async function loginAction(
@@ -107,7 +108,10 @@ export async function loginAction(
   ) {
     return { error: "Falsche Zugangsdaten" };
   }
-  return startSession(user.id, formData.get("next"));
+  if (!user.isActive) {
+    return { error: "Dieses Konto ist deaktiviert." };
+  }
+  return startSession(user.id, user.tokenVersion, formData.get("next"));
 }
 
 export async function logoutAction() {
