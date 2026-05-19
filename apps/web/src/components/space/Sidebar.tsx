@@ -10,6 +10,9 @@ import {
   ChevronLeft,
   FileText,
   Users,
+  Trash2,
+  Settings,
+  ShieldCheck,
 } from "lucide-react";
 import type { TreeNode } from "@/lib/page-tree";
 import { cn } from "@/lib/cn";
@@ -27,6 +30,7 @@ type Props = {
   tree: TreeNode[];
   canManage: boolean;
   canManageSpace: boolean;
+  isAdmin: boolean;
 };
 
 export function Sidebar({
@@ -37,6 +41,7 @@ export function Sidebar({
   tree,
   canManage,
   canManageSpace,
+  isAdmin,
 }: Props) {
   const pathname = usePathname();
   return (
@@ -97,22 +102,44 @@ export function Sidebar({
         </form>
       )}
 
-      {canManageSpace && (
-        <Link
-          href={`/s/${slug}/members`}
-          className={cn(
-            "mx-3 mt-2 flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
-            pathname === `/s/${slug}/members`
-              ? "bg-surface text-ink shadow-soft"
-              : "text-muted hover:bg-surface/70 hover:text-ink",
-          )}
+      <div className="mt-1 space-y-0.5">
+        {canManage && (
+          <NavLink
+            href={`/s/${slug}/trash`}
+            active={pathname === `/s/${slug}/trash`}
+            icon={<Trash2 className="h-3.5 w-3.5" />}
+          >
+            Papierkorb
+          </NavLink>
+        )}
+        {canManageSpace && (
+          <NavLink
+            href={`/s/${slug}/members`}
+            active={pathname === `/s/${slug}/members`}
+            icon={<Users className="h-3.5 w-3.5" />}
+          >
+            Mitglieder
+          </NavLink>
+        )}
+        <NavLink
+          href="/account"
+          active={false}
+          icon={<Settings className="h-3.5 w-3.5" />}
         >
-          <Users className="h-3.5 w-3.5" />
-          Mitglieder
-        </Link>
-      )}
+          Konto
+        </NavLink>
+        {isAdmin && (
+          <NavLink
+            href="/admin"
+            active={false}
+            icon={<ShieldCheck className="h-3.5 w-3.5" />}
+          >
+            Administration
+          </NavLink>
+        )}
+      </div>
 
-      <div className="flex items-center justify-between border-t border-line px-3 py-3">
+      <div className="mt-2 flex items-center justify-between border-t border-line px-3 py-3">
         <div className="flex min-w-0 items-center gap-2">
           <Avatar name={userName} size={26} />
           <span className="truncate text-[13px] text-muted">
@@ -126,6 +153,33 @@ export function Sidebar({
         </form>
       </div>
     </aside>
+  );
+}
+
+function NavLink({
+  href,
+  active,
+  icon,
+  children,
+}: {
+  href: string;
+  active: boolean;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <Link
+      href={href}
+      className={cn(
+        "mx-3 flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
+        active
+          ? "bg-surface text-ink shadow-soft"
+          : "text-muted hover:bg-surface/70 hover:text-ink",
+      )}
+    >
+      {icon}
+      {children}
+    </Link>
   );
 }
 

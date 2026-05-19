@@ -40,6 +40,44 @@ export function buildInviteUrl(invitationId: string, token: string): string {
   return u.toString();
 }
 
+export function buildResetUrl(resetId: string, token: string): string {
+  const u = new URL(`${appUrl()}/reset/${resetId}`);
+  u.searchParams.set("token", token);
+  return u.toString();
+}
+
+export async function sendPasswordResetEmail(opts: {
+  to: string;
+  resetUrl: string;
+}): Promise<void> {
+  const subject = "Passwort zurücksetzen — dokunc";
+  const text = `Setze dein Passwort zurück:\n${opts.resetUrl}\n\nDer Link ist 1 Stunde gültig. Wenn du das nicht warst, ignoriere diese E-Mail.`;
+  const html = `
+    <div style="font-family:ui-sans-serif,system-ui,sans-serif;max-width:480px;margin:0 auto">
+      <h2 style="font-weight:600">Passwort zurücksetzen</h2>
+      <p style="color:#555;line-height:1.6">Klicke zum Zurücksetzen:</p>
+      <p><a href="${opts.resetUrl}"
+         style="display:inline-block;background:#5e60e8;color:#fff;
+                padding:10px 18px;border-radius:10px;text-decoration:none">
+        Neues Passwort setzen</a></p>
+      <p style="color:#999;font-size:12px">Gültig für 1 Stunde. Nicht angefordert? E-Mail ignorieren.</p>
+    </div>`;
+  const t = transport();
+  if (!t) {
+    log.warn({ to: opts.to, url: opts.resetUrl }, "SMTP fehlt — Reset-Link nur im Log");
+    return;
+  }
+  await t.sendMail({
+    from:
+      process.env.MAIL_FROM_ADDRESS ??
+      `dokunc <no-reply@${new URL(appUrl()).hostname}>`,
+    to: opts.to,
+    subject,
+    text,
+    html,
+  });
+}
+
 export async function sendInvitationEmail(opts: {
   to: string;
   spaceName: string;

@@ -89,6 +89,17 @@ export function AuthForm({
         </Button>
       </form>
 
+      {isLogin && (
+        <p className="mt-4 text-center text-sm">
+          <Link
+            href="/forgot"
+            className="text-muted hover:text-ink hover:underline"
+          >
+            Passwort vergessen?
+          </Link>
+        </p>
+      )}
+
       <p className="mt-6 text-center text-sm text-muted">
         {isLogin ? "Noch kein Konto? " : "Schon registriert? "}
         <Link

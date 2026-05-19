@@ -29,6 +29,7 @@ export default async function SpaceLayout({
         tree={buildTree(pages)}
         canManage={can(role, "managePages")}
         canManageSpace={can(role, "manageSpace")}
+        isAdmin={user.isAdmin}
       />
       <main className="flex-1 overflow-y-auto">{children}</main>
     </div>

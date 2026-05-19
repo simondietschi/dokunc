@@ -54,6 +54,44 @@ export async function deletePageAction(form: FormData) {
   redirect(`/s/${space.slug}`);
 }
 
+export async function restorePageAction(form: FormData) {
+  const { space } = await authorizeAction(form, "managePages");
+  const pageId = str(form, "pageId");
+  const page = await prisma.page.findFirst({
+    where: { id: pageId, spaceId: space.id, NOT: { deletedAt: null } },
+    select: { id: true },
+  });
+  if (!page) {
+    revalidatePath(`/s/${space.slug}/trash`);
+    return;
+  }
+  // Seite + (gelöschten) Unterbaum wiederherstellen.
+  await prisma.$executeRaw`
+    WITH RECURSIVE sub AS (
+      SELECT id FROM "Page" WHERE id = ${pageId}
+      UNION ALL
+      SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
+    )
+    UPDATE "Page" SET "deletedAt" = NULL
+    WHERE id IN (SELECT id FROM sub) AND "deletedAt" IS NOT NULL
+  `;
+  revalidatePath(`/s/${space.slug}/trash`);
+  revalidatePath(`/s/${space.slug}`);
+}
+
+export async function purgePageAction(form: FormData) {
+  const { space } = await authorizeAction(form, "managePages");
+  // Endgültig (Kaskade entfernt Unterseiten, Versionen, Collab-State).
+  await prisma.page.deleteMany({
+    where: {
+      id: str(form, "pageId"),
+      spaceId: space.id,
+      NOT: { deletedAt: null },
+    },
+  });
+  revalidatePath(`/s/${space.slug}/trash`);
+}
+
 export async function restoreVersionAction(form: FormData) {
   const { space } = await authorizeAction(form, "write");
   const version = await prisma.pageVersion.findUnique({

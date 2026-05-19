@@ -6,7 +6,7 @@ import { can, type Action } from "@/lib/permissions";
 import { str } from "@/lib/form";
 
 type Access = {
-  user: { id: string; email: string; name: string };
+  user: { id: string; email: string; name: string; isAdmin: boolean };
   space: Space;
   role: SpaceRole;
 };

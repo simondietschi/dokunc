@@ -27,6 +27,18 @@ export default async function SpacesPage() {
           <Logo />
           <div className="flex items-center gap-1">
             <ThemeToggle />
+            {user.isAdmin && (
+              <Link href="/admin">
+                <Button variant="ghost" size="sm">
+                  Admin
+                </Button>
+              </Link>
+            )}
+            <Link href="/account">
+              <Button variant="ghost" size="sm">
+                Konto
+              </Button>
+            </Link>
             <div className="mx-2 h-5 w-px bg-line" />
             <span className="hidden text-sm text-muted sm:block">
               {user.name}
