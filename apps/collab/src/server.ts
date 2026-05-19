@@ -5,6 +5,7 @@ import { Server } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
 import { jwtVerify } from "jose";
 import { Redis } from "ioredis";
+import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
 import pino from "pino";
 import * as Y from "yjs";
 import { prisma } from "@dokunc/db";
@@ -84,8 +85,19 @@ async function authorize(token: string | undefined, pageId: string) {
   return { userId, readOnly };
 }
 
+// HA: mehrere Collab-Instanzen koordinieren Yjs-Dokumente + Awareness
+// über Redis Pub/Sub (eine Instanz "ownt" ein Dokument, andere proxen).
+const redisUrl = new URL(
+  process.env.REDIS_URL ?? "redis://localhost:6379",
+);
+const haExtension = new HocuspocusRedis({
+  host: redisUrl.hostname,
+  port: Number(redisUrl.port || 6379),
+});
+
 const server = new Server({
   port: PORT,
+  extensions: [haExtension],
   async onAuthenticate(data) {
     const { userId, readOnly } = await authorize(
       data.token,

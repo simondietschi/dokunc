@@ -11,6 +11,7 @@
   "dependencies": {
     "@dokunc/db": "workspace:*",
     "@dokunc/editor": "workspace:*",
+    "@hocuspocus/extension-redis": "4.0.0",
     "@hocuspocus/server": "4.0.0",
     "@hocuspocus/transformer": "4.0.0",
     "@tiptap/core": "3.23.5",

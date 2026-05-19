@@ -103,8 +103,12 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 - [x] Prod-Härtung: TLS-Reverse-Proxy (Caddy, nur localhost exponiert),
       Security-Header/CSP/HSTS, Upload-Magic-Byte-Prüfung, non-root
       Container, fail-closed APP_SECRET, Backup-Skript
-- [ ] Ausbaustufen: draw.io & Excalidraw, Kommentare, PDF-Export, S3, SSO,
-      Papierkorb-UI, Health-Endpoint, CI-Pipeline, Collab-HA
+- [x] Ops/Account: Session-Revocation, Health-Endpoint, CI-Pipeline,
+      strukturiertes Logging, Account (Profil/Passwort), Passwort-Reset
+      per E-Mail, Admin-Panel, Papierkorb-UI, Collab-HA (Redis), Mobile-
+      Sidebar, Markdown-Export, Such-Pagination, Compose-Limits
+- [ ] Ausbaustufen: draw.io & Excalidraw, Kommentare, PDF-Export, S3,
+      SSO, vollständige i18n, Prompt→Dialog-UI
 
 ## 7. Setup
 

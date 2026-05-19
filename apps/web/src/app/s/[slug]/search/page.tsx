@@ -10,12 +10,15 @@ export default async function SearchPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string; p?: string }>;
 }) {
   const { slug } = await params;
-  const { q } = await searchParams;
+  const { q, p } = await searchParams;
   const { space } = await loadSpace(slug);
   const query = (q ?? "").trim();
+  const pageSize = 20;
+  const pageNum = Math.max(1, Number(p ?? "1") || 1);
+  const offset = (pageNum - 1) * pageSize;
 
   let results: Row[] = [];
   if (query) {
@@ -33,9 +36,13 @@ export default async function SearchPage({
         to_tsvector('simple', coalesce(title,'') || ' ' || coalesce("textContent",'')),
         plainto_tsquery('simple', ${query})
       ) DESC
-      LIMIT 30
+      LIMIT ${pageSize} OFFSET ${offset}
     `;
   }
+  const hasPrev = pageNum > 1;
+  const hasNext = results.length === pageSize;
+  const pageHref = (n: number) =>
+    `/s/${slug}/search?q=${encodeURIComponent(query)}&p=${n}`;
 
   return (
     <div className="mx-auto max-w-2xl px-8 py-14 animate-[rise_0.4s_ease]">
@@ -43,7 +50,7 @@ export default async function SearchPage({
       <p className="mt-1 text-sm text-muted">
         {query ? (
           <>
-            {results.length} Treffer für{" "}
+            Seite {pageNum} für{" "}
             <span className="font-medium text-ink">„{query}"</span>
           </>
         ) : (
@@ -71,6 +78,29 @@ export default async function SearchPage({
           </li>
         ))}
       </ul>
+
+      {query && (hasPrev || hasNext) && (
+        <div className="mt-6 flex items-center justify-between">
+          {hasPrev ? (
+            <Link
+              href={pageHref(pageNum - 1)}
+              className="rounded-lg border border-line-strong px-3 py-1.5 text-[13px] text-muted hover:bg-subtle hover:text-ink"
+            >
+              ← Zurück
+            </Link>
+          ) : (
+            <span />
+          )}
+          {hasNext && (
+            <Link
+              href={pageHref(pageNum + 1)}
+              className="rounded-lg border border-line-strong px-3 py-1.5 text-[13px] text-muted hover:bg-subtle hover:text-ink"
+            >
+              Weiter →
+            </Link>
+          )}
+        </div>
+      )}
 
       {query && results.length === 0 && (
         <div className="mt-16 flex flex-col items-center text-center">

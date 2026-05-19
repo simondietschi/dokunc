@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ChevronRight,
   Plus,
@@ -13,6 +13,7 @@ import {
   Trash2,
   Settings,
   ShieldCheck,
+  Menu,
 } from "lucide-react";
 import type { TreeNode } from "@/lib/page-tree";
 import { cn } from "@/lib/cn";
@@ -44,8 +45,39 @@ export function Sidebar({
   isAdmin,
 }: Props) {
   const pathname = usePathname();
+  const [open, setOpen] = useState(false);
+
+  // Bei Navigation auf Mobile schließen.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => setOpen(false), [pathname]);
+
   return (
-    <aside className="flex w-[280px] shrink-0 flex-col border-r border-line bg-subtle/40">
+    <>
+      {/* Mobile-Topbar */}
+      <div className="fixed inset-x-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-canvas/90 px-4 backdrop-blur-xl md:hidden">
+        <button
+          onClick={() => setOpen(true)}
+          aria-label="Menü öffnen"
+          className="grid h-9 w-9 place-items-center rounded-lg text-muted hover:bg-subtle hover:text-ink"
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+        <Logo />
+      </div>
+
+      {open && (
+        <div
+          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+        />
+      )}
+
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex w-[280px] shrink-0 flex-col border-r border-line bg-subtle/95 backdrop-blur-xl transition-transform duration-200 md:static md:z-auto md:translate-x-0 md:bg-subtle/40 md:backdrop-blur-none",
+          open ? "translate-x-0" : "-translate-x-full",
+        )}
+      >
       <div className="flex items-center justify-between px-4 pb-2 pt-4">
         <Logo />
         <ThemeToggle />
@@ -152,7 +184,8 @@ export function Sidebar({
           </button>
         </form>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
 

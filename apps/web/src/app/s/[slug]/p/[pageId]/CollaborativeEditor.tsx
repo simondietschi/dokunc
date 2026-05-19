@@ -15,7 +15,7 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import { richExtensions } from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import * as Y from "yjs";
-import { History, Trash2 } from "lucide-react";
+import { History, Trash2, Download } from "lucide-react";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { CalloutView } from "@/components/editor/CalloutView";
@@ -197,6 +197,13 @@ export function CollaborativeEditor({
               <History className="h-4 w-4" />
               Verlauf
             </Link>
+            <a
+              href={`/api/pages/${pageId}/export`}
+              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-subtle hover:text-ink"
+              title="Als Markdown exportieren"
+            >
+              <Download className="h-4 w-4" />
+            </a>
             {canManage && (
               <form action={deletePageAction}>
                 <input type="hidden" name="slug" value={slug} />
