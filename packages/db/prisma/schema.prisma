@@ -1,0 +1,101 @@
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  runtime             = "nodejs"
+  importFileExtension = ""
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SpaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  memberships  SpaceMember[]
+  pageVersions PageVersion[]
+}
+
+model Space {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members SpaceMember[]
+  pages   Page[]
+}
+
+model SpaceMember {
+  id      String    @id @default(cuid())
+  userId  String
+  spaceId String
+  role    SpaceRole @default(MEMBER)
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  space Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, spaceId])
+  @@index([spaceId])
+}
+
+model Page {
+  id          String   @id @default(cuid())
+  spaceId     String
+  parentId    String?
+  title       String   @default("Untitled")
+  /// TipTap/ProseMirror JSON
+  content     Json?
+  /// Flacher Text für Suche & History
+  textContent String   @default("")
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  space    Space          @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  parent   Page?          @relation("PageTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children Page[]         @relation("PageTree")
+  versions PageVersion[]
+  collab   CollabDocument?
+
+  @@index([spaceId])
+  @@index([parentId])
+}
+
+model PageVersion {
+  id          String   @id @default(cuid())
+  pageId      String
+  title       String
+  content     Json?
+  textContent String   @default("")
+  authorId    String?
+  createdAt   DateTime @default(now())
+
+  page   Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([pageId])
+}
+
+/// Von Hocuspocus verwalteter Yjs-Dokumentstatus
+model CollabDocument {
+  pageId    String   @id
+  state     Bytes
+  updatedAt DateTime @updatedAt
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@dokunc/collab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json --noEmit",
+    "start": "tsx src/server.ts"
+  },
+  "dependencies": {
+    "@dokunc/db": "workspace:*",
+    "@dokunc/editor": "workspace:*",
+    "@hocuspocus/server": "4.0.0",
+    "@hocuspocus/transformer": "4.0.0",
+    "@tiptap/core": "3.23.5",
+    "@tiptap/starter-kit": "3.23.5",
+    "dotenv": "17.4.2",
+    "jose": "6.2.3",
+    "yjs": "13.6.30"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.0",
+    "tsx": "4.22.3",
+    "typescript": "6.0.3"
+  }
+}

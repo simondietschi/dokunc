@@ -1,0 +1,22 @@
+{
+  "name": "dokunc",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "dev": "concurrently -n web,collab -c blue,magenta \"pnpm --filter @dokunc/web dev\" \"pnpm --filter @dokunc/collab dev\"",
+    "build": "pnpm --filter @dokunc/db generate && pnpm --filter @dokunc/web build",
+    "start": "concurrently -n web,collab -c blue,magenta \"pnpm --filter @dokunc/web start\" \"pnpm --filter @dokunc/collab start\"",
+    "db:migrate": "pnpm --filter @dokunc/db migrate",
+    "db:generate": "pnpm --filter @dokunc/db generate"
+  },
+  "devDependencies": {
+    "concurrently": "9.2.1"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@prisma/engines", "prisma", "esbuild", "sharp"]
+  }
+}

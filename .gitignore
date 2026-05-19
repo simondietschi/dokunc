@@ -1,0 +1,14 @@
+node_modules/
+.next/
+dist/
+build/
+.env
+.env.local
+*.log
+.DS_Store
+.pgdata/
+.redis/
+coverage/
+.turbo/
+next-env.d.ts
+packages/db/src/generated/
