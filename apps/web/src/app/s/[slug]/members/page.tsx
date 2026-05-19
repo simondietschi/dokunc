@@ -4,6 +4,7 @@ import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { Avatar } from "@/components/ui/Avatar";
+import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { InviteForm } from "./InviteForm";
 import { RoleSelect } from "./RoleSelect";
 import { revokeInvitationAction, removeMemberAction } from "./actions";
@@ -71,12 +72,13 @@ export default async function MembersPage({
               <form action={removeMemberAction}>
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="memberId" value={m.id} />
-                <button
+                <ConfirmButton
+                  message={`„${m.user.name}" aus diesem Space entfernen?`}
                   title="Entfernen"
                   className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
                 >
                   <Trash2 className="h-4 w-4" />
-                </button>
+                </ConfirmButton>
               </form>
             </div>
           </li>

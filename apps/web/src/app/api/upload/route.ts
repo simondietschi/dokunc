@@ -3,6 +3,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { getUserId } from "@/lib/session";
+import { isSameOrigin } from "@/lib/origin";
+import { rateLimit, clientKey } from "@/lib/rate-limit";
 import {
   UPLOAD_DIR,
   MAX_UPLOAD_BYTES,
@@ -12,9 +14,26 @@ import {
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  if (
+    !isSameOrigin(
+      req.headers.get("origin"),
+      process.env.APP_URL,
+      req.headers.get("host"),
+    )
+  ) {
+    return NextResponse.json({ error: "Ungültige Herkunft" }, { status: 403 });
+  }
+
   const userId = await getUserId();
   if (!userId) {
     return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
+  }
+
+  if (!(await rateLimit(await clientKey("upload"), 30, 60))) {
+    return NextResponse.json(
+      { error: "Zu viele Uploads. Bitte kurz warten." },
+      { status: 429 },
+    );
   }
 
   const form = await req.formData();

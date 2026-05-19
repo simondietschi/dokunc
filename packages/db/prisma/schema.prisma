@@ -21,6 +21,8 @@ model User {
   email        String   @unique
   name         String
   passwordHash String
+  /// Instanz-Admin (die erste registrierte Person).
+  isAdmin      Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -64,6 +66,8 @@ model Page {
   /// Flacher Text für Suche & History
   textContent String   @default("")
   position    Int      @default(0)
+  /// Soft-Delete: gesetzt = im Papierkorb (nicht hart gelöscht).
+  deletedAt   DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

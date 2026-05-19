@@ -1,10 +1,9 @@
 import "server-only";
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
+import { getAppSecret } from "./secret";
 
-const SECRET = new TextEncoder().encode(
-  process.env.APP_SECRET ?? "change-me-please-change-me-please-32+",
-);
+const SECRET = new TextEncoder().encode(getAppSecret());
 const COOKIE = "dokunc_session";
 const EXPIRES = process.env.JWT_EXPIRES_IN ?? "7d";
 

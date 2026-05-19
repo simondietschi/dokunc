@@ -10,9 +10,21 @@ import { prisma } from "@dokunc/db";
 import { richExtensions, COLLAB_FIELD } from "@dokunc/editor";
 
 const PORT = Number(process.env.COLLAB_PORT ?? 3001);
-const SECRET = new TextEncoder().encode(
-  process.env.APP_SECRET ?? "change-me-please-change-me-please-32+",
-);
+
+function resolveAppSecret(): string {
+  const s = process.env.APP_SECRET;
+  if (process.env.NODE_ENV === "production") {
+    if (!s || s.length < 32) {
+      throw new Error(
+        "APP_SECRET fehlt oder ist zu kurz (min. 32 Zeichen).",
+      );
+    }
+    return s;
+  }
+  return s && s.length >= 32 ? s : "dev-only-insecure-secret-change-me-32+chars";
+}
+
+const SECRET = new TextEncoder().encode(resolveAppSecret());
 const extensions = richExtensions();
 
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */

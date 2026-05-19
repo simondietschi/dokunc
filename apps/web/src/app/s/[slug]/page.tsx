@@ -12,7 +12,7 @@ export default async function SpaceIndex({
   const { space } = await loadSpace(slug);
 
   const first = await prisma.page.findFirst({
-    where: { spaceId: space.id, parentId: null },
+    where: { spaceId: space.id, parentId: null, deletedAt: null },
     orderBy: { position: "asc" },
     select: { id: true },
   });

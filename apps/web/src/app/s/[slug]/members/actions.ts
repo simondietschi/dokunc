@@ -16,6 +16,7 @@ import {
   verifyToken,
 } from "@/lib/invitations";
 import { buildInviteUrl, sendInvitationEmail } from "@/lib/mail";
+import { rateLimit } from "@/lib/rate-limit";
 
 export type FormState = { error?: string; success?: string } | undefined;
 
@@ -29,6 +30,10 @@ export async function inviteMemberAction(
   form: FormData,
 ): Promise<FormState> {
   const { space, user } = await authorizeAction(form, "manageSpace");
+
+  if (!(await rateLimit(`invite:${user.id}`, 20, 3600))) {
+    return { error: "Zu viele Einladungen. Bitte später erneut." };
+  }
 
   const parsed = inviteSchema.safeParse({
     email: form.get("email"),

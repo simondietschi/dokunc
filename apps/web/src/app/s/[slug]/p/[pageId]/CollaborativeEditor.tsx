@@ -17,6 +17,7 @@ import type { Range } from "@tiptap/core";
 import * as Y from "yjs";
 import { History, Trash2 } from "lucide-react";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
+import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { CalloutView } from "@/components/editor/CalloutView";
 import { MermaidView } from "@/components/editor/MermaidView";
 import { createSlashCommands } from "@/components/editor/SlashCommands";
@@ -200,12 +201,13 @@ export function CollaborativeEditor({
               <form action={deletePageAction}>
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="pageId" value={pageId} />
-                <button
-                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-danger/10 hover:text-danger"
+                <ConfirmButton
+                  message="Diese Seite und alle Unterseiten in den Papierkorb verschieben?"
                   title="Seite löschen"
+                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-danger/10 hover:text-danger"
                 >
                   <Trash2 className="h-4 w-4" />
-                </button>
+                </ConfirmButton>
               </form>
             )}
           </div>

@@ -15,7 +15,7 @@ export default async function SpaceLayout({
   const { space, role, user } = await loadSpace(slug);
 
   const pages = await prisma.page.findMany({
-    where: { spaceId: space.id },
+    where: { spaceId: space.id, deletedAt: null },
     select: { id: true, title: true, parentId: true, position: true },
   });
 

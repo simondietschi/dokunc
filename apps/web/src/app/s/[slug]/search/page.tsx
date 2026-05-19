@@ -26,6 +26,7 @@ export default async function SearchPage({
           'MaxFragments=1,MaxWords=24,MinWords=6') AS snippet
       FROM "Page"
       WHERE "spaceId" = ${space.id}
+        AND "deletedAt" IS NULL
         AND to_tsvector('simple', coalesce(title,'') || ' ' || coalesce("textContent",''))
             @@ plainto_tsquery('simple', ${query})
       ORDER BY ts_rank(

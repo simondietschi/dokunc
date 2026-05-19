@@ -37,7 +37,7 @@ export function AuthForm({
       <p className="mt-1.5 text-sm text-muted">
         {isLogin
           ? "Melde dich an, um weiterzuschreiben."
-          : "In wenigen Sekunden startklar."}
+          : "Nur per Einladung — das erste Konto wird Admin."}
       </p>
 
       <form action={formAction} className="mt-8 space-y-4">

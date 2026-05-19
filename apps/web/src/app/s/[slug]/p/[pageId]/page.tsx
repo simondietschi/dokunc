@@ -14,7 +14,7 @@ export default async function PageView({
   const { space, role, user } = await loadSpace(slug);
 
   const page = await prisma.page.findFirst({
-    where: { id: pageId, spaceId: space.id },
+    where: { id: pageId, spaceId: space.id, deletedAt: null },
     select: { id: true, title: true },
   });
   if (!page) notFound();

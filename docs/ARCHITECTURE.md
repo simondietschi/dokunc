@@ -97,7 +97,11 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 - [x] Rich-Editor: Slash-Menü („/"), Tabellen, Aufgabenlisten, Bilder
       (sicherer Upload), Callouts, Mermaid-Diagramme, YouTube-Embeds,
       Highlight/Link — gemeinsames Schema für Client & Collab-Server
-- [ ] Ausbaustufen: draw.io & Excalidraw, Kommentare, PDF-Export, S3, SSO
+- [x] Härtung: Invite-only-Registrierung (erste Person = Instanz-Admin),
+      APP_SECRET-Zwang in Prod, Soft-Delete/Papierkorb mit Bestätigung,
+      CSRF/Origin-Check, Rate-Limiting, erweiterte Tests
+- [ ] Ausbaustufen: draw.io & Excalidraw, Kommentare, PDF-Export, S3, SSO,
+      Papierkorb-UI (Wiederherstellen)
 
 ## 7. Setup
 

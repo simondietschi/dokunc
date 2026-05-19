@@ -30,7 +30,26 @@ export async function renamePageAction(form: FormData) {
 
 export async function deletePageAction(form: FormData) {
   const { space } = await authorizeAction(form, "managePages");
-  await prisma.page.delete({ where: { id: str(form, "pageId") } });
+  const pageId = str(form, "pageId");
+
+  // Nur Seiten dieses Space (kein Cross-Space-Löschen über manipuliertes Feld).
+  const page = await prisma.page.findFirst({
+    where: { id: pageId, spaceId: space.id, deletedAt: null },
+    select: { id: true },
+  });
+  if (!page) redirect(`/s/${space.slug}`);
+
+  // Soft-Delete: Seite + gesamter Unterbaum in den Papierkorb (kein
+  // harter, unwiderruflicher Verlust). Rekursive CTE.
+  await prisma.$executeRaw`
+    WITH RECURSIVE sub AS (
+      SELECT id FROM "Page" WHERE id = ${pageId}
+      UNION ALL
+      SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
+    )
+    UPDATE "Page" SET "deletedAt" = now()
+    WHERE id IN (SELECT id FROM sub) AND "deletedAt" IS NULL
+  `;
   revalidatePath(`/s/${space.slug}`);
   redirect(`/s/${space.slug}`);
 }
