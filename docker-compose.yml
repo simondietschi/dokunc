@@ -34,7 +34,7 @@ services:
       - "3001:3001"
 
   db:
-    image: postgres:16
+    image: postgres:18
     restart: unless-stopped
     environment:
       POSTGRES_USER: dokunc
@@ -49,7 +49,7 @@ services:
       retries: 10
 
   redis:
-    image: redis:7
+    image: redis:8
     restart: unless-stopped
     command: redis-server --appendonly yes --maxmemory-policy noeviction
     volumes:
