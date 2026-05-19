@@ -22,22 +22,32 @@ Redis · TipTap 3 · Yjs · Hocuspocus 4 · Tailwind CSS 4 · Node 26 · pnpm.
 
 ## Schnellstart mit Docker (empfohlen)
 
-Es muss nur Docker laufen — alles andere startet aus den Containern:
+`APP_SECRET` ist Pflicht (sonst startet der Container bewusst nicht):
 
 ```bash
+cp .env.example .env
+# In .env ein starkes Secret setzen:  openssl rand -base64 48
 docker compose up --build
 ```
 
 Danach:
 
-- App: <http://localhost:3000>
-- Collab-WebSocket: ws://localhost:3001
+- App: <https://localhost> (TLS über den Caddy-Proxy)
+- Collab läuft unter `wss://localhost/collab` (vom Proxy geroutet)
 
-Die Datenbank-Migrationen laufen beim Start automatisch. Daten liegen in den
-Docker-Volumes `db_data` und `redis_data`.
+Hinweise:
 
-Konfiguration optional über Umgebungsvariablen (siehe `docker-compose.yml`),
-mindestens `APP_SECRET` in Produktion setzen.
+- TLS nutzt Caddys **interne CA** (`localhost`). Der Browser zeigt anfangs
+  eine Zertifikatswarnung — für internen/VPN-Betrieb ok, oder die Caddy-Root-CA
+  importieren. Für eine echte Domain `SITE_ADDRESS=wiki.example.com` setzen
+  und in der `Caddyfile` `tls internal` entfernen (auto-HTTPS via Let's Encrypt).
+- **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1` (kein LAN-Zugriff).
+  App/DB/Redis sind nur im internen Docker-Netz erreichbar.
+- Der App-Container läuft als **non-root**. Migrationen laufen automatisch.
+  Daten liegen in den Volumes `db_data`, `redis_data`, `uploads`.
+
+**Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
+(Restore-Befehle gibt das Skript aus).
 
 ## Lokale Entwicklung (ohne Docker)
 

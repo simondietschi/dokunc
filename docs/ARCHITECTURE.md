@@ -100,8 +100,11 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 - [x] Härtung: Invite-only-Registrierung (erste Person = Instanz-Admin),
       APP_SECRET-Zwang in Prod, Soft-Delete/Papierkorb mit Bestätigung,
       CSRF/Origin-Check, Rate-Limiting, erweiterte Tests
+- [x] Prod-Härtung: TLS-Reverse-Proxy (Caddy, nur localhost exponiert),
+      Security-Header/CSP/HSTS, Upload-Magic-Byte-Prüfung, non-root
+      Container, fail-closed APP_SECRET, Backup-Skript
 - [ ] Ausbaustufen: draw.io & Excalidraw, Kommentare, PDF-Export, S3, SSO,
-      Papierkorb-UI (Wiederherstellen)
+      Papierkorb-UI, Health-Endpoint, CI-Pipeline, Collab-HA
 
 ## 7. Setup
 

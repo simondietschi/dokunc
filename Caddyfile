@@ -1,0 +1,29 @@
+# Reverse-Proxy mit TLS-Terminierung.
+# Standard: localhost mit Caddys interner CA (für internen/VPN-Betrieb).
+# Für eine echte Domain: SITE_ADDRESS=wiki.example.com setzen und die
+# Zeile `tls internal` entfernen (Caddy holt dann automatisch Let's Encrypt).
+
+{$SITE_ADDRESS:localhost} {
+	encode zstd gzip
+
+	# Collab-WebSocket: /collab -> interner Hocuspocus-Port 3001
+	handle_path /collab* {
+		reverse_proxy app:3001 {
+			header_up Host {host}
+		}
+	}
+
+	# Alles andere -> Next.js
+	handle {
+		reverse_proxy app:3000 {
+			header_up Host {host}
+		}
+	}
+
+	tls internal
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+}

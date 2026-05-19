@@ -1,9 +1,25 @@
 services:
+  # TLS-Terminierung + einziger nach außen (nur localhost) exponierter Dienst.
+  proxy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    ports:
+      - "127.0.0.1:443:443"
+      - "127.0.0.1:80:80"
+
   app:
     build:
       context: .
       args:
-        NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-ws://localhost:3001}
+        NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-wss://localhost/collab}
     restart: unless-stopped
     depends_on:
       db:
@@ -11,12 +27,13 @@ services:
       redis:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://dokunc:dokunc@db:5432/dokunc?schema=public
+      DATABASE_URL: postgresql://dokunc:${POSTGRES_PASSWORD:-dokunc}@db:5432/dokunc?schema=public
       REDIS_URL: redis://redis:6379
-      APP_SECRET: ${APP_SECRET:-change-me-please-change-me-please-32+}
+      # Fail-closed: ohne gesetztes, ausreichend langes Secret kein Start.
+      APP_SECRET: ${APP_SECRET:?APP_SECRET muss gesetzt sein (min. 32 Zeichen)}
       JWT_EXPIRES_IN: 7d
-      APP_URL: ${APP_URL:-http://localhost:3000}
-      NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-ws://localhost:3001}
+      APP_URL: ${APP_URL:-https://localhost}
+      NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-wss://localhost/collab}
       COLLAB_PORT: 3001
       NODE_ENV: production
       # E-Mail (Einladungen) — optional, ohne SMTP_HOST nur Log-Fallback
@@ -29,16 +46,17 @@ services:
       UPLOAD_DIR: /app/uploads
     volumes:
       - uploads:/app/uploads
-    ports:
-      - "3000:3000"
-      - "3001:3001"
+    # Keine Host-Ports: nur über den Proxy im internen Docker-Netz erreichbar.
+    expose:
+      - "3000"
+      - "3001"
 
   db:
     image: postgres:18
     restart: unless-stopped
     environment:
       POSTGRES_USER: dokunc
-      POSTGRES_PASSWORD: dokunc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dokunc}
       POSTGRES_DB: dokunc
     volumes:
       - db_data:/var/lib/postgresql/data
@@ -64,3 +82,5 @@ volumes:
   db_data:
   redis_data:
   uploads:
+  caddy_data:
+  caddy_config:
