@@ -1,6 +1,12 @@
 import Link from "next/link";
+import { ArrowUpRight, FileText, Plus } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
+import { Logo } from "@/components/ui/Logo";
+import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Avatar, gradientFor } from "@/components/ui/Avatar";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { logoutAction } from "../(auth)/actions";
 import { createSpaceAction } from "./actions";
 
@@ -9,58 +15,98 @@ export default async function SpacesPage() {
   const spaces = await prisma.space.findMany({
     where: { members: { some: { userId: user.id } } },
     orderBy: { createdAt: "asc" },
-    include: { _count: { select: { pages: true } } },
+    include: {
+      _count: { select: { pages: true, members: true } },
+    },
   });
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-12">
-      <header className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">Deine Spaces</h1>
-          <p className="text-sm text-slate-500">{user.name}</p>
+    <div className="min-h-screen">
+      <header className="sticky top-0 z-10 border-b border-line bg-canvas/80 backdrop-blur-xl">
+        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-6">
+          <Logo />
+          <div className="flex items-center gap-1">
+            <ThemeToggle />
+            <div className="mx-2 h-5 w-px bg-line" />
+            <span className="hidden text-sm text-muted sm:block">
+              {user.name}
+            </span>
+            <Avatar name={user.name} size={30} className="ml-1" />
+            <form action={logoutAction} className="ml-2">
+              <Button variant="ghost" size="sm">
+                Abmelden
+              </Button>
+            </form>
+          </div>
         </div>
-        <form action={logoutAction}>
-          <button className="text-sm text-slate-500 underline">
-            Abmelden
-          </button>
-        </form>
       </header>
 
-      <ul className="space-y-2">
-        {spaces.map((s) => (
-          <li key={s.id}>
+      <main className="mx-auto max-w-5xl px-6 py-12">
+        <div className="animate-[rise_0.5s_ease]">
+          <h1 className="text-3xl font-semibold tracking-tight">
+            Deine Spaces
+          </h1>
+          <p className="mt-1.5 text-muted">
+            Bereiche für Teams, Projekte und Themen.
+          </p>
+        </div>
+
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {spaces.map((s, i) => (
             <Link
+              key={s.id}
               href={`/s/${s.slug}`}
-              className="flex items-center justify-between rounded-lg border bg-white px-4 py-3 hover:bg-slate-50"
+              style={{ animationDelay: `${i * 40}ms` }}
+              className="group relative animate-[rise_0.5s_ease_both] overflow-hidden rounded-xl border border-line bg-surface p-5 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-pop"
             >
-              <span className="font-medium">{s.name}</span>
-              <span className="text-xs text-slate-400">
-                {s._count.pages} Seiten
-              </span>
+              <div className="flex items-start justify-between">
+                <span
+                  className={`grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br ${gradientFor(
+                    s.slug,
+                  )} text-lg font-bold text-white shadow-soft`}
+                >
+                  {s.name[0]?.toUpperCase()}
+                </span>
+                <ArrowUpRight className="h-4 w-4 text-faint transition-all duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-accent" />
+              </div>
+              <h3 className="mt-4 font-semibold tracking-tight">
+                {s.name}
+              </h3>
+              <p className="mt-1 flex items-center gap-1.5 text-[13px] text-muted">
+                <FileText className="h-3.5 w-3.5" />
+                {s._count.pages} Seiten · {s._count.members} Mitglieder
+              </p>
             </Link>
-          </li>
-        ))}
+          ))}
+
+          {/* Create-Card */}
+          <form
+            action={createSpaceAction}
+            className="flex flex-col justify-between rounded-xl border border-dashed border-line-strong bg-subtle/40 p-5 transition-colors hover:border-accent/50"
+          >
+            <span className="grid h-11 w-11 place-items-center rounded-xl border border-line-strong bg-surface text-muted">
+              <Plus className="h-5 w-5" />
+            </span>
+            <div className="mt-4 space-y-2.5">
+              <Input
+                name="name"
+                placeholder="Neuer Space…"
+                required
+                className="h-10"
+              />
+              <Button type="submit" size="sm" className="w-full">
+                Space erstellen
+              </Button>
+            </div>
+          </form>
+        </div>
+
         {spaces.length === 0 && (
-          <p className="text-sm text-slate-500">
-            Noch keine Spaces — leg unten einen an.
+          <p className="mt-8 text-sm text-faint">
+            Du bist noch in keinem Space — erstelle rechts deinen ersten.
           </p>
         )}
-      </ul>
-
-      <form
-        action={createSpaceAction}
-        className="mt-8 flex gap-2 rounded-lg border bg-white p-4"
-      >
-        <input
-          name="name"
-          placeholder="Neuer Space (z.B. Engineering)"
-          required
-          className="flex-1 rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-400"
-        />
-        <button className="rounded-lg bg-slate-900 px-4 py-2 text-white">
-          Erstellen
-        </button>
-      </form>
+      </main>
     </div>
   );
 }

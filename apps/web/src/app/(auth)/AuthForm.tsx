@@ -2,7 +2,11 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
+import { ArrowRight, Loader2 } from "lucide-react";
 import { loginAction, registerAction, type ActionState } from "./actions";
+import { Button } from "@/components/ui/Button";
+import { Input, Field } from "@/components/ui/Input";
+import { Logo } from "@/components/ui/Logo";
 
 export function AuthForm({ mode }: { mode: "login" | "register" }) {
   const action = mode === "login" ? loginAction : registerAction;
@@ -10,69 +14,80 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
     action,
     undefined,
   );
+  const isLogin = mode === "login";
 
   return (
-    <div className="mx-auto mt-24 w-full max-w-sm rounded-xl border bg-white p-8 shadow-sm">
-      <h1 className="mb-1 text-2xl font-bold">dokunc</h1>
-      <p className="mb-6 text-sm text-slate-500">
-        {mode === "login" ? "Anmelden" : "Konto erstellen"}
+    <div>
+      <div className="mb-8 lg:hidden">
+        <Logo />
+      </div>
+
+      <h2 className="text-2xl font-semibold tracking-tight text-ink">
+        {isLogin ? "Willkommen zurück" : "Konto erstellen"}
+      </h2>
+      <p className="mt-1.5 text-sm text-muted">
+        {isLogin
+          ? "Melde dich an, um weiterzuschreiben."
+          : "In wenigen Sekunden startklar."}
       </p>
-      <form action={formAction} className="space-y-4">
-        {mode === "register" && (
-          <Field name="name" label="Name" type="text" />
+
+      <form action={formAction} className="mt-8 space-y-4">
+        {!isLogin && (
+          <Field label="Name">
+            <Input name="name" type="text" placeholder="Alex Muster" required />
+          </Field>
         )}
-        <Field name="email" label="E-Mail" type="email" />
-        <Field name="password" label="Passwort" type="password" />
+        <Field label="E-Mail">
+          <Input
+            name="email"
+            type="email"
+            placeholder="alex@team.de"
+            autoComplete="email"
+            required
+          />
+        </Field>
+        <Field label="Passwort">
+          <Input
+            name="password"
+            type="password"
+            placeholder="••••••••"
+            autoComplete={isLogin ? "current-password" : "new-password"}
+            required
+          />
+        </Field>
+
         {state?.error && (
-          <p className="text-sm text-red-600">{state.error}</p>
+          <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger animate-[fade-in_0.2s_ease]">
+            {state.error}
+          </p>
         )}
-        <button
+
+        <Button
           type="submit"
+          size="lg"
           disabled={pending}
-          className="w-full rounded-lg bg-slate-900 py-2 text-white disabled:opacity-50"
+          className="w-full"
         >
-          {pending ? "…" : mode === "login" ? "Anmelden" : "Registrieren"}
-        </button>
+          {pending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <>
+              {isLogin ? "Anmelden" : "Loslegen"}
+              <ArrowRight className="h-4 w-4" />
+            </>
+          )}
+        </Button>
       </form>
-      <p className="mt-4 text-center text-sm text-slate-500">
-        {mode === "login" ? (
-          <>
-            Kein Konto?{" "}
-            <Link href="/register" className="text-slate-900 underline">
-              Registrieren
-            </Link>
-          </>
-        ) : (
-          <>
-            Schon ein Konto?{" "}
-            <Link href="/login" className="text-slate-900 underline">
-              Anmelden
-            </Link>
-          </>
-        )}
+
+      <p className="mt-6 text-center text-sm text-muted">
+        {isLogin ? "Noch kein Konto? " : "Schon registriert? "}
+        <Link
+          href={isLogin ? "/register" : "/login"}
+          className="font-medium text-accent hover:underline"
+        >
+          {isLogin ? "Registrieren" : "Anmelden"}
+        </Link>
       </p>
     </div>
-  );
-}
-
-function Field({
-  name,
-  label,
-  type,
-}: {
-  name: string;
-  label: string;
-  type: string;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1 block text-sm font-medium">{label}</span>
-      <input
-        name={name}
-        type={type}
-        required
-        className="w-full rounded-lg border px-3 py-2 outline-none focus:ring-2 focus:ring-slate-400"
-      />
-    </label>
   );
 }

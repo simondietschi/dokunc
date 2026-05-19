@@ -3,66 +3,42 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@dokunc/db";
-import { requireUser, getMembership } from "@/lib/current-user";
-import { can } from "@/lib/permissions";
+import { authorizeAction } from "@/lib/space-context";
+import { str, strOrNull } from "@/lib/form";
 
-async function spaceBySlug(slug: string) {
-  const space = await prisma.space.findUnique({ where: { slug } });
-  if (!space) throw new Error("Space nicht gefunden");
-  return space;
-}
-
-export async function createPageAction(formData: FormData) {
-  const user = await requireUser();
-  const slug = String(formData.get("slug"));
-  const parentId = (formData.get("parentId") as string) || null;
-  const space = await spaceBySlug(slug);
-  const role = await getMembership(user.id, space.id);
-  if (!can(role, "managePages")) throw new Error("Keine Berechtigung");
-
+export async function createPageAction(form: FormData) {
+  const { space } = await authorizeAction(form, "managePages");
   const page = await prisma.page.create({
-    data: { spaceId: space.id, parentId, title: "Untitled" },
+    data: {
+      spaceId: space.id,
+      parentId: strOrNull(form, "parentId"),
+      title: "Untitled",
+    },
   });
-  revalidatePath(`/s/${slug}`);
-  redirect(`/s/${slug}/p/${page.id}`);
+  revalidatePath(`/s/${space.slug}`);
+  redirect(`/s/${space.slug}/p/${page.id}`);
 }
 
-export async function renamePageAction(formData: FormData) {
-  const user = await requireUser();
-  const slug = String(formData.get("slug"));
-  const pageId = String(formData.get("pageId"));
-  const title = String(formData.get("title") ?? "").trim() || "Untitled";
-  const space = await spaceBySlug(slug);
-  const role = await getMembership(user.id, space.id);
-  if (!can(role, "write")) throw new Error("Keine Berechtigung");
-
-  await prisma.page.update({ where: { id: pageId }, data: { title } });
-  revalidatePath(`/s/${slug}`);
+export async function renamePageAction(form: FormData) {
+  const { space } = await authorizeAction(form, "write");
+  await prisma.page.update({
+    where: { id: str(form, "pageId") },
+    data: { title: str(form, "title") || "Untitled" },
+  });
+  revalidatePath(`/s/${space.slug}`);
 }
 
-export async function deletePageAction(formData: FormData) {
-  const user = await requireUser();
-  const slug = String(formData.get("slug"));
-  const pageId = String(formData.get("pageId"));
-  const space = await spaceBySlug(slug);
-  const role = await getMembership(user.id, space.id);
-  if (!can(role, "managePages")) throw new Error("Keine Berechtigung");
-
-  await prisma.page.delete({ where: { id: pageId } });
-  revalidatePath(`/s/${slug}`);
-  redirect(`/s/${slug}`);
+export async function deletePageAction(form: FormData) {
+  const { space } = await authorizeAction(form, "managePages");
+  await prisma.page.delete({ where: { id: str(form, "pageId") } });
+  revalidatePath(`/s/${space.slug}`);
+  redirect(`/s/${space.slug}`);
 }
 
-export async function restoreVersionAction(formData: FormData) {
-  const user = await requireUser();
-  const slug = String(formData.get("slug"));
-  const versionId = String(formData.get("versionId"));
-  const space = await spaceBySlug(slug);
-  const role = await getMembership(user.id, space.id);
-  if (!can(role, "write")) throw new Error("Keine Berechtigung");
-
+export async function restoreVersionAction(form: FormData) {
+  const { space } = await authorizeAction(form, "write");
   const version = await prisma.pageVersion.findUnique({
-    where: { id: versionId },
+    where: { id: str(form, "versionId") },
   });
   if (!version) throw new Error("Version nicht gefunden");
 
@@ -78,6 +54,6 @@ export async function restoreVersionAction(formData: FormData) {
     // Yjs-Status verwerfen, damit der Collab-Server aus content neu seedet.
     prisma.collabDocument.deleteMany({ where: { pageId: version.pageId } }),
   ]);
-  revalidatePath(`/s/${slug}/p/${version.pageId}`);
-  redirect(`/s/${slug}/p/${version.pageId}`);
+  revalidatePath(`/s/${space.slug}/p/${version.pageId}`);
+  redirect(`/s/${space.slug}/p/${version.pageId}`);
 }

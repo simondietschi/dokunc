@@ -4,7 +4,6 @@ import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { getRawToken } from "@/lib/session";
 import { CollaborativeEditor } from "./CollaborativeEditor";
-import { TitleBar } from "./TitleBar";
 
 export default async function PageView({
   params,
@@ -25,21 +24,15 @@ export default async function PageView({
     process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:3001";
 
   return (
-    <div className="mx-auto max-w-3xl pb-24">
-      <TitleBar
-        slug={slug}
-        pageId={page.id}
-        title={page.title}
-        canWrite={can(role, "write")}
-        canManage={can(role, "managePages")}
-      />
-      <CollaborativeEditor
-        pageId={page.id}
-        token={token}
-        collabUrl={collabUrl}
-        editable={can(role, "write")}
-        userName={user.name}
-      />
-    </div>
+    <CollaborativeEditor
+      slug={slug}
+      pageId={page.id}
+      title={page.title}
+      token={token}
+      collabUrl={collabUrl}
+      editable={can(role, "write")}
+      canManage={can(role, "managePages")}
+      userName={user.name}
+    />
   );
 }

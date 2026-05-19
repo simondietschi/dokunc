@@ -1,52 +1,243 @@
 @import "tailwindcss";
 @source "../**/*.{ts,tsx}";
 
-:root {
-  color-scheme: light;
+/* Dark Mode über .dark-Klasse am <html> */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---- Design Tokens -> Tailwind Utilities ---- */
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-subtle: var(--subtle);
+  --color-surface: var(--surface);
+  --color-elevated: var(--elevated);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-contrast: var(--accent-contrast);
+  --color-danger: var(--danger);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.04), 0 4px 16px -8px rgb(0 0 0 / 0.10);
+  --shadow-pop: 0 8px 30px -8px rgb(0 0 0 / 0.18);
+
+  --animate-fade-in: fade-in 0.4s ease both;
+  --animate-rise: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* ---- Light ---- */
+:root {
+  --canvas: #fcfcfd;
+  --subtle: #f4f5f7;
+  --surface: #ffffff;
+  --elevated: #ffffff;
+  --line: #ecedf0;
+  --line-strong: #dfe0e5;
+  --ink: #16171b;
+  --muted: #6b6f76;
+  --faint: #9b9fa7;
+  --accent: #5e60e8;
+  --accent-hover: #4d4fd6;
+  --accent-soft: color-mix(in oklab, #5e60e8 12%, transparent);
+  --accent-contrast: #ffffff;
+  --danger: #e5484d;
+}
+
+/* ---- Dark (Linear-esque deep) ---- */
+.dark {
+  --canvas: #08090a;
+  --subtle: #101113;
+  --surface: #101214;
+  --elevated: #16181c;
+  --line: #ffffff14;
+  --line-strong: #ffffff24;
+  --ink: #f6f7f8;
+  --muted: #989aa2;
+  --faint: #6c6e76;
+  --accent: #7b7df0;
+  --accent-hover: #8f91f4;
+  --accent-soft: color-mix(in oklab, #7b7df0 20%, transparent);
+  --accent-contrast: #0b0b10;
+  --danger: #ff6166;
+}
+
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--canvas);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  ::selection {
+    background: var(--accent-soft);
+  }
+  /* dezenter, edler Scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line-strong);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+/* ---- Motion ---- */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--subtle);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in oklab, var(--ink) 6%, transparent),
+    transparent
+  );
+  animation: shimmer 1.4s infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ---- Editor / Prose ---- */
 .ProseMirror {
   outline: none;
-  min-height: 60vh;
+  min-height: 62vh;
+  font-size: 1.0625rem;
+  line-height: 1.78;
+  color: var(--ink);
 }
-.ProseMirror p {
-  margin: 0.5rem 0;
+.ProseMirror > * + * {
+  margin-top: 0.85rem;
 }
 .ProseMirror h1 {
-  font-size: 1.875rem;
+  font-size: 2rem;
   font-weight: 700;
-  margin: 1rem 0 0.5rem;
+  letter-spacing: -0.02em;
+  margin-top: 2rem;
 }
 .ProseMirror h2 {
   font-size: 1.5rem;
-  font-weight: 700;
-  margin: 1rem 0 0.5rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  margin-top: 1.6rem;
 }
 .ProseMirror h3 {
-  font-size: 1.25rem;
+  font-size: 1.2rem;
   font-weight: 600;
-  margin: 0.75rem 0 0.5rem;
+  margin-top: 1.3rem;
 }
 .ProseMirror ul {
   list-style: disc;
-  padding-left: 1.5rem;
+  padding-left: 1.4rem;
 }
 .ProseMirror ol {
   list-style: decimal;
-  padding-left: 1.5rem;
+  padding-left: 1.4rem;
+}
+.ProseMirror li > * + * {
+  margin-top: 0.3rem;
+}
+.ProseMirror a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ProseMirror code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--subtle);
+  padding: 0.15em 0.4em;
+  border-radius: 6px;
 }
 .ProseMirror pre {
-  background: #1e293b;
-  color: #e2e8f0;
-  padding: 0.75rem 1rem;
-  border-radius: 0.5rem;
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  padding: 1rem 1.1rem;
+  border-radius: 12px;
   overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+.ProseMirror pre code {
+  background: none;
+  padding: 0;
 }
 .ProseMirror blockquote {
-  border-left: 3px solid #cbd5e1;
+  border-left: 3px solid var(--accent);
   padding-left: 1rem;
-  color: #475569;
+  color: var(--muted);
 }
+.ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--line-strong);
+  margin: 1.5rem 0;
+}
+.ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--faint);
+  pointer-events: none;
+  height: 0;
+}
+
+/* Live-Cursor (CollaborationCaret) */
 .collaboration-carets__caret {
   border-left: 1px solid;
   border-right: 1px solid;
@@ -54,17 +245,19 @@
   margin-right: -1px;
   position: relative;
   word-break: normal;
+  pointer-events: none;
 }
 .collaboration-carets__label {
-  border-radius: 3px;
+  border-radius: 4px;
   color: #fff;
   font-size: 11px;
   font-weight: 600;
   left: -1px;
   line-height: 1;
-  padding: 2px 4px;
+  padding: 3px 5px;
   position: absolute;
-  top: -1.4em;
+  top: -1.5em;
   user-select: none;
   white-space: nowrap;
+  box-shadow: var(--shadow-soft);
 }

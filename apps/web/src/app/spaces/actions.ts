@@ -4,10 +4,11 @@ import { redirect } from "next/navigation";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { slugify } from "@/lib/slug";
+import { str } from "@/lib/form";
 
 export async function createSpaceAction(formData: FormData) {
   const user = await requireUser();
-  const name = String(formData.get("name") ?? "").trim();
+  const name = str(formData, "name");
   if (name.length < 2) return;
 
   let slug = slugify(name);

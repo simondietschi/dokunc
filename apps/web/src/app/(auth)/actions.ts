@@ -19,6 +19,12 @@ const loginSchema = z.object({
 
 export type ActionState = { error?: string } | undefined;
 
+/** Session anlegen und in die App leiten (gemeinsamer Abschluss von Login/Register). */
+async function startSession(userId: string): Promise<never> {
+  await createSession(userId);
+  redirect("/spaces");
+}
+
 export async function registerAction(
   _prev: ActionState,
   formData: FormData,
@@ -28,19 +34,16 @@ export async function registerAction(
     email: formData.get("email"),
     password: formData.get("password"),
   });
-  if (!parsed.success) {
-    return { error: parsed.error.issues[0].message };
-  }
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
   const { name, email, password } = parsed.data;
 
-  const exists = await prisma.user.findUnique({ where: { email } });
-  if (exists) return { error: "E-Mail bereits registriert" };
-
+  if (await prisma.user.findUnique({ where: { email } })) {
+    return { error: "E-Mail bereits registriert" };
+  }
   const user = await prisma.user.create({
     data: { name, email, passwordHash: await bcrypt.hash(password, 10) },
   });
-  await createSession(user.id);
-  redirect("/spaces");
+  return startSession(user.id);
 }
 
 export async function loginAction(
@@ -56,11 +59,13 @@ export async function loginAction(
   const user = await prisma.user.findUnique({
     where: { email: parsed.data.email },
   });
-  if (!user || !(await bcrypt.compare(parsed.data.password, user.passwordHash))) {
+  if (
+    !user ||
+    !(await bcrypt.compare(parsed.data.password, user.passwordHash))
+  ) {
     return { error: "Falsche Zugangsdaten" };
   }
-  await createSession(user.id);
-  redirect("/spaces");
+  return startSession(user.id);
 }
 
 export async function logoutAction() {
