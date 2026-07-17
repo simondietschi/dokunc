@@ -9,6 +9,7 @@ import { Avatar, gradientFor } from "@/components/ui/Avatar";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { logoutAction } from "../(auth)/actions";
 import { createSpaceAction } from "./actions";
+import { Onboarding, WaitingForInvite } from "./Onboarding";
 
 export default async function SpacesPage() {
   const user = await requireUser();
@@ -76,6 +77,15 @@ export default async function SpacesPage() {
         </div>
       </header>
 
+      {spaces.length === 0 ? (
+        <main>
+          {user.isAdmin ? (
+            <Onboarding userName={user.name} />
+          ) : (
+            <WaitingForInvite />
+          )}
+        </main>
+      ) : (
       <main className="mx-auto max-w-5xl px-6 py-12">
         <div className="animate-[rise_0.5s_ease]">
           <h1 className="text-3xl font-semibold tracking-tight">
@@ -135,13 +145,8 @@ export default async function SpacesPage() {
             </div>
           </form>
         </div>
-
-        {spaces.length === 0 && (
-          <p className="mt-8 text-sm text-faint">
-            Du bist noch in keinem Space — erstelle rechts deinen ersten.
-          </p>
-        )}
       </main>
+      )}
     </div>
   );
 }
