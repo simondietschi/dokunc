@@ -25,7 +25,7 @@ const csp = [
   "style-src 'self' 'unsafe-inline'",
   "script-src 'self' 'unsafe-inline'",
   "connect-src 'self' ws: wss:",
-  "frame-src https://www.youtube-nocookie.com https://www.youtube.com",
+  "frame-src https://www.youtube-nocookie.com https://www.youtube.com https://embed.diagrams.net",
   "font-src 'self' data:",
   "object-src 'none'",
   "base-uri 'self'",

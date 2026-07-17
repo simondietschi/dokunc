@@ -15,13 +15,16 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import { richExtensions } from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import * as Y from "yjs";
-import { History, Trash2, Download, FileText, AtSign } from "lucide-react";
+import { History, Trash2, FileText, AtSign } from "lucide-react";
+import { ExportMenu } from "@/components/editor/ExportMenu";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { CalloutView } from "@/components/editor/CalloutView";
 import { MermaidView } from "@/components/editor/MermaidView";
 import { WikiLinkView } from "@/components/editor/WikiLinkView";
 import { MentionView } from "@/components/editor/MentionView";
+import { ExcalidrawView } from "@/components/editor/ExcalidrawView";
+import { DrawioView } from "@/components/editor/DrawioView";
 import { createSlashCommands } from "@/components/editor/SlashCommands";
 import { createEntitySuggestion } from "@/components/editor/EntitySuggestion";
 import { cn } from "@/lib/cn";
@@ -76,6 +79,7 @@ export function CollaborativeEditor({
   editable,
   canManage,
   userName,
+  pdfEnabled,
 }: {
   slug: string;
   spaceId: string;
@@ -86,6 +90,7 @@ export function CollaborativeEditor({
   editable: boolean;
   canManage: boolean;
   userName: string;
+  pdfEnabled: boolean;
 }) {
   const ydoc = useMemo(() => new Y.Doc(), [pageId]);
   const [status, setStatus] = useState<
@@ -173,6 +178,8 @@ export function CollaborativeEditor({
         mermaid: () => ReactNodeViewRenderer(MermaidView),
         wikiLink: () => ReactNodeViewRenderer(WikiLinkView),
         mention: () => ReactNodeViewRenderer(MentionView),
+        excalidraw: () => ReactNodeViewRenderer(ExcalidrawView),
+        drawio: () => ReactNodeViewRenderer(DrawioView),
       }),
       Placeholder.configure({
         placeholder:
@@ -274,13 +281,7 @@ export function CollaborativeEditor({
               <History className="h-4 w-4" />
               Verlauf
             </Link>
-            <a
-              href={`/api/pages/${pageId}/export`}
-              className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-subtle hover:text-ink"
-              title="Als Markdown exportieren"
-            >
-              <Download className="h-4 w-4" />
-            </a>
+            <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
             {canManage && (
               <form action={deletePageAction}>
                 <input type="hidden" name="slug" value={slug} />

@@ -455,3 +455,41 @@
   border-bottom: 2px solid color-mix(in oklab, #f59e0b 60%, transparent);
   cursor: pointer;
 }
+
+/* Diagramme (Excalidraw / draw.io) */
+.dk-diagram {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 1rem 0;
+  background: var(--surface);
+  overflow: hidden;
+}
+.dk-diagram-bar {
+  display: flex;
+  align-items: center;
+  padding: 0.4rem 0.7rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--subtle);
+}
+.dk-diagram-img {
+  display: block;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0.75rem;
+  background: #fff;
+}
+.dk-diagram-empty {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2.2rem 1rem;
+  color: var(--faint);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.dk-diagram-empty:hover {
+  color: var(--muted);
+  background: var(--subtle);
+}

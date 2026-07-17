@@ -58,6 +58,7 @@ export default async function PageView({
         editable={can(role, "write")}
         canManage={can(role, "managePages")}
         userName={user.name}
+        pdfEnabled={!!process.env.GOTENBERG_URL}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">

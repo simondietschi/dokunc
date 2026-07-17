@@ -22,6 +22,8 @@ import {
   TriangleAlert,
   OctagonAlert,
   Workflow,
+  Shapes,
+  Network,
   MonitorPlay as YoutubeIcon,
 } from "lucide-react";
 import { SlashMenu, type SlashMenuHandle, type SlashItem } from "./SlashMenu";
@@ -59,6 +61,8 @@ function defs(opts: SlashOptions): Def[] {
     { title: "Warnung-Callout", subtitle: "Warnhinweis", icon: TriangleAlert, keywords: "callout warn warnung", run: (e, r) => chain(e, r).setCallout("warn").run() },
     { title: "Achtung-Callout", subtitle: "Kritischer Hinweis", icon: OctagonAlert, keywords: "callout danger achtung fehler", run: (e, r) => chain(e, r).setCallout("danger").run() },
     { title: "Mermaid-Diagramm", subtitle: "Flussdiagramm aus Code", icon: Workflow, keywords: "mermaid diagramm graph flowchart", run: (e, r) => chain(e, r).setMermaid().run() },
+    { title: "Excalidraw-Zeichnung", subtitle: "Freihand skizzieren", icon: Shapes, keywords: "excalidraw zeichnung skizze sketch whiteboard", run: (e, r) => chain(e, r).setExcalidraw().run() },
+    { title: "draw.io-Diagramm", subtitle: "Diagramm-Editor (diagrams.net)", icon: Network, keywords: "drawio diagrams flowchart uml architektur", run: (e, r) => chain(e, r).setDrawio().run() },
     {
       title: "YouTube-Video",
       subtitle: "Video einbetten",

@@ -8,6 +8,12 @@ packages:
 #  Releases — Abhängigkeiten sind exakt gepinnt + Lockfile-geprüft.)
 minimumReleaseAge: 0
 
+# Genau EINE ProseMirror-Instanz erzwingen (transitive @tiptap/pm-
+# Versionen z. B. aus Hocuspocus würden sonst prosemirror-model doppeln
+# -> "multiple versions of prosemirror-model" zur Laufzeit).
+overrides:
+  "@tiptap/*": "3.28.0"
+
 # Erlaubte Postinstall-Build-Skripte (pnpm 11).
 allowBuilds:
   "@prisma/engines": true

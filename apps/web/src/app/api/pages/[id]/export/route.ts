@@ -2,11 +2,19 @@ import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
 import { toMarkdown } from "@/lib/markdown";
+import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
+import { htmlToPdf, gotenbergUrl } from "@/lib/pdf";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
+/**
+ * Seiten-Export: ?format=md (Default) | html | pdf
+ * PDF nutzt Gotenberg (GOTENBERG_URL); ohne Gotenberg antwortet die
+ * Route mit 501 + Hinweis auf die Druckansicht (/p/[id]/print).
+ */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const user = await getCurrentUser();
@@ -14,10 +22,16 @@ export async function GET(
     return new NextResponse("Nicht angemeldet", { status: 401 });
   }
   const { id } = await params;
+  const format = new URL(req.url).searchParams.get("format") ?? "md";
 
   const page = await prisma.page.findFirst({
     where: { id, deletedAt: null },
-    select: { title: true, content: true, spaceId: true },
+    select: {
+      title: true,
+      content: true,
+      spaceId: true,
+      space: { select: { name: true } },
+    },
   });
   if (!page) return new NextResponse("Nicht gefunden", { status: 404 });
 
@@ -27,12 +41,51 @@ export async function GET(
   });
   if (!member) return new NextResponse("Kein Zugriff", { status: 403 });
 
-  const md = `# ${page.title}\n\n${toMarkdown(page.content)}`;
-  const safe = page.title.replace(/[^a-zA-Z0-9-_]+/g, "_").slice(0, 60);
-  return new NextResponse(md, {
-    headers: {
-      "Content-Type": "text/markdown; charset=utf-8",
-      "Content-Disposition": `attachment; filename="${safe || "page"}.md"`,
-    },
+  const safe =
+    page.title.replace(/[^a-zA-Z0-9-_]+/g, "_").slice(0, 60) || "page";
+
+  if (format === "md") {
+    const md = `# ${page.title}\n\n${toMarkdown(page.content)}`;
+    return new NextResponse(md, {
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${safe}.md"`,
+      },
+    });
+  }
+
+  const html = pageToPrintHtml({
+    title: page.title,
+    spaceName: page.space.name,
+    contentHtml: contentToHtml(page.content),
   });
+
+  if (format === "html") {
+    return new NextResponse(html, {
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${safe}.html"`,
+      },
+    });
+  }
+
+  if (format === "pdf") {
+    const pdf = await htmlToPdf(html);
+    if (!pdf) {
+      const hint = gotenbergUrl()
+        ? "PDF-Dienst (Gotenberg) nicht erreichbar."
+        : "PDF-Dienst nicht konfiguriert (GOTENBERG_URL). Nutze die Druckansicht: /p/" +
+          id +
+          "/print";
+      return new NextResponse(hint, { status: 501 });
+    }
+    return new NextResponse(new Uint8Array(pdf), {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${safe}.pdf"`,
+      },
+    });
+  }
+
+  return new NextResponse("Unbekanntes Format", { status: 400 });
 }

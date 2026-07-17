@@ -152,3 +152,63 @@ test("Frag-dein-Wiki-Seite lädt (Fallback ohne API-Key)", async ({
   // Ohne ANTHROPIC_API_KEY: Hinweis statt Formular
   await expect(page.getByText("KI nicht konfiguriert")).toBeVisible();
 });
+
+test("Diagramm-Blöcke einfügbar, Export liefert MD/HTML/Print", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**/p/**");
+  await waitForLive(page);
+  const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
+
+  // Excalidraw-Block per Slash-Menü
+  const editor = page.locator(".ProseMirror");
+  await editor.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/excali");
+  await page
+    .locator(".shadow-pop button", { hasText: "Excalidraw-Zeichnung" })
+    .click();
+  await expect(
+    page.locator('[data-diagram="excalidraw"]').first(),
+  ).toBeVisible({ timeout: 8000 });
+
+  // draw.io-Block per Slash-Menü
+  await editor.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/drawio");
+  await page
+    .locator(".shadow-pop button", { hasText: "draw.io-Diagramm" })
+    .click();
+  await expect(page.locator('[data-diagram="drawio"]').first()).toBeVisible({
+    timeout: 8000,
+  });
+
+  // Export-Routen (Session-Cookie ist im Kontext)
+  const md = await page.request.get(
+    `/api/pages/${pageId}/export?format=md`,
+  );
+  expect(md.status()).toBe(200);
+  expect(md.headers()["content-type"]).toContain("text/markdown");
+
+  const html = await page.request.get(
+    `/api/pages/${pageId}/export?format=html`,
+  );
+  expect(html.status()).toBe(200);
+  expect(await html.text()).toContain("<!DOCTYPE html>");
+
+  // PDF ohne Gotenberg -> 501 mit Hinweis (graceful)
+  const pdf = await page.request.get(
+    `/api/pages/${pageId}/export?format=pdf`,
+  );
+  expect(pdf.status()).toBe(501);
+
+  // Druckansicht liefert druckfertiges HTML
+  const print = await page.request.get(`/p/${pageId}/print`);
+  expect(print.status()).toBe(200);
+  expect(await print.text()).toContain("window.print");
+});

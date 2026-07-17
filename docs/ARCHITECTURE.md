@@ -119,8 +119,15 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) über
       Claude API (claude-opus-4-8, adaptive thinking, Prompt-Caching);
       graceful deaktiviert ohne ANTHROPIC_API_KEY
-- [ ] Ausbaustufen: draw.io & Excalidraw, PDF-Export, S3, SSO,
-      vollständige i18n, Prompt→Dialog-UI, pgvector ab ~10k Seiten
+- [x] Diagramme: Excalidraw-Zeichnungen (Vollbild-Editor, SVG-Preview
+      nur als data-URI-img — kein Inline-SVG/XSS) und draw.io via
+      embed.diagrams.net (postMessage-Protokoll, CSP frame-src);
+      Quelldaten nur im Yjs/JSON-Dokument, nie im Export-HTML
+- [x] Export: Markdown, HTML (JSON→HTML über das geteilte Schema via
+      @tiptap/html) und PDF (Gotenberg-Service im Compose; Fallback:
+      Druckansicht /p/[id]/print mit window.print)
+- [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
+      pgvector ab ~10k Seiten
 
 ## 7. Setup
 

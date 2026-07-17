@@ -14,6 +14,8 @@ import { Mermaid } from "./mermaid";
 import { WikiLink } from "./wiki-link";
 import { Mention } from "./mention";
 import { CommentMark } from "./comment-mark";
+import { Excalidraw } from "./excalidraw";
+import { Drawio } from "./drawio";
 
 export const COLLAB_FIELD = "default";
 
@@ -27,6 +29,8 @@ export type NodeViewFactories = {
   mermaid?: () => unknown;
   wikiLink?: () => unknown;
   mention?: () => unknown;
+  excalidraw?: () => unknown;
+  drawio?: () => unknown;
 };
 
 /**
@@ -50,6 +54,12 @@ export function richExtensions(views: NodeViewFactories = {}) {
   const mention = views.mention
     ? Mention.extend({ addNodeView: views.mention as never })
     : Mention;
+  const excalidraw = views.excalidraw
+    ? Excalidraw.extend({ addNodeView: views.excalidraw as never })
+    : Excalidraw;
+  const drawio = views.drawio
+    ? Drawio.extend({ addNodeView: views.drawio as never })
+    : Drawio;
   return [
     StarterKit.configure({
       undoRedo: false,
@@ -69,6 +79,8 @@ export function richExtensions(views: NodeViewFactories = {}) {
     mermaid,
     wikiLink,
     mention,
+    excalidraw,
+    drawio,
     CommentMark,
   ];
 }
@@ -119,3 +131,5 @@ export { WikiLink } from "./wiki-link";
 export { Mention } from "./mention";
 export { CommentMark } from "./comment-mark";
 export { chunkText } from "./text";
+export { Excalidraw, toBase64 } from "./excalidraw";
+export { Drawio } from "./drawio";

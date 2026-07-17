@@ -10,7 +10,8 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - Auth & Benutzer (Invite-only-Registrierung, erste Person = Admin)
 - Spaces mit Rollen/Berechtigungen (OWNER/ADMIN/MEMBER/VIEWER)
 - Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
-  Aufgabenlisten, Bilder, Callouts, Mermaid-Diagramme, YouTube-Embeds)
+  Aufgabenlisten, Bilder, Callouts, Mermaid-Diagramme, YouTube-Embeds,
+  Excalidraw-Zeichnungen, draw.io-Diagramme)
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
 - **Kommentare** (textverankerte Threads) + **@-Mentions** +
@@ -18,7 +19,9 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
-- Postgres-Volltextsuche, Versionsverlauf, Papierkorb, Markdown-Export
+- Postgres-Volltextsuche, Versionsverlauf, Papierkorb
+- Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
+  enthalten; ohne Gotenberg über die Druckansicht des Browsers)
 
 ## Stack
 

@@ -6,17 +6,17 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "dependencies": {
-    "@tiptap/core": "3.23.5",
-    "@tiptap/extension-highlight": "3.23.5",
-    "@tiptap/extension-image": "3.23.5",
-    "@tiptap/extension-table": "3.23.5",
-    "@tiptap/extension-table-cell": "3.23.5",
-    "@tiptap/extension-table-header": "3.23.5",
-    "@tiptap/extension-table-row": "3.23.5",
-    "@tiptap/extension-task-item": "3.23.5",
-    "@tiptap/extension-task-list": "3.23.5",
-    "@tiptap/extension-text-align": "3.23.5",
-    "@tiptap/extension-youtube": "3.23.5",
-    "@tiptap/starter-kit": "3.23.5"
+    "@tiptap/core": "3.28.0",
+    "@tiptap/extension-highlight": "3.28.0",
+    "@tiptap/extension-image": "3.28.0",
+    "@tiptap/extension-table": "3.28.0",
+    "@tiptap/extension-table-cell": "3.28.0",
+    "@tiptap/extension-table-header": "3.28.0",
+    "@tiptap/extension-table-row": "3.28.0",
+    "@tiptap/extension-task-item": "3.28.0",
+    "@tiptap/extension-task-list": "3.28.0",
+    "@tiptap/extension-text-align": "3.28.0",
+    "@tiptap/extension-youtube": "3.28.0",
+    "@tiptap/starter-kit": "3.28.0"
   }
 }

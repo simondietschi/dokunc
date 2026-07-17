@@ -50,6 +50,8 @@ services:
       AI_MODEL: ${AI_MODEL:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      # PDF-Export über den mitlaufenden Gotenberg-Service
+      GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
     volumes:
       - uploads:/app/uploads
     # Keine Host-Ports: nur über den Proxy im internen Docker-Netz erreichbar.
@@ -83,6 +85,15 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  # HTML -> PDF (Seiten-Export). Nur intern erreichbar.
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    command:
+      - gotenberg
+      - --chromium-disable-javascript=true
+      - --api-timeout=30s
 
   redis:
     image: redis:8
