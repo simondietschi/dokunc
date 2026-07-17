@@ -8,6 +8,10 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+    env:
+      # prisma.config.ts löst DATABASE_URL strikt auf — für generate/build
+      # reicht ein Platzhalter (es wird keine Verbindung aufgebaut).
+      DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
       - uses: actions/checkout@v4
 
