@@ -10,10 +10,16 @@
     "dev": "concurrently -n web,collab -c blue,magenta \"pnpm --filter @dokunc/web dev\" \"pnpm --filter @dokunc/collab dev\"",
     "build": "pnpm --filter @dokunc/db generate && pnpm --filter @dokunc/web build",
     "start": "concurrently -n web,collab -c blue,magenta \"pnpm --filter @dokunc/web start\" \"pnpm --filter @dokunc/collab start\"",
+    "test": "pnpm --filter @dokunc/web test",
+    "test:e2e": "playwright test",
     "db:migrate": "pnpm --filter @dokunc/db migrate",
     "db:generate": "pnpm --filter @dokunc/db generate"
   },
   "devDependencies": {
-    "concurrently": "9.2.1"
+    "@playwright/test": "1.61.1",
+    "@types/pg": "8.20.0",
+    "concurrently": "9.2.1",
+    "dotenv": "17.4.2",
+    "pg": "8.21.0"
   }
 }

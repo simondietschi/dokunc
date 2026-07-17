@@ -61,6 +61,19 @@ pnpm db:migrate          # Schema + Migrationen
 pnpm dev                 # web :3000 + collab :3001
 ```
 
+## Tests
+
+```bash
+pnpm test        # Unit-Tests (Vitest, 44 Tests)
+pnpm test:e2e    # Playwright-E2E: kompletter Editor-Pfad inkl.
+                 # Realtime-Sync (leert die DB! Nur gegen Dev-DB laufen lassen)
+```
+
+Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
+Server) und erwartet Postgres + Redis aus `.env`. In Umgebungen mit
+vorinstalliertem Chromium: `PW_EXECUTABLE_PATH=/pfad/zu/chromium` setzen.
+CI führt beide Suiten automatisch aus (`.github/workflows/ci.yml`).
+
 ## Projektstruktur
 
 ```
@@ -68,4 +81,5 @@ apps/web      Next.js (UI, Auth, API, Editor)
 apps/collab   Hocuspocus WebSocket-Server (Yjs-Persistenz)
 packages/db   Prisma-Schema + generierter Client (geteilt)
 packages/editor  Geteilte TipTap-Extensions
+e2e/          Playwright-E2E-Tests
 ```
