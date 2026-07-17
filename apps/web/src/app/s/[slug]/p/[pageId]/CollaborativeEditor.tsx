@@ -96,9 +96,13 @@ export function CollaborativeEditor({
         name: pageId,
         document: ydoc,
         token,
-        onStatus: ({ status }) =>
-          setStatus(status === "connected" ? "connected" : "connecting"),
+        // "Live" erst nach erfolgreicher Server-Authentifizierung —
+        // Socket-Open allein heißt noch nicht, dass wir schreiben dürfen.
+        onAuthenticated: () => setStatus("connected"),
         onAuthenticationFailed: () => setStatus("offline"),
+        onStatus: ({ status }) => {
+          if (status !== "connected") setStatus("connecting");
+        },
       }),
     [collabUrl, pageId, token, ydoc],
   );

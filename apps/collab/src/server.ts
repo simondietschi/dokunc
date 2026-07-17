@@ -1,6 +1,5 @@
-import { config as loadEnv } from "dotenv";
-loadEnv({ path: new URL("../../../.env", import.meta.url).pathname });
-
+// WICHTIG: env-Import zuerst — lädt .env bevor @dokunc/db o.ä. sie lesen.
+import "./env";
 import { Server } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
 import { jwtVerify } from "jose";
@@ -68,12 +67,23 @@ async function authorize(token: string | undefined, pageId: string) {
   if (!token) throw new Error("Kein Token");
   const { payload } = await jwtVerify(token, SECRET);
   const userId = String(payload.sub);
+  const tokenVersion = Number(payload.tv ?? 0);
+
+  // Session-Revocation gilt auch für den WebSocket: Konto muss aktiv
+  // sein und die Token-Version des JWT muss aktuell sein.
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { isActive: true, tokenVersion: true },
+  });
+  if (!user || !user.isActive || user.tokenVersion !== tokenVersion) {
+    throw new Error("Sitzung ungültig");
+  }
 
   const page = await prisma.page.findUnique({
     where: { id: pageId },
-    select: { spaceId: true },
+    select: { spaceId: true, deletedAt: true },
   });
-  if (!page) throw new Error("Seite nicht gefunden");
+  if (!page || page.deletedAt) throw new Error("Seite nicht gefunden");
 
   const member = await prisma.spaceMember.findUnique({
     where: { userId_spaceId: { userId, spaceId: page.spaceId } },
