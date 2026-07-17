@@ -493,3 +493,91 @@
   color: var(--muted);
   background: var(--subtle);
 }
+
+/* ---- Auth-Hero (High-End-Politur) ---- */
+@keyframes dk-drift-a {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  50% { transform: translate(4%, 6%) scale(1.08); }
+}
+@keyframes dk-drift-b {
+  0%, 100% { transform: translate(0, 0) scale(1.05); }
+  50% { transform: translate(-5%, -4%) scale(1); }
+}
+@keyframes dk-cursor-a {
+  0%, 100% { transform: translate(0, 0); }
+  30% { transform: translate(120px, 34px); }
+  60% { transform: translate(48px, 78px); }
+  85% { transform: translate(160px, 12px); }
+}
+@keyframes dk-cursor-b {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-90px, 40px); }
+  55% { transform: translate(-30px, -18px); }
+  80% { transform: translate(-140px, 26px); }
+}
+@keyframes dk-caret-blink {
+  0%, 55% { opacity: 1; }
+  56%, 100% { opacity: 0; }
+}
+@keyframes dk-shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-3px); }
+  40%, 60% { transform: translateX(3px); }
+}
+.dk-shake { animation: dk-shake 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both; }
+
+/* Feines Rausch-Overlay für Tiefe (data-URI, kein Netzwerk) */
+.dk-noise::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.04 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Produktvorschau-Karte im Hero */
+.dk-preview {
+  position: relative;
+  border: 1px solid var(--line-strong);
+  border-radius: 16px;
+  background: color-mix(in oklab, var(--surface) 88%, transparent);
+  backdrop-filter: blur(8px);
+  box-shadow:
+    0 1px 0 0 color-mix(in oklab, #fff 60%, transparent) inset,
+    0 24px 60px -24px rgb(0 0 0 / 0.25);
+  overflow: hidden;
+}
+.dark .dk-preview {
+  box-shadow:
+    0 1px 0 0 #ffffff14 inset,
+    0 24px 60px -24px rgb(0 0 0 / 0.6);
+}
+.dk-preview-cursor {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+}
+.dk-preview-cursor svg { display: block; }
+.dk-preview-cursor .label {
+  margin-left: 10px;
+  margin-top: -2px;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  width: fit-content;
+}
+.dk-cursor-a { animation: dk-cursor-a 14s ease-in-out infinite; }
+.dk-cursor-b { animation: dk-cursor-b 17s ease-in-out infinite; }
+.dk-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  vertical-align: text-bottom;
+  background: var(--accent);
+  animation: dk-caret-blink 1.1s steps(1) infinite;
+}
