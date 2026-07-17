@@ -17,3 +17,6 @@ uploads/
 backups/
 test-results/
 playwright-report/
+
+# TypeScript incremental build info
+*.tsbuildinfo
