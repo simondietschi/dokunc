@@ -14,6 +14,8 @@ import {
   Settings,
   ShieldCheck,
   Menu,
+  Bell,
+  Sparkles,
 } from "lucide-react";
 import type { TreeNode } from "@/lib/page-tree";
 import { cn } from "@/lib/cn";
@@ -32,6 +34,7 @@ type Props = {
   canManage: boolean;
   canManageSpace: boolean;
   isAdmin: boolean;
+  unreadCount: number;
 };
 
 export function Sidebar({
@@ -43,6 +46,7 @@ export function Sidebar({
   canManage,
   canManageSpace,
   isAdmin,
+  unreadCount,
 }: Props) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -135,6 +139,13 @@ export function Sidebar({
       )}
 
       <div className="mt-1 space-y-0.5">
+        <NavLink
+          href="/ask"
+          active={false}
+          icon={<Sparkles className="h-3.5 w-3.5" />}
+        >
+          Frag dein Wiki
+        </NavLink>
         {canManage && (
           <NavLink
             href={`/s/${slug}/trash`}
@@ -153,6 +164,20 @@ export function Sidebar({
             Mitglieder
           </NavLink>
         )}
+        <NavLink
+          href="/notifications"
+          active={false}
+          icon={<Bell className="h-3.5 w-3.5" />}
+        >
+          <span className="flex flex-1 items-center justify-between">
+            Benachrichtigungen
+            {unreadCount > 0 && (
+              <span className="ml-2 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent-contrast">
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </span>
+        </NavLink>
         <NavLink
           href="/account"
           active={false}

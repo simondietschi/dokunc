@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowUpRight, FileText, Plus } from "lucide-react";
+import { ArrowUpRight, FileText, Plus, Bell, Sparkles } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { Logo } from "@/components/ui/Logo";
@@ -12,13 +12,18 @@ import { createSpaceAction } from "./actions";
 
 export default async function SpacesPage() {
   const user = await requireUser();
-  const spaces = await prisma.space.findMany({
-    where: { members: { some: { userId: user.id } } },
-    orderBy: { createdAt: "asc" },
-    include: {
-      _count: { select: { pages: true, members: true } },
-    },
-  });
+  const [spaces, unreadCount] = await Promise.all([
+    prisma.space.findMany({
+      where: { members: { some: { userId: user.id } } },
+      orderBy: { createdAt: "asc" },
+      include: {
+        _count: { select: { pages: true, members: true } },
+      },
+    }),
+    prisma.notification.count({
+      where: { userId: user.id, readAt: null },
+    }),
+  ]);
 
   return (
     <div className="min-h-screen">
@@ -27,6 +32,24 @@ export default async function SpacesPage() {
           <Logo />
           <div className="flex items-center gap-1">
             <ThemeToggle />
+            <Link href="/ask">
+              <Button variant="ghost" size="sm">
+                <Sparkles className="h-4 w-4" />
+                Fragen
+              </Button>
+            </Link>
+            <Link
+              href="/notifications"
+              className="relative grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-subtle hover:text-ink"
+              aria-label="Benachrichtigungen"
+            >
+              <Bell className="h-[18px] w-[18px]" />
+              {unreadCount > 0 && (
+                <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[10px] font-semibold leading-none text-accent-contrast">
+                  {unreadCount > 9 ? "9+" : unreadCount}
+                </span>
+              )}
+            </Link>
             {user.isAdmin && (
               <Link href="/admin">
                 <Button variant="ghost" size="sm">

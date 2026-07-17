@@ -45,6 +45,11 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-dokunc <no-reply@example.com>}
       UPLOAD_DIR: /app/uploads
+      # KI — optional; ohne Key sind die KI-Features deaktiviert
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-}
+      VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
     volumes:
       - uploads:/app/uploads
     # Keine Host-Ports: nur über den Proxy im internen Docker-Netz erreichbar.

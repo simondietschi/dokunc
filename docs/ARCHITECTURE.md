@@ -107,8 +107,20 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       strukturiertes Logging, Account (Profil/Passwort), Passwort-Reset
       per E-Mail, Admin-Panel, Papierkorb-UI, Collab-HA (Redis), Mobile-
       Sidebar, Markdown-Export, Such-Pagination, Compose-Limits
-- [ ] Ausbaustufen: draw.io & Excalidraw, Kommentare, PDF-Export, S3,
-      SSO, vollständige i18n, Prompt→Dialog-UI
+- [x] Wiki-Links [[Seite]] mit Vorschlags-Popup, Backlinks-Anzeige
+      ("Wird referenziert von"), kanonische /p/[id]-Redirects
+- [x] Kollaboration: textverankerte Kommentar-Threads (anlegen,
+      antworten, auflösen), @-Mentions mit Vorschlags-Popup,
+      Benachrichtigungen (Glocke, /notifications, Mention-Diff im
+      Collab-Server, Thread-Antworten)
+- [x] KI-Layer: "Frag dein Wiki" (RAG mit Quellenangaben; Retrieval
+      semantisch via Voyage-Embeddings, FTS-Fallback ohne Key;
+      Chunk-Indexierung im Collab-Server) + KI-Aktionen im Editor
+      (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) über
+      Claude API (claude-opus-4-8, adaptive thinking, Prompt-Caching);
+      graceful deaktiviert ohne ANTHROPIC_API_KEY
+- [ ] Ausbaustufen: draw.io & Excalidraw, PDF-Export, S3, SSO,
+      vollständige i18n, Prompt→Dialog-UI, pgvector ab ~10k Seiten
 
 ## 7. Setup
 

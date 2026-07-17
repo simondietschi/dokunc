@@ -410,3 +410,48 @@
   font-size: 0.8rem;
   white-space: pre-wrap;
 }
+
+/* Wiki-Link */
+.dk-wikilink {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0 0.35rem;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.dk-wikilink:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dk-wikilink-icon {
+  width: 0.8em;
+  height: 0.8em;
+  opacity: 0.7;
+}
+
+/* Mention */
+.dk-mention {
+  display: inline;
+  padding: 0 0.3rem;
+  border-radius: 6px;
+  background: color-mix(in oklab, #10b981 14%, transparent);
+  color: #059669;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.dark .dk-mention {
+  color: #34d399;
+}
+
+/* Kommentar-Anker im Text */
+.dk-comment-anchor {
+  background: color-mix(in oklab, #f59e0b 22%, transparent);
+  border-bottom: 2px solid color-mix(in oklab, #f59e0b 60%, transparent);
+  cursor: pointer;
+}

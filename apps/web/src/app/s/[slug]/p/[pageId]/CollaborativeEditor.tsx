@@ -15,12 +15,15 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import { richExtensions } from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import * as Y from "yjs";
-import { History, Trash2, Download } from "lucide-react";
+import { History, Trash2, Download, FileText, AtSign } from "lucide-react";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { CalloutView } from "@/components/editor/CalloutView";
 import { MermaidView } from "@/components/editor/MermaidView";
+import { WikiLinkView } from "@/components/editor/WikiLinkView";
+import { MentionView } from "@/components/editor/MentionView";
 import { createSlashCommands } from "@/components/editor/SlashCommands";
+import { createEntitySuggestion } from "@/components/editor/EntitySuggestion";
 import { cn } from "@/lib/cn";
 import { renamePageAction, deletePageAction } from "../../actions";
 
@@ -65,6 +68,7 @@ type Peer = { name: string; color: string };
 
 export function CollaborativeEditor({
   slug,
+  spaceId,
   pageId,
   title,
   token,
@@ -74,6 +78,7 @@ export function CollaborativeEditor({
   userName,
 }: {
   slug: string;
+  spaceId: string;
   pageId: string;
   title: string;
   token: string;
@@ -87,7 +92,18 @@ export function CollaborativeEditor({
     "connecting" | "connected" | "offline"
   >("connecting");
   const [peers, setPeers] = useState<Peer[]>([]);
-  const titleForm = useRef<HTMLFormElement>(null);
+  const [titleValue, setTitleValue] = useState(title);
+  const lastSavedTitle = useRef(title);
+
+  function saveTitle() {
+    if (!editable || titleValue === lastSavedTitle.current) return;
+    lastSavedTitle.current = titleValue;
+    const fd = new FormData();
+    fd.set("slug", slug);
+    fd.set("pageId", pageId);
+    fd.set("title", titleValue);
+    void renamePageAction(fd);
+  }
 
   const provider = useMemo(
     () =>
@@ -120,6 +136,34 @@ export function CollaborativeEditor({
     [],
   );
 
+  const wikiLinkSuggest = useMemo(
+    () =>
+      createEntitySuggestion({
+        name: "wikiLinkSuggestion",
+        char: "[[",
+        spaceId,
+        kind: "pages",
+        nodeType: "wikiLink",
+        icon: FileText,
+        subtitle: "Seite verlinken",
+      }),
+    [spaceId],
+  );
+
+  const mentionSuggest = useMemo(
+    () =>
+      createEntitySuggestion({
+        name: "mentionSuggestion",
+        char: "@",
+        spaceId,
+        kind: "members",
+        nodeType: "mention",
+        icon: AtSign,
+        subtitle: "Person erwähnen",
+      }),
+    [spaceId],
+  );
+
   const editor = useEditor({
     editable,
     immediatelyRender: false,
@@ -127,9 +171,12 @@ export function CollaborativeEditor({
       ...richExtensions({
         callout: () => ReactNodeViewRenderer(CalloutView),
         mermaid: () => ReactNodeViewRenderer(MermaidView),
+        wikiLink: () => ReactNodeViewRenderer(WikiLinkView),
+        mention: () => ReactNodeViewRenderer(MentionView),
       }),
       Placeholder.configure({
-        placeholder: 'Schreib etwas — tippe "/" für Befehle…',
+        placeholder:
+          'Schreib etwas — "/" für Befehle, "[[" für Links, "@" für Mentions…',
         includeChildren: true,
       }),
       Collaboration.configure({ document: ydoc, field: "default" }),
@@ -138,10 +185,36 @@ export function CollaborativeEditor({
         user: { name: userName, color },
       }),
       slash,
+      wikiLinkSuggest,
+      mentionSuggest,
     ],
     editorProps: {
       attributes: { class: "mx-auto max-w-[760px] px-6 pb-40" },
     },
+  });
+
+  // CommentsPanel bittet darum, eine Kommentar-Markierung zu entfernen
+  // (Thread verworfen oder aufgelöst).
+  useEffect(() => {
+    const onRemove = (e: Event) => {
+      const { id } = (e as CustomEvent<{ id: string }>).detail;
+      if (!editor) return;
+      const { state } = editor;
+      const markType = state.schema.marks.commentMark;
+      if (!markType) return;
+      const tr = state.tr;
+      state.doc.descendants((node, pos) => {
+        for (const mark of node.marks) {
+          if (mark.type === markType && mark.attrs.commentId === id) {
+            tr.removeMark(pos, pos + node.nodeSize, markType);
+          }
+        }
+      });
+      if (tr.docChanged) editor.view.dispatch(tr);
+    };
+    window.addEventListener("dokunc:remove-comment-mark", onRemove);
+    return () =>
+      window.removeEventListener("dokunc:remove-comment-mark", onRemove);
   });
 
   useEffect(() => {
@@ -225,20 +298,22 @@ export function CollaborativeEditor({
         </div>
       </header>
 
-      {/* Title */}
+      {/* Title — kontrolliert + explizites Speichern nur bei Änderung.
+          (Kein <form action>: React 19 resettet unkontrollierte Felder
+          nach Server-Actions, was Eingaben klobbern kann.) */}
       <div className="mx-auto max-w-[760px] px-6 pt-12">
-        <form ref={titleForm} action={renamePageAction}>
-          <input type="hidden" name="slug" value={slug} />
-          <input type="hidden" name="pageId" value={pageId} />
-          <input
-            name="title"
-            defaultValue={title}
-            readOnly={!editable}
-            onBlur={() => editable && titleForm.current?.requestSubmit()}
-            placeholder="Ohne Titel"
-            className="w-full bg-transparent text-[2.5rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-faint"
-          />
-        </form>
+        <input
+          name="title"
+          value={titleValue}
+          onChange={(e) => setTitleValue(e.target.value)}
+          readOnly={!editable}
+          onBlur={saveTitle}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.currentTarget.blur();
+          }}
+          placeholder="Ohne Titel"
+          className="w-full bg-transparent text-[2.5rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-faint"
+        />
       </div>
 
       {/* Toolbar */}

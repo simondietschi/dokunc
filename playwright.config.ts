@@ -12,6 +12,10 @@ export default defineConfig({
   globalSetup: "./e2e/global-setup.ts",
   timeout: 60_000,
   expect: { timeout: 15_000 },
+  // Sequenziell: features.spec setzt auf den in editor.spec angelegten
+  // ersten Nutzer/Space auf (Invite-only). Dateien laufen alphabetisch.
+  fullyParallel: false,
+  workers: 1,
   retries: CI ? 1 : 0,
   reporter: CI ? [["list"], ["github"]] : [["list"]],
   use: {

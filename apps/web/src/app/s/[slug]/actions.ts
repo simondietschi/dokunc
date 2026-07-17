@@ -15,7 +15,7 @@ export async function createPageAction(form: FormData) {
       title: "Untitled",
     },
   });
-  revalidatePath(`/s/${space.slug}`);
+  revalidatePath(`/s/${space.slug}`, "layout");
   redirect(`/s/${space.slug}/p/${page.id}`);
 }
 
@@ -25,7 +25,7 @@ export async function renamePageAction(form: FormData) {
     where: { id: str(form, "pageId") },
     data: { title: str(form, "title") || "Untitled" },
   });
-  revalidatePath(`/s/${space.slug}`);
+  revalidatePath(`/s/${space.slug}`, "layout");
 }
 
 export async function deletePageAction(form: FormData) {
@@ -50,7 +50,7 @@ export async function deletePageAction(form: FormData) {
     UPDATE "Page" SET "deletedAt" = now()
     WHERE id IN (SELECT id FROM sub) AND "deletedAt" IS NULL
   `;
-  revalidatePath(`/s/${space.slug}`);
+  revalidatePath(`/s/${space.slug}`, "layout");
   redirect(`/s/${space.slug}`);
 }
 
@@ -76,7 +76,7 @@ export async function restorePageAction(form: FormData) {
     WHERE id IN (SELECT id FROM sub) AND "deletedAt" IS NOT NULL
   `;
   revalidatePath(`/s/${space.slug}/trash`);
-  revalidatePath(`/s/${space.slug}`);
+  revalidatePath(`/s/${space.slug}`, "layout");
 }
 
 export async function purgePageAction(form: FormData) {

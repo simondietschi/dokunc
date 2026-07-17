@@ -18,8 +18,26 @@ import {
   Highlighter,
   Link2,
   Table as TableIcon,
+  MessageSquarePlus,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { AiMenu } from "@/components/editor/AiMenu";
+
+/** Markierten Text kommentieren: Mark setzen + Panel informieren. */
+function startCommentThread(editor: Editor) {
+  const { from, to, empty } = editor.state.selection;
+  if (empty) return;
+  const anchorText = editor.state.doc
+    .textBetween(from, to, " ")
+    .slice(0, 300);
+  const id = crypto.randomUUID();
+  editor.chain().focus().setCommentMark(id).run();
+  window.dispatchEvent(
+    new CustomEvent("dokunc:new-comment-thread", {
+      detail: { id, anchorText },
+    }),
+  );
+}
 
 export function EditorToolbar({ editor }: { editor: Editor | null }) {
   if (!editor) return null;
@@ -39,6 +57,9 @@ export function EditorToolbar({ editor }: { editor: Editor | null }) {
       type="button"
       title={label}
       aria-label={label}
+      // preventDefault: mousedown darf die Editor-Selektion nicht kollabieren
+      // (nötig für auswahlbasierte Aktionen wie Kommentieren/KI).
+      onMouseDown={(e) => e.preventDefault()}
       onClick={on}
       className={cn(
         "grid h-8 w-8 place-items-center rounded-md transition-colors duration-150",
@@ -118,6 +139,16 @@ export function EditorToolbar({ editor }: { editor: Editor | null }) {
       <Btn label="Trennlinie" on={() => c.setHorizontalRule().run()}>
         <Minus className="h-4 w-4" />
       </Btn>
+      <Sep />
+      <Btn
+        label="Auswahl kommentieren"
+        on={() => startCommentThread(editor)}
+        active={editor.isActive("commentMark")}
+      >
+        <MessageSquarePlus className="h-4 w-4" />
+      </Btn>
+      <Sep />
+      <AiMenu editor={editor} />
     </div>
   );
 }

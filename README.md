@@ -5,15 +5,20 @@ inspirierter Klon. Next.js-Fullstack mit Echtzeit-Co-Editing (Yjs/CRDT).
 
 Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-## Features (MVP)
+## Features
 
-- Auth & Benutzer (Registrierung, Login, Session)
+- Auth & Benutzer (Invite-only-Registrierung, erste Person = Admin)
 - Spaces mit Rollen/Berechtigungen (OWNER/ADMIN/MEMBER/VIEWER)
 - Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
   Aufgabenlisten, Bilder, Callouts, Mermaid-Diagramme, YouTube-Embeds)
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
-- Postgres-Volltextsuche
-- Versionsverlauf + Wiederherstellen
+- **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
+- **Kommentare** (textverankerte Threads) + **@-Mentions** +
+  Benachrichtigungen
+- **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
+  im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
+  optional, aktiviert per `ANTHROPIC_API_KEY`
+- Postgres-Volltextsuche, Versionsverlauf, Papierkorb, Markdown-Export
 
 ## Stack
 

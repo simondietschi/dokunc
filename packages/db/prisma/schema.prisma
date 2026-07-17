@@ -33,6 +33,9 @@ model User {
   memberships   SpaceMember[]
   pageVersions  PageVersion[]
   passwordResets PasswordResetToken[]
+  comments      Comment[]
+  notifications Notification[] @relation("NotificationUser")
+  actedNotifications Notification[] @relation("NotificationActor")
 }
 
 /// Tokenbasierter Passwort-Reset (nur SHA-256-Hash gespeichert).
@@ -95,9 +98,88 @@ model Page {
   children Page[]         @relation("PageTree")
   versions PageVersion[]
   collab   CollabDocument?
+  outgoingLinks PageLink[] @relation("LinkSource")
+  incomingLinks PageLink[] @relation("LinkTarget")
+  comments      Comment[]
+  chunks        PageChunk[]
 
   @@index([spaceId])
   @@index([parentId])
+}
+
+/// Wiki-Link zwischen zwei Seiten ([[Seite]]) — Basis für Backlinks.
+/// Wird vom Collab-Server aus dem Dokumentinhalt extrahiert.
+model PageLink {
+  id           String @id @default(cuid())
+  sourcePageId String
+  targetPageId String
+
+  source Page @relation("LinkSource", fields: [sourcePageId], references: [id], onDelete: Cascade)
+  target Page @relation("LinkTarget", fields: [targetPageId], references: [id], onDelete: Cascade)
+
+  @@unique([sourcePageId, targetPageId])
+  @@index([targetPageId])
+}
+
+/// Kommentar-Thread auf einer Seite. parentId = Antwort im Thread.
+/// anchorText = Textstelle, auf die sich der Thread bezieht (Snapshot);
+/// die Markierung im Dokument trägt die Thread-ID als commentMark.
+model Comment {
+  id         String    @id @default(cuid())
+  pageId     String
+  parentId   String?
+  authorId   String?
+  body       String
+  anchorText String?
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  page    Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  parent  Comment?  @relation("Thread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies Comment[] @relation("Thread")
+  author  User?     @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([pageId])
+  @@index([parentId])
+}
+
+enum NotificationType {
+  MENTION
+  COMMENT
+  COMMENT_REPLY
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  actorId   String?
+  type      NotificationType
+  pageId    String?
+  commentId String?
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user  User  @relation("NotificationUser", fields: [userId], references: [id], onDelete: Cascade)
+  actor User? @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([userId, readAt])
+}
+
+/// Text-Chunk einer Seite für die KI-Suche ("Frag dein Wiki").
+/// embedding: Float32-Vektor (Bytes) — optional, nur mit Embedding-Key.
+model PageChunk {
+  id         String   @id @default(cuid())
+  pageId     String
+  chunkIndex Int
+  text       String
+  embedding  Bytes?
+  updatedAt  DateTime @updatedAt
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, chunkIndex])
+  @@index([pageId])
 }
 
 model PageVersion {

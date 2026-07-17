@@ -8,7 +8,13 @@ import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
 import pino from "pino";
 import * as Y from "yjs";
 import { prisma } from "@dokunc/db";
-import { richExtensions, COLLAB_FIELD } from "@dokunc/editor";
+import {
+  richExtensions,
+  COLLAB_FIELD,
+  extractWikiLinkIds,
+  extractMentionIds,
+  chunkText,
+} from "@dokunc/editor";
 
 const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
@@ -150,6 +156,14 @@ const server = new Server({
 
     const json = TiptapTransformer.fromYdoc(data.document, COLLAB_FIELD);
     const textContent = extractText(json);
+    const editorId =
+      (data.lastContext?.userId as string | undefined) ?? undefined;
+
+    // Alten Inhalt VOR dem Update lesen (für den Mention-Diff).
+    const before = await prisma.page.findUnique({
+      where: { id: pageId },
+      select: { content: true, spaceId: true, title: true },
+    });
 
     await prisma.$transaction([
       prisma.collabDocument.upsert({
@@ -163,25 +177,131 @@ const server = new Server({
       }),
     ]);
 
+    if (before) {
+      await syncWikiLinks(pageId, before.spaceId, json).catch((e) =>
+        log.warn({ err: String(e) }, "wikiLink sync fehlgeschlagen"),
+      );
+      await notifyNewMentions(
+        pageId,
+        before.spaceId,
+        before.content,
+        json,
+        editorId,
+      ).catch((e) =>
+        log.warn({ err: String(e) }, "mention notify fehlgeschlagen"),
+      );
+      await indexChunks(pageId, textContent).catch((e) =>
+        log.warn({ err: String(e) }, "chunk indexing fehlgeschlagen"),
+      );
+    }
+
     if (await shouldSnapshot(pageId)) {
-      const page = await prisma.page.findUnique({
-        where: { id: pageId },
-        select: { title: true },
-      });
-      const userId =
-        (data.lastContext?.userId as string | undefined) ?? undefined;
       await prisma.pageVersion.create({
         data: {
           pageId,
-          title: page?.title ?? "Untitled",
+          title: before?.title ?? "Untitled",
           content: json,
           textContent,
-          authorId: userId,
+          authorId: editorId,
         },
       });
     }
   },
 });
+
+/**
+ * Synchronisiert die PageLink-Tabelle (Backlinks) mit den Wiki-Links
+ * im Dokument. Nur Ziele im selben Space (kein Cross-Space-Leak).
+ */
+async function syncWikiLinks(
+  pageId: string,
+  spaceId: string,
+  json: unknown,
+): Promise<void> {
+  const targetIds = extractWikiLinkIds(json).filter((id) => id !== pageId);
+  const valid = targetIds.length
+    ? await prisma.page.findMany({
+        where: { id: { in: targetIds }, spaceId },
+        select: { id: true },
+      })
+    : [];
+  const keep = new Set(valid.map((p) => p.id));
+
+  await prisma.$transaction([
+    prisma.pageLink.deleteMany({
+      where: { sourcePageId: pageId, targetPageId: { notIn: [...keep] } },
+    }),
+    ...[...keep].map((targetPageId) =>
+      prisma.pageLink.upsert({
+        where: {
+          sourcePageId_targetPageId: { sourcePageId: pageId, targetPageId },
+        },
+        create: { sourcePageId: pageId, targetPageId },
+        update: {},
+      }),
+    ),
+  ]);
+}
+
+/**
+ * Erzeugt MENTION-Benachrichtigungen für Nutzer, die im Vergleich zum
+ * vorherigen Stand NEU erwähnt wurden (und Mitglied des Space sind).
+ */
+async function notifyNewMentions(
+  pageId: string,
+  spaceId: string,
+  oldContent: unknown,
+  newContent: unknown,
+  actorId: string | undefined,
+): Promise<void> {
+  const previous = new Set(extractMentionIds(oldContent));
+  const added = extractMentionIds(newContent).filter(
+    (id) => !previous.has(id) && id !== actorId,
+  );
+  if (added.length === 0) return;
+
+  const members = await prisma.spaceMember.findMany({
+    where: { spaceId, userId: { in: added } },
+    select: { userId: true },
+  });
+
+  for (const { userId } of members) {
+    const exists = await prisma.notification.findFirst({
+      where: { userId, pageId, type: "MENTION", readAt: null },
+      select: { id: true },
+    });
+    if (!exists) {
+      await prisma.notification.create({
+        data: { userId, actorId, type: "MENTION", pageId },
+      });
+    }
+  }
+}
+
+/** Chunk-Größe für die KI-Indexierung (Zeichen). */
+const CHUNK_SIZE = 1200;
+
+/**
+ * Zerlegt den Seitentext in Chunks und speichert sie für die KI-Suche.
+ * Embeddings werden (falls konfiguriert) vom Retrieval-Layer der Web-App
+ * nachgezogen — hier wird nur der Text aktuell gehalten.
+ */
+async function indexChunks(pageId: string, text: string): Promise<void> {
+  const chunks = chunkText(text, CHUNK_SIZE);
+  await prisma.$transaction([
+    prisma.pageChunk.deleteMany({
+      where: { pageId, chunkIndex: { gte: chunks.length } },
+    }),
+    ...chunks.map((chunk, i) =>
+      prisma.pageChunk.upsert({
+        where: { pageId_chunkIndex: { pageId, chunkIndex: i } },
+        // embedding auf null: Text hat sich geändert -> neu einbetten.
+        create: { pageId, chunkIndex: i, text: chunk },
+        update: { text: chunk, embedding: null },
+      }),
+    ),
+  ]);
+}
 
 /** Plain-Text aus ProseMirror-JSON ziehen (für Suche/History). */
 function extractText(node: unknown): string {

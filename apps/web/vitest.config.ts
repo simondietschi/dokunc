@@ -13,6 +13,9 @@ export default defineConfig({
         new URL("./test/server-only-stub.ts", import.meta.url),
       ),
       "@": fileURLToPath(new URL("./src", import.meta.url)),
+      "@dokunc/editor": fileURLToPath(
+        new URL("../../packages/editor/src/index.ts", import.meta.url),
+      ),
     },
   },
 });

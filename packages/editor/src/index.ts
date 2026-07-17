@@ -11,6 +11,9 @@ import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { Callout } from "./callout";
 import { Mermaid } from "./mermaid";
+import { WikiLink } from "./wiki-link";
+import { Mention } from "./mention";
+import { CommentMark } from "./comment-mark";
 
 export const COLLAB_FIELD = "default";
 
@@ -22,6 +25,8 @@ export const COLLAB_FIELD = "default";
 export type NodeViewFactories = {
   callout?: () => unknown;
   mermaid?: () => unknown;
+  wikiLink?: () => unknown;
+  mention?: () => unknown;
 };
 
 /**
@@ -39,6 +44,12 @@ export function richExtensions(views: NodeViewFactories = {}) {
   const mermaid = views.mermaid
     ? Mermaid.extend({ addNodeView: views.mermaid as never })
     : Mermaid;
+  const wikiLink = views.wikiLink
+    ? WikiLink.extend({ addNodeView: views.wikiLink as never })
+    : WikiLink;
+  const mention = views.mention
+    ? Mention.extend({ addNodeView: views.mention as never })
+    : Mention;
   return [
     StarterKit.configure({
       undoRedo: false,
@@ -56,9 +67,55 @@ export function richExtensions(views: NodeViewFactories = {}) {
     TaskItem.configure({ nested: true }),
     callout,
     mermaid,
+    wikiLink,
+    mention,
+    CommentMark,
   ];
+}
+
+/**
+ * Extrahiert alle Ziel-Seiten-IDs von Wiki-Links aus ProseMirror-JSON.
+ */
+export function extractWikiLinkIds(node: unknown): string[] {
+  const ids = new Set<string>();
+  walk(node, (n) => {
+    if (n.type === "wikiLink" && typeof n.attrs?.pageId === "string") {
+      ids.add(n.attrs.pageId);
+    }
+  });
+  return [...ids];
+}
+
+/** Extrahiert alle erwähnten User-IDs (@-Mentions) aus ProseMirror-JSON. */
+export function extractMentionIds(node: unknown): string[] {
+  const ids = new Set<string>();
+  walk(node, (n) => {
+    if (n.type === "mention" && typeof n.attrs?.userId === "string") {
+      ids.add(n.attrs.userId);
+    }
+  });
+  return [...ids];
+}
+
+type JsonNode = {
+  type?: string;
+  attrs?: Record<string, unknown>;
+  content?: unknown[];
+};
+
+function walk(node: unknown, visit: (n: JsonNode) => void): void {
+  if (!node || typeof node !== "object") return;
+  const n = node as JsonNode;
+  visit(n);
+  if (Array.isArray(n.content)) {
+    for (const child of n.content) walk(child, visit);
+  }
 }
 
 export { Callout, CALLOUT_TYPES } from "./callout";
 export type { CalloutType } from "./callout";
 export { Mermaid } from "./mermaid";
+export { WikiLink } from "./wiki-link";
+export { Mention } from "./mention";
+export { CommentMark } from "./comment-mark";
+export { chunkText } from "./text";

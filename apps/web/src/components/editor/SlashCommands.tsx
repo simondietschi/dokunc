@@ -2,6 +2,7 @@
 
 import { Extension, type Editor, type Range } from "@tiptap/core";
 import Suggestion from "@tiptap/suggestion";
+import { PluginKey } from "@tiptap/pm/state";
 import { ReactRenderer } from "@tiptap/react";
 import {
   Type,
@@ -82,6 +83,7 @@ export function createSlashCommands(opts: SlashOptions) {
       return [
         Suggestion<Def>({
           editor: this.editor,
+          pluginKey: new PluginKey("slashCommands"),
           char: "/",
           allowSpaces: false,
           startOfLine: false,
