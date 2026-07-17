@@ -7,6 +7,7 @@ import { loginAction, registerAction, type ActionState } from "./actions";
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Input";
 import { Logo } from "@/components/ui/Logo";
+import { stagger } from "./stagger";
 
 function PasswordField({
   autoComplete,
@@ -57,11 +58,6 @@ export function AuthForm({
   const switchHref = `${isLogin ? "/register" : "/login"}${
     next ? `?next=${encodeURIComponent(next)}` : ""
   }`;
-
-  const stagger = (i: number) => ({
-    animation: "rise 0.5s cubic-bezier(0.22,1,0.36,1) both",
-    animationDelay: `${80 + i * 60}ms`,
-  });
 
   return (
     <div>
