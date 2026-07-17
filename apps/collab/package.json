@@ -11,20 +11,20 @@
   "dependencies": {
     "@dokunc/db": "workspace:*",
     "@dokunc/editor": "workspace:*",
-    "@hocuspocus/extension-redis": "4.0.0",
-    "@hocuspocus/server": "4.0.0",
-    "@hocuspocus/transformer": "4.0.0",
+    "@hocuspocus/extension-redis": "4.4.0",
+    "@hocuspocus/server": "4.4.0",
+    "@hocuspocus/transformer": "4.4.0",
     "@tiptap/core": "3.28.0",
     "@tiptap/starter-kit": "3.28.0",
     "dotenv": "17.4.2",
-    "ioredis": "5.10.1",
+    "ioredis": "5.11.1",
     "jose": "6.2.3",
     "pino": "10.3.1",
-    "yjs": "13.6.30"
+    "yjs": "13.6.31"
   },
   "devDependencies": {
-    "@types/node": "25.9.0",
-    "tsx": "4.22.3",
-    "typescript": "6.0.3"
+    "@types/node": "26.1.1",
+    "tsx": "4.23.1",
+    "typescript": "7.0.2"
   }
 }

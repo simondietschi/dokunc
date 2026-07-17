@@ -30,17 +30,40 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
   page.on("pageerror", (e) => jsErrors.push(String(e)));
 
   await test.step("Registrierung (erster Nutzer -> Admin)", async () => {
+    // Retry-fest: Existiert der Nutzer aus einem früheren Versuch
+    // bereits (CI-Retry), stattdessen einloggen.
     await page.goto("/register");
     await page.fill('input[name="name"]', "E2E Tester");
     await page.fill('input[name="email"]', EMAIL);
     await page.fill('input[name="password"]', PASS);
     await page.click('button[type="submit"]');
-    await page.waitForURL("**/spaces");
+    const outcome = await Promise.race([
+      page.waitForURL("**/spaces").then(() => "ok" as const),
+      page
+        .getByText("bereits registriert")
+        .waitFor({ timeout: 15_000 })
+        .then(() => "exists" as const),
+    ]);
+    if (outcome === "exists") {
+      await page.goto("/login");
+      await page.fill('input[name="email"]', EMAIL);
+      await page.fill('input[name="password"]', PASS);
+      await page.click('button[type="submit"]');
+      await page.waitForURL("**/spaces");
+    }
   });
 
   await test.step("Space anlegen", async () => {
-    await page.fill('input[name="name"]', "E2E Space");
-    await page.click("text=Space erstellen");
+    // Retry-fest: Space aus früherem Versuch wiederverwenden.
+    const existing = page.locator('a[href^="/s/"]', {
+      hasText: "E2E Space",
+    });
+    if (await existing.count()) {
+      await existing.first().click();
+    } else {
+      await page.fill('input[name="name"]', "E2E Space");
+      await page.click("text=Space erstellen");
+    }
     await page.waitForURL("**/s/**");
   });
 
@@ -125,5 +148,11 @@ test("Registrierung ohne Einladung ist gesperrt (Invite-only)", async ({
   await page.fill('input[name="email"]', "zweiter@dokunc.dev");
   await page.fill('input[name="password"]', "nochSicherer123!");
   await page.click('button[type="submit"]');
-  await expect(page.getByText(/nur per Einladung/i)).toBeVisible();
+  // Exakter Fehlertext der Server-Action (der Seiten-Untertitel enthält
+  // ebenfalls "Nur per Einladung" — ein Regex-Match wäre mehrdeutig).
+  await expect(
+    page.getByText("Registrierung ist nur per Einladung möglich", {
+      exact: false,
+    }),
+  ).toBeVisible();
 });

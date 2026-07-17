@@ -3,7 +3,15 @@ import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { getAppSecret } from "./secret";
 
-const SECRET = new TextEncoder().encode(getAppSecret());
+// Lazy + memoisiert: NICHT beim Modul-Import berechnen — `next build`
+// läuft mit NODE_ENV=production und würde sonst ohne APP_SECRET schon
+// beim Build scheitern (Fail-fast gehört in die Laufzeit, nicht in den Build).
+let _secret: Uint8Array | null = null;
+function secret(): Uint8Array {
+  if (!_secret) _secret = new TextEncoder().encode(getAppSecret());
+  return _secret;
+}
+
 const COOKIE = "dokunc_session";
 const EXPIRES = process.env.JWT_EXPIRES_IN ?? "7d";
 
@@ -15,7 +23,7 @@ export async function createSession(userId: string, tokenVersion: number) {
     .setSubject(userId)
     .setIssuedAt()
     .setExpirationTime(EXPIRES)
-    .sign(SECRET);
+    .sign(secret());
 
   const store = await cookies();
   store.set(COOKIE, token, {
@@ -38,7 +46,7 @@ export async function getSessionClaims(): Promise<SessionClaims | null> {
   const token = store.get(COOKIE)?.value;
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, SECRET);
+    const { payload } = await jwtVerify(token, secret());
     if (!payload.sub) return null;
     return { sub: payload.sub, tv: Number(payload.tv ?? 0) };
   } catch {

@@ -13,12 +13,12 @@ jobs:
       # reicht ein Platzhalter (es wird keine Verbindung aufgebaut).
       DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Enable Corepack (pnpm)
         run: corepack enable
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
           cache: pnpm
@@ -73,12 +73,12 @@ jobs:
       NEXT_PUBLIC_COLLAB_URL: ws://localhost:3001
       COLLAB_PORT: 3001
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Enable Corepack (pnpm)
         run: corepack enable
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 26
           cache: pnpm
@@ -103,7 +103,7 @@ jobs:
 
       - name: Upload traces on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-traces
           path: test-results/
