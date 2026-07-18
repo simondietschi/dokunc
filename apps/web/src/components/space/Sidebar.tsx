@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 import {
   ChevronRight,
   Plus,
-  Search,
   ChevronLeft,
   FileText,
   Users,
@@ -24,6 +23,7 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Logo } from "@/components/ui/Logo";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { logoutAction } from "@/app/(auth)/actions";
+import { PaletteButton } from "@/components/CommandPalette";
 
 type Props = {
   slug: string;
@@ -107,16 +107,9 @@ export function Sidebar({
         </div>
       </div>
 
-      <form action={`/s/${slug}/search`} className="px-3 py-2">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-faint" />
-          <input
-            name="q"
-            placeholder="Suchen…"
-            className="w-full rounded-lg border border-line bg-surface py-2 pl-8 pr-3 text-[13px] text-ink placeholder:text-faint transition-all focus-visible:border-accent focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-accent-soft"
-          />
-        </div>
-      </form>
+      <div className="px-3 py-2">
+        <PaletteButton variant="input" />
+      </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-1">
         <PageTree nodes={tree} slug={slug} canManage={canManage} />

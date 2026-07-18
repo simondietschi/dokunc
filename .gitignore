@@ -20,3 +20,4 @@ playwright-report/
 
 # TypeScript incremental build info
 *.tsbuildinfo
+dump.rdb

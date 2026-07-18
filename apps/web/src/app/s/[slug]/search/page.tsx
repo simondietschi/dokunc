@@ -2,6 +2,7 @@ import Link from "next/link";
 import { FileText, SearchX } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
+import { HL_START, HL_STOP, splitHighlights } from "@/lib/palette";
 
 type Row = { id: string; title: string; snippet: string };
 
@@ -26,7 +27,7 @@ export default async function SearchPage({
       SELECT id, title,
         ts_headline('simple', "textContent",
           plainto_tsquery('simple', ${query}),
-          'MaxFragments=1,MaxWords=24,MinWords=6') AS snippet
+          ${`StartSel=${HL_START},StopSel=${HL_STOP},MaxFragments=1,MaxWords=24,MinWords=6`}) AS snippet
       FROM "Page"
       WHERE "spaceId" = ${space.id}
         AND "deletedAt" IS NULL
@@ -48,15 +49,21 @@ export default async function SearchPage({
     <div className="mx-auto max-w-2xl px-8 py-14 animate-[rise_0.4s_ease]">
       <h1 className="text-2xl font-semibold tracking-tight">Suche</h1>
       <p className="mt-1 text-sm text-muted">
-        {query ? (
-          <>
-            Seite {pageNum} für{" "}
-            <span className="font-medium text-ink">„{query}"</span>
-          </>
-        ) : (
-          "Gib oben einen Suchbegriff ein."
-        )}
+        Volltextsuche in „{space.name}“.
       </p>
+
+      <form action={`/s/${slug}/search`} className="mt-6">
+        <input
+          name="q"
+          defaultValue={query}
+          placeholder="Suchbegriff…"
+          autoFocus={!query}
+          className="w-full rounded-xl border border-line bg-surface px-4 py-3 text-[15px] text-ink shadow-soft placeholder:text-faint transition-all focus-visible:border-accent focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-accent-soft"
+        />
+      </form>
+      {query && pageNum > 1 && (
+        <p className="mt-3 text-[13px] text-faint">Seite {pageNum}</p>
+      )}
 
       <ul className="mt-8 space-y-2">
         {results.map((r) => (
@@ -70,7 +77,18 @@ export default async function SearchPage({
                 <p className="font-medium tracking-tight">{r.title}</p>
                 {r.snippet && (
                   <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-muted">
-                    {r.snippet}
+                    {splitHighlights(r.snippet).map((seg, j) =>
+                      seg.hit ? (
+                        <mark
+                          key={j}
+                          className="rounded-sm bg-accent-soft px-0.5 text-accent"
+                        >
+                          {seg.text}
+                        </mark>
+                      ) : (
+                        <span key={j}>{seg.text}</span>
+                      ),
+                    )}
                   </p>
                 )}
               </div>

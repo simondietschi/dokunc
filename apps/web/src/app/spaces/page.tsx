@@ -10,6 +10,7 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { logoutAction } from "../(auth)/actions";
 import { createSpaceAction } from "./actions";
 import { Onboarding, WaitingForInvite } from "./Onboarding";
+import { PaletteButton } from "@/components/CommandPalette";
 
 export default async function SpacesPage() {
   const user = await requireUser();
@@ -32,6 +33,7 @@ export default async function SpacesPage() {
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-6">
           <Logo />
           <div className="flex items-center gap-1">
+            <PaletteButton variant="chip" className="mr-1" />
             <ThemeToggle />
             <Link href="/ask">
               <Button variant="ghost" size="sm">

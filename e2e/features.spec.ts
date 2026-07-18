@@ -212,3 +212,41 @@ test("Diagramm-Blöcke einfügbar, Export liefert MD/HTML/Print", async ({
   expect(print.status()).toBe(200);
   expect(await print.text()).toContain("window.print");
 });
+
+test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
+  await login(page);
+
+  // Öffnen per Tastatur (Linux/CI: Ctrl+K). Direkt nach der Navigation
+  // kann die Hydration noch laufen — dann erneut drücken.
+  const input = page.getByPlaceholder("Suchen oder springen…");
+  await expect(async () => {
+    await page.keyboard.press("ControlOrMeta+k");
+    await expect(input).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
+
+  // Leerer Zustand zeigt zuletzt aktualisierte Seiten + Aktionen
+  await expect(page.getByText("Aktionen", { exact: true })).toBeVisible();
+
+  // Suche findet die in editor.spec angelegte Seite und springt dorthin
+  await input.fill("Willkommen");
+  const hit = page.getByRole("option").filter({ hasText: "Willkommen" });
+  await expect(hit.first()).toBeVisible();
+  await hit.first().click();
+  await page.waitForURL(/\/s\/[^/]+\/p\/[a-z0-9]+/);
+
+  // Aktion: Palette erneut öffnen, "Alle Spaces" wählen
+  await page.keyboard.press("ControlOrMeta+k");
+  await page.getByPlaceholder("Suchen oder springen…").fill("alle spaces");
+  await page
+    .getByRole("option", { name: "Alle Spaces", exact: true })
+    .click();
+  await page.waitForURL("**/spaces");
+
+  // Escape schließt
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(page.getByPlaceholder("Suchen oder springen…")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByPlaceholder("Suchen oder springen…"),
+  ).toBeHidden();
+});
