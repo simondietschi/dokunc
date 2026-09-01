@@ -92,7 +92,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dokunc}
       POSTGRES_DB: dokunc
     volumes:
-      - db_data:/var/lib/postgresql/data
+      # Ab Postgres 18 gehört der Mount auf /var/lib/postgresql (das Image
+      # legt darunter ein versionsspezifisches Verzeichnis an). Auf dem
+      # alten Pfad /var/lib/postgresql/data verweigert es den Start.
+      - db_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dokunc"]
       interval: 5s
