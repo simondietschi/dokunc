@@ -124,9 +124,20 @@ jobs:
       - name: Stack bauen und starten
         run: docker compose up -d --build --wait --wait-timeout 600
 
+      # Caddy stellt beim ersten Start sein internes Zertifikat aus; bis
+      # dahin bricht der TLS-Handshake ab. Der Proxy hat keinen
+      # Healthcheck, auf den `--wait` warten könnte — also hier pollen.
       - name: Health-Endpunkt über den Proxy
         run: |
-          curl -fsSk https://localhost/api/health | grep -q '"status":"ok"'
+          for i in $(seq 1 30); do
+            if curl -fsSk https://localhost/api/health | grep -q '"status":"ok"'; then
+              echo "Proxy antwortet (Versuch $i)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Proxy hat nach 60 s nicht geantwortet"
+          exit 1
 
       - name: Anmeldeseite wird ausgeliefert
         run: curl -fsSk https://localhost/login -o /dev/null
@@ -135,9 +146,12 @@ jobs:
         run: |
           docker compose exec -T app sh -c 'test -s /app/data/app_secret'
 
-      - name: Logs bei Fehlschlag
+      - name: Zustand und Logs bei Fehlschlag
         if: failure()
-        run: docker compose logs --no-color --tail 200
+        run: |
+          docker compose ps -a
+          docker compose logs --no-color --tail 80 app
+          docker compose logs --no-color --tail 30 proxy db
 
       - name: Aufräumen
         if: always()

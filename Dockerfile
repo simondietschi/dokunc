@@ -66,4 +66,7 @@ RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 USER node
 EXPOSE 3000 3001
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["sh", "-c", "pnpm --filter @dokunc/db migrate:deploy && pnpm start"]
+# `exec` am Ende: der Server wird PID 1 und bekommt SIGTERM direkt —
+# sonst wartet Docker beim Stoppen bis zum Hard-Kill (10 s) und der
+# Collab-Server verliert womöglich noch nicht gespeicherte Änderungen.
+CMD ["sh", "-c", "pnpm --filter @dokunc/db migrate:deploy && exec pnpm start"]
