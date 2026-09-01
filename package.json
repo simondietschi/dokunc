@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "concurrently -n web,collab -c blue,magenta \"pnpm --filter @dokunc/web dev\" \"pnpm --filter @dokunc/collab dev\"",
     "build": "pnpm --filter @dokunc/db generate && pnpm --filter @dokunc/web build",
-    "start": "concurrently -n web,collab -c blue,magenta \"pnpm --filter @dokunc/web start\" \"pnpm --filter @dokunc/collab start\"",
+    "start": "concurrently --kill-others-on-fail -n web,collab -c blue,magenta \"pnpm --filter @dokunc/web start\" \"pnpm --filter @dokunc/collab start\"",
     "test": "pnpm --filter @dokunc/web test",
     "test:e2e": "playwright test",
     "db:migrate": "pnpm --filter @dokunc/db migrate",

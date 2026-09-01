@@ -132,6 +132,11 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       (TRUSTED_PROXY_HOPS), Login-Limit auch pro Konto, gedrosseltes
       Reset-Einlösen, Server-Action-Origins in Prod ohne "localhost";
       Export bettet Bilder als data:-URI ein (PDF/HTML self-contained)
+- [x] Zero-Config-Deployment: `docker compose up -d` läuft ohne .env
+      (APP_SECRET wird beim ersten Start erzeugt und im Volume app_data
+      gehalten, Collab-Adresse zur Laufzeit aus dem Host abgeleitet,
+      pnpm im Image vorinstalliert, DATABASE_URL-Platzhalter für
+      `prisma generate` im Build); CI startet den Stack als Test
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

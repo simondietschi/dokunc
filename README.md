@@ -30,29 +30,54 @@ Redis · TipTap 3 · Yjs · Hocuspocus 4 · Tailwind CSS 4 · Node 26 · pnpm.
 
 ## Schnellstart mit Docker (empfohlen)
 
-`APP_SECRET` ist Pflicht (sonst startet der Container bewusst nicht):
+Klonen, starten — mehr ist nicht nötig, keine `.env` erforderlich:
 
 ```bash
-cp .env.example .env
-# In .env ein starkes Secret setzen:  openssl rand -base64 48
-docker compose up --build
+git clone https://github.com/simondietschi/dokunc.git
+cd dokunc
+docker compose up -d
 ```
+
+Der erste Start baut das Image (einige Minuten) und richtet alles ein:
+Datenbank-Migrationen laufen automatisch, ein zufälliges `APP_SECRET` wird
+erzeugt und im Volume `app_data` abgelegt (überlebt Neustarts und Updates).
 
 Danach:
 
 - App: <https://localhost> (TLS über den Caddy-Proxy)
-- Collab läuft unter `wss://localhost/collab` (vom Proxy geroutet)
+- Die erste Registrierung wird automatisch Instanz-Admin; danach ist die
+  Anmeldung nur noch per Einladung möglich.
+- Status: `docker compose ps` · Logs: `docker compose logs -f app`
+- Stoppen: `docker compose down` (Daten bleiben) — Update:
+  `git pull && docker compose up -d --build`
 
 Hinweise:
 
 - TLS nutzt Caddys **interne CA** (`localhost`). Der Browser zeigt anfangs
   eine Zertifikatswarnung — für internen/VPN-Betrieb ok, oder die Caddy-Root-CA
-  importieren. Für eine echte Domain `SITE_ADDRESS=wiki.example.com` setzen
-  und in der `Caddyfile` `tls internal` entfernen (auto-HTTPS via Let's Encrypt).
+  importieren.
 - **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1` (kein LAN-Zugriff).
   App/DB/Redis sind nur im internen Docker-Netz erreichbar.
-- Der App-Container läuft als **non-root**. Migrationen laufen automatisch.
-  Daten liegen in den Volumes `db_data`, `redis_data`, `uploads`.
+- Der App-Container läuft als **non-root**. Daten liegen in den Volumes
+  `db_data`, `redis_data`, `uploads`, `app_data`.
+
+### Eigene Domain / Produktionsbetrieb
+
+Eine `.env` neben der `docker-compose.yml` genügt — ein Rebuild ist dafür
+nicht nötig, die Adressen werden zur Laufzeit ausgewertet:
+
+```env
+SITE_ADDRESS=wiki.example.com
+APP_URL=https://wiki.example.com
+APP_SECRET=<openssl rand -base64 48>
+POSTGRES_PASSWORD=<eigenes Passwort>
+```
+
+Dann `docker compose up -d`. In der `Caddyfile` `tls internal` entfernen,
+damit Caddy ein Let's-Encrypt-Zertifikat holt. Ein selbst gesetztes
+`APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
+alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs-Mails,
+`ANTHROPIC_API_KEY` für die KI-Funktionen — siehe `.env.example`.
 
 **Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
 (Restore-Befehle gibt das Skript aus).

@@ -1,10 +1,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { Link2 } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { getRawToken } from "@/lib/session";
+import { resolveCollabUrl } from "@/lib/collab-url";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
 
@@ -23,8 +25,12 @@ export default async function PageView({
   if (!page) notFound();
 
   const token = (await getRawToken()) ?? "";
-  const collabUrl =
-    process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:3001";
+  const requestHeaders = await headers();
+  const collabUrl = resolveCollabUrl({
+    configured: process.env.NEXT_PUBLIC_COLLAB_URL,
+    host: requestHeaders.get("host"),
+    proto: requestHeaders.get("x-forwarded-proto"),
+  });
 
   const [backlinks, comments] = await Promise.all([
     prisma.pageLink.findMany({

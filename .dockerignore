@@ -9,3 +9,9 @@ dist
 .redis
 *.log
 .env
+
+# Laufzeit- und Testartefakte gehören nicht in den Build-Kontext
+uploads
+backups
+test-results
+playwright-report

@@ -20,7 +20,7 @@ services:
     build:
       context: .
       args:
-        NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-wss://localhost/collab}
+        NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-}
     restart: unless-stopped
     depends_on:
       db:
@@ -30,11 +30,17 @@ services:
     environment:
       DATABASE_URL: postgresql://dokunc:${POSTGRES_PASSWORD:-dokunc}@db:5432/dokunc?schema=public
       REDIS_URL: redis://redis:6379
-      # Fail-closed: ohne gesetztes, ausreichend langes Secret kein Start.
-      APP_SECRET: ${APP_SECRET:?APP_SECRET muss gesetzt sein (min. 32 Zeichen)}
+      # Leer = der Container erzeugt beim ersten Start ein zufälliges
+      # Secret und legt es dauerhaft im Volume app_data ab. Ein eigenes
+      # (empfohlen, z. B. für mehrere Instanzen) hat immer Vorrang:
+      # APP_SECRET in .env setzen — openssl rand -base64 48
+      APP_SECRET: ${APP_SECRET:-}
       JWT_EXPIRES_IN: 7d
       APP_URL: ${APP_URL:-https://localhost}
-      NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-wss://localhost/collab}
+      # Leer = zur Laufzeit aus der aufgerufenen Adresse abgeleitet
+      # (wss://<host>/collab). Nur setzen, wenn der Collab-Server unter
+      # einer anderen Adresse läuft (dann Rebuild nötig, s. README).
+      NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-}
       COLLAB_PORT: 3001
       NODE_ENV: production
       # Reverse-Proxys vor der App (hier: Caddy). Bestimmt, wie die
@@ -57,6 +63,8 @@ services:
       GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
     volumes:
       - uploads:/app/uploads
+      # Hält u. a. das automatisch erzeugte APP_SECRET (überlebt Updates).
+      - app_data:/app/data
     # Keine Host-Ports: nur über den Proxy im internen Docker-Netz erreichbar.
     expose:
       - "3000"
@@ -71,7 +79,9 @@ services:
       timeout: 5s
       retries: 10
       start_period: 40s
-    mem_limit: 1g
+    # Zwei Node-Prozesse (Next + Hocuspocus) in einem Container; bei
+    # kleinen Hosts kann der Wert gesenkt werden.
+    mem_limit: 2g
     cpus: 1.5
 
   db:
@@ -114,5 +124,6 @@ volumes:
   db_data:
   redis_data:
   uploads:
+  app_data:
   caddy_data:
   caddy_config:
