@@ -6,18 +6,15 @@
 FROM node:26-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
-# Corepack-Cache an einen für alle Nutzer lesbaren Ort legen und die in
-# package.json gepinnte pnpm-Version schon im Build installieren. Sonst
-# lädt Corepack sie beim ersten Containerstart als Nutzer „node" aus dem
-# Netz nach — der Start hinge damit an einer Internetverbindung.
-ENV COREPACK_HOME=/opt/corepack
-ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+# pnpm fest im Image installieren, in der in package.json gepinnten
+# Version. Corepack ist hier kein Weg: node:26 bringt es nicht mehr mit
+# (`corepack: not found`). Ein Nachladen zur Laufzeit wäre ohnehin
+# unerwünscht — der Containerstart hinge sonst am Netz.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
-  && corepack enable \
-  && corepack install --global pnpm@11.13.1 \
-  && chmod -R a+rX /opt/corepack
+  && npm install -g pnpm@11.13.1 \
+  && npm cache clean --force
 WORKDIR /app
 
 ############################
