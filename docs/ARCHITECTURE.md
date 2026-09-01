@@ -126,8 +126,17 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 - [x] Export: Markdown, HTML (JSON→HTML über das geteilte Schema via
       @tiptap/html) und PDF (Gotenberg-Service im Compose; Fallback:
       Druckansicht /p/[id]/print mit window.print)
+- [x] Sicherheits-Audit: Space-Scoping aller Seiten-Actions (Umbenennen,
+      Elternseite, Versions-Rollback — die IDs kommen aus dem Formular),
+      Client-IP für das Rate-Limiting von rechts aus X-Forwarded-For
+      (TRUSTED_PROXY_HOPS), Login-Limit auch pro Konto, gedrosseltes
+      Reset-Einlösen, Server-Action-Origins in Prod ohne "localhost";
+      Export bettet Bilder als data:-URI ein (PDF/HTML self-contained)
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
+- [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des
+      Session-JWT im Client, Zugriffsschutz für /api/files (Attachment-
+      Modell mit Space-Bezug), Größenlimit für Yjs-Dokumente
 
 ## 7. Setup
 

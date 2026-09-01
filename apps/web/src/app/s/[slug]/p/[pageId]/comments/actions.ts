@@ -24,6 +24,15 @@ export async function createThreadAction(form: FormData) {
   });
   if (!page) return;
 
+  // Die Thread-ID kommt vom Client (sie wird zeitgleich als Mark im
+  // Dokument gesetzt). Kollidiert sie mit einem bestehenden Kommentar,
+  // wäre der Unique-Constraint-Fehler ein 500 — hier still abbrechen.
+  const taken = await prisma.comment.findUnique({
+    where: { id: threadId },
+    select: { id: true },
+  });
+  if (taken) return;
+
   await prisma.comment.create({
     data: {
       id: threadId,

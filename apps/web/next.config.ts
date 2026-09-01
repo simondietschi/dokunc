@@ -51,7 +51,10 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
       bodySizeLimit: "5mb",
-      allowedOrigins: ["localhost", ...appUrlHost()],
+      // "localhost" nur in der Entwicklung erlauben. In Produktion wäre
+      // es eine zusätzliche CSRF-Fläche: eine beliebige lokal laufende
+      // Seite dürfte sonst Server Actions dieser Instanz auslösen.
+      allowedOrigins: isProd ? appUrlHost() : ["localhost", ...appUrlHost()],
     },
   },
   async headers() {

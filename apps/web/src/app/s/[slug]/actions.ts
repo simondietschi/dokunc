@@ -8,10 +8,22 @@ import { str, strOrNull } from "@/lib/form";
 
 export async function createPageAction(form: FormData) {
   const { space } = await authorizeAction(form, "managePages");
+
+  // Elternseite muss zu DIESEM Space gehören — sonst hinge die neue Seite
+  // im Baum eines fremden Space (und die rekursiven Papierkorb-Queries
+  // liefen über die Space-Grenze hinweg).
+  const requestedParent = strOrNull(form, "parentId");
+  const parent = requestedParent
+    ? await prisma.page.findFirst({
+        where: { id: requestedParent, spaceId: space.id, deletedAt: null },
+        select: { id: true },
+      })
+    : null;
+
   const page = await prisma.page.create({
     data: {
       spaceId: space.id,
-      parentId: strOrNull(form, "parentId"),
+      parentId: parent?.id ?? null,
       title: "Untitled",
     },
   });
@@ -21,8 +33,10 @@ export async function createPageAction(form: FormData) {
 
 export async function renamePageAction(form: FormData) {
   const { space } = await authorizeAction(form, "write");
-  await prisma.page.update({
-    where: { id: str(form, "pageId") },
+  // updateMany + spaceId: die pageId kommt aus dem Formular und darf
+  // keine Seite eines fremden Space treffen (Schreibrecht gilt nur hier).
+  await prisma.page.updateMany({
+    where: { id: str(form, "pageId"), spaceId: space.id, deletedAt: null },
     data: { title: str(form, "title") || "Untitled" },
   });
   revalidatePath(`/s/${space.slug}`, "layout");
@@ -43,9 +57,10 @@ export async function deletePageAction(form: FormData) {
   // harter, unwiderruflicher Verlust). Rekursive CTE.
   await prisma.$executeRaw`
     WITH RECURSIVE sub AS (
-      SELECT id FROM "Page" WHERE id = ${pageId}
+      SELECT id FROM "Page" WHERE id = ${pageId} AND "spaceId" = ${space.id}
       UNION ALL
       SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
+      WHERE p."spaceId" = ${space.id}
     )
     UPDATE "Page" SET "deletedAt" = now()
     WHERE id IN (SELECT id FROM sub) AND "deletedAt" IS NULL
@@ -68,9 +83,10 @@ export async function restorePageAction(form: FormData) {
   // Seite + (gelöschten) Unterbaum wiederherstellen.
   await prisma.$executeRaw`
     WITH RECURSIVE sub AS (
-      SELECT id FROM "Page" WHERE id = ${pageId}
+      SELECT id FROM "Page" WHERE id = ${pageId} AND "spaceId" = ${space.id}
       UNION ALL
       SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
+      WHERE p."spaceId" = ${space.id}
     )
     UPDATE "Page" SET "deletedAt" = NULL
     WHERE id IN (SELECT id FROM sub) AND "deletedAt" IS NOT NULL
@@ -94,8 +110,14 @@ export async function purgePageAction(form: FormData) {
 
 export async function restoreVersionAction(form: FormData) {
   const { space } = await authorizeAction(form, "write");
-  const version = await prisma.pageVersion.findUnique({
-    where: { id: str(form, "versionId") },
+  // Die versionId stammt aus dem Formular: nur Versionen von Seiten
+  // dieses Space dürfen wiederhergestellt werden — sonst ließe sich jede
+  // Seite der Instanz auf einen alten Stand zurücksetzen.
+  const version = await prisma.pageVersion.findFirst({
+    where: {
+      id: str(form, "versionId"),
+      page: { spaceId: space.id, deletedAt: null },
+    },
   });
   if (!version) throw new Error("Version nicht gefunden");
 

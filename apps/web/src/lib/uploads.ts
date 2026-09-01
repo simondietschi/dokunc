@@ -1,4 +1,5 @@
 import "server-only";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 export const UPLOAD_DIR =
@@ -68,4 +69,27 @@ export function contentTypeForFile(name: string): string {
     webp: "image/webp",
   };
   return map[ext ?? ""] ?? "application/octet-stream";
+}
+
+/**
+ * Liest eine hochgeladene Datei aus dem Upload-Verzeichnis (base64).
+ * Nur für serverseitige Nutzung (Export-Einbettung). Gibt null zurück,
+ * wenn der Name unsicher ist oder die Datei fehlt.
+ */
+export async function loadUpload(
+  name: string,
+): Promise<{ base64: string; contentType: string } | null> {
+  if (!isSafeFilename(name)) return null;
+  const base = path.resolve(UPLOAD_DIR);
+  const full = path.resolve(base, name);
+  if (!full.startsWith(base + path.sep)) return null;
+  try {
+    const data = await readFile(full);
+    return {
+      base64: data.toString("base64"),
+      contentType: contentTypeForFile(name),
+    };
+  } catch {
+    return null;
+  }
 }

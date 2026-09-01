@@ -95,13 +95,17 @@ export async function loginAction(
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  if (!(await rateLimit(await clientKey("login"), 10, 300))) {
+  const email = normalizeEmail(parsed.data.email);
+  // Zwei Limits: pro IP (ein Angreifer, viele Konten) UND pro Konto
+  // (viele IPs, ein Konto — Passwort-Raten aus einem Botnetz).
+  if (
+    !(await rateLimit(await clientKey("login"), 10, 300)) ||
+    !(await rateLimit(`login:acct:${email}`, 10, 300))
+  ) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }
 
-  const user = await prisma.user.findUnique({
-    where: { email: normalizeEmail(parsed.data.email) },
-  });
+  const user = await prisma.user.findUnique({ where: { email } });
   if (
     !user ||
     !(await bcrypt.compare(parsed.data.password, user.passwordHash))
