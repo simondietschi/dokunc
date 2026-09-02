@@ -16,6 +16,9 @@ export default defineConfig({
       "@dokunc/editor": fileURLToPath(
         new URL("../../packages/editor/src/index.ts", import.meta.url),
       ),
+      "@dokunc/mail": fileURLToPath(
+        new URL("../../packages/mail/src/index.ts", import.meta.url),
+      ),
     },
   },
 });

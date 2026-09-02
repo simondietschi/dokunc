@@ -35,6 +35,9 @@ importers:
       '@dokunc/editor':
         specifier: workspace:*
         version: link:../../packages/editor
+      '@dokunc/mail':
+        specifier: workspace:*
+        version: link:../../packages/mail
       '@hocuspocus/extension-redis':
         specifier: 4.4.0
         version: 4.4.0(y-protocols@1.0.7(yjs@13.6.31))(yjs@13.6.31)
@@ -87,6 +90,9 @@ importers:
       '@dokunc/editor':
         specifier: workspace:*
         version: link:../../packages/editor
+      '@dokunc/mail':
+        specifier: workspace:*
+        version: link:../../packages/mail
       '@excalidraw/excalidraw':
         specifier: 0.18.1
         version: 0.18.1(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -129,6 +135,9 @@ importers:
       dotenv:
         specifier: 17.4.2
         version: 17.4.2
+      fflate:
+        specifier: 0.8.3
+        version: 0.8.3
       geist:
         specifier: 1.7.2
         version: 1.7.2(next@16.2.10(@playwright/test@1.61.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))
@@ -141,6 +150,9 @@ importers:
       lucide-react:
         specifier: 1.25.0
         version: 1.25.0(react@19.2.7)
+      marked:
+        specifier: 18.0.11
+        version: 18.0.11
       mermaid:
         specifier: 11.16.0
         version: 11.16.0
@@ -254,6 +266,16 @@ importers:
       '@tiptap/starter-kit':
         specifier: 3.28.0
         version: 3.28.0
+
+  packages/mail:
+    dependencies:
+      nodemailer:
+        specifier: 9.0.3
+        version: 9.0.3
+    devDependencies:
+      '@types/nodemailer':
+        specifier: 8.0.1
+        version: 8.0.1
 
 packages:
 
@@ -2430,6 +2452,9 @@ packages:
       picomatch:
         optional: true
 
+  fflate@0.8.3:
+    resolution: {integrity: sha512-tbZNuJrLwGUp3zshBtdy4W+ORxZuIh8a5ilyIEQDC5rY1f3U20JMry0Ll3WBzU58EZKsEuJFXhb5gwv8CsPvgA==}
+
   fill-range@7.1.1:
     resolution: {integrity: sha512-YsGpe3WHLK8ZYi4tWDg2Jy3ebRz2rXowDxnld4bkQB00cc/1Zw9AWnC0i9ztDJitivtQvaI9KaLyKrc+hBW0yg==}
     engines: {node: '>=8'}
@@ -2743,6 +2768,11 @@ packages:
 
   marked@16.4.2:
     resolution: {integrity: sha512-TI3V8YYWvkVf3KJe1dRkpnjs68JUPyEa5vjKrp1XEEJUAOaQc+Qj+L1qWbPd0SJuAdQkFU0h73sXXqwDYxsiDA==}
+    engines: {node: '>= 20'}
+    hasBin: true
+
+  marked@18.0.11:
+    resolution: {integrity: sha512-HnslJfsZkRPBDJRHvVtAaWlZHEpSu7u8LgQuJCELjRKuWR+hpq4A7sLq3p8HaI9ypVoXDXxV34CsQJEe1+J5Aw==}
     engines: {node: '>= 20'}
     hasBin: true
 
@@ -5560,6 +5590,8 @@ snapshots:
     optionalDependencies:
       picomatch: 4.0.5
 
+  fflate@0.8.3: {}
+
   fill-range@7.1.1:
     dependencies:
       to-regex-range: 5.0.1
@@ -5815,6 +5847,8 @@ snapshots:
       '@jridgewell/sourcemap-codec': 1.5.5
 
   marked@16.4.2: {}
+
+  marked@18.0.11: {}
 
   mermaid@11.16.0:
     dependencies:

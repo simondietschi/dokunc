@@ -16,6 +16,13 @@ enum SpaceRole {
   VIEWER
 }
 
+/// Wie Benachrichtigungen zusätzlich per Mail zugestellt werden.
+enum EmailNotificationMode {
+  INSTANT
+  DAILY
+  OFF
+}
+
 model User {
   id           String   @id @default(cuid())
   email        String   @unique
@@ -27,10 +34,16 @@ model User {
   isActive     Boolean  @default(true)
   /// Wird bei "überall abmelden" / Passwortwechsel erhöht -> alte JWTs ungültig.
   tokenVersion Int      @default(0)
+  /// Mail-Zustellung von Benachrichtigungen: sofort, täglicher Digest oder aus.
+  emailNotifications EmailNotificationMode @default(INSTANT)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   memberships   SpaceMember[]
+  favorites     Favorite[]
+  visits        PageVisit[]
+  attachments   Attachment[]
+  editedPages   Page[]         @relation("PageLastEditor")
   pageVersions  PageVersion[]
   passwordResets PasswordResetToken[]
   comments      Comment[]
@@ -57,12 +70,15 @@ model Space {
   name        String
   slug        String   @unique
   description String?
+  /// Emoji-Icon des Space (optional).
+  icon        String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   members SpaceMember[]
   pages   Page[]
   invitations SpaceInvitation[]
+  attachments Attachment[]
 }
 
 model SpaceMember {
@@ -88,12 +104,17 @@ model Page {
   /// Flacher Text für Suche & History
   textContent String   @default("")
   position    Int      @default(0)
+  /// Vorlage: erscheint nicht im Seitenbaum, sondern unter "Vorlagen".
+  isTemplate  Boolean  @default(false)
   /// Soft-Delete: gesetzt = im Papierkorb (nicht hart gelöscht).
   deletedAt   DateTime?
+  /// Letzte bearbeitende Person (vom Collab-Server gesetzt).
+  lastEditedById String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   space    Space          @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  lastEditedBy User?      @relation("PageLastEditor", fields: [lastEditedById], references: [id], onDelete: SetNull)
   parent   Page?          @relation("PageTree", fields: [parentId], references: [id], onDelete: Cascade)
   children Page[]         @relation("PageTree")
   versions PageVersion[]
@@ -102,9 +123,63 @@ model Page {
   incomingLinks PageLink[] @relation("LinkTarget")
   comments      Comment[]
   chunks        PageChunk[]
+  favorites     Favorite[]
+  visits        PageVisit[]
+  attachments   Attachment[]
 
   @@index([spaceId])
   @@index([parentId])
+  @@index([spaceId, isTemplate])
+}
+
+/// Hochgeladene Datei (Bild oder beliebiger Anhang) mit Space-Bezug.
+/// storedName = zufälliger Dateiname auf der Platte; name = Originalname.
+/// Zugriff: nur Mitglieder des Space (siehe /api/files).
+model Attachment {
+  id         String   @id @default(cuid())
+  spaceId    String
+  pageId     String?
+  uploaderId String?
+  storedName String   @unique
+  name       String
+  mimeType   String
+  size       Int
+  createdAt  DateTime @default(now())
+
+  space    Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  page     Page? @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  uploader User? @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
+
+  @@index([spaceId])
+  @@index([pageId])
+}
+
+/// Favorit (Lesezeichen) einer Person auf eine Seite.
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  pageId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pageId])
+  @@index([pageId])
+}
+
+/// Letzter Besuch einer Seite durch eine Person ("Zuletzt besucht").
+model PageVisit {
+  id        String   @id @default(cuid())
+  userId    String
+  pageId    String
+  visitedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pageId])
+  @@index([userId, visitedAt])
 }
 
 /// Wiki-Link zwischen zwei Seiten ([[Seite]]) — Basis für Backlinks.
@@ -158,12 +233,16 @@ model Notification {
   pageId    String?
   commentId String?
   readAt    DateTime?
+  /// Gesetzt, sobald die Benachrichtigung per Mail zugestellt (oder
+  /// bewusst übersprungen) wurde. NULL = noch offen für den Dispatcher.
+  emailedAt DateTime?
   createdAt DateTime         @default(now())
 
   user  User  @relation("NotificationUser", fields: [userId], references: [id], onDelete: Cascade)
   actor User? @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   @@index([userId, readAt])
+  @@index([emailedAt, createdAt])
 }
 
 /// Text-Chunk einer Seite für die KI-Suche ("Frag dein Wiki").

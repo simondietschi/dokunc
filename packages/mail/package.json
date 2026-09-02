@@ -1,0 +1,14 @@
+{
+  "name": "@dokunc/mail",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "dependencies": {
+    "nodemailer": "9.0.3"
+  },
+  "devDependencies": {
+    "@types/nodemailer": "8.0.1"
+  }
+}

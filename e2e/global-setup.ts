@@ -18,7 +18,7 @@ export default async function globalSetup() {
   await client.connect();
   try {
     await client.query(
-      'TRUNCATE "User","Space","SpaceMember","Page","PageVersion","CollabDocument","SpaceInvitation","PasswordResetToken","PageLink","Comment","Notification","PageChunk" CASCADE',
+      'TRUNCATE "User","Space","SpaceMember","Page","PageVersion","CollabDocument","SpaceInvitation","PasswordResetToken","PageLink","Comment","Notification","PageChunk","Attachment","Favorite","PageVisit" CASCADE',
     );
   } finally {
     await client.end();

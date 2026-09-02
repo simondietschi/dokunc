@@ -173,7 +173,11 @@ const server = new Server({
       }),
       prisma.page.update({
         where: { id: pageId },
-        data: { content: json, textContent },
+        data: {
+          content: json,
+          textContent,
+          ...(editorId ? { lastEditedById: editorId } : {}),
+        },
       }),
     ]);
 

@@ -15,10 +15,10 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import { richExtensions } from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import * as Y from "yjs";
-import { History, Trash2, FileText, AtSign } from "lucide-react";
+import { History, FileText, AtSign } from "lucide-react";
 import { ExportMenu } from "@/components/editor/ExportMenu";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
-import { ConfirmButton } from "@/components/ui/ConfirmButton";
+import { PageActions } from "@/components/space/PageActions";
 import { CalloutView } from "@/components/editor/CalloutView";
 import { MermaidView } from "@/components/editor/MermaidView";
 import { WikiLinkView } from "@/components/editor/WikiLinkView";
@@ -28,7 +28,7 @@ import { DrawioView } from "@/components/editor/DrawioView";
 import { createSlashCommands } from "@/components/editor/SlashCommands";
 import { createEntitySuggestion } from "@/components/editor/EntitySuggestion";
 import { cn } from "@/lib/cn";
-import { renamePageAction, deletePageAction } from "../../actions";
+import { renamePageAction } from "../../actions";
 
 /** Datei wählen, hochladen, als Bild einfügen. */
 function pickAndUploadImage(editor: Editor, range?: Range) {
@@ -282,19 +282,7 @@ export function CollaborativeEditor({
               Verlauf
             </Link>
             <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
-            {canManage && (
-              <form action={deletePageAction}>
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="pageId" value={pageId} />
-                <ConfirmButton
-                  message="Diese Seite und alle Unterseiten in den Papierkorb verschieben?"
-                  title="Seite löschen"
-                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-danger/10 hover:text-danger"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </ConfirmButton>
-              </form>
-            )}
+            <PageActions slug={slug} pageId={pageId} canManage={canManage} />
           </div>
         </div>
       </header>

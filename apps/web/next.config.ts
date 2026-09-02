@@ -46,7 +46,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@dokunc/db", "@dokunc/editor"],
+  transpilePackages: ["@dokunc/db", "@dokunc/editor", "@dokunc/mail"],
   poweredByHeader: false,
   experimental: {
     serverActions: {
