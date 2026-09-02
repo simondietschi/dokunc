@@ -12,9 +12,10 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    # Host-Port 7891 -> Caddy 443 (https://localhost:7891). Port 80 ist
+    # nicht gemappt: die HTTP->HTTPS-Umleitung würde auf :443 zeigen.
     ports:
-      - "127.0.0.1:443:443"
-      - "127.0.0.1:80:80"
+      - "127.0.0.1:${APP_PORT:-7891}:443"
 
   app:
     build:
@@ -36,7 +37,7 @@ services:
       # APP_SECRET in .env setzen — openssl rand -base64 48
       APP_SECRET: ${APP_SECRET:-}
       JWT_EXPIRES_IN: 7d
-      APP_URL: ${APP_URL:-https://localhost}
+      APP_URL: ${APP_URL:-https://localhost:7891}
       # Leer = zur Laufzeit aus der aufgerufenen Adresse abgeleitet
       # (wss://<host>/collab). Nur setzen, wenn der Collab-Server unter
       # einer anderen Adresse läuft (dann Rebuild nötig, s. README).
