@@ -7,6 +7,7 @@ import { extractPlainText } from "@dokunc/editor";
 import { authorizeAction } from "@/lib/space-context";
 import { str, strOrNull } from "@/lib/form";
 import { isValidCover, normalizeIcon } from "@/lib/page-meta";
+import { changedPages, movePage, type Placement } from "@/lib/page-tree";
 import { fillTemplate, findBuiltinTemplate } from "@/lib/templates";
 
 type NewPageData = {
@@ -257,4 +258,74 @@ export async function restoreVersionAction(form: FormData) {
   ]);
   revalidatePath(`/s/${space.slug}/p/${version.pageId}`);
   redirect(`/s/${space.slug}/p/${version.pageId}`);
+}
+
+/**
+ * Seite im Baum verschieben (Sidebar-Drag-and-Drop): vor/nach/in eine
+ * Zielseite desselben Space. Die Reihenfolge wird in `lib/page-tree`
+ * berechnet (rein, getestet); hier nur laden, prüfen, schreiben.
+ */
+export async function movePageAction(form: FormData) {
+  const { space } = await authorizeAction(form, "managePages");
+  const placementRaw = str(form, "placement");
+  if (!["before", "after", "inside"].includes(placementRaw)) return;
+  const placement = placementRaw as Placement;
+
+  const pages = await prisma.page.findMany({
+    where: { spaceId: space.id, deletedAt: null },
+    select: { id: true, title: true, parentId: true, position: true },
+  });
+  const next = movePage(pages, str(form, "pageId"), str(form, "targetId"), placement);
+  if (!next) return;
+
+  const changes = changedPages(pages, next);
+  if (changes.length === 0) return;
+  await prisma.$transaction(
+    changes.map((p) =>
+      prisma.page.updateMany({
+        where: { id: p.id, spaceId: space.id },
+        data: { parentId: p.parentId, position: p.position },
+      }),
+    ),
+  );
+  revalidatePath(`/s/${space.slug}`, "layout");
+}
+
+/** Favorit setzen/entfernen (jedes Mitglied, auch nur lesend). */
+export async function toggleFavoriteAction(
+  form: FormData,
+): Promise<{ favorite: boolean }> {
+  const { space, user } = await authorizeAction(form, "read");
+  const page = await prisma.page.findFirst({
+    where: { id: str(form, "pageId"), spaceId: space.id, deletedAt: null },
+    select: { id: true },
+  });
+  if (!page) return { favorite: false };
+
+  const key = { userId_pageId: { userId: user.id, pageId: page.id } };
+  const existing = await prisma.favorite.findUnique({ where: key });
+  if (existing) {
+    await prisma.favorite.delete({ where: key });
+  } else {
+    await prisma.favorite.create({
+      data: { userId: user.id, pageId: page.id },
+    });
+  }
+  revalidatePath(`/s/${space.slug}`, "layout");
+  return { favorite: !existing };
+}
+
+/** Besuch für "Zuletzt besucht" festhalten (ein Eintrag pro Seite/Person). */
+export async function recordVisitAction(form: FormData) {
+  const { space, user } = await authorizeAction(form, "read");
+  const page = await prisma.page.findFirst({
+    where: { id: str(form, "pageId"), spaceId: space.id, deletedAt: null },
+    select: { id: true },
+  });
+  if (!page) return;
+  await prisma.pageVisit.upsert({
+    where: { userId_pageId: { userId: user.id, pageId: page.id } },
+    create: { userId: user.id, pageId: page.id },
+    update: { visitedAt: new Date() },
+  });
 }

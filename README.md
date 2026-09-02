@@ -20,6 +20,11 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   sichtbar in Sidebar, Wiki-Links, Suche und Export
 - **Vorlagen**: eingebaute (Meeting, ADR, Onboarding, Postmortem,
   Anleitung) und eigene pro Space („Als Vorlage speichern")
+- **Seitenbaum per Drag and Drop** sortieren und umhängen, Breadcrumbs
+  und Unterseitenliste auf jeder Seite
+- **Favoriten** (Stern) und **Zuletzt besucht** in Sidebar und ⌘K-Palette
+- **Versionsvergleich**: Diff einer Version gegen die vorherige oder den
+  aktuellen Stand, wortgenau hervorgehoben
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
 - **Kommentare** (textverankerte Threads) + **@-Mentions** +

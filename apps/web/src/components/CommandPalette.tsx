@@ -14,6 +14,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Star,
   SunMedium,
   TextSearch,
 } from "lucide-react";
@@ -36,7 +37,7 @@ export function openPalette() {
 
 type Item = {
   key: string;
-  group: "Seiten" | "Spaces" | "Aktionen";
+  group: "Favoriten" | "Seiten" | "Spaces" | "Aktionen";
   icon: React.ReactNode;
   label: string;
   hint?: string;
@@ -44,7 +45,14 @@ type Item = {
   run: () => void;
 };
 
-const EMPTY: SearchResponse = { q: "", isAdmin: false, spaces: [], pages: [] };
+const EMPTY: SearchResponse = {
+  q: "",
+  isAdmin: false,
+  spaces: [],
+  pages: [],
+  favorites: [],
+  recentKind: "updated",
+};
 
 export function CommandPalette() {
   const router = useRouter();
@@ -143,6 +151,22 @@ export function CommandPalette() {
   // Enter bei schnellem Tippen veraltete Treffer.
   const stale = data.q !== query.trim().slice(0, 100);
   const items: Item[] = [];
+  if (!query) {
+    for (const p of data.favorites) {
+      items.push({
+        key: `fav:${p.id}`,
+        group: "Favoriten",
+        icon: p.icon ? (
+          <span className="text-[15px] leading-none">{p.icon}</span>
+        ) : (
+          <Star className="h-4 w-4" />
+        ),
+        label: p.title || "Untitled",
+        hint: p.spaceName,
+        run: () => go(`/s/${p.slug}/p/${p.id}`),
+      });
+    }
+  }
   for (const p of data.pages) {
     if (stale && !matchesQuery(p.title || "Untitled", query)) continue;
     items.push({
@@ -324,7 +348,9 @@ export function CommandPalette() {
               item.group !== lastGroup ? (
                 <p className="px-3 pb-1 pt-2.5 text-[11px] font-semibold uppercase tracking-wider text-faint">
                   {item.group === "Seiten" && !query
-                    ? "Zuletzt aktualisiert"
+                    ? data.recentKind === "visited"
+                      ? "Zuletzt besucht"
+                      : "Zuletzt aktualisiert"
                     : item.group}
                 </p>
               ) : null;

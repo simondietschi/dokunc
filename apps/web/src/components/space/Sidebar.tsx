@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   ChevronRight,
   Plus,
@@ -16,13 +16,21 @@ import {
   Bell,
   Sparkles,
   LayoutTemplate,
+  Star,
+  History,
 } from "lucide-react";
-import type { TreeNode } from "@/lib/page-tree";
+import {
+  buildTree,
+  movePage,
+  type FlatPage,
+  type Placement,
+  type TreeNode,
+} from "@/lib/page-tree";
 import { cn } from "@/lib/cn";
 import { Avatar } from "@/components/ui/Avatar";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Logo } from "@/components/ui/Logo";
-import { createPageAction } from "@/app/s/[slug]/actions";
+import { createPageAction, movePageAction } from "@/app/s/[slug]/actions";
 import { logoutAction } from "@/app/(auth)/actions";
 import { PaletteButton } from "@/components/CommandPalette";
 import {
@@ -30,12 +38,16 @@ import {
   type SpaceTemplate,
 } from "@/components/space/TemplatePicker";
 
+export type PageLink = { id: string; title: string; icon: string | null };
+
 type Props = {
   slug: string;
   spaceName: string;
   role: string;
   userName: string;
-  tree: TreeNode[];
+  pages: FlatPage[];
+  favorites: PageLink[];
+  recent: PageLink[];
   canManage: boolean;
   canManageSpace: boolean;
   isAdmin: boolean;
@@ -43,12 +55,21 @@ type Props = {
   templates: SpaceTemplate[];
 };
 
+/** Drag-Zustand des Seitenbaums (ein Zug gleichzeitig). */
+type DragState = {
+  id: string;
+  overId: string | null;
+  placement: Placement | null;
+};
+
 export function Sidebar({
   slug,
   spaceName,
   role,
   userName,
-  tree,
+  pages,
+  favorites,
+  recent,
   canManage,
   canManageSpace,
   isAdmin,
@@ -59,6 +80,30 @@ export function Sidebar({
   const [open, setOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const currentPage = pathname.match(/\/p\/([^/?#]+)/)?.[1] ?? null;
+
+  // Lokale Kopie für optimistisches Verschieben; Server-Stand gewinnt,
+  // sobald das Layout revalidiert wurde.
+  const [localPages, setLocalPages] = useState(pages);
+  useEffect(() => setLocalPages(pages), [pages]);
+  const tree = useMemo(() => buildTree(localPages), [localPages]);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [, startTransition] = useTransition();
+
+  function drop(targetId: string, placement: Placement) {
+    if (!drag) return;
+    const next = movePage(localPages, drag.id, targetId, placement);
+    setDrag(null);
+    if (!next) return;
+    setLocalPages(next);
+    const fd = new FormData();
+    fd.set("slug", slug);
+    fd.set("pageId", drag.id);
+    fd.set("targetId", targetId);
+    fd.set("placement", placement);
+    startTransition(() => {
+      void movePageAction(fd);
+    });
+  }
 
   // Bei Navigation auf Mobile schließen.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,7 +166,38 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-1">
-        <PageTree nodes={tree} slug={slug} canManage={canManage} />
+        {favorites.length > 0 && (
+          <QuickSection
+            title="Favoriten"
+            icon={<Star className="h-3 w-3" />}
+            items={favorites}
+            slug={slug}
+            currentPage={currentPage}
+          />
+        )}
+        {recent.length > 0 && (
+          <QuickSection
+            title="Zuletzt besucht"
+            icon={<History className="h-3 w-3" />}
+            items={recent}
+            slug={slug}
+            currentPage={currentPage}
+            defaultOpen={false}
+          />
+        )}
+        {(favorites.length > 0 || recent.length > 0) && (
+          <p className="mb-1 mt-3 px-3 text-[10.5px] font-semibold uppercase tracking-wider text-faint">
+            Seiten
+          </p>
+        )}
+        <PageTree
+          nodes={tree}
+          slug={slug}
+          canManage={canManage}
+          drag={drag}
+          setDrag={setDrag}
+          onDrop={drop}
+        />
         {tree.length === 0 && (
           <div className="mt-6 px-3 text-center">
             <FileText className="mx-auto h-5 w-5 text-faint" />
@@ -244,6 +320,69 @@ export function Sidebar({
   );
 }
 
+/** Aufklappbare Kurzliste (Favoriten, zuletzt besucht). */
+function QuickSection({
+  title,
+  icon,
+  items,
+  slug,
+  currentPage,
+  defaultOpen = true,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  items: PageLink[];
+  slug: string;
+  currentPage: string | null;
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="mb-1" data-section={title}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-1.5 rounded-md px-3 py-1 text-[10.5px] font-semibold uppercase tracking-wider text-faint hover:text-muted"
+      >
+        {icon}
+        {title}
+        <ChevronRight
+          className={cn(
+            "ml-auto h-3 w-3 transition-transform",
+            open && "rotate-90",
+          )}
+        />
+      </button>
+      {open && (
+        <ul>
+          {items.map((p) => (
+            <li key={p.id}>
+              <Link
+                href={`/s/${slug}/p/${p.id}`}
+                className={cn(
+                  "flex items-center truncate rounded-lg py-1.5 pl-[26px] pr-2 text-[13px] transition-colors",
+                  currentPage === p.id
+                    ? "bg-surface font-medium text-ink shadow-soft"
+                    : "text-muted hover:bg-surface/70",
+                )}
+              >
+                {p.icon ? (
+                  <span className="dk-tree-icon" aria-hidden>
+                    {p.icon}
+                  </span>
+                ) : (
+                  <FileText className="mr-1.5 h-3.5 w-3.5 shrink-0 text-faint" />
+                )}
+                <span className="truncate">{p.title || "Untitled"}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function NavLink({
   href,
   active,
@@ -271,54 +410,88 @@ function NavLink({
   );
 }
 
-function PageTree({
-  nodes,
-  slug,
-  canManage,
-  depth = 0,
-}: {
-  nodes: TreeNode[];
+type TreeProps = {
   slug: string;
   canManage: boolean;
-  depth?: number;
-}) {
+  drag: DragState | null;
+  setDrag: (d: DragState | null) => void;
+  onDrop: (targetId: string, placement: Placement) => void;
+};
+
+function PageTree({
+  nodes,
+  depth = 0,
+  ...rest
+}: TreeProps & { nodes: TreeNode[]; depth?: number }) {
   return (
     <ul>
       {nodes.map((n) => (
-        <TreeItem
-          key={n.id}
-          node={n}
-          slug={slug}
-          canManage={canManage}
-          depth={depth}
-        />
+        <TreeItem key={n.id} node={n} depth={depth} {...rest} />
       ))}
     </ul>
   );
 }
 
+/** Ablageposition aus der Mausposition innerhalb der Zeile ableiten. */
+function placementFor(e: React.DragEvent<HTMLElement>): Placement {
+  const rect = e.currentTarget.getBoundingClientRect();
+  const y = (e.clientY - rect.top) / rect.height;
+  if (y < 0.28) return "before";
+  if (y > 0.72) return "after";
+  return "inside";
+}
+
 function TreeItem({
   node,
+  depth,
   slug,
   canManage,
-  depth,
-}: {
-  node: TreeNode;
-  slug: string;
-  canManage: boolean;
-  depth: number;
-}) {
+  drag,
+  setDrag,
+  onDrop,
+}: TreeProps & { node: TreeNode; depth: number }) {
   const pathname = usePathname();
   const active = pathname === `/s/${slug}/p/${node.id}`;
   const [open, setOpen] = useState(true);
   const hasKids = node.children.length > 0;
+  const isDragging = drag?.id === node.id;
+  const over = drag && drag.overId === node.id && !isDragging ? drag.placement : null;
 
   return (
     <li>
       <div
+        draggable={canManage}
+        onDragStart={(e) => {
+          if (!canManage) return;
+          e.dataTransfer.effectAllowed = "move";
+          e.dataTransfer.setData("text/plain", node.id);
+          setDrag({ id: node.id, overId: null, placement: null });
+        }}
+        onDragEnd={() => setDrag(null)}
+        onDragOver={(e) => {
+          if (!drag || isDragging) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          const placement = placementFor(e);
+          if (drag.overId !== node.id || drag.placement !== placement) {
+            setDrag({ ...drag, overId: node.id, placement });
+          }
+        }}
+        onDragLeave={() => {
+          if (drag?.overId === node.id) setDrag({ ...drag, overId: null, placement: null });
+        }}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (!drag || isDragging) return;
+          onDrop(node.id, placementFor(e));
+        }}
+        data-drop={over ?? undefined}
         className={cn(
-          "group flex items-center gap-1 rounded-lg pr-1.5 transition-colors",
+          "dk-tree-row group relative flex items-center gap-1 rounded-lg pr-1.5 transition-colors",
           active ? "bg-surface shadow-soft" : "hover:bg-surface/70",
+          isDragging && "opacity-40",
+          over === "inside" && "ring-2 ring-accent/60",
+          canManage && "cursor-grab active:cursor-grabbing",
         )}
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
       >
@@ -338,6 +511,7 @@ function TreeItem({
         </button>
         <Link
           href={`/s/${slug}/p/${node.id}`}
+          draggable={false}
           className={cn(
             "flex-1 truncate py-1.5 text-[13px] transition-colors",
             active ? "font-medium text-ink" : "text-muted",
@@ -366,9 +540,12 @@ function TreeItem({
       {hasKids && open && (
         <PageTree
           nodes={node.children}
+          depth={depth + 1}
           slug={slug}
           canManage={canManage}
-          depth={depth + 1}
+          drag={drag}
+          setDrag={setDrag}
+          onDrop={onDrop}
         />
       )}
     </li>

@@ -37,6 +37,8 @@ model User {
   notifications Notification[] @relation("NotificationUser")
   actedNotifications Notification[] @relation("NotificationActor")
   pageTemplates PageTemplate[]
+  favorites     Favorite[]
+  visits        PageVisit[]
 }
 
 /// Tokenbasierter Passwort-Reset (nur SHA-256-Hash gespeichert).
@@ -108,9 +110,37 @@ model Page {
   incomingLinks PageLink[] @relation("LinkTarget")
   comments      Comment[]
   chunks        PageChunk[]
+  favorites     Favorite[]
+  visits        PageVisit[]
 
   @@index([spaceId])
   @@index([parentId])
+}
+
+/// Favorit einer Person ("Stern" an einer Seite).
+model Favorite {
+  userId    String
+  pageId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@id([userId, pageId])
+  @@index([pageId])
+}
+
+/// Letzter Besuch einer Seite pro Person ("Zuletzt besucht").
+model PageVisit {
+  userId    String
+  pageId    String
+  visitedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@id([userId, pageId])
+  @@index([userId, visitedAt])
 }
 
 /// Wiki-Link zwischen zwei Seiten ([[Seite]]) — Basis für Backlinks.

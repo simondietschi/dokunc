@@ -64,6 +64,9 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   (`lib/templates.ts`, IDs `builtin:*`).
 - Page trägt zusätzlich `icon` (ein Grapheme, serverseitig validiert) und
   `cover` (eigener Upload `/api/files/…` oder Preset `gradient:N`).
+- **Favorite** (userId, pageId) und **PageVisit** (userId, pageId,
+  visitedAt, ein Eintrag pro Person und Seite) — Sidebar-Kurzlisten und
+  ⌘K-Palette.
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
 
 Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
@@ -153,6 +156,12 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       wird beim Seeden bereinigt statt geworfen — ein Throw in
       onLoadDocument liess Hocuspocus sonst die Speicherung aussetzen;
       nicht rettbarer Inhalt landet als PageVersion, die Seite startet leer
+- [x] Navigation: Seitenbaum-Drag-and-Drop (Zug wird rein in
+      `lib/page-tree.movePage` berechnet und serverseitig mit Space-
+      Scoping geschrieben; kein Zug in den eigenen Unterbaum), Breadcrumb
+      per rekursiver CTE, Unterseitenliste, Favoriten + zuletzt besucht,
+      Versionsvergleich (eigener Myers-Diff über den Markdown-Export:
+      Zeilen, innerhalb geänderter Zeilen wortgenau)
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

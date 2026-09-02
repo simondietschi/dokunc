@@ -17,6 +17,10 @@ export type SearchResponse = {
   isAdmin: boolean;
   spaces: Array<{ id: string; name: string; slug: string }>;
   pages: SearchPage[];
+  /** Nur ohne Query: Favoriten der Person (alle Spaces). */
+  favorites: SearchPage[];
+  /** Ohne Query: "Zuletzt besucht" statt "Zuletzt aktualisiert". */
+  recentKind: "visited" | "updated";
 };
 
 /**
@@ -43,6 +47,8 @@ export async function GET(req: Request) {
     isAdmin: user.isAdmin,
     spaces: [],
     pages: [],
+    favorites: [],
+    recentKind: "updated",
   };
   if (spaceIds.length === 0) return NextResponse.json(body);
 
@@ -57,25 +63,54 @@ export async function GET(req: Request) {
   });
 
   if (!q) {
-    const recent = await prisma.page.findMany({
-      where: { spaceId: { in: spaceIds }, deletedAt: null },
-      orderBy: { updatedAt: "desc" },
-      take: 8,
-      select: {
-        id: true,
-        title: true,
-        icon: true,
-        space: { select: { slug: true, name: true } },
-      },
-    });
-    body.pages = recent.map((p) => ({
+    const pageSelect = {
+      id: true,
+      title: true,
+      icon: true,
+      space: { select: { slug: true, name: true } },
+    } as const;
+    const toItem = (p: {
+      id: string;
+      title: string;
+      icon: string | null;
+      space: { slug: string; name: string };
+    }): SearchPage => ({
       id: p.id,
       title: p.title,
       icon: p.icon,
       slug: p.space.slug,
       spaceName: p.space.name,
       snippet: "",
-    }));
+    });
+
+    const [favorites, visited] = await Promise.all([
+      prisma.favorite.findMany({
+        where: { userId: user.id, page: { deletedAt: null } },
+        orderBy: { createdAt: "asc" },
+        take: 6,
+        select: { page: { select: pageSelect } },
+      }),
+      prisma.pageVisit.findMany({
+        where: { userId: user.id, page: { deletedAt: null } },
+        orderBy: { visitedAt: "desc" },
+        take: 8,
+        select: { page: { select: pageSelect } },
+      }),
+    ]);
+    body.favorites = favorites.map((f) => toItem(f.page));
+
+    if (visited.length > 0) {
+      body.recentKind = "visited";
+      body.pages = visited.map((v) => toItem(v.page));
+      return NextResponse.json(body);
+    }
+    const recent = await prisma.page.findMany({
+      where: { spaceId: { in: spaceIds }, deletedAt: null },
+      orderBy: { updatedAt: "desc" },
+      take: 8,
+      select: pageSelect,
+    });
+    body.pages = recent.map(toItem);
     return NextResponse.json(body);
   }
 

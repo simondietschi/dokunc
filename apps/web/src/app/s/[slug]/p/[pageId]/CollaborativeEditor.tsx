@@ -15,7 +15,7 @@ import { HocuspocusProvider } from "@hocuspocus/provider";
 import { richExtensions } from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import * as Y from "yjs";
-import { History, Trash2, FileText, AtSign } from "lucide-react";
+import { History, Trash2, FileText, AtSign, ChevronRight } from "lucide-react";
 import { ExportMenu } from "@/components/editor/ExportMenu";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
@@ -31,6 +31,9 @@ import { TableOfContents } from "@/components/editor/TableOfContents";
 import { BlockDragHandle } from "@/components/editor/BlockDragHandle";
 import { PageHeader } from "@/components/editor/PageHeader";
 import { PageMoreMenu } from "@/components/editor/PageMoreMenu";
+import { FavoriteButton } from "@/components/editor/FavoriteButton";
+
+type Crumb = { id: string; title: string; icon: string | null };
 import { createSlashCommands } from "@/components/editor/SlashCommands";
 import { createEntitySuggestion } from "@/components/editor/EntitySuggestion";
 import { cn } from "@/lib/cn";
@@ -88,6 +91,8 @@ export function CollaborativeEditor({
   canManage,
   userName,
   pdfEnabled,
+  ancestors,
+  isFavorite,
 }: {
   slug: string;
   spaceId: string;
@@ -101,6 +106,8 @@ export function CollaborativeEditor({
   canManage: boolean;
   userName: string;
   pdfEnabled: boolean;
+  ancestors: Crumb[];
+  isFavorite: boolean;
 }) {
   const ydoc = useMemo(() => new Y.Doc(), [pageId]);
   const [status, setStatus] = useState<
@@ -286,6 +293,7 @@ export function CollaborativeEditor({
             <PeerStack peers={peers} />
           </div>
           <div className="flex items-center gap-1">
+            <FavoriteButton slug={slug} pageId={pageId} initial={isFavorite} />
             <TableOfContents editor={editor} variant="popover" />
             <Link
               href={`/s/${slug}/p/${pageId}/history`}
@@ -329,6 +337,22 @@ export function CollaborativeEditor({
         cover={cover}
         editable={editable}
       >
+        {ancestors.length > 0 && (
+          <nav aria-label="Pfad" className="mt-2 flex flex-wrap items-center gap-1 text-[12.5px] text-faint">
+            {ancestors.map((a) => (
+              <span key={a.id} className="flex items-center gap-1">
+                <Link
+                  href={`/s/${slug}/p/${a.id}`}
+                  className="inline-flex max-w-[220px] items-center gap-1 truncate rounded px-1 py-0.5 transition-colors hover:bg-subtle hover:text-ink"
+                >
+                  {a.icon && <span aria-hidden>{a.icon}</span>}
+                  <span className="truncate">{a.title || "Untitled"}</span>
+                </Link>
+                <ChevronRight className="h-3 w-3" />
+              </span>
+            ))}
+          </nav>
+        )}
         <input
           name="title"
           value={titleValue}
