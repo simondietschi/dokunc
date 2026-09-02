@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
 import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
+import { extractHeadings } from "@dokunc/editor";
 
 export const runtime = "nodejs";
 
@@ -25,6 +26,7 @@ export async function GET(
     where: { id: pageId, deletedAt: null },
     select: {
       title: true,
+      icon: true,
       content: true,
       spaceId: true,
       space: { select: { name: true } },
@@ -40,6 +42,8 @@ export async function GET(
 
   const html = pageToPrintHtml({
     title: page.title,
+    icon: page.icon,
+    headings: extractHeadings(page.content),
     spaceName: page.space.name,
     contentHtml: contentToHtml(page.content),
   }).replace(

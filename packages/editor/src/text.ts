@@ -14,3 +14,14 @@ export function chunkText(text: string, size: number): string[] {
   if (rest.trim()) chunks.push(rest.trim());
   return chunks;
 }
+
+/** Plain-Text aus ProseMirror-JSON (für Suche/History/Vorlagen). */
+export function extractPlainText(node: unknown): string {
+  if (!node || typeof node !== "object") return "";
+  const n = node as { type?: string; text?: string; content?: unknown[] };
+  if (n.type === "text" && typeof n.text === "string") return n.text;
+  if (Array.isArray(n.content)) {
+    return n.content.map(extractPlainText).join(" ");
+  }
+  return "";
+}

@@ -19,7 +19,7 @@ describe("contentToHtml()", () => {
         },
       ]),
     );
-    expect(html).toContain("<h2>Titel</h2>");
+    expect(html).toContain('<h2 id="titel">Titel</h2>');
     expect(html).toContain("Hallo Welt");
   });
 

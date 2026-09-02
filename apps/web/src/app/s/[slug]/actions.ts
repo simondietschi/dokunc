@@ -2,9 +2,56 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@dokunc/db";
+import { prisma, type Prisma } from "@dokunc/db";
+import { extractPlainText } from "@dokunc/editor";
 import { authorizeAction } from "@/lib/space-context";
 import { str, strOrNull } from "@/lib/form";
+import { isValidCover, normalizeIcon } from "@/lib/page-meta";
+import { fillTemplate, findBuiltinTemplate } from "@/lib/templates";
+
+type NewPageData = {
+  title: string;
+  icon?: string | null;
+  content?: Prisma.InputJsonValue;
+  textContent?: string;
+};
+
+/**
+ * Startinhalt für eine neue Seite aus einer Vorlage: eingebaut
+ * (`builtin:…`) oder aus `PageTemplate` dieses Space (kein Cross-Space).
+ */
+async function templateData(
+  templateId: string | null,
+  spaceId: string,
+): Promise<NewPageData> {
+  if (!templateId) return { title: "Untitled" };
+
+  const builtin = findBuiltinTemplate(templateId);
+  if (builtin) {
+    const filled = fillTemplate({
+      title: builtin.title,
+      content: builtin.content,
+    });
+    return {
+      title: filled.title,
+      icon: builtin.icon,
+      content: filled.content as Prisma.InputJsonValue,
+      textContent: extractPlainText(filled.content),
+    };
+  }
+
+  const tpl = await prisma.pageTemplate.findFirst({
+    where: { id: templateId, spaceId },
+    select: { name: true, icon: true, content: true },
+  });
+  if (!tpl) return { title: "Untitled" };
+  return {
+    title: tpl.name,
+    icon: tpl.icon,
+    content: (tpl.content ?? undefined) as Prisma.InputJsonValue | undefined,
+    textContent: extractPlainText(tpl.content),
+  };
+}
 
 export async function createPageAction(form: FormData) {
   const { space } = await authorizeAction(form, "managePages");
@@ -20,15 +67,90 @@ export async function createPageAction(form: FormData) {
       })
     : null;
 
+  const data = await templateData(strOrNull(form, "templateId"), space.id);
   const page = await prisma.page.create({
     data: {
       spaceId: space.id,
       parentId: parent?.id ?? null,
-      title: "Untitled",
+      ...data,
     },
   });
   revalidatePath(`/s/${space.slug}`, "layout");
   redirect(`/s/${space.slug}/p/${page.id}`);
+}
+
+export async function setPageIconAction(form: FormData) {
+  const { space } = await authorizeAction(form, "write");
+  const icon = normalizeIcon(str(form, "icon"));
+  if (icon === undefined) return; // ungültig -> unverändert lassen
+  await prisma.page.updateMany({
+    where: { id: str(form, "pageId"), spaceId: space.id, deletedAt: null },
+    data: { icon },
+  });
+  revalidatePath(`/s/${space.slug}`, "layout");
+}
+
+export async function setPageCoverAction(form: FormData) {
+  const { space } = await authorizeAction(form, "write");
+  const cover = str(form, "cover");
+  // Nur eigene Uploads oder Presets — keine fremden URLs (Tracking/CSP).
+  if (cover && !isValidCover(cover)) return;
+  await prisma.page.updateMany({
+    where: { id: str(form, "pageId"), spaceId: space.id, deletedAt: null },
+    data: { cover: cover || null },
+  });
+  revalidatePath(`/s/${space.slug}`, "layout");
+}
+
+/** Obergrenze für Vorlageninhalt (JSON-Zeichen). */
+const MAX_TEMPLATE_CHARS = 500_000;
+
+export async function saveTemplateAction(
+  form: FormData,
+): Promise<{ ok: boolean; error?: string }> {
+  const { space, user } = await authorizeAction(form, "managePages");
+  const name = str(form, "name").slice(0, 80);
+  if (name.length < 2) return { ok: false, error: "Name zu kurz." };
+
+  const raw = str(form, "content");
+  if (raw.length > MAX_TEMPLATE_CHARS) {
+    return { ok: false, error: "Seite zu gross für eine Vorlage." };
+  }
+  let content: unknown;
+  try {
+    content = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: "Ungültiger Inhalt." };
+  }
+  if (
+    !content ||
+    typeof content !== "object" ||
+    (content as { type?: string }).type !== "doc"
+  ) {
+    return { ok: false, error: "Ungültiger Inhalt." };
+  }
+
+  const icon = normalizeIcon(str(form, "icon"));
+  await prisma.pageTemplate.create({
+    data: {
+      spaceId: space.id,
+      name,
+      description: strOrNull(form, "description")?.slice(0, 200) ?? null,
+      icon: icon ?? null,
+      content: content as Prisma.InputJsonValue,
+      createdById: user.id,
+    },
+  });
+  revalidatePath(`/s/${space.slug}`, "layout");
+  return { ok: true };
+}
+
+export async function deleteTemplateAction(form: FormData) {
+  const { space } = await authorizeAction(form, "managePages");
+  await prisma.pageTemplate.deleteMany({
+    where: { id: str(form, "templateId"), spaceId: space.id },
+  });
+  revalidatePath(`/s/${space.slug}`, "layout");
 }
 
 export async function renamePageAction(form: FormData) {

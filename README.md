@@ -12,6 +12,14 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
   Aufgabenlisten, Bilder, Callouts, Mermaid-Diagramme, YouTube-Embeds,
   Excalidraw-Zeichnungen, draw.io-Diagramme)
+- **Codeblöcke mit Syntax-Highlighting** (Sprachauswahl, Kopieren-Knopf;
+  auch im HTML/PDF-Export), **Drag Handle** zum Verschieben von Blöcken
+- **Inhaltsverzeichnis** aus den Überschriften (rechte Leiste bzw.
+  Popover, Anker-Links `#abschnitt`, im Export eingebettet)
+- **Seiten-Icons** (Emoji) und **Titelbilder** (Verlauf oder Upload),
+  sichtbar in Sidebar, Wiki-Links, Suche und Export
+- **Vorlagen**: eingebaute (Meeting, ADR, Onboarding, Postmortem,
+  Anleitung) und eigene pro Space („Als Vorlage speichern")
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
 - **Kommentare** (textverankerte Threads) + **@-Mentions** +

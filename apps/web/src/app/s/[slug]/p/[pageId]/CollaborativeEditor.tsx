@@ -25,6 +25,12 @@ import { WikiLinkView } from "@/components/editor/WikiLinkView";
 import { MentionView } from "@/components/editor/MentionView";
 import { ExcalidrawView } from "@/components/editor/ExcalidrawView";
 import { DrawioView } from "@/components/editor/DrawioView";
+import { CodeBlockView } from "@/components/editor/CodeBlockView";
+import { HeadingAnchors } from "@/components/editor/HeadingAnchors";
+import { TableOfContents } from "@/components/editor/TableOfContents";
+import { BlockDragHandle } from "@/components/editor/BlockDragHandle";
+import { PageHeader } from "@/components/editor/PageHeader";
+import { PageMoreMenu } from "@/components/editor/PageMoreMenu";
 import { createSlashCommands } from "@/components/editor/SlashCommands";
 import { createEntitySuggestion } from "@/components/editor/EntitySuggestion";
 import { cn } from "@/lib/cn";
@@ -74,6 +80,8 @@ export function CollaborativeEditor({
   spaceId,
   pageId,
   title,
+  icon,
+  cover,
   token,
   collabUrl,
   editable,
@@ -85,6 +93,8 @@ export function CollaborativeEditor({
   spaceId: string;
   pageId: string;
   title: string;
+  icon: string | null;
+  cover: string | null;
   token: string;
   collabUrl: string;
   editable: boolean;
@@ -180,7 +190,9 @@ export function CollaborativeEditor({
         mention: () => ReactNodeViewRenderer(MentionView),
         excalidraw: () => ReactNodeViewRenderer(ExcalidrawView),
         drawio: () => ReactNodeViewRenderer(DrawioView),
+        codeBlock: () => ReactNodeViewRenderer(CodeBlockView),
       }),
+      HeadingAnchors,
       Placeholder.configure({
         placeholder:
           'Schreib etwas — "/" für Befehle, "[[" für Links, "@" für Mentions…',
@@ -274,6 +286,7 @@ export function CollaborativeEditor({
             <PeerStack peers={peers} />
           </div>
           <div className="flex items-center gap-1">
+            <TableOfContents editor={editor} variant="popover" />
             <Link
               href={`/s/${slug}/p/${pageId}/history`}
               className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-subtle hover:text-ink"
@@ -282,6 +295,13 @@ export function CollaborativeEditor({
               Verlauf
             </Link>
             <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
+            {canManage && (
+              <PageMoreMenu
+                editor={editor}
+                slug={slug}
+                pageTitle={titleValue}
+              />
+            )}
             {canManage && (
               <form action={deletePageAction}>
                 <input type="hidden" name="slug" value={slug} />
@@ -302,7 +322,13 @@ export function CollaborativeEditor({
       {/* Title — kontrolliert + explizites Speichern nur bei Änderung.
           (Kein <form action>: React 19 resettet unkontrollierte Felder
           nach Server-Actions, was Eingaben klobbern kann.) */}
-      <div className="mx-auto max-w-[760px] px-6 pt-12">
+      <PageHeader
+        slug={slug}
+        pageId={pageId}
+        icon={icon}
+        cover={cover}
+        editable={editable}
+      >
         <input
           name="title"
           value={titleValue}
@@ -313,9 +339,9 @@ export function CollaborativeEditor({
             if (e.key === "Enter") e.currentTarget.blur();
           }}
           placeholder="Ohne Titel"
-          className="w-full bg-transparent text-[2.5rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-faint"
+          className="mt-2 w-full bg-transparent text-[2.5rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-faint"
         />
-      </div>
+      </PageHeader>
 
       {/* Toolbar */}
       {editable && (
@@ -325,9 +351,11 @@ export function CollaborativeEditor({
       )}
 
       {/* Canvas */}
-      <div className="mt-6 animate-[fade-in_0.4s_ease]">
+      <div className="relative mt-6 animate-[fade-in_0.4s_ease]">
         <EditorContent editor={editor} />
+        <BlockDragHandle editor={editor} />
       </div>
+      <TableOfContents editor={editor} variant="rail" />
     </div>
   );
 }

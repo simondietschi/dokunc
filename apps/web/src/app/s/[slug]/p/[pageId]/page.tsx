@@ -20,7 +20,7 @@ export default async function PageView({
 
   const page = await prisma.page.findFirst({
     where: { id: pageId, spaceId: space.id, deletedAt: null },
-    select: { id: true, title: true },
+    select: { id: true, title: true, icon: true, cover: true },
   });
   if (!page) notFound();
 
@@ -35,7 +35,7 @@ export default async function PageView({
   const [backlinks, comments] = await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
-      select: { source: { select: { id: true, title: true } } },
+      select: { source: { select: { id: true, title: true, icon: true } } },
       take: 50,
     }),
     prisma.comment.findMany({
@@ -59,6 +59,8 @@ export default async function PageView({
         spaceId={space.id}
         pageId={page.id}
         title={page.title}
+        icon={page.icon}
+        cover={page.cover}
         token={token}
         collabUrl={collabUrl}
         editable={can(role, "write")}
@@ -79,8 +81,9 @@ export default async function PageView({
                 <li key={source.id}>
                   <Link
                     href={`/s/${slug}/p/${source.id}`}
-                    className="inline-flex items-center rounded-lg border border-line bg-surface px-2.5 py-1 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-ink"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-ink"
                   >
+                    {source.icon && <span aria-hidden>{source.icon}</span>}
                     {source.title || "Untitled"}
                   </Link>
                 </li>

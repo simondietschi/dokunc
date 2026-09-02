@@ -1,6 +1,11 @@
 import "server-only";
 import { generateHTML } from "@tiptap/html";
-import { richExtensions } from "@dokunc/editor";
+import {
+  extractHeadings,
+  highlightToHtml,
+  richExtensions,
+  type TocEntry,
+} from "@dokunc/editor";
 
 const extensions = richExtensions();
 
@@ -8,10 +13,71 @@ const extensions = richExtensions();
 export function contentToHtml(content: unknown): string {
   if (!content || typeof content !== "object") return "";
   try {
-    return generateHTML(content as Record<string, unknown>, extensions);
+    const html = generateHTML(content as Record<string, unknown>, extensions);
+    return addHeadingAnchors(
+      highlightCodeBlocks(html),
+      extractHeadings(content),
+    );
   } catch {
     return "";
   }
+}
+
+function unescapeHtml(s: string): string {
+  return s
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * Serverseitiges Syntax-Highlighting für den Export. Der Codeblock aus
+ * generateHTML enthält nur escapten Klartext; der wird zurückgewandelt,
+ * gehighlightet und wieder escaped ausgegeben (kein fremdes HTML).
+ */
+export function highlightCodeBlocks(html: string): string {
+  return html.replace(
+    /<pre><code(?: class="language-([^"]*)")?>([\s\S]*?)<\/code><\/pre>/g,
+    (_m, lang: string | undefined, body: string) => {
+      const cls = lang ? ` class="language-${escapeHtml(lang)}"` : "";
+      return `<pre><code${cls}>${highlightToHtml(unescapeHtml(body), lang)}</code></pre>`;
+    },
+  );
+}
+
+/**
+ * Verteilt die Anker-IDs (identisch zum Editor) auf die Überschriften
+ * des exportierten HTML, in Dokument-Reihenfolge.
+ */
+export function addHeadingAnchors(html: string, headings: TocEntry[]): string {
+  if (headings.length === 0) return html;
+  let i = 0;
+  return html.replace(
+    /<h([1-6])([^>]*)>([\s\S]*?)<\/h\1>/g,
+    (m, level: string, attrs: string, inner: string) => {
+      const text = unescapeHtml(inner.replace(/<[^>]+>/g, "")).trim();
+      const next = headings[i];
+      if (!next || next.level !== Number(level) || next.text !== text) {
+        return m;
+      }
+      i++;
+      return `<h${level}${attrs} id="${escapeHtml(next.id)}">${inner}</h${level}>`;
+    },
+  );
+}
+
+/** Eingebettetes Inhaltsverzeichnis für Export/Druck (ab 2 Überschriften). */
+export function tocHtml(headings: TocEntry[]): string {
+  if (headings.length < 2) return "";
+  const items = headings
+    .map(
+      (h) =>
+        `<li class="dk-toc-l${h.level}"><a href="#${escapeHtml(h.id)}">${escapeHtml(h.text)}</a></li>`,
+    )
+    .join("");
+  return `<nav class="dk-toc"><p>Inhalt</p><ul>${items}</ul></nav>`;
 }
 
 export function escapeHtml(s: string): string {
@@ -36,7 +102,10 @@ export function pageToPrintHtml(opts: {
   title: string;
   contentHtml: string;
   spaceName?: string;
+  icon?: string | null;
+  headings?: TocEntry[];
 }): string {
+  const heading = `${opts.icon ? `<span class="dk-icon">${escapeHtml(opts.icon)}</span> ` : ""}${escapeHtml(opts.title)}`;
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
@@ -61,6 +130,22 @@ export function pageToPrintHtml(opts: {
   code { font-family: ui-monospace, monospace; font-size: 0.9em; background: #f3f4f6; padding: 0.1em 0.35em; border-radius: 4px; }
   pre { background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-size: 9pt; page-break-inside: avoid; }
   pre code { background: none; padding: 0; }
+  .hljs-comment, .hljs-quote { color: #8b8f98; font-style: italic; }
+  .hljs-keyword, .hljs-selector-tag, .hljs-doctag { color: #a626a4; }
+  .hljs-string, .hljs-regexp, .hljs-addition { color: #2f8f4e; }
+  .hljs-number, .hljs-literal, .hljs-symbol, .hljs-bullet { color: #b5600b; }
+  .hljs-title, .hljs-section, .hljs-name { color: #3d63dd; }
+  .hljs-attr, .hljs-attribute, .hljs-variable, .hljs-property { color: #a0491f; }
+  .hljs-built_in, .hljs-type { color: #0b7c8a; }
+  .hljs-meta, .hljs-tag { color: #6b6f76; }
+  .hljs-deletion { color: #c8323a; }
+  .dk-icon { font-size: 1.1em; margin-right: 0.15em; }
+  .dk-toc { border: 1px solid #e5e7eb; border-radius: 8px; padding: 10px 14px; margin: 0 0 20px; background: #f9fafb; page-break-inside: avoid; }
+  .dk-toc p { margin: 0 0 4px; font-size: 9pt; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; }
+  .dk-toc ul { list-style: none; margin: 0; padding: 0; }
+  .dk-toc li { margin: 2px 0; font-size: 10pt; }
+  .dk-toc li.dk-toc-l2 { padding-left: 14px; }
+  .dk-toc li.dk-toc-l3 { padding-left: 28px; }
   blockquote { border-left: 3px solid #a5b4fc; margin: 0.7em 0; padding-left: 12px; color: #4b5563; }
   table { border-collapse: collapse; width: 100%; margin: 0.8em 0; page-break-inside: avoid; }
   th, td { border: 1px solid #d1d5db; padding: 6px 9px; text-align: left; vertical-align: top; }
@@ -82,9 +167,10 @@ export function pageToPrintHtml(opts: {
 </head>
 <body>
 <header class="dk-head">
-  <h1>${escapeHtml(opts.title)}</h1>
+  <h1>${heading}</h1>
   ${opts.spaceName ? `<p>${escapeHtml(opts.spaceName)} · dokunc</p>` : ""}
 </header>
+${tocHtml(opts.headings ?? [])}
 <main>${opts.contentHtml}</main>
 </body>
 </html>`;

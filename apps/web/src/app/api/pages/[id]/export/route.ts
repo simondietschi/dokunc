@@ -6,6 +6,7 @@ import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
 import { htmlToPdf, gotenbergUrl } from "@/lib/pdf";
 import { inlineUploadImages } from "@/lib/inline-images";
 import { loadUpload } from "@/lib/uploads";
+import { extractHeadings } from "@dokunc/editor";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -30,6 +31,7 @@ export async function GET(
     where: { id, deletedAt: null },
     select: {
       title: true,
+      icon: true,
       content: true,
       spaceId: true,
       space: { select: { name: true } },
@@ -47,7 +49,7 @@ export async function GET(
     page.title.replace(/[^a-zA-Z0-9-_]+/g, "_").slice(0, 60) || "page";
 
   if (format === "md") {
-    const md = `# ${page.title}\n\n${toMarkdown(page.content)}`;
+    const md = `# ${page.icon ? `${page.icon} ` : ""}${page.title}\n\n${toMarkdown(page.content)}`;
     return new NextResponse(md, {
       headers: {
         "Content-Type": "text/markdown; charset=utf-8",
@@ -61,6 +63,8 @@ export async function GET(
   // .html-Datei wird per file:// geöffnet).
   const html = pageToPrintHtml({
     title: page.title,
+    icon: page.icon,
+    headings: extractHeadings(page.content),
     spaceName: page.space.name,
     contentHtml: await inlineUploadImages(
       contentToHtml(page.content),

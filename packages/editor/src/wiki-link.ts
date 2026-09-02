@@ -24,6 +24,13 @@ export const WikiLink = Node.create({
         parseHTML: (el) => el.getAttribute("data-label") ?? el.textContent,
         renderHTML: (attrs) => ({ "data-label": attrs.label }),
       },
+      /// Icon-Snapshot der Zielseite (wie label; kann veralten).
+      icon: {
+        default: null,
+        parseHTML: (el) => el.getAttribute("data-icon"),
+        renderHTML: (attrs) =>
+          attrs.icon ? { "data-icon": attrs.icon } : {},
+      },
     };
   },
 
@@ -38,7 +45,7 @@ export const WikiLink = Node.create({
         class: "dk-wikilink",
         href: `/p/${node.attrs.pageId}`,
       }),
-      String(node.attrs.label ?? "Seite"),
+      `${node.attrs.icon ? `${node.attrs.icon} ` : ""}${String(node.attrs.label ?? "Seite")}`,
     ];
   },
 

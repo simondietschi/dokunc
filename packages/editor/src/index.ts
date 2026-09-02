@@ -16,6 +16,7 @@ import { Mention } from "./mention";
 import { CommentMark } from "./comment-mark";
 import { Excalidraw } from "./excalidraw";
 import { Drawio } from "./drawio";
+import { CodeBlockHighlight } from "./code-block";
 
 export const COLLAB_FIELD = "default";
 
@@ -31,6 +32,7 @@ export type NodeViewFactories = {
   mention?: () => unknown;
   excalidraw?: () => unknown;
   drawio?: () => unknown;
+  codeBlock?: () => unknown;
 };
 
 /**
@@ -60,11 +62,17 @@ export function richExtensions(views: NodeViewFactories = {}) {
   const drawio = views.drawio
     ? Drawio.extend({ addNodeView: views.drawio as never })
     : Drawio;
+  const codeBlock = views.codeBlock
+    ? CodeBlockHighlight.extend({ addNodeView: views.codeBlock as never })
+    : CodeBlockHighlight;
   return [
     StarterKit.configure({
       undoRedo: false,
       link: { openOnClick: false, autolink: true },
+      // Ersetzt durch die lowlight-Variante (gleicher Node-Name).
+      codeBlock: false,
     }),
+    codeBlock,
     Highlight.configure({ multicolor: true }),
     Image.configure({ inline: false }),
     TextAlign.configure({ types: ["heading", "paragraph"] }),
@@ -130,6 +138,21 @@ export { Mermaid } from "./mermaid";
 export { WikiLink } from "./wiki-link";
 export { Mention } from "./mention";
 export { CommentMark } from "./comment-mark";
-export { chunkText } from "./text";
+export { chunkText, extractPlainText } from "./text";
 export { Excalidraw, toBase64 } from "./excalidraw";
 export { Drawio } from "./drawio";
+export {
+  CodeBlockHighlight,
+  CODE_LANGUAGES,
+  highlightToHtml,
+  lowlight,
+} from "./code-block";
+export type { CodeLanguage } from "./code-block";
+export {
+  extractHeadings,
+  headingSlug,
+  tocEligible,
+  uniqueHeadingIds,
+  TOC_MAX_LEVEL,
+} from "./toc";
+export type { TocEntry } from "./toc";

@@ -148,7 +148,11 @@ export function CommandPalette() {
     items.push({
       key: `page:${p.id}`,
       group: "Seiten",
-      icon: <FileText className="h-4 w-4" />,
+      icon: p.icon ? (
+        <span className="text-[15px] leading-none">{p.icon}</span>
+      ) : (
+        <FileText className="h-4 w-4" />
+      ),
       label: p.title || "Untitled",
       hint: p.spaceName,
       snippet: p.snippet,

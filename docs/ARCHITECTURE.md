@@ -59,6 +59,11 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 - **Page** — id, spaceId, parentId (Baum), title, content (TipTap-JSON),
   textContent (für Suche/History), `searchVector` (tsvector), position, timestamps.
 - **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit.
+- **PageTemplate** — Seitenvorlage pro Space (name, description, icon,
+  content als TipTap-JSON). Eingebaute Vorlagen liegen im Code
+  (`lib/templates.ts`, IDs `builtin:*`).
+- Page trägt zusätzlich `icon` (ein Grapheme, serverseitig validiert) und
+  `cover` (eigener Upload `/api/files/…` oder Preset `gradient:N`).
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
 
 Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
@@ -137,6 +142,17 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       gehalten, Collab-Adresse zur Laufzeit aus dem Host abgeleitet,
       pnpm im Image vorinstalliert, DATABASE_URL-Platzhalter für
       `prisma generate` im Build); CI startet den Stack als Test
+- [x] Editor-Politur: Codeblöcke mit lowlight-Highlighting (gleicher
+      Node-Name `codeBlock`, Highlighting nur als Decorations; Export
+      highlightet serverseitig über dieselbe lowlight-Instanz),
+      Drag Handle (@tiptap/extension-drag-handle-react), automatisches
+      Inhaltsverzeichnis (Anker-IDs als Decorations, identische
+      Slug-Ableitung in Editor und Export; Leiste ab 1500px, sonst
+      Popover), Seiten-Icons/Titelbilder, Vorlagen (eingebaut + eigene).
+      Collab-Server: ungültiger Page-Content (z. B. leere Textknoten)
+      wird beim Seeden bereinigt statt geworfen — ein Throw in
+      onLoadDocument liess Hocuspocus sonst die Speicherung aussetzen;
+      nicht rettbarer Inhalt landet als PageVersion, die Seite startet leer
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

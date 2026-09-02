@@ -12,7 +12,8 @@ import { cn } from "@/lib/cn";
 export type SlashItem = {
   title: string;
   subtitle: string;
-  icon: LucideIcon;
+  /** Lucide-Icon oder Emoji-String (z. B. Seiten-Icon). */
+  icon: LucideIcon | string;
   command: () => void;
 };
 
@@ -71,7 +72,11 @@ export const SlashMenu = forwardRef<
             )}
           >
             <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line bg-surface text-muted">
-              <Icon className="h-4 w-4" />
+              {typeof Icon === "string" ? (
+                <span className="text-[16px] leading-none">{Icon}</span>
+              ) : (
+                <Icon className="h-4 w-4" />
+              )}
             </span>
             <span className="min-w-0">
               <span className="block text-[13px] font-medium text-ink">

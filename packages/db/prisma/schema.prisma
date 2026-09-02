@@ -36,6 +36,7 @@ model User {
   comments      Comment[]
   notifications Notification[] @relation("NotificationUser")
   actedNotifications Notification[] @relation("NotificationActor")
+  pageTemplates PageTemplate[]
 }
 
 /// Tokenbasierter Passwort-Reset (nur SHA-256-Hash gespeichert).
@@ -63,6 +64,7 @@ model Space {
   members SpaceMember[]
   pages   Page[]
   invitations SpaceInvitation[]
+  templates PageTemplate[]
 }
 
 model SpaceMember {
@@ -83,6 +85,10 @@ model Page {
   spaceId     String
   parentId    String?
   title       String   @default("Untitled")
+  /// Emoji/Symbol vor dem Titel (Sidebar, Wiki-Links, Suche).
+  icon        String?
+  /// Titelbild: Upload-URL (/api/files/…) oder Verlaufs-Preset (gradient:N).
+  cover       String?
   /// TipTap/ProseMirror JSON
   content     Json?
   /// Flacher Text für Suche & History
@@ -215,6 +221,25 @@ model SpaceInvitation {
 
   /// Höchstens eine offene Einladung pro E-Mail/Space.
   @@unique([spaceId, email])
+  @@index([spaceId])
+}
+
+/// Seitenvorlage eines Space: Startinhalt (TipTap-JSON) für neue Seiten.
+/// Eingebaute Vorlagen (Meeting, ADR, …) liegen im Code, nicht hier.
+model PageTemplate {
+  id          String   @id @default(cuid())
+  spaceId     String
+  name        String
+  description String?
+  icon        String?
+  content     Json?
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  space     Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  createdBy User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
   @@index([spaceId])
 }
 

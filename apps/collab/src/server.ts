@@ -7,7 +7,7 @@ import { Redis } from "ioredis";
 import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
 import pino from "pino";
 import * as Y from "yjs";
-import { prisma } from "@dokunc/db";
+import { prisma, type Prisma } from "@dokunc/db";
 import {
   richExtensions,
   COLLAB_FIELD,
@@ -137,15 +137,26 @@ const server = new Server({
     // Erstes Öffnen: aus gespeichertem Page-Content seeden.
     const page = await prisma.page.findUnique({
       where: { id: pageId },
-      select: { content: true },
+      select: { content: true, title: true },
     });
     if (page?.content) {
-      const seeded = TiptapTransformer.toYdoc(
-        page.content,
-        COLLAB_FIELD,
-        extensions,
-      );
-      Y.applyUpdate(data.document, Y.encodeStateAsUpdate(seeded));
+      const seeded = seedFromContent(page.content);
+      if (seeded) {
+        Y.applyUpdate(data.document, Y.encodeStateAsUpdate(seeded));
+      } else {
+        // Ein Throw hier lässt Hocuspocus die Speicherung ALLER Dokumente
+        // aussetzen. Stattdessen: Original als Version sichern (kein
+        // Datenverlust) und leer starten.
+        log.error({ pageId }, "Seed aus Page.content ungültig – leer gestartet");
+        await prisma.pageVersion.create({
+          data: {
+            pageId,
+            title: page.title,
+            content: page.content as Prisma.InputJsonValue,
+            textContent: extractText(page.content),
+          },
+        });
+      }
     }
     return data.document;
   },
@@ -208,6 +219,41 @@ const server = new Server({
     }
   },
 });
+
+/**
+ * ProseMirror-JSON -> Yjs. Erster Versuch mit dem Original, zweiter mit
+ * bereinigtem JSON (leere Textknoten sind im Schema verboten und kommen
+ * z. B. aus manuell erzeugten Inhalten). Bei Misserfolg null.
+ */
+function seedFromContent(content: unknown): Y.Doc | null {
+  for (const candidate of [content, stripEmptyText(content)]) {
+    try {
+      return TiptapTransformer.toYdoc(candidate, COLLAB_FIELD, extensions);
+    } catch (e) {
+      log.warn({ err: String(e) }, "Seed-Versuch fehlgeschlagen");
+    }
+  }
+  return null;
+}
+
+/** Entfernt leere Textknoten rekursiv (Kopie, Original bleibt unberührt). */
+function stripEmptyText(node: unknown): unknown {
+  if (!node || typeof node !== "object") return node;
+  const n = node as { type?: string; text?: string; content?: unknown[] };
+  if (!Array.isArray(n.content)) return node;
+  const content = n.content
+    .filter(
+      (c) =>
+        !(
+          c &&
+          typeof c === "object" &&
+          (c as { type?: string; text?: string }).type === "text" &&
+          !(c as { text?: string }).text
+        ),
+    )
+    .map(stripEmptyText);
+  return content.length ? { ...n, content } : { ...n, content: undefined };
+}
 
 /**
  * Synchronisiert die PageLink-Tabelle (Backlinks) mit den Wiki-Links

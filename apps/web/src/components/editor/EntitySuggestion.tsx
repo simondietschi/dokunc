@@ -7,7 +7,7 @@ import { ReactRenderer } from "@tiptap/react";
 import type { LucideIcon } from "lucide-react";
 import { SlashMenu, type SlashMenuHandle, type SlashItem } from "./SlashMenu";
 
-type EntityItem = { id: string; label: string };
+type EntityItem = { id: string; label: string; icon?: string | null };
 
 /**
  * Popup-Vervollständigung für Entitäten aus der Suggest-API:
@@ -50,7 +50,7 @@ export function createEntitySuggestion(opts: {
           command: ({ editor, range, props }) => {
             const attrs =
               opts.nodeType === "wikiLink"
-                ? { pageId: props.id, label: props.label }
+                ? { pageId: props.id, label: props.label, icon: props.icon ?? null }
                 : { userId: props.id, name: props.label };
             editor
               .chain()
@@ -81,7 +81,7 @@ export function createEntitySuggestion(opts: {
               items.map((it) => ({
                 title: it.label,
                 subtitle: opts.subtitle,
-                icon: opts.icon,
+                icon: it.icon ?? opts.icon,
                 command: () => command(it),
               }));
 

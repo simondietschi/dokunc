@@ -19,6 +19,9 @@
     "@tiptap/core": "3.28.0",
     "@tiptap/extension-collaboration": "3.28.0",
     "@tiptap/extension-collaboration-caret": "3.28.0",
+    "@tiptap/extension-drag-handle": "3.28.0",
+    "@tiptap/extension-drag-handle-react": "3.28.0",
+    "@tiptap/extension-node-range": "3.28.0",
     "@tiptap/extension-placeholder": "3.28.0",
     "@tiptap/html": "3.28.0",
     "@tiptap/pm": "3.28.0",
@@ -45,9 +48,9 @@
   "devDependencies": {
     "@tailwindcss/postcss": "4.3.3",
     "@types/node": "26.1.1",
+    "@types/nodemailer": "8.0.1",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
-    "@types/nodemailer": "8.0.1",
     "tailwindcss": "4.3.3",
     "typescript": "6.0.3",
     "vitest": "4.1.10"

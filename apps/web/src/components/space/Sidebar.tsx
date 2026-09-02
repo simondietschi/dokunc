@@ -15,6 +15,7 @@ import {
   Menu,
   Bell,
   Sparkles,
+  LayoutTemplate,
 } from "lucide-react";
 import type { TreeNode } from "@/lib/page-tree";
 import { cn } from "@/lib/cn";
@@ -24,6 +25,10 @@ import { Logo } from "@/components/ui/Logo";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { logoutAction } from "@/app/(auth)/actions";
 import { PaletteButton } from "@/components/CommandPalette";
+import {
+  TemplatePicker,
+  type SpaceTemplate,
+} from "@/components/space/TemplatePicker";
 
 type Props = {
   slug: string;
@@ -35,6 +40,7 @@ type Props = {
   canManageSpace: boolean;
   isAdmin: boolean;
   unreadCount: number;
+  templates: SpaceTemplate[];
 };
 
 export function Sidebar({
@@ -47,9 +53,12 @@ export function Sidebar({
   canManageSpace,
   isAdmin,
   unreadCount,
+  templates,
 }: Props) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const currentPage = pathname.match(/\/p\/([^/?#]+)/)?.[1] ?? null;
 
   // Bei Navigation auf Mobile schließen.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -122,13 +131,32 @@ export function Sidebar({
       </nav>
 
       {canManage && (
-        <form action={createPageAction} className="px-3 pt-2">
-          <input type="hidden" name="slug" value={slug} />
-          <button className="flex w-full items-center gap-2 rounded-lg border border-dashed border-line-strong px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:border-accent/50 hover:text-ink">
-            <Plus className="h-3.5 w-3.5" />
-            Neue Seite
+        <div className="flex items-stretch gap-1 px-3 pt-2">
+          <form action={createPageAction} className="min-w-0 flex-1">
+            <input type="hidden" name="slug" value={slug} />
+            <button className="flex w-full items-center gap-2 rounded-lg border border-dashed border-line-strong px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:border-accent/50 hover:text-ink">
+              <Plus className="h-3.5 w-3.5" />
+              Neue Seite
+            </button>
+          </form>
+          <button
+            type="button"
+            onClick={() => setPickerOpen(true)}
+            title="Aus Vorlage erstellen"
+            aria-label="Aus Vorlage erstellen"
+            className="grid w-9 shrink-0 place-items-center rounded-lg border border-dashed border-line-strong text-muted transition-colors hover:border-accent/50 hover:text-ink"
+          >
+            <LayoutTemplate className="h-3.5 w-3.5" />
           </button>
-        </form>
+        </div>
+      )}
+      {pickerOpen && (
+        <TemplatePicker
+          slug={slug}
+          templates={templates}
+          currentPageId={currentPage}
+          onClose={() => setPickerOpen(false)}
+        />
       )}
 
       <div className="mt-1 space-y-0.5">
@@ -139,6 +167,15 @@ export function Sidebar({
         >
           Frag dein Wiki
         </NavLink>
+        {canManage && (
+          <NavLink
+            href={`/s/${slug}/templates`}
+            active={pathname === `/s/${slug}/templates`}
+            icon={<LayoutTemplate className="h-3.5 w-3.5" />}
+          >
+            Vorlagen
+          </NavLink>
+        )}
         {canManage && (
           <NavLink
             href={`/s/${slug}/trash`}
@@ -306,6 +343,11 @@ function TreeItem({
             active ? "font-medium text-ink" : "text-muted",
           )}
         >
+          {node.icon && (
+            <span className="dk-tree-icon" aria-hidden>
+              {node.icon}
+            </span>
+          )}
           {node.title || "Untitled"}
         </Link>
         {canManage && (

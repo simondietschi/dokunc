@@ -1,6 +1,7 @@
 export type FlatPage = {
   id: string;
   title: string;
+  icon?: string | null;
   parentId: string | null;
   position: number;
 };

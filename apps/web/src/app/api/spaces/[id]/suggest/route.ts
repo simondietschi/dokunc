@@ -54,11 +54,15 @@ export async function GET(
       deletedAt: null,
       ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
     },
-    select: { id: true, title: true },
+    select: { id: true, title: true, icon: true },
     orderBy: { updatedAt: "desc" },
     take: 8,
   });
   return NextResponse.json({
-    items: pages.map((p) => ({ id: p.id, label: p.title || "Untitled" })),
+    items: pages.map((p) => ({
+      id: p.id,
+      label: p.title || "Untitled",
+      icon: p.icon,
+    })),
   });
 }

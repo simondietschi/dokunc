@@ -14,13 +14,24 @@ export default async function SpaceLayout({
   const { slug } = await params;
   const { space, role, user } = await loadSpace(slug);
 
-  const [pages, unreadCount] = await Promise.all([
+  const [pages, unreadCount, templates] = await Promise.all([
     prisma.page.findMany({
       where: { spaceId: space.id, deletedAt: null },
-      select: { id: true, title: true, parentId: true, position: true },
+      select: {
+        id: true,
+        title: true,
+        icon: true,
+        parentId: true,
+        position: true,
+      },
     }),
     prisma.notification.count({
       where: { userId: user.id, readAt: null },
+    }),
+    prisma.pageTemplate.findMany({
+      where: { spaceId: space.id },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, description: true, icon: true },
     }),
   ]);
 
@@ -36,6 +47,7 @@ export default async function SpaceLayout({
         canManageSpace={can(role, "manageSpace")}
         isAdmin={user.isAdmin}
         unreadCount={unreadCount}
+        templates={templates}
       />
       <main className="flex-1 overflow-y-auto pt-14 md:pt-0">
         {children}

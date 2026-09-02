@@ -6,6 +6,7 @@ import { HL_START, HL_STOP, likeEscape } from "@/lib/palette";
 export type SearchPage = {
   id: string;
   title: string;
+  icon: string | null;
   slug: string;
   spaceName: string;
   snippet: string;
@@ -63,12 +64,14 @@ export async function GET(req: Request) {
       select: {
         id: true,
         title: true,
+        icon: true,
         space: { select: { slug: true, name: true } },
       },
     });
     body.pages = recent.map((p) => ({
       id: p.id,
       title: p.title,
+      icon: p.icon,
       slug: p.space.slug,
       spaceName: p.space.name,
       snippet: "",
@@ -81,7 +84,7 @@ export async function GET(req: Request) {
   // Titel-Treffer ranken vor reinen Inhaltstreffern. Die Marker für die
   // Hervorhebung sind kein HTML — der Client zerlegt sie sicher.
   body.pages = await prisma.$queryRaw<SearchPage[]>`
-    SELECT p.id, p.title, s.slug, s.name AS "spaceName",
+    SELECT p.id, p.title, p.icon, s.slug, s.name AS "spaceName",
       CASE
         WHEN to_tsvector('simple', coalesce(p."textContent", ''))
              @@ plainto_tsquery('simple', ${q})
