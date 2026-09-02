@@ -7,6 +7,7 @@ import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { getRawToken } from "@/lib/session";
 import { resolveCollabUrl } from "@/lib/collab-url";
+import { loadAncestors } from "@/lib/page-ancestors";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
 
@@ -20,7 +21,7 @@ export default async function PageView({
 
   const page = await prisma.page.findFirst({
     where: { id: pageId, spaceId: space.id, deletedAt: null },
-    select: { id: true, title: true },
+    select: { id: true, title: true, parentId: true },
   });
   if (!page) notFound();
 
@@ -32,7 +33,7 @@ export default async function PageView({
     proto: requestHeaders.get("x-forwarded-proto"),
   });
 
-  const [backlinks, comments] = await Promise.all([
+  const [backlinks, comments, ancestors] = await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -49,6 +50,7 @@ export default async function PageView({
         },
       },
     }),
+    loadAncestors(space.id, page.parentId),
   ]);
 
   return (
@@ -65,6 +67,7 @@ export default async function PageView({
         canManage={can(role, "managePages")}
         userName={user.name}
         pdfEnabled={!!process.env.GOTENBERG_URL}
+        breadcrumbs={{ spaceName: space.name, ancestors }}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">

@@ -17,8 +17,14 @@ import type { Range } from "@tiptap/core";
 import * as Y from "yjs";
 import { History, FileText, AtSign } from "lucide-react";
 import { ExportMenu } from "@/components/editor/ExportMenu";
+import { TableOfContents } from "@/components/editor/TableOfContents";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { PageActions } from "@/components/space/PageActions";
+import { Breadcrumbs, type Crumb } from "@/components/space/Breadcrumbs";
+import {
+  MovePageDialog,
+  MovePageMenuItem,
+} from "@/components/space/MovePageDialog";
 import { CalloutView } from "@/components/editor/CalloutView";
 import { MermaidView } from "@/components/editor/MermaidView";
 import { WikiLinkView } from "@/components/editor/WikiLinkView";
@@ -80,6 +86,7 @@ export function CollaborativeEditor({
   canManage,
   userName,
   pdfEnabled,
+  breadcrumbs,
 }: {
   slug: string;
   spaceId: string;
@@ -91,8 +98,11 @@ export function CollaborativeEditor({
   canManage: boolean;
   userName: string;
   pdfEnabled: boolean;
+  /** Space-Name und Vorfahren (Wurzel zuerst) fuer die Brotkrumen. */
+  breadcrumbs: { spaceName: string; ancestors: Crumb[] };
 }) {
   const ydoc = useMemo(() => new Y.Doc(), [pageId]);
+  const [moveOpen, setMoveOpen] = useState(false);
   const [status, setStatus] = useState<
     "connecting" | "connected" | "offline"
   >("connecting");
@@ -282,15 +292,33 @@ export function CollaborativeEditor({
               Verlauf
             </Link>
             <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
-            <PageActions slug={slug} pageId={pageId} canManage={canManage} />
+            <PageActions slug={slug} pageId={pageId} canManage={canManage}>
+              {canManage && (
+                <MovePageMenuItem onOpen={() => setMoveOpen(true)} />
+              )}
+            </PageActions>
           </div>
         </div>
       </header>
+      {moveOpen && (
+        <MovePageDialog
+          slug={slug}
+          spaceId={spaceId}
+          pageId={pageId}
+          onClose={() => setMoveOpen(false)}
+        />
+      )}
 
       {/* Title — kontrolliert + explizites Speichern nur bei Änderung.
           (Kein <form action>: React 19 resettet unkontrollierte Felder
           nach Server-Actions, was Eingaben klobbern kann.) */}
       <div className="mx-auto max-w-[760px] px-6 pt-12">
+        <Breadcrumbs
+          slug={slug}
+          spaceName={breadcrumbs.spaceName}
+          ancestors={breadcrumbs.ancestors}
+          current={titleValue}
+        />
         <input
           name="title"
           value={titleValue}
@@ -314,7 +342,9 @@ export function CollaborativeEditor({
 
       {/* Canvas */}
       <div className="mt-6 animate-[fade-in_0.4s_ease]">
-        <EditorContent editor={editor} />
+        <TableOfContents editor={editor}>
+          <EditorContent editor={editor} />
+        </TableOfContents>
       </div>
     </div>
   );
