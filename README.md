@@ -19,6 +19,11 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
+- **Anhänge** beliebigen Typs (PDF, Office, Archive, Medien) per
+  Slash-Befehl „Datei", Drag-and-drop oder Einfügen; Anhangsliste unter
+  der Seite. **Zugriffsschutz**: jede Datei ist an ihren Space gebunden
+  und nur für dessen Mitglieder abrufbar (Bilder inline, alles andere
+  als Download; Limit per `MAX_UPLOAD_MB`, Default 50 MB)
 - Postgres-Volltextsuche, Versionsverlauf, Papierkorb
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
@@ -77,7 +82,8 @@ Dann `docker compose up -d`. In der `Caddyfile` `tls internal` entfernen,
 damit Caddy ein Let's-Encrypt-Zertifikat holt. Ein selbst gesetztes
 `APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
 alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs-Mails,
-`ANTHROPIC_API_KEY` für die KI-Funktionen — siehe `.env.example`.
+`ANTHROPIC_API_KEY` für die KI-Funktionen, `MAX_UPLOAD_MB` für das
+Upload-Limit — siehe `.env.example`.
 
 **Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
 (Restore-Befehle gibt das Skript aus).
