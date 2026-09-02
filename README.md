@@ -12,6 +12,9 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
   Aufgabenlisten, Bilder, Callouts, Mermaid-Diagramme, YouTube-Embeds,
   Excalidraw-Zeichnungen, draw.io-Diagramme)
+- Navigation: Seiten per Drag and Drop im Seitenbaum verschieben und
+  sortieren (oder per Dialog „Verschieben nach…“), Brotkrumen über dem
+  Titel, Inhaltsverzeichnis aus den Überschriften der Seite
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
 - **Kommentare** (textverankerte Threads) + **@-Mentions** +

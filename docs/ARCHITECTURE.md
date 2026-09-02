@@ -137,6 +137,13 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       gehalten, Collab-Adresse zur Laufzeit aus dem Host abgeleitet,
       pnpm im Image vorinstalliert, DATABASE_URL-Platzhalter für
       `prisma generate` im Build); CI startet den Stack als Test
+- [x] Navigation: Seiten verschieben/sortieren (movePageAction mit
+      Zyklus-Check per rekursiver CTE, kompakte Neunummerierung der
+      Geschwister; natives HTML5-Drag-and-Drop im Seitenbaum mit
+      optimistischer Anzeige, Dialog "Verschieben nach…" als
+      Tastatur-/A11y-Weg), Brotkrumen (Vorfahren per rekursiver CTE,
+      Kürzung langer Pfade) und Inhaltsverzeichnis aus den Überschriften
+      (sticky Panel bei genug Platz, sonst einklappbarer Block)
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des
