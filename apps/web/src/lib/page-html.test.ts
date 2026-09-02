@@ -65,6 +65,32 @@ describe("contentToHtml()", () => {
     expect((html.match(/dk-diagram-img/g) ?? []).length).toBe(2);
   });
 
+  it("rendert Anhaenge als Link mit data-Attributen (kein Roh-HTML)", () => {
+    const html = contentToHtml(
+      doc([
+        {
+          type: "attachment",
+          attrs: {
+            src: "/api/files/abc123.pdf",
+            name: '<b>Bericht</b> "Q3".pdf',
+            size: 2048,
+            mimeType: "application/pdf",
+          },
+        },
+      ]),
+    );
+    expect(html).toContain('href="/api/files/abc123.pdf"');
+    expect(html).toContain("data-attachment");
+    expect(html).toContain('data-size="2048"');
+    expect(html).toContain('data-mime="application/pdf"');
+    expect(html).toContain('class="dk-attachment"');
+    // Name wird escaped, nie als Markup uebernommen: kein <b>-Element im
+    // Linktext, Anfuehrungszeichen im Attribut kodiert.
+    expect(html).not.toMatch(/>\s*<b>Bericht/);
+    expect(html).toContain("&lt;b&gt;Bericht&lt;/b&gt;");
+    expect(html).toContain("&quot;Q3&quot;");
+  });
+
   it("ungültiger Input -> leerer String", () => {
     expect(contentToHtml(null)).toBe("");
     expect(contentToHtml("kaputt")).toBe("");

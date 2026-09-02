@@ -16,6 +16,7 @@ import { Mention } from "./mention";
 import { CommentMark } from "./comment-mark";
 import { Excalidraw } from "./excalidraw";
 import { Drawio } from "./drawio";
+import { Attachment } from "./attachment";
 
 export const COLLAB_FIELD = "default";
 
@@ -31,6 +32,7 @@ export type NodeViewFactories = {
   mention?: () => unknown;
   excalidraw?: () => unknown;
   drawio?: () => unknown;
+  attachment?: () => unknown;
 };
 
 /**
@@ -60,6 +62,9 @@ export function richExtensions(views: NodeViewFactories = {}) {
   const drawio = views.drawio
     ? Drawio.extend({ addNodeView: views.drawio as never })
     : Drawio;
+  const attachment = views.attachment
+    ? Attachment.extend({ addNodeView: views.attachment as never })
+    : Attachment;
   return [
     StarterKit.configure({
       undoRedo: false,
@@ -81,6 +86,7 @@ export function richExtensions(views: NodeViewFactories = {}) {
     mention,
     excalidraw,
     drawio,
+    attachment,
     CommentMark,
   ];
 }
@@ -133,3 +139,5 @@ export { CommentMark } from "./comment-mark";
 export { chunkText } from "./text";
 export { Excalidraw, toBase64 } from "./excalidraw";
 export { Drawio } from "./drawio";
+export { Attachment } from "./attachment";
+export type { AttachmentAttrs } from "./attachment";

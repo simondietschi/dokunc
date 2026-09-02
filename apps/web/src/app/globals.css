@@ -494,6 +494,19 @@
   background: var(--subtle);
 }
 
+/* Anhang-Karte (Datei-Node) */
+.dk-attachment-wrap {
+  margin: 1rem 0;
+}
+.ProseMirror .dk-attachment a {
+  color: inherit;
+  text-decoration: none;
+}
+.ProseMirror .dk-attachment a.dk-attachment-name:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* ---- Auth-Hero (High-End-Politur) ---- */
 @keyframes dk-drift-a {
   0%, 100% { transform: translate(0, 0) scale(1); }

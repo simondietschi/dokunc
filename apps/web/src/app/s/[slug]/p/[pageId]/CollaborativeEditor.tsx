@@ -2,18 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import {
-  useEditor,
-  EditorContent,
-  ReactNodeViewRenderer,
-  type Editor,
-} from "@tiptap/react";
+import { useEditor, EditorContent, ReactNodeViewRenderer } from "@tiptap/react";
 import Placeholder from "@tiptap/extension-placeholder";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { richExtensions } from "@dokunc/editor";
-import type { Range } from "@tiptap/core";
 import * as Y from "yjs";
 import { History, FileText, AtSign } from "lucide-react";
 import { ExportMenu } from "@/components/editor/ExportMenu";
@@ -25,38 +19,16 @@ import { WikiLinkView } from "@/components/editor/WikiLinkView";
 import { MentionView } from "@/components/editor/MentionView";
 import { ExcalidrawView } from "@/components/editor/ExcalidrawView";
 import { DrawioView } from "@/components/editor/DrawioView";
+import { AttachmentView } from "@/components/editor/AttachmentView";
+import {
+  IMAGE_ACCEPT,
+  pickAndUpload,
+  uploadAndInsert,
+} from "@/components/editor/upload";
 import { createSlashCommands } from "@/components/editor/SlashCommands";
 import { createEntitySuggestion } from "@/components/editor/EntitySuggestion";
 import { cn } from "@/lib/cn";
 import { renamePageAction } from "../../actions";
-
-/** Datei wählen, hochladen, als Bild einfügen. */
-function pickAndUploadImage(editor: Editor, range?: Range) {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/png,image/jpeg,image/gif,image/webp";
-  input.onchange = async () => {
-    const file = input.files?.[0];
-    let chain = editor.chain().focus();
-    if (range) chain = chain.deleteRange(range);
-    if (!file) {
-      chain.run();
-      return;
-    }
-    const body = new FormData();
-    body.set("file", file);
-    try {
-      const res = await fetch("/api/upload", { method: "POST", body });
-      if (!res.ok) throw new Error();
-      const { url } = (await res.json()) as { url: string };
-      chain.setImage({ src: url }).run();
-    } catch {
-      chain.run();
-      alert("Upload fehlgeschlagen.");
-    }
-  };
-  input.click();
-}
 
 const CARET_COLORS = [
   "#5e60e8",
@@ -136,9 +108,15 @@ export function CollaborativeEditor({
   const slash = useMemo(
     () =>
       createSlashCommands({
-        onImage: (e, r) => pickAndUploadImage(e, r),
+        onImage: (e, r) =>
+          pickAndUpload(
+            e,
+            { spaceId, pageId },
+            { accept: IMAGE_ACCEPT, range: r },
+          ),
+        onFile: (e, r) => pickAndUpload(e, { spaceId, pageId }, { range: r }),
       }),
-    [],
+    [spaceId, pageId],
   );
 
   const wikiLinkSuggest = useMemo(
@@ -180,6 +158,7 @@ export function CollaborativeEditor({
         mention: () => ReactNodeViewRenderer(MentionView),
         excalidraw: () => ReactNodeViewRenderer(ExcalidrawView),
         drawio: () => ReactNodeViewRenderer(DrawioView),
+        attachment: () => ReactNodeViewRenderer(AttachmentView),
       }),
       Placeholder.configure({
         placeholder:
@@ -197,6 +176,28 @@ export function CollaborativeEditor({
     ],
     editorProps: {
       attributes: { class: "mx-auto max-w-[760px] px-6 pb-40" },
+      // Dateien per Drag-and-drop bzw. Einfuegen: hochladen, dann als
+      // Bild oder Anhang einfuegen (asynchron, Editor bleibt bedienbar).
+      handleDrop: (view, event, _slice, moved) => {
+        if (moved || !view.editable) return false;
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        const pos = view.posAtCoords({
+          left: event.clientX,
+          top: event.clientY,
+        })?.pos;
+        void uploadAndInsert(view, files, { spaceId, pageId }, pos);
+        return true;
+      },
+      handlePaste: (view, event) => {
+        if (!view.editable) return false;
+        const files = Array.from(event.clipboardData?.files ?? []);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        void uploadAndInsert(view, files, { spaceId, pageId });
+        return true;
+      },
     },
   });
 

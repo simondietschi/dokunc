@@ -17,6 +17,7 @@ import {
   Minus,
   Table as TableIcon,
   Image as ImageIcon,
+  Paperclip,
   Info,
   CircleCheck,
   TriangleAlert,
@@ -38,6 +39,8 @@ type Def = {
 
 export type SlashOptions = {
   onImage: (editor: Editor, range: Range) => void;
+  /** Beliebige Datei als Anhang hochladen. */
+  onFile: (editor: Editor, range: Range) => void;
 };
 
 function defs(opts: SlashOptions): Def[] {
@@ -56,6 +59,7 @@ function defs(opts: SlashOptions): Def[] {
     { title: "Trennlinie", subtitle: "Horizontaler Strich", icon: Minus, keywords: "hr divider trennlinie linie", run: (e, r) => chain(e, r).setHorizontalRule().run() },
     { title: "Tabelle", subtitle: "3×3 mit Kopfzeile", icon: TableIcon, keywords: "table tabelle grid", run: (e, r) => chain(e, r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
     { title: "Bild", subtitle: "Datei hochladen", icon: ImageIcon, keywords: "image bild foto upload", run: (e, r) => opts.onImage(e, r) },
+    { title: "Datei", subtitle: "Anhang hochladen", icon: Paperclip, keywords: "datei file anhang attachment upload pdf dokument", run: (e, r) => opts.onFile(e, r) },
     { title: "Info-Callout", subtitle: "Hervorgehobener Hinweis", icon: Info, keywords: "callout info hinweis", run: (e, r) => chain(e, r).setCallout("info").run() },
     { title: "Erfolg-Callout", subtitle: "Positiver Hinweis", icon: CircleCheck, keywords: "callout success erfolg", run: (e, r) => chain(e, r).setCallout("success").run() },
     { title: "Warnung-Callout", subtitle: "Warnhinweis", icon: TriangleAlert, keywords: "callout warn warnung", run: (e, r) => chain(e, r).setCallout("warn").run() },

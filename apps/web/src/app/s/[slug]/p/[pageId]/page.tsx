@@ -9,6 +9,7 @@ import { getRawToken } from "@/lib/session";
 import { resolveCollabUrl } from "@/lib/collab-url";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
+import { PageAttachments } from "@/components/space/PageAttachments";
 
 export default async function PageView({
   params,
@@ -32,7 +33,7 @@ export default async function PageView({
     proto: requestHeaders.get("x-forwarded-proto"),
   });
 
-  const [backlinks, comments] = await Promise.all([
+  const [backlinks, comments, attachments] = await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -47,6 +48,20 @@ export default async function PageView({
           orderBy: { createdAt: "asc" },
           include: { author: { select: { id: true, name: true } } },
         },
+      },
+    }),
+    prisma.attachment.findMany({
+      where: { pageId: page.id },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      select: {
+        id: true,
+        name: true,
+        size: true,
+        mimeType: true,
+        storedName: true,
+        createdAt: true,
+        uploader: { select: { name: true } },
       },
     }),
   ]);
@@ -88,6 +103,18 @@ export default async function PageView({
             </ul>
           </section>
         )}
+
+        <PageAttachments
+          items={attachments.map((a) => ({
+            id: a.id,
+            name: a.name,
+            size: a.size,
+            mimeType: a.mimeType,
+            url: `/api/files/${a.storedName}`,
+            createdAt: a.createdAt,
+            uploader: a.uploader?.name ?? null,
+          }))}
+        />
 
         <CommentsPanel
           slug={slug}

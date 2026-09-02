@@ -55,6 +55,10 @@ function block(node: Node, depth = 0): string {
       )})`;
     case "mermaid":
       return `\`\`\`mermaid\n${String(node.attrs?.code ?? "")}\n\`\`\``;
+    case "attachment":
+      return `[${String(node.attrs?.name ?? "Datei")}](${String(
+        node.attrs?.src ?? "",
+      )})`;
     case "callout":
       return children(node)
         .map((n) => `> ${block(n, depth)}`)
