@@ -36,7 +36,8 @@ export default async function PageView({
     proto: requestHeaders.get("x-forwarded-proto"),
   });
 
-  const [backlinks, comments, ancestors, children, favorite] = await Promise.all([
+  const [backlinks, comments, ancestors, children, favorite, subscription] =
+    await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true, icon: true } } },
@@ -74,6 +75,10 @@ export default async function PageView({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },
       select: { userId: true },
     }),
+    prisma.pageSubscription.findUnique({
+      where: { userId_pageId: { userId: user.id, pageId: page.id } },
+      select: { includeChildren: true },
+    }),
   ]);
 
   return (
@@ -94,6 +99,9 @@ export default async function PageView({
         pdfEnabled={!!process.env.GOTENBERG_URL}
         ancestors={ancestors.map(({ id, title, icon }) => ({ id, title, icon }))}
         isFavorite={!!favorite}
+        subscription={
+          subscription ? (subscription.includeChildren ? "tree" : "page") : "off"
+        }
       />
       <VisitTracker slug={slug} pageId={page.id} />
 

@@ -67,6 +67,15 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 - **Favorite** (userId, pageId) und **PageVisit** (userId, pageId,
   visitedAt, ein Eintrag pro Person und Seite) — Sidebar-Kurzlisten und
   ⌘K-Palette.
+- **PageSubscription** (userId, pageId, includeChildren) — der Collab-Server
+  erzeugt beim Speichern geänderter Inhalte `PAGE_CHANGED`-Notifications
+  für Abonnenten der Seite und für Abonnenten von Vorfahren mit
+  includeChildren (rekursive CTE, nur Space-Mitglieder, nie die
+  schreibende Person, höchstens eine ungelesene pro Seite).
+- User: `digestEmail`, `digestSentAt` — tägliche Mail-Zusammenfassung.
+  Zeitplan läuft im Next-Prozess (`instrumentation.ts` -> `lib/digest`,
+  alle 10 Minuten, ab `DIGEST_HOUR`); Mehrfachversand bei mehreren
+  Instanzen verhindert ein bedingtes Update auf `digestSentAt`.
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
 
 Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
@@ -162,6 +171,15 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       per rekursiver CTE, Unterseitenliste, Favoriten + zuletzt besucht,
       Versionsvergleich (eigener Myers-Diff über den Markdown-Export:
       Zeilen, innerhalb geänderter Zeilen wortgenau)
+- [x] Abos + Digest (siehe Datenmodell) und Markdown-Import:
+      `lib/import-markdown` plant den Baum aus Pfaden (index/README/
+      gleichnamige Datei füllt die Ordnerseite, Front Matter/H1 als
+      Titel, Notion-ID-Suffix entfernt) und wandelt Markdown über
+      marked -> HTML -> `generateJSON` mit dem geteilten Schema; Bilder
+      werden wie Uploads abgelegt (Magic-Bytes), relative .md-Links
+      werden zu Wiki-Links. Route `/api/spaces/[id]/import` (ZIP via
+      fflate, Limits 50 MB / 1000 Dateien, Rate-Limit), UI unter
+      `/s/[slug]/import`.
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

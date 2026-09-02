@@ -23,7 +23,8 @@ export const Mermaid = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: "pre[data-mermaid]" }];
+    // div zusätzlich: beim Import hat die Codeblock-Regel für <pre> Vorrang.
+    return [{ tag: "pre[data-mermaid]" }, { tag: "div[data-mermaid]" }];
   },
 
   renderHTML({ node, HTMLAttributes }) {

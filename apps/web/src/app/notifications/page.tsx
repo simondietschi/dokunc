@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowLeft, AtSign, MessageSquare, Bell } from "lucide-react";
+import { ArrowLeft, AtSign, MessageSquare, Bell, FilePen } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { Avatar } from "@/components/ui/Avatar";
@@ -11,6 +11,7 @@ const TYPE_TEXT: Record<string, string> = {
   MENTION: "hat dich erwähnt",
   COMMENT: "hat kommentiert",
   COMMENT_REPLY: "hat in einem Thread geantwortet",
+  PAGE_CHANGED: "hat eine abonnierte Seite geändert",
 };
 
 export default async function NotificationsPage() {
@@ -64,7 +65,12 @@ export default async function NotificationsPage() {
 
       <ul className="mt-8 space-y-2">
         {notifications.map((n) => {
-          const Icon = n.type === "MENTION" ? AtSign : MessageSquare;
+          const Icon =
+            n.type === "MENTION"
+              ? AtSign
+              : n.type === "PAGE_CHANGED"
+                ? FilePen
+                : MessageSquare;
           const title = n.pageId
             ? (titleById.get(n.pageId) ?? "Seite")
             : "Seite";
@@ -107,7 +113,8 @@ export default async function NotificationsPage() {
           </div>
           <p className="mt-4 font-medium">Alles ruhig</p>
           <p className="mt-1 text-sm text-muted">
-            Erwähnungen und Kommentar-Antworten landen hier.
+            Erwähnungen, Kommentar-Antworten und Änderungen an abonnierten
+            Seiten landen hier.
           </p>
         </div>
       )}

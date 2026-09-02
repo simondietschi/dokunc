@@ -32,6 +32,8 @@ import { BlockDragHandle } from "@/components/editor/BlockDragHandle";
 import { PageHeader } from "@/components/editor/PageHeader";
 import { PageMoreMenu } from "@/components/editor/PageMoreMenu";
 import { FavoriteButton } from "@/components/editor/FavoriteButton";
+import { SubscribeButton } from "@/components/editor/SubscribeButton";
+import type { SubscriptionMode } from "../../actions";
 
 type Crumb = { id: string; title: string; icon: string | null };
 import { createSlashCommands } from "@/components/editor/SlashCommands";
@@ -93,6 +95,7 @@ export function CollaborativeEditor({
   pdfEnabled,
   ancestors,
   isFavorite,
+  subscription,
 }: {
   slug: string;
   spaceId: string;
@@ -108,6 +111,7 @@ export function CollaborativeEditor({
   pdfEnabled: boolean;
   ancestors: Crumb[];
   isFavorite: boolean;
+  subscription: SubscriptionMode;
 }) {
   const ydoc = useMemo(() => new Y.Doc(), [pageId]);
   const [status, setStatus] = useState<
@@ -294,6 +298,7 @@ export function CollaborativeEditor({
           </div>
           <div className="flex items-center gap-1">
             <FavoriteButton slug={slug} pageId={pageId} initial={isFavorite} />
+            <SubscribeButton slug={slug} pageId={pageId} initial={subscription} />
             <TableOfContents editor={editor} variant="popover" />
             <Link
               href={`/s/${slug}/p/${pageId}/history`}

@@ -2,11 +2,16 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { requireUser } from "@/lib/current-user";
 import { Button } from "@/components/ui/Button";
-import { ProfileForm, PasswordForm } from "./AccountForms";
+import { prisma } from "@dokunc/db";
+import { ProfileForm, PasswordForm, DigestForm } from "./AccountForms";
 import { logoutEverywhereAction } from "./actions";
 
 export default async function AccountPage() {
   const user = await requireUser();
+  const prefs = await prisma.user.findUnique({
+    where: { id: user.id },
+    select: { digestEmail: true },
+  });
 
   return (
     <div className="mx-auto max-w-xl px-6 py-12 animate-[rise_0.4s_ease]">
@@ -25,6 +30,10 @@ export default async function AccountPage() {
       <div className="mt-8 space-y-5">
         <ProfileForm name={user.name} />
         <PasswordForm />
+        <DigestForm
+          enabled={!!prefs?.digestEmail}
+          smtpConfigured={!!process.env.SMTP_HOST}
+        />
         <div className="rounded-xl border border-line bg-surface p-5 shadow-soft">
           <h2 className="text-sm font-semibold">Sitzungen</h2>
           <p className="mt-1 text-[13px] text-muted">

@@ -18,6 +18,7 @@ import {
   LayoutTemplate,
   Star,
   History,
+  FileUp,
 } from "lucide-react";
 import {
   buildTree,
@@ -250,6 +251,15 @@ export function Sidebar({
             icon={<LayoutTemplate className="h-3.5 w-3.5" />}
           >
             Vorlagen
+          </NavLink>
+        )}
+        {canManage && (
+          <NavLink
+            href={`/s/${slug}/import`}
+            active={pathname === `/s/${slug}/import`}
+            icon={<FileUp className="h-3.5 w-3.5" />}
+          >
+            Importieren
           </NavLink>
         )}
         {canManage && (

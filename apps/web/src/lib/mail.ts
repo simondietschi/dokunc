@@ -126,6 +126,58 @@ export async function sendInvitationEmail(opts: {
   });
 }
 
+export type DigestItem = {
+  actor: string;
+  what: string;
+  pageTitle: string;
+  pageId: string;
+  at: Date;
+};
+
+/** Tägliche Zusammenfassung ungelesener Benachrichtigungen. */
+export async function sendDigestEmail(opts: {
+  to: string;
+  name: string;
+  items: DigestItem[];
+}): Promise<boolean> {
+  const t = transport();
+  if (!t) return false;
+  const n = opts.items.length;
+  const subject = `${n} ${n === 1 ? "neue Benachrichtigung" : "neue Benachrichtigungen"} — dokunc`;
+  const lines = opts.items.map(
+    (i) => `• ${i.actor} ${i.what} — ${i.pageTitle}\n  ${appUrl()}/p/${i.pageId}`,
+  );
+  const text = `Hallo ${opts.name},\n\nseit deiner letzten Zusammenfassung ist Folgendes passiert:\n\n${lines.join("\n")}\n\nAlle Benachrichtigungen: ${appUrl()}/notifications\n\nDu erhältst diese Mail, weil in deinem Konto die tägliche Zusammenfassung aktiv ist.`;
+  const rows = opts.items
+    .map(
+      (i) => `<li style="margin:6px 0">
+        <strong>${escapeHtml(i.actor)}</strong> ${escapeHtml(i.what)} —
+        <a href="${appUrl()}/p/${encodeURIComponent(i.pageId)}" style="color:#5e60e8">${escapeHtml(i.pageTitle)}</a>
+        <span style="color:#999;font-size:12px"> · ${i.at.toLocaleString("de-CH", { dateStyle: "medium", timeStyle: "short" })}</span>
+      </li>`,
+    )
+    .join("");
+  const html = `
+    <div style="font-family:ui-sans-serif,system-ui,sans-serif;max-width:520px;margin:0 auto">
+      <h2 style="font-weight:600">Deine Zusammenfassung</h2>
+      <p style="color:#555;line-height:1.6">Hallo ${escapeHtml(opts.name)}, seit deiner letzten Zusammenfassung ist Folgendes passiert:</p>
+      <ul style="padding-left:18px;line-height:1.5">${rows}</ul>
+      <p><a href="${appUrl()}/notifications"
+         style="display:inline-block;background:#5e60e8;color:#fff;padding:10px 18px;border-radius:10px;text-decoration:none">Alle Benachrichtigungen</a></p>
+      <p style="color:#999;font-size:12px">Du erhältst diese Mail, weil in deinem Konto die tägliche Zusammenfassung aktiv ist. Abschaltbar unter Konto.</p>
+    </div>`;
+  await t.sendMail({
+    from:
+      process.env.MAIL_FROM_ADDRESS ??
+      `dokunc <no-reply@${new URL(appUrl()).hostname}>`,
+    to: opts.to,
+    subject,
+    text,
+    html,
+  });
+  return true;
+}
+
 function escapeHtml(s: string): string {
   return s.replace(
     /[&<>"']/g,

@@ -329,3 +329,38 @@ export async function recordVisitAction(form: FormData) {
     update: { visitedAt: new Date() },
   });
 }
+
+export type SubscriptionMode = "off" | "page" | "tree";
+
+/** Seite abonnieren: nur diese Seite, inkl. Unterseiten, oder abbestellen. */
+export async function setSubscriptionAction(
+  form: FormData,
+): Promise<{ mode: SubscriptionMode }> {
+  const { space, user } = await authorizeAction(form, "read");
+  const raw = str(form, "mode");
+  const mode: SubscriptionMode =
+    raw === "page" || raw === "tree" ? raw : "off";
+  const page = await prisma.page.findFirst({
+    where: { id: str(form, "pageId"), spaceId: space.id, deletedAt: null },
+    select: { id: true },
+  });
+  if (!page) return { mode: "off" };
+
+  const key = { userId_pageId: { userId: user.id, pageId: page.id } };
+  if (mode === "off") {
+    await prisma.pageSubscription.deleteMany({
+      where: { userId: user.id, pageId: page.id },
+    });
+  } else {
+    await prisma.pageSubscription.upsert({
+      where: key,
+      create: {
+        userId: user.id,
+        pageId: page.id,
+        includeChildren: mode === "tree",
+      },
+      update: { includeChildren: mode === "tree" },
+    });
+  }
+  return { mode };
+}

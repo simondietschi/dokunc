@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 export const UPLOAD_DIR =
-  process.env.UPLOAD_DIR ?? path.join(process.cwd(), "uploads");
+  process.env.UPLOAD_DIR || path.join(process.cwd(), "uploads");
 
 export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
 

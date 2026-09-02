@@ -189,6 +189,13 @@ const server = new Server({
     ]);
 
     if (before) {
+      const changed =
+        JSON.stringify(before.content ?? null) !== JSON.stringify(json);
+      if (changed) {
+        await notifySubscribers(pageId, before.spaceId, editorId).catch((e) =>
+          log.warn({ err: String(e) }, "subscriber notify fehlgeschlagen"),
+        );
+      }
       await syncWikiLinks(pageId, before.spaceId, json).catch((e) =>
         log.warn({ err: String(e) }, "wikiLink sync fehlgeschlagen"),
       );
@@ -319,6 +326,44 @@ async function notifyNewMentions(
     if (!exists) {
       await prisma.notification.create({
         data: { userId, actorId, type: "MENTION", pageId },
+      });
+    }
+  }
+}
+
+/**
+ * PAGE_CHANGED für Abonnenten der Seite und für Abonnenten von Vorfahren
+ * mit "inkl. Unterseiten". Nur Space-Mitglieder, nie die schreibende
+ * Person; pro Seite höchstens eine ungelesene Benachrichtigung.
+ */
+async function notifySubscribers(
+  pageId: string,
+  spaceId: string,
+  actorId: string | undefined,
+): Promise<void> {
+  const rows = await prisma.$queryRaw<{ userId: string }[]>`
+    WITH RECURSIVE up AS (
+      SELECT id, "parentId", 0 AS depth FROM "Page" WHERE id = ${pageId}
+      UNION ALL
+      SELECT p.id, p."parentId", up.depth + 1
+      FROM "Page" p JOIN up ON p.id = up."parentId"
+      WHERE up.depth < 32
+    )
+    SELECT DISTINCT s."userId"
+    FROM "PageSubscription" s
+    JOIN up ON up.id = s."pageId"
+    JOIN "SpaceMember" m ON m."userId" = s."userId" AND m."spaceId" = ${spaceId}
+    WHERE up.depth = 0 OR s."includeChildren"
+  `;
+  for (const { userId } of rows) {
+    if (userId === actorId) continue;
+    const exists = await prisma.notification.findFirst({
+      where: { userId, pageId, type: "PAGE_CHANGED", readAt: null },
+      select: { id: true },
+    });
+    if (!exists) {
+      await prisma.notification.create({
+        data: { userId, actorId, type: "PAGE_CHANGED", pageId },
       });
     }
   }

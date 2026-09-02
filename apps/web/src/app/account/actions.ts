@@ -71,3 +71,21 @@ export async function logoutEverywhereAction() {
   await destroySession();
   redirect("/login");
 }
+
+export async function updateDigestAction(
+  _prev: AccountState,
+  form: FormData,
+): Promise<AccountState> {
+  const user = await requireUser();
+  const digestEmail = form.get("digest") === "on";
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { digestEmail },
+  });
+  revalidatePath("/account");
+  return {
+    success: digestEmail
+      ? "Tägliche Zusammenfassung aktiviert."
+      : "Tägliche Zusammenfassung deaktiviert.",
+  };
+}

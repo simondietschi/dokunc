@@ -25,6 +25,12 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - **Favoriten** (Stern) und **Zuletzt besucht** in Sidebar und ⌘K-Palette
 - **Versionsvergleich**: Diff einer Version gegen die vorherige oder den
   aktuellen Stand, wortgenau hervorgehoben
+- **Seiten abonnieren** (nur Seite oder inkl. Unterseiten): Benachrichtigung
+  bei Änderungen durch andere; optional **tägliche Zusammenfassung per
+  Mail** (Konto-Einstellung, `DIGEST_HOUR`)
+- **Markdown-Import**: ZIP (Ordnerstruktur, Obsidian, Notion-Export) oder
+  einzelne `.md`-Dateien; Ordner werden zu Unterseiten, Bilder kommen mit,
+  relative Links werden zu Wiki-Links
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
 - **Kommentare** (textverankerte Threads) + **@-Mentions** +
