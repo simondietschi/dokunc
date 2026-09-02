@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { MoreHorizontal, Trash2 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { deletePageAction } from "@/app/s/[slug]/actions";
+
+const MenuCloseContext = createContext<() => void>(() => {});
+
+/** Schliesst das umgebende PageActions-Menue (z. B. bevor ein Dialog aufgeht). */
+export function useCloseMenu() {
+  return useContext(MenuCloseContext);
+}
 
 /**
  * "…"-Menü in der Seitenkopfzeile. Sammelt seltener genutzte Aktionen
@@ -64,7 +71,9 @@ export function PageActions({
           role="menu"
           className="absolute right-0 top-full z-30 mt-1 w-56 overflow-hidden rounded-xl border border-line bg-elevated p-1 shadow-pop animate-[fade-in_0.15s_ease]"
         >
-          {children}
+          <MenuCloseContext.Provider value={() => setOpen(false)}>
+            {children}
+          </MenuCloseContext.Provider>
           {canManage && (
             <form action={deletePageAction}>
               <input type="hidden" name="slug" value={slug} />

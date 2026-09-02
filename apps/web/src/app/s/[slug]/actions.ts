@@ -20,11 +20,18 @@ export async function createPageAction(form: FormData) {
       })
     : null;
 
+  // Neue Seiten ans Ende der Geschwister (position = max + 1).
+  const last = await prisma.page.aggregate({
+    where: { spaceId: space.id, parentId: parent?.id ?? null, deletedAt: null },
+    _max: { position: true },
+  });
+
   const page = await prisma.page.create({
     data: {
       spaceId: space.id,
       parentId: parent?.id ?? null,
       title: "Untitled",
+      position: (last._max.position ?? -1) + 1,
     },
   });
   revalidatePath(`/s/${space.slug}`, "layout");
