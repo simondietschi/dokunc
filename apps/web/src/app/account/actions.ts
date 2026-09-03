@@ -62,6 +62,36 @@ export async function changePasswordAction(
   return { success: "Passwort geändert. Andere Sitzungen wurden beendet." };
 }
 
+const prefsSchema = z.object({
+  emailNotifications: z.enum(["INSTANT", "DAILY", "OFF"]),
+});
+
+const PREFS_LABEL: Record<"INSTANT" | "DAILY" | "OFF", string> = {
+  INSTANT: "Sofort",
+  DAILY: "Täglich als Zusammenfassung",
+  OFF: "Aus",
+};
+
+/** Mail-Zustellung von Benachrichtigungen: sofort, täglicher Digest, aus. */
+export async function updateNotificationPrefsAction(
+  _prev: AccountState,
+  form: FormData,
+): Promise<AccountState> {
+  const user = await requireUser();
+  const parsed = prefsSchema.safeParse({
+    emailNotifications: form.get("emailNotifications"),
+  });
+  if (!parsed.success) return { error: "Ungültige Auswahl." };
+  await prisma.user.update({
+    where: { id: user.id },
+    data: { emailNotifications: parsed.data.emailNotifications },
+  });
+  revalidatePath("/account");
+  return {
+    success: `Mail-Benachrichtigungen: ${PREFS_LABEL[parsed.data.emailNotifications]}.`,
+  };
+}
+
 export async function logoutEverywhereAction() {
   const user = await requireUser();
   await prisma.user.update({
