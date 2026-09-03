@@ -165,7 +165,7 @@ export function TemplatePicker({
             </ul>
           </div>
 
-          <div className="flex min-h-0 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-col">
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               {current ? (
                 <>
