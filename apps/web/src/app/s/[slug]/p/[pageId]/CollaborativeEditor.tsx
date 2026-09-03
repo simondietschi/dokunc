@@ -48,6 +48,7 @@ const CARET_COLORS = [
 ];
 
 type Peer = { name: string; color: string };
+type Conn = { ydoc: Y.Doc; provider: HocuspocusProvider };
 
 export function CollaborativeEditor({
   slug,
@@ -83,7 +84,6 @@ export function CollaborativeEditor({
   /** Für "Duplizieren": Option "Unterseiten mitkopieren" nur bei Bedarf. */
   hasChildren?: boolean;
 }) {
-  const ydoc = useMemo(() => new Y.Doc(), [pageId]);
   const [moveOpen, setMoveOpen] = useState(false);
   const [status, setStatus] = useState<
     "connecting" | "connected" | "offline"
@@ -102,23 +102,37 @@ export function CollaborativeEditor({
     void renamePageAction(fd);
   }
 
-  const provider = useMemo(
-    () =>
-      new HocuspocusProvider({
-        url: collabUrl,
-        name: pageId,
-        document: ydoc,
-        token,
-        // "Live" erst nach erfolgreicher Server-Authentifizierung —
-        // Socket-Open allein heißt noch nicht, dass wir schreiben dürfen.
-        onAuthenticated: () => setStatus("connected"),
-        onAuthenticationFailed: () => setStatus("offline"),
-        onStatus: ({ status }) => {
-          if (status !== "connected") setStatus("connecting");
-        },
-      }),
-    [collabUrl, pageId, token, ydoc],
-  );
+  // Y.Doc und Provider erst im Effekt erzeugen, nicht im Render: ein
+  // memoisierter Provider wuerde beim StrictMode-Doppelmount im Cleanup
+  // zerstoert und danach tot weiterverwendet (keine Updates mehr). Der
+  // Effekt legt bei jedem (Re-)Mount eine frische Verbindung an.
+  const [conn, setConn] = useState<Conn | null>(null);
+  useEffect(() => {
+    const ydoc = new Y.Doc();
+    setStatus("connecting");
+    // Die Status-Callbacks gehoeren in den Konstruktor: der Provider
+    // verbindet sofort, ein spaeter registrierter Listener koennte das
+    // "authenticated"-Ereignis verpassen. "Live" erst nach erfolgreicher
+    // Server-Authentifizierung: Socket-Open allein heisst noch nicht,
+    // dass wir schreiben duerfen.
+    const provider = new HocuspocusProvider({
+      url: collabUrl,
+      name: pageId,
+      document: ydoc,
+      token,
+      onAuthenticated: () => setStatus("connected"),
+      onAuthenticationFailed: () => setStatus("offline"),
+      onStatus: ({ status }) => {
+        if (status !== "connected") setStatus("connecting");
+      },
+    });
+    setConn({ ydoc, provider });
+    return () => {
+      setConn(null);
+      provider.destroy();
+      ydoc.destroy();
+    };
+  }, [collabUrl, pageId, token]);
 
   const color = useMemo(
     () => CARET_COLORS[Math.floor(Math.random() * CARET_COLORS.length)],
@@ -167,8 +181,11 @@ export function CollaborativeEditor({
     [spaceId],
   );
 
-  const editor = useEditor({
-    editable,
+  const editor = useEditor(
+    {
+    // Ohne Verbindung (erster Tick nach dem Mount) ist der Editor nur
+    // Platzhalter: nicht editierbar, ohne Collaboration-Extensions.
+    editable: editable && !!conn,
     immediatelyRender: false,
     extensions: [
       ...richExtensions({
@@ -185,11 +202,15 @@ export function CollaborativeEditor({
           'Schreib etwas — "/" für Befehle, "[[" für Links, "@" für Mentions…',
         includeChildren: true,
       }),
-      Collaboration.configure({ document: ydoc, field: "default" }),
-      CollaborationCaret.configure({
-        provider,
-        user: { name: userName, color },
-      }),
+      ...(conn
+        ? [
+            Collaboration.configure({ document: conn.ydoc, field: "default" }),
+            CollaborationCaret.configure({
+              provider: conn.provider,
+              user: { name: userName, color },
+            }),
+          ]
+        : []),
       slash,
       wikiLinkSuggest,
       mentionSuggest,
@@ -219,7 +240,9 @@ export function CollaborativeEditor({
         return true;
       },
     },
-  });
+    },
+    [conn],
+  );
 
   // CommentsPanel bittet darum, eine Kommentar-Markierung zu entfernen
   // (Thread verworfen oder aufgelöst).
@@ -246,7 +269,7 @@ export function CollaborativeEditor({
   });
 
   useEffect(() => {
-    const aw = provider.awareness;
+    const aw = conn?.provider.awareness;
     if (!aw) return;
     const sync = () => {
       const seen = new Map<string, Peer>();
@@ -259,15 +282,7 @@ export function CollaborativeEditor({
     aw.on("change", sync);
     sync();
     return () => aw.off("change", sync);
-  }, [provider]);
-
-  useEffect(
-    () => () => {
-      provider.destroy();
-      ydoc.destroy();
-    },
-    [provider, ydoc],
-  );
+  }, [conn]);
 
   const dot =
     status === "connected"
