@@ -14,6 +14,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Star,
   SunMedium,
   TextSearch,
 } from "lucide-react";
@@ -25,6 +26,7 @@ import {
   splitHighlights,
 } from "@/lib/palette";
 import type { SearchResponse } from "@/app/api/search/route";
+import type { FavoritesResponse } from "@/app/api/favorites/route";
 import { createPageAction } from "@/app/s/[slug]/actions";
 
 const OPEN_EVENT = "dokunc:cmdk";
@@ -36,7 +38,7 @@ export function openPalette() {
 
 type Item = {
   key: string;
-  group: "Seiten" | "Spaces" | "Aktionen";
+  group: "Favoriten" | "Seiten" | "Spaces" | "Aktionen";
   icon: React.ReactNode;
   label: string;
   hint?: string;
@@ -52,6 +54,9 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [data, setData] = useState<SearchResponse>(EMPTY);
+  const [favorites, setFavorites] = useState<FavoritesResponse["favorites"]>(
+    [],
+  );
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
@@ -93,6 +98,23 @@ export function CommandPalette() {
     return () => {
       document.body.style.overflow = "";
     };
+  }, [open]);
+
+  // Favoriten einmal pro Öffnen laden — Sprungziele bei leerer Eingabe.
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    fetch("/api/favorites", { signal: controller.signal })
+      .then(async (res) => {
+        if (res.ok) {
+          const body = (await res.json()) as FavoritesResponse;
+          setFavorites(body.favorites);
+        }
+      })
+      .catch(() => {
+        // Abgebrochen oder offline — ohne Favoriten weiterarbeiten.
+      });
+    return () => controller.abort();
   }, [open]);
 
   // Debounced Suche (auch leer: liefert "Zuletzt aktualisiert").
@@ -143,7 +165,22 @@ export function CommandPalette() {
   // Enter bei schnellem Tippen veraltete Treffer.
   const stale = data.q !== query.trim().slice(0, 100);
   const items: Item[] = [];
+  const favoriteIds = new Set<string>();
+  if (!query.trim()) {
+    for (const f of favorites) {
+      favoriteIds.add(f.id);
+      items.push({
+        key: `fav:${f.id}`,
+        group: "Favoriten",
+        icon: <Star className="h-4 w-4" />,
+        label: f.title || "Untitled",
+        hint: f.spaceName,
+        run: () => go(`/s/${f.slug}/p/${f.id}`),
+      });
+    }
+  }
   for (const p of data.pages) {
+    if (favoriteIds.has(p.id)) continue;
     if (stale && !matchesQuery(p.title || "Untitled", query)) continue;
     items.push({
       key: `page:${p.id}`,

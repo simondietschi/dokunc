@@ -157,6 +157,12 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       in CSP-Sandbox, Rest als Download mit nosniff, privater Cache);
       Editor-Block "attachment" (Slash-Befehl, Drag-and-drop, Einfügen),
       Anhangsliste unter der Seite, Altbestand wird nachgetragen
+- [x] Favoriten & Zuletzt besucht: persoenliche Favoriten (Favorite,
+      Stern in der Kopfzeile, einklappbarer Sidebar-Abschnitt, Palette),
+      Besuche via `after()` nach dem Rendern (PageVisit, pro Person auf
+      200 Eintraege begrenzt), Space-Startseite als Dashboard statt
+      Redirect (Kennzahlen, Zuletzt besucht, Favoriten, Zuletzt
+      geaendert), /spaces mit Einstiegen ueber alle Spaces
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

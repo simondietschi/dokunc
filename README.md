@@ -28,6 +28,10 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   und nur für dessen Mitglieder abrufbar (Bilder inline, alles andere
   als Download; Limit per `MAX_UPLOAD_MB`, Default 50 MB)
 - Postgres-Volltextsuche, Versionsverlauf, Papierkorb
+- **Favoriten** (Stern in der Seitenkopfzeile, Abschnitt in der Sidebar,
+  Sprungziele in der Palette), **Zuletzt besucht** und ein
+  **Space-Dashboard** (Kennzahlen, zuletzt besuchte, favorisierte und
+  zuletzt geaenderte Seiten)
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
 

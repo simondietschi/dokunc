@@ -19,6 +19,7 @@ import {
   MovePageDialog,
   MovePageMenuItem,
 } from "@/components/space/MovePageDialog";
+import { FavoriteButton } from "@/components/space/FavoriteButton";
 import { CalloutView } from "@/components/editor/CalloutView";
 import { MermaidView } from "@/components/editor/MermaidView";
 import { WikiLinkView } from "@/components/editor/WikiLinkView";
@@ -56,6 +57,7 @@ export function CollaborativeEditor({
   collabUrl,
   editable,
   canManage,
+  isFavorite,
   userName,
   pdfEnabled,
   breadcrumbs,
@@ -68,6 +70,7 @@ export function CollaborativeEditor({
   collabUrl: string;
   editable: boolean;
   canManage: boolean;
+  isFavorite: boolean;
   userName: string;
   pdfEnabled: boolean;
   /** Space-Name und Vorfahren (Wurzel zuerst) fuer die Brotkrumen. */
@@ -292,6 +295,11 @@ export function CollaborativeEditor({
               <History className="h-4 w-4" />
               Verlauf
             </Link>
+            <FavoriteButton
+              slug={slug}
+              pageId={pageId}
+              isFavorite={isFavorite}
+            />
             <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
             <PageActions slug={slug} pageId={pageId} canManage={canManage}>
               {canManage && (

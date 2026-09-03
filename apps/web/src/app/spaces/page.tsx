@@ -11,6 +11,7 @@ import { logoutAction } from "../(auth)/actions";
 import { createSpaceAction } from "./actions";
 import { Onboarding, WaitingForInvite } from "./Onboarding";
 import { PaletteButton } from "@/components/CommandPalette";
+import { RecentAndFavorites } from "@/components/RecentAndFavorites";
 
 export default async function SpacesPage() {
   const user = await requireUser();
@@ -147,6 +148,8 @@ export default async function SpacesPage() {
             </div>
           </form>
         </div>
+
+        <RecentAndFavorites userId={user.id} />
       </main>
       )}
     </div>

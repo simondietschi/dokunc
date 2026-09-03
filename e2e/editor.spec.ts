@@ -65,6 +65,10 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
       await page.click("text=Space erstellen");
     }
     await page.waitForURL("**/s/**");
+    // Die Space-Startseite ist ein Dashboard — zur ersten Seite in der
+    // Sidebar navigieren.
+    await page.locator('aside a[href*="/p/"]').first().click();
+    await page.waitForURL("**/p/**");
   });
 
   await test.step("Editor rendert und verbindet sich (Live)", async () => {
