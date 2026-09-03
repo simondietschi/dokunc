@@ -6,7 +6,11 @@ import { Prisma, prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str, strOrNull } from "@/lib/form";
 import { getBuiltinTemplate } from "@/lib/builtin-templates";
-import { stripCommentMarks, planSubtreeCopy } from "@/lib/page-copy";
+import {
+  stripCommentMarks,
+  planSubtreeCopy,
+  placeCopyAfter,
+} from "@/lib/page-copy";
 import { extractText } from "@/lib/page-text";
 
 /**
@@ -191,6 +195,9 @@ export async function duplicatePageAction(form: FormData) {
         select: { id: true, parentId: true, title: true, position: true },
       });
 
+  // Position der Kopie ist erst in der Transaktion bekannt (Geschwister
+  // werden dort kompakt neu nummeriert); der Plan selbst hängt nur von
+  // der Baumstruktur ab.
   const steps = planSubtreeCopy(rows, original.id, {
     withChildren,
     rootPosition: original.position + 1,
@@ -203,43 +210,55 @@ export async function duplicatePageAction(form: FormData) {
   });
   const contentById = new Map(contents.map((c) => [c.id, c.content]));
 
-  const rootId = await prisma.$transaction(async (tx) => {
-    // Geschwister hinter dem Original um eins nach hinten schieben,
-    // damit die Kopie direkt dahinter landet.
-    await tx.page.updateMany({
-      where: {
-        spaceId: space.id,
-        parentId: original.parentId,
-        isTemplate: original.isTemplate,
-        deletedAt: null,
-        position: { gt: original.position },
-      },
-      data: { position: { increment: 1 } },
-    });
-
-    const newIds = new Map<string, string>();
-    for (const step of steps) {
-      const content = stripCommentMarks(contentById.get(step.sourceId));
-      const parentId = step.parentSourceId
-        ? (newIds.get(step.parentSourceId) ?? null)
-        : original.parentId;
-      const created = await tx.page.create({
-        data: {
+  const rootId = await prisma.$transaction(
+    async (tx) => {
+      // Geschwister in Anzeige-Reihenfolge kompakt nummerieren und die
+      // Kopie direkt hinter dem Original einreihen — robust auch bei
+      // gleichen Positionen (Altbestand) und Lücken.
+      const siblings = await tx.page.findMany({
+        where: {
           spaceId: space.id,
-          parentId,
-          title: step.title,
-          content: jsonInput(content),
-          textContent: extractText(content),
-          position: step.position,
+          parentId: original.parentId,
           isTemplate: original.isTemplate,
-          lastEditedById: user.id,
+          deletedAt: null,
         },
-        select: { id: true },
+        select: { id: true, title: true, position: true },
       });
-      newIds.set(step.sourceId, created.id);
-    }
-    return newIds.get(original.id)!;
-  });
+      const { copyPosition, updates } = placeCopyAfter(siblings, original.id);
+      for (const u of updates) {
+        await tx.page.updateMany({
+          where: { id: u.id, spaceId: space.id },
+          data: { position: u.position },
+        });
+      }
+
+      const newIds = new Map<string, string>();
+      for (const step of steps) {
+        const isRoot = step.parentSourceId === null;
+        const content = stripCommentMarks(contentById.get(step.sourceId));
+        const parentId = step.parentSourceId
+          ? (newIds.get(step.parentSourceId) ?? null)
+          : original.parentId;
+        const created = await tx.page.create({
+          data: {
+            spaceId: space.id,
+            parentId,
+            title: step.title,
+            content: jsonInput(content),
+            textContent: extractText(content),
+            position: isRoot ? copyPosition : step.position,
+            isTemplate: original.isTemplate,
+            lastEditedById: user.id,
+          },
+          select: { id: true },
+        });
+        newIds.set(step.sourceId, created.id);
+      }
+      return newIds.get(original.id)!;
+    },
+    // Grosse Unterbäume: mehr Zeit als die 5 s Standard-Timeout.
+    { timeout: 30_000 },
+  );
 
   revalidatePath(`/s/${space.slug}`, "layout");
   redirect(`/s/${space.slug}/p/${rootId}`);
