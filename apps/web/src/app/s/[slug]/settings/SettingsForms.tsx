@@ -109,7 +109,7 @@ export function GeneralForm({
                 key={emoji}
                 type="button"
                 onClick={() => setIconValue(emoji)}
-                aria-label={`Icon ${emoji} waehlen`}
+                aria-label={`Icon ${emoji} wählen`}
                 aria-pressed={iconValue === emoji}
                 className={cn(
                   "grid h-9 w-9 place-items-center rounded-lg border text-lg transition-colors",

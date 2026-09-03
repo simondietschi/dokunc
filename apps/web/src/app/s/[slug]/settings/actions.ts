@@ -45,9 +45,9 @@ export async function deleteSpaceAction(
   form: FormData,
 ): Promise<SettingsState> {
   const { space, role, user } = await authorizeAction(form, "manageSpace");
-  if (role !== "OWNER") return { error: "Nur Owner koennen den Space loeschen." };
+  if (role !== "OWNER") return { error: "Nur Owner können den Space löschen." };
   if (str(form, "confirm") !== space.name) {
-    return { error: "Der eingegebene Name stimmt nicht mit dem Space-Namen ueberein." };
+    return { error: "Der eingegebene Name stimmt nicht mit dem Space-Namen überein." };
   }
 
   const attachments = await prisma.attachment.findMany({
@@ -55,7 +55,7 @@ export async function deleteSpaceAction(
     select: { storedName: true },
   });
   await prisma.space.delete({ where: { id: space.id } });
-  log.info({ spaceId: space.id, userId: user.id }, "Space geloescht");
+  log.info({ spaceId: space.id, userId: user.id }, "Space gelöscht");
 
   const base = path.resolve(UPLOAD_DIR);
   await Promise.all(
@@ -84,7 +84,7 @@ export async function leaveSpaceAction(
     if (owners <= 1) {
       return {
         error:
-          "Du bist der letzte Owner. Ernenne zuerst eine andere Person zum Owner oder loesche den Space.",
+          "Du bist der letzte Owner. Ernenne zuerst eine andere Person zum Owner oder lösche den Space.",
       };
     }
   }

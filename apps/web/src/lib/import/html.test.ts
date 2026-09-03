@@ -7,7 +7,7 @@ import {
   parseConfluenceIndex,
 } from "./html";
 import { findNodes } from "./doc";
-import { extractText } from "./text";
+import { decodeEntities, extractText } from "./text";
 
 const CONFLUENCE_PAGE = `<!DOCTYPE html>
 <html><head><title>DEV : Deployment - Confluence</title><style>body{}</style></head>
@@ -43,6 +43,7 @@ describe("Confluence-HTML", () => {
   it("Titel ohne Space-Praefix und Suffix", () => {
     expect(cleanConfluenceTitle("DEV : Deployment - Confluence")).toBe("Deployment");
     expect(cleanConfluenceTitle("Seite")).toBe("Seite");
+    expect(cleanConfluenceTitle("DEV : Q&A - Teil 2", false)).toBe("Q&A - Teil 2");
     expect(htmlTitle(CONFLUENCE_PAGE, "confluence")).toBe("Deployment");
     expect(htmlTitle("<title>DEV : Nur Title</title>", "confluence")).toBe("Nur Title");
   });
@@ -175,6 +176,13 @@ describe("Notion-HTML", () => {
       .flatMap((p) => p.content ?? [])
       .find((n) => n.marks?.some((m) => m.type === "link"));
     expect(link?.marks?.[0].attrs?.href).toContain("Q1%20ffffffff");
+  });
+});
+
+describe("decodeEntities()", () => {
+  it("loest Entities auf und laesst ungueltige Codepoints stehen", () => {
+    expect(decodeEntities("A &amp; B &#8211; &#x41; &nbsp;C")).toBe("A & B – A  C");
+    expect(decodeEntities("&#99999999; &#0; &#x110000;")).toBe("&#99999999; &#0; &#x110000;");
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { zipSync, strToU8 } from "fflate";
-import { extractZip, ZIP_MAX_ENTRIES } from "./zip";
+import { extractZip, ZIP_MAX_ENTRIES, ZIP_MAX_FILE } from "./zip";
 import { ImportError } from "./types";
 
 describe("extractZip()", () => {
@@ -38,6 +38,19 @@ describe("extractZip()", () => {
     const entries: Record<string, Uint8Array> = {};
     for (let i = 0; i <= ZIP_MAX_ENTRIES; i++) entries[`f${i}.md`] = strToU8("x");
     expect(() => extractZip(zipSync(entries))).toThrow(ImportError);
+  });
+
+  it("ueberspringt einzelne Eintraege ueber dem Groessenlimit", () => {
+    const zip = zipSync(
+      {
+        "klein.md": strToU8("# ok"),
+        "riesig.md": new Uint8Array(ZIP_MAX_FILE + 1),
+      },
+      { level: 9 },
+    );
+    const { files, tooLarge } = extractZip(zip);
+    expect(files.map((f) => f.path)).toEqual(["klein.md"]);
+    expect(tooLarge).toEqual(["riesig.md"]);
   });
 
   it("wirft bei kaputten Daten", () => {

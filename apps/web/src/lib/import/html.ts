@@ -202,8 +202,11 @@ function buildRules(format: ImportFormat): { rules: Rule[]; dataUrls: string[] }
       callouts.add(tag);
       return { action: "rewrite", attrs: { "data-callout": type, class: null } };
     },
+    // Notion: figure.callout (HTML-Export) bzw. <aside> (Markdown-Export).
     (tag) => {
-      if (tag.name !== "figure" || !hasClass(tag, "callout")) return null;
+      const isCallout =
+        (tag.name === "figure" && hasClass(tag, "callout")) || tag.name === "aside";
+      if (!isCallout) return null;
       callouts.add(tag);
       return {
         action: "rewrite",
@@ -313,10 +316,14 @@ function region(tokens: Token[], name: string, pred?: (t: OpenToken) => boolean)
   return findRegion(tokens, (t) => t.name === name && (!pred || pred(t)));
 }
 
-/** Confluence: "Space : Seite" bzw. "Seite - Confluence" bereinigen. */
-export function cleanConfluenceTitle(raw: string): string {
+/**
+ * Confluence: "Space : Seite" bzw. "Seite - Confluence" bereinigen. Der
+ * Suffix nach " - " kommt nur im <title> vor; #title-text traegt den
+ * exakten Seitentitel (der selbst " - " enthalten darf).
+ */
+export function cleanConfluenceTitle(raw: string, stripSuffix = true): string {
   let t = raw.trim();
-  t = t.replace(/\s+-\s+[^-]*$/, "");
+  if (stripSuffix) t = t.replace(/\s+-\s+[^-]*$/, "");
   t = t.replace(/^[^:]*\s:\s+/, "");
   return t.trim();
 }
@@ -324,7 +331,7 @@ export function cleanConfluenceTitle(raw: string): string {
 function extractTitle(tokens: Token[], format: ImportFormat): string | null {
   if (format === "confluence") {
     const span = textOf(region(tokens, "span", (t) => t.attrs.get("id") === "title-text"));
-    if (span) return cleanConfluenceTitle(span);
+    if (span) return cleanConfluenceTitle(span, false);
     const title = textOf(region(tokens, "title"));
     return title ? cleanConfluenceTitle(title) : null;
   }

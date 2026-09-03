@@ -64,7 +64,7 @@ async function rewriteInline(nodes: JsonNode[], ctx: LinkContext): Promise<JsonN
       continue;
     }
     if (resolved?.kind === "file") {
-      ctx.warn(`Anhang "${shortHref(href)}" wurde nicht importiert (nur Bilder werden uebernommen).`);
+      ctx.warn(`Anhang "${shortHref(href)}" wurde nicht importiert (nur Bilder werden übernommen).`);
     } else {
       ctx.warn(`Link "${shortHref(href)}" konnte keiner importierten Seite zugeordnet werden.`);
     }
