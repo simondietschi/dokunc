@@ -34,7 +34,11 @@ export default async function PageView({
     proto: requestHeaders.get("x-forwarded-proto"),
   });
 
-  const [backlinks, comments, ancestors, attachments] = await Promise.all([
+  // Brotkrumen parallel starten, aber getrennt von Promise.all erwarten:
+  // mit vier heterogenen Prisma-Promises verliert TypeScript die
+  // Tupel-Inferenz (implizites any in den Ergebnissen).
+  const ancestorsPromise = loadAncestors(space.id, page.parentId);
+  const [backlinks, comments, attachments] = await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -51,7 +55,6 @@ export default async function PageView({
         },
       },
     }),
-    loadAncestors(space.id, page.parentId),
     prisma.attachment.findMany({
       where: { pageId: page.id },
       orderBy: { createdAt: "desc" },
@@ -67,6 +70,7 @@ export default async function PageView({
       },
     }),
   ]);
+  const ancestors = await ancestorsPromise;
 
   return (
     <div>
