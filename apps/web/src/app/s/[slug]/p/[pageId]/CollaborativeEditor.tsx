@@ -307,21 +307,25 @@ export function CollaborativeEditor({
               <History className="h-4 w-4" />
               Verlauf
             </Link>
-            <FavoriteButton
-              slug={slug}
-              pageId={pageId}
-              isFavorite={isFavorite}
-            />
+            {!isTemplate && (
+              <FavoriteButton
+                slug={slug}
+                pageId={pageId}
+                isFavorite={isFavorite}
+              />
+            )}
             <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
             <PageActions slug={slug} pageId={pageId} canManage={canManage}>
               {canManage && (
-                <MovePageMenuItem onOpen={() => setMoveOpen(true)} />
-                <PageMenuTemplates
-                  slug={slug}
-                  pageId={pageId}
-                  isTemplate={isTemplate}
-                  hasChildren={hasChildren}
-                />
+                <>
+                  <MovePageMenuItem onOpen={() => setMoveOpen(true)} />
+                  <PageMenuTemplates
+                    slug={slug}
+                    pageId={pageId}
+                    isTemplate={isTemplate}
+                    hasChildren={hasChildren}
+                  />
+                </>
               )}
             </PageActions>
           </div>
