@@ -179,6 +179,19 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       Markdown-Basis (lib/diff.ts), Vergleich einer Version gegen den
       aktuellen Stand oder die vorherige Version, gerenderte Vorschau
       ueber das geteilte Schema, Wiederherstellen aus der Vergleichsseite
+- [x] Space-Einstellungen (Name, Beschreibung, Emoji-Icon; Space verlassen
+      ausser als letzter Owner; Löschen nur durch Owner mit Namens-
+      Bestätigung inkl. Aufräumen der Upload-Dateien) und Import
+      (Markdown-Baum, Confluence-HTML-Export, Notion-Export) als reine,
+      getestete Pipeline in `apps/web/src/lib/import`: Zip entpacken mit
+      Limits und Traversal-Ablehnung -> Format erkennen -> Seitenbaum aus
+      Pfaden bzw. Confluence-Index/Breadcrumbs -> Markdown (marked, GFM)
+      bzw. HTML (eigener Tag-Rewriter für Export-Makros) über
+      `generateJSON` durch das geteilte Editor-Schema -> JSON-Nachbearbeitung
+      (Mermaid, Admonitions) -> zwei Durchläufe in der DB: erst alle Seiten
+      anlegen (IDs), dann Inhalte mit Wiki-Links/Backlinks und Bildern als
+      Attachment speichern; Route Handler mit Origin-Check, Rate-Limit,
+      `IMPORT_MAX_MB` und managePages-Prüfung
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

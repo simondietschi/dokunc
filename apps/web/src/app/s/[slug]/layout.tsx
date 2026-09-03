@@ -54,6 +54,7 @@ export default async function SpaceLayout({
       <Sidebar
         slug={slug}
         spaceName={space.name}
+        spaceIcon={space.icon}
         role={role}
         userName={user.name}
         tree={buildTree(pages)}

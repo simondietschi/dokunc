@@ -108,13 +108,19 @@ export default async function SpacesPage() {
               className="group relative animate-[rise_0.5s_ease_both] overflow-hidden rounded-xl border border-line bg-surface p-5 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-pop"
             >
               <div className="flex items-start justify-between">
-                <span
-                  className={`grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br ${gradientFor(
-                    s.slug,
-                  )} text-lg font-bold text-white shadow-soft`}
-                >
-                  {s.name[0]?.toUpperCase()}
-                </span>
+                {s.icon ? (
+                  <span className="grid h-11 w-11 place-items-center rounded-xl border border-line bg-subtle text-2xl leading-none shadow-soft">
+                    {s.icon}
+                  </span>
+                ) : (
+                  <span
+                    className={`grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br ${gradientFor(
+                      s.slug,
+                    )} text-lg font-bold text-white shadow-soft`}
+                  >
+                    {s.name[0]?.toUpperCase()}
+                  </span>
+                )}
                 <ArrowUpRight className="h-4 w-4 text-faint transition-all duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-accent" />
               </div>
               <h3 className="mt-4 font-semibold tracking-tight">

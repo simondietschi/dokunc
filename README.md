@@ -41,6 +41,35 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   zuletzt geänderte Seiten)
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
+- **Space-Einstellungen**: Name, Beschreibung und Emoji-Icon (Sidebar und
+  Space-Übersicht), Mitgliederverwaltung, Space verlassen (nicht als
+  letzter Owner), Gefahrenzone: Space löschen (nur Owner, Bestätigung
+  durch Eintippen des Namens; Anhänge werden von der Platte entfernt)
+- **Import** (Menüpunkt „Importieren“, ab Rolle MEMBER) mit drei Formaten:
+  - **Markdown**: einzelne Dateien (.md/.markdown/.txt/.html) oder ein Zip
+    mit Ordnern. Ordner werden Elternseiten; `index.md`/`README.md` oder
+    eine gleichnamige Datei neben dem Ordner liefert deren Inhalt. Titel aus
+    Frontmatter `title:`, erster H1 oder Dateiname. Unterstützt GFM
+    (Tabellen, Aufgabenlisten), Mermaid-Codeblöcke, GitHub-Hinweise
+    (`> [!NOTE]`, `[!TIP]`, `[!WARNING]`, `[!CAUTION]` werden Callouts),
+    `[[Wiki-Links]]`.
+  - **Confluence**: HTML-Export eines Bereichs (Zip). Hierarchie und
+    Reihenfolge aus `index.html`, sonst aus den Breadcrumbs; Info-/Hinweis-/
+    Warn-/Tipp-Makros werden Callouts, Code-Makros Codeblöcke (Sprache aus
+    `brush`), Aufgabenlisten und Tabellen bleiben erhalten, Bilder aus
+    `attachments/` werden gespeichert.
+  - **Notion**: Export als „Markdown & CSV“ oder „HTML“ inklusive
+    Unterseiten (Zip). Die 32-stelligen IDs in Datei- und Ordnernamen werden
+    entfernt, To-do-Listen, Callouts und Toggle-Blöcke abgebildet,
+    Datenbanken (CSV) werden mit Hinweis übersprungen.
+  - Relative Links zwischen importierten Dateien werden zu Wiki-Links
+    (inkl. Backlinks), relative und `data:`-Bilder als Anhänge gespeichert
+    (nur PNG/JPG/GIF/WebP, Magic-Byte-Prüfung), externe Bilder bleiben
+    verlinkt. Es wird nie Roh-HTML gespeichert — alles läuft durch das
+    Editor-Schema. Limits: `IMPORT_MAX_MB` (Default 100) pro Upload,
+    2000 Dateien / 500 MB entpackt pro Zip, 2000 Seiten pro Import,
+    5 Importe pro 10 Minuten. Fehler einzelner Dateien werden als Hinweise
+    gesammelt, der Rest wird importiert.
 
 ## Stack
 
