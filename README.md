@@ -18,7 +18,8 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
 - **Kommentare** (textverankerte Threads) + **@-Mentions** +
-  Benachrichtigungen
+  Benachrichtigungen, optional auch **per Mail** (sofort gebündelt oder
+  als tägliche Zusammenfassung, pro Person im Konto einstellbar)
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
@@ -31,7 +32,9 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   (Meeting-Notizen, ADR, Runbook, Projektbrief, Wochenbericht), Picker
   neben „Neue Seite", **Seiten duplizieren** (optional mit Unterseiten),
   „Als Vorlage speichern"
-- Postgres-Volltextsuche, Versionsverlauf, Papierkorb
+- Postgres-Volltextsuche, Versionsverlauf mit **Versionsvergleich**
+  (Zeilen- und Wort-Diff gegen den aktuellen Stand oder die vorherige
+  Version, Vorschau, Wiederherstellen), Papierkorb
 - **Favoriten** (Stern in der Seitenkopfzeile, Abschnitt in der Sidebar,
   Sprungziele in der Palette), **Zuletzt besucht** und ein
   **Space-Dashboard** (Kennzahlen, zuletzt besuchte, favorisierte und
@@ -92,7 +95,8 @@ POSTGRES_PASSWORD=<eigenes Passwort>
 Dann `docker compose up -d`. In der `Caddyfile` `tls internal` entfernen,
 damit Caddy ein Let's-Encrypt-Zertifikat holt. Ein selbst gesetztes
 `APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
-alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs-Mails,
+alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs- und
+Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
 `ANTHROPIC_API_KEY` für die KI-Funktionen, `MAX_UPLOAD_MB` für das
 Upload-Limit — siehe `.env.example`.
 

@@ -15,6 +15,7 @@ import {
   extractMentionIds,
   chunkText,
 } from "@dokunc/editor";
+import { startMailDispatcher } from "./mail-dispatcher";
 
 const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
@@ -320,4 +321,6 @@ function extractText(node: unknown): string {
 
 server.listen().then(() => {
   log.info({ port: PORT }, "Hocuspocus läuft");
+  // Mail-Versand von Benachrichtigungen (periodisch, Redis-gelockt).
+  startMailDispatcher({ redis, log });
 });

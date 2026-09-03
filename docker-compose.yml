@@ -53,6 +53,9 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-dokunc <no-reply@example.com>}
+      # Benachrichtigungs-Mails: Pruefintervall (s) und Digest-Stunde (UTC)
+      MAIL_DISPATCH_INTERVAL_S: ${MAIL_DISPATCH_INTERVAL_S:-30}
+      DIGEST_HOUR_UTC: ${DIGEST_HOUR_UTC:-6}
       UPLOAD_DIR: /app/uploads
       # Maximale Groesse einer hochgeladenen Datei (Bilder und Anhaenge) in MB
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
