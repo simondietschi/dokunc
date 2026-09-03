@@ -4,7 +4,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  Plus,
   ChevronLeft,
   FileText,
   Users,
@@ -14,6 +13,7 @@ import {
   Menu,
   Bell,
   Sparkles,
+  LayoutTemplate,
 } from "lucide-react";
 import type { TreeNode } from "@/lib/page-tree";
 import { PageTree } from "@/components/space/PageTree";
@@ -21,7 +21,8 @@ import { cn } from "@/lib/cn";
 import { Avatar } from "@/components/ui/Avatar";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Logo } from "@/components/ui/Logo";
-import { createPageAction } from "@/app/s/[slug]/actions";
+import type { TemplateOptions } from "@/lib/template-options";
+import { NewPageButton } from "@/components/space/NewPageButton";
 import { logoutAction } from "@/app/(auth)/actions";
 import { PaletteButton } from "@/components/CommandPalette";
 
@@ -35,6 +36,7 @@ type Props = {
   canManageSpace: boolean;
   isAdmin: boolean;
   unreadCount: number;
+  templates: TemplateOptions;
 };
 
 export function Sidebar({
@@ -47,6 +49,7 @@ export function Sidebar({
   canManageSpace,
   isAdmin,
   unreadCount,
+  templates,
 }: Props) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -121,15 +124,7 @@ export function Sidebar({
         )}
       </nav>
 
-      {canManage && (
-        <form action={createPageAction} className="px-3 pt-2">
-          <input type="hidden" name="slug" value={slug} />
-          <button className="flex w-full items-center gap-2 rounded-lg border border-dashed border-line-strong px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:border-accent/50 hover:text-ink">
-            <Plus className="h-3.5 w-3.5" />
-            Neue Seite
-          </button>
-        </form>
-      )}
+      {canManage && <NewPageButton slug={slug} templates={templates} />}
 
       <div className="mt-1 space-y-0.5">
         <NavLink
@@ -139,6 +134,15 @@ export function Sidebar({
         >
           Frag dein Wiki
         </NavLink>
+        {canManage && (
+          <NavLink
+            href={`/s/${slug}/templates`}
+            active={pathname === `/s/${slug}/templates`}
+            icon={<LayoutTemplate className="h-3.5 w-3.5" />}
+          >
+            Vorlagen
+          </NavLink>
+        )}
         {canManage && (
           <NavLink
             href={`/s/${slug}/trash`}

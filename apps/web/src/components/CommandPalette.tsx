@@ -41,6 +41,8 @@ type Item = {
   label: string;
   hint?: string;
   snippet?: string;
+  /** Kleines Badge hinter dem Label (z. B. "Vorlage"). */
+  badge?: string;
   run: () => void;
 };
 
@@ -152,6 +154,7 @@ export function CommandPalette() {
       label: p.title || "Untitled",
       hint: p.spaceName,
       snippet: p.snippet,
+      badge: p.isTemplate ? "Vorlage" : undefined,
       run: () => go(`/s/${p.slug}/p/${p.id}`),
     });
   }
@@ -352,6 +355,11 @@ export function CommandPalette() {
                       <span className="truncate text-[14px] font-medium">
                         {item.label}
                       </span>
+                      {item.badge && (
+                        <span className="shrink-0 rounded-full border border-accent/30 bg-accent-soft px-1.5 py-px text-[10.5px] font-medium text-accent">
+                          {item.badge}
+                        </span>
+                      )}
                       {item.hint && (
                         <span className="shrink-0 text-[11.5px] text-faint">
                           {item.hint}

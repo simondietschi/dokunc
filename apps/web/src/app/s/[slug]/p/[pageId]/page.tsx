@@ -20,7 +20,7 @@ export default async function PageView({
 
   const page = await prisma.page.findFirst({
     where: { id: pageId, spaceId: space.id, deletedAt: null },
-    select: { id: true, title: true },
+    select: { id: true, title: true, isTemplate: true },
   });
   if (!page) notFound();
 
@@ -32,7 +32,7 @@ export default async function PageView({
     proto: requestHeaders.get("x-forwarded-proto"),
   });
 
-  const [backlinks, comments] = await Promise.all([
+  const [backlinks, comments, childCount] = await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -49,6 +49,7 @@ export default async function PageView({
         },
       },
     }),
+    prisma.page.count({ where: { parentId: page.id, deletedAt: null } }),
   ]);
 
   return (
@@ -65,6 +66,8 @@ export default async function PageView({
         canManage={can(role, "managePages")}
         userName={user.name}
         pdfEnabled={!!process.env.GOTENBERG_URL}
+        isTemplate={page.isTemplate}
+        hasChildren={childCount > 0}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">

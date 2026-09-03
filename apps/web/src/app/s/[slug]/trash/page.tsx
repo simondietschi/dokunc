@@ -19,7 +19,7 @@ export default async function TrashPage({
   const pages = await prisma.page.findMany({
     where: { spaceId: space.id, NOT: { deletedAt: null } },
     orderBy: { deletedAt: "desc" },
-    select: { id: true, title: true, deletedAt: true },
+    select: { id: true, title: true, deletedAt: true, isTemplate: true },
   });
 
   return (
@@ -40,8 +40,13 @@ export default async function TrashPage({
             className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface p-3.5 shadow-soft"
           >
             <div className="min-w-0">
-              <p className="truncate text-sm font-medium">
-                {p.title || "Ohne Titel"}
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <span className="truncate">{p.title || "Ohne Titel"}</span>
+                {p.isTemplate && (
+                  <span className="shrink-0 rounded-full border border-accent/30 bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
+                    Vorlage
+                  </span>
+                )}
               </p>
               <p className="text-xs text-faint">
                 gelöscht am{" "}

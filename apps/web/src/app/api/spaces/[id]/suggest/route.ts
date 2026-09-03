@@ -52,6 +52,8 @@ export async function GET(
     where: {
       spaceId,
       deletedAt: null,
+      // Vorlagen sind keine Link-Ziele.
+      isTemplate: false,
       ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
     },
     select: { id: true, title: true },

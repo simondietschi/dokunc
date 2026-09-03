@@ -4,7 +4,7 @@ import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { HL_START, HL_STOP, splitHighlights } from "@/lib/palette";
 
-type Row = { id: string; title: string; snippet: string };
+type Row = { id: string; title: string; snippet: string; isTemplate: boolean };
 
 export default async function SearchPage({
   params,
@@ -24,7 +24,7 @@ export default async function SearchPage({
   let results: Row[] = [];
   if (query) {
     results = await prisma.$queryRaw<Row[]>`
-      SELECT id, title,
+      SELECT id, title, "isTemplate",
         ts_headline('simple', "textContent",
           plainto_tsquery('simple', ${query}),
           ${`StartSel=${HL_START},StopSel=${HL_STOP},MaxFragments=1,MaxWords=24,MinWords=6`}) AS snippet
@@ -74,7 +74,14 @@ export default async function SearchPage({
             >
               <FileText className="mt-0.5 h-4 w-4 shrink-0 text-faint group-hover:text-accent" />
               <div className="min-w-0">
-                <p className="font-medium tracking-tight">{r.title}</p>
+                <p className="flex items-center gap-2 font-medium tracking-tight">
+                  <span className="truncate">{r.title}</span>
+                  {r.isTemplate && (
+                    <span className="shrink-0 rounded-full border border-accent/30 bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
+                      Vorlage
+                    </span>
+                  )}
+                </p>
                 {r.snippet && (
                   <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-muted">
                     {splitHighlights(r.snippet).map((seg, j) =>

@@ -3,6 +3,10 @@ import { loadSpace } from "@/lib/space-context";
 import { buildTree } from "@/lib/page-tree";
 import { can } from "@/lib/permissions";
 import { Sidebar } from "@/components/space/Sidebar";
+import {
+  builtinTemplateOptions,
+  spaceTemplateOptions,
+} from "@/lib/template-options";
 
 export default async function SpaceLayout({
   children,
@@ -14,15 +18,28 @@ export default async function SpaceLayout({
   const { slug } = await params;
   const { space, role, user } = await loadSpace(slug);
 
-  const [pages, unreadCount] = await Promise.all([
+  const canManage = can(role, "managePages");
+  const [pages, unreadCount, templateRows] = await Promise.all([
     prisma.page.findMany({
-      where: { spaceId: space.id, deletedAt: null },
+      where: { spaceId: space.id, deletedAt: null, isTemplate: false },
       select: { id: true, title: true, parentId: true, position: true },
     }),
     prisma.notification.count({
       where: { userId: user.id, readAt: null },
     }),
+    // Vorlagen nur für den Picker (Seiten anlegen = managePages).
+    canManage
+      ? prisma.page.findMany({
+          where: { spaceId: space.id, isTemplate: true, deletedAt: null },
+          orderBy: { title: "asc" },
+          select: { id: true, title: true, updatedAt: true, content: true },
+        })
+      : Promise.resolve([]),
   ]);
+  const templates = {
+    space: spaceTemplateOptions(templateRows),
+    builtin: builtinTemplateOptions(),
+  };
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -32,7 +49,8 @@ export default async function SpaceLayout({
         role={role}
         userName={user.name}
         tree={buildTree(pages)}
-        canManage={can(role, "managePages")}
+        canManage={canManage}
+        templates={templates}
         canManageSpace={can(role, "manageSpace")}
         isAdmin={user.isAdmin}
         unreadCount={unreadCount}
