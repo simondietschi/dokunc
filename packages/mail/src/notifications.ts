@@ -1,9 +1,9 @@
 import { escapeHtml, mailButton, mailLayout } from "./index";
 
 /**
- * Mail-Vorlagen fuer Benachrichtigungen (Sofort-Mail und Tageszusammen-
+ * Mail-Vorlagen für Benachrichtigungen (Sofort-Mail und Tageszusammen-
  * fassung). Reine Funktionen ohne I/O: alle Nutzertexte werden escaped,
- * damit weder Namen noch Seitentitel HTML in die Mail schleusen koennen.
+ * damit weder Namen noch Seitentitel HTML in die Mail schleusen können.
  */
 
 export type NotificationMailType = "MENTION" | "COMMENT" | "COMMENT_REPLY";
@@ -19,7 +19,7 @@ export type NotificationMailItem = {
 
 export type RenderedMail = { subject: string; text: string; html: string };
 
-/** Beschreibt eine Benachrichtigung als Praedikat ("hat dich ... erwaehnt"). */
+/** Beschreibt eine Benachrichtigung als Prädikat ("hat dich ... erwähnt"). */
 export function describeNotification(type: NotificationMailType): string {
   switch (type) {
     case "MENTION":
@@ -31,7 +31,7 @@ export function describeNotification(type: NotificationMailType): string {
   }
 }
 
-/** Betreff fuer genau einen Eintrag. */
+/** Betreff für genau einen Eintrag. */
 function singleSubject(item: NotificationMailItem): string {
   switch (item.type) {
     case "MENTION":
@@ -43,11 +43,13 @@ function singleSubject(item: NotificationMailItem): string {
   }
 }
 
-/** Auszug auf eine handliche Laenge kuerzen (eine Zeile, ohne Umbrueche). */
+/** Auszug auf eine handliche Länge kürzen (eine Zeile, ohne Umbrüche). */
 function trimExcerpt(excerpt: string | null | undefined): string {
   if (!excerpt) return "";
   const flat = excerpt.replace(/\s+/g, " ").trim();
-  return flat.length > 200 ? `${flat.slice(0, 199)}…` : flat;
+  // Nach Codepunkten kürzen, damit kein Emoji/Surrogatpaar zerschnitten wird.
+  const chars = Array.from(flat);
+  return chars.length > 200 ? `${chars.slice(0, 199).join("")}…` : flat;
 }
 
 function itemText(item: NotificationMailItem): string {
@@ -83,8 +85,8 @@ function greeting(recipientName: string): string {
 }
 
 /**
- * Sofort-Mail: ein oder mehrere Eintraege (Sammelfenster). Bei genau einem
- * Eintrag ist der Betreff sprechend, sonst zaehlend.
+ * Sofort-Mail: ein oder mehrere Einträge (Sammelfenster). Bei genau einem
+ * Eintrag ist der Betreff sprechend, sonst zählend.
  */
 export function notificationMail(opts: {
   recipientName: string;
@@ -123,8 +125,8 @@ export function notificationMail(opts: {
 }
 
 /**
- * Tageszusammenfassung fuer Nutzer mit Modus DAILY: alle offenen
- * Eintraege seit `since`, gruppiert in einer Mail.
+ * Tageszusammenfassung für Nutzer mit Modus DAILY: alle offenen
+ * Einträge seit `since`, gruppiert in einer Mail.
  */
 export function digestMail(opts: {
   recipientName: string;

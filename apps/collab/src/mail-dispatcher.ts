@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
 import { prisma } from "@dokunc/db";
@@ -13,24 +14,35 @@ import {
 } from "@dokunc/mail";
 
 /**
- * Mail-Dispatcher fuer Benachrichtigungen. Laeuft im Collab-Prozess (der
+ * Mail-Dispatcher für Benachrichtigungen. Läuft im Collab-Prozess (der
  * langlebige Worker) und verarbeitet periodisch alle Notification-Zeilen
  * mit emailedAt = NULL:
- *  - INSTANT-Nutzer: Sammelmail, sobald die Eintraege das Sammelfenster
+ *  - INSTANT-Nutzer: Sammelmail, sobald die Einträge das Sammelfenster
  *    verlassen haben (siehe planDispatch)
  *  - DAILY-Nutzer: eine Zusammenfassung pro Tag ab DIGEST_HOUR_UTC
  *  - OFF/inaktiv/gelesen: nur markieren
- * Ein Redis-Lock (SET NX PX) sorgt dafuer, dass bei mehreren Instanzen
- * nur eine arbeitet. Ohne SMTP werden Eintraege nur markiert, damit ein
- * spaeteres Aktivieren keine Flut alter Mails ausloest.
+ * Ein Redis-Lock (SET NX PX) sorgt dafür, dass bei mehreren Instanzen
+ * nur eine arbeitet. Ohne SMTP werden Einträge nur markiert, damit ein
+ * späteres Aktivieren keine Flut alter Mails auslöst.
  */
 
 const LOCK_KEY = "dokunc:mail-dispatch:lock";
 const DIGEST_KEY_PREFIX = "dokunc:digest:";
-/** Kandidaten pro Lauf (Rest folgt im naechsten Intervall). */
+/** Kandidaten pro Lauf (Rest folgt im nächsten Intervall). */
 const BATCH_LIMIT = 500;
+/** Volle Batches pro Lauf, bevor der Rest auf das nächste Intervall wartet. */
+const MAX_ROUNDS = 10;
 const SEND_ATTEMPTS = 3;
-/** Marker-Lebensdauer: deutlich laenger als ein Tag, aber endlich. */
+/**
+ * Lebensdauer des Locks: deutlich länger als ein Lauf dauern darf, damit
+ * eine zweite Instanz nie parallel dieselben Einträge lädt. Nach dem Lauf
+ * wird der Lock explizit freigegeben; stirbt der Prozess, verfällt er.
+ */
+const LOCK_TTL_MS = 10 * 60 * 1000;
+/** Lua: Lock nur löschen, wenn er noch uns gehört (Token-Vergleich). */
+const RELEASE_SCRIPT =
+  'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) end return 0';
+/** Marker-Lebensdauer: deutlich länger als ein Tag, aber endlich. */
 const DIGEST_MARKER_TTL_MS = 3 * 24 * 60 * 60 * 1000;
 
 function intervalMs(): number {
@@ -58,22 +70,22 @@ export function startMailDispatcher(opts: {
   let running = false;
   let warnedUnconfigured = false;
 
-  async function acquireLock(): Promise<boolean> {
+  async function acquireLock(token: string): Promise<boolean> {
     try {
-      // Lock etwas kuerzer als das Intervall, damit er sicher frei ist,
-      // wenn dieselbe Instanz erneut dran ist.
-      const res = await redis.set(
-        LOCK_KEY,
-        "1",
-        "PX",
-        Math.max(1000, Math.floor(every * 0.9)),
-        "NX",
-      );
+      const res = await redis.set(LOCK_KEY, token, "PX", LOCK_TTL_MS, "NX");
       return res === "OK";
     } catch (e) {
       // Ohne Redis lieber aussetzen als doppelt versenden.
       log.warn({ err: String(e) }, "Redis nicht erreichbar, Lauf übersprungen");
       return false;
+    }
+  }
+
+  async function releaseLock(token: string): Promise<void> {
+    try {
+      await redis.eval(RELEASE_SCRIPT, 1, LOCK_KEY, token);
+    } catch (e) {
+      log.warn({ err: String(e) }, "Lock konnte nicht freigegeben werden");
     }
   }
 
@@ -106,6 +118,8 @@ export function startMailDispatcher(opts: {
   async function loadCandidates(): Promise<{
     candidates: DispatchCandidate[];
     orphanIds: string[];
+    /** true, wenn das Limit erreicht wurde (es kann mehr geben). */
+    full: boolean;
   }> {
     const rows = await prisma.notification.findMany({
       where: { emailedAt: null },
@@ -123,7 +137,8 @@ export function startMailDispatcher(opts: {
         actor: { select: { name: true } },
       },
     });
-    if (rows.length === 0) return { candidates: [], orphanIds: [] };
+    const full = rows.length === BATCH_LIMIT;
+    if (rows.length === 0) return { candidates: [], orphanIds: [], full };
 
     const pageIds = [
       ...new Set(rows.map((r) => r.pageId).filter((id): id is string => !!id)),
@@ -155,7 +170,7 @@ export function startMailDispatcher(opts: {
     for (const r of rows) {
       const title = r.pageId ? titleById.get(r.pageId) : undefined;
       if (!r.pageId || title === undefined) {
-        // Seite geloescht oder ohne Seitenbezug: kein sinnvoller Link.
+        // Seite gelöscht oder ohne Seitenbezug: kein sinnvoller Link.
         orphanIds.push(r.id);
         continue;
       }
@@ -174,7 +189,7 @@ export function startMailDispatcher(opts: {
         },
       });
     }
-    return { candidates, orphanIds };
+    return { candidates, orphanIds, full };
   }
 
   async function deliver(batch: DispatchBatch, now: Date): Promise<boolean> {
@@ -207,11 +222,14 @@ export function startMailDispatcher(opts: {
     return false;
   }
 
-  async function runOnce(): Promise<void> {
-    const now = new Date();
-    const { candidates, orphanIds } = await loadCandidates();
+  /**
+   * Ein Batch: laden, planen, senden, markieren. Liefert, ob der Batch
+   * voll war und Fortschritt gemacht wurde (dann lohnt eine weitere Runde).
+   */
+  async function processBatch(now: Date, digest: boolean): Promise<boolean> {
+    const { candidates, orphanIds, full } = await loadCandidates();
     await markEmailed(orphanIds, now);
-    if (candidates.length === 0) return;
+    if (candidates.length === 0) return false;
 
     if (!isMailConfigured()) {
       if (!warnedUnconfigured) {
@@ -224,10 +242,9 @@ export function startMailDispatcher(opts: {
         candidates.map((c) => c.id),
         now,
       );
-      return;
+      return full;
     }
 
-    const digest = await digestDue(now);
     const plan = planDispatch(candidates, now, { digest });
     await markEmailed(plan.markOnly, now);
 
@@ -241,23 +258,41 @@ export function startMailDispatcher(opts: {
         failed++;
       }
     }
-    if (digest) await markDigestDone(now);
     if (sent || failed) {
       log.info(
         { sent, failed, markOnly: plan.markOnly.length, digest },
         "Benachrichtigungs-Mails verarbeitet",
       );
     }
+    // Ohne Fortschritt (nur Einträge im Sammelfenster oder fehlgeschlagene
+    // Sendungen) würde die nächste Runde dieselben Zeilen erneut laden.
+    const progressed = sent > 0 || plan.markOnly.length > 0 || orphanIds.length > 0;
+    return full && progressed;
+  }
+
+  async function runOnce(): Promise<void> {
+    const now = new Date();
+    const digest = await digestDue(now);
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      if (!(await processBatch(now, digest))) break;
+    }
+    // Erst nach allen Runden markieren, damit auch grosse Rückstände in
+    // einem Digest landen statt auf den nächsten Tag zu rutschen.
+    if (digest) await markDigestDone(now);
   }
 
   async function tick(): Promise<void> {
     if (running) return;
     running = true;
+    const token = randomUUID();
+    let locked = false;
     try {
-      if (await acquireLock()) await runOnce();
+      locked = await acquireLock(token);
+      if (locked) await runOnce();
     } catch (e) {
       log.error({ err: String(e) }, "Mail-Dispatcher-Lauf fehlgeschlagen");
     } finally {
+      if (locked) await releaseLock(token);
       running = false;
     }
   }

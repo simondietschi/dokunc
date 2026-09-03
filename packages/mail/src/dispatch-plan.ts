@@ -1,10 +1,10 @@
 import type { NotificationMailItem } from "./notifications";
 
 /**
- * Reine Planungslogik fuer den Mail-Versand von Benachrichtigungen.
- * Der Dispatcher (Collab-Prozess) laedt offene Eintraege, laesst sie hier
- * einteilen und fuehrt anschliessend nur noch aus. Ohne I/O, damit die
- * Regeln vollstaendig per Unit-Test abgedeckt sind.
+ * Reine Planungslogik für den Mail-Versand von Benachrichtigungen.
+ * Der Dispatcher (Collab-Prozess) lädt offene Einträge, lässt sie hier
+ * einteilen und führt anschliessend nur noch aus. Ohne I/O, damit die
+ * Regeln vollständig per Unit-Test abgedeckt sind.
  */
 
 export type EmailMode = "INSTANT" | "DAILY" | "OFF";
@@ -20,7 +20,7 @@ export type DispatchCandidate = {
     isActive: boolean;
     emailNotifications: EmailMode;
   };
-  /** Bereits aufgeloester Inhalt fuer die Mail (Akteur, Seite, Link). */
+  /** Bereits aufgelöster Inhalt für die Mail (Akteur, Seite, Link). */
   item: NotificationMailItem;
 };
 
@@ -41,7 +41,7 @@ export type DispatchPlan = {
   markOnly: string[];
 };
 
-/** Sammelfenster: Eintraege muessen mindestens so alt sein (ms). */
+/** Sammelfenster: Einträge müssen mindestens so alt sein (ms). */
 export const INSTANT_BATCH_WINDOW_MS = 20_000;
 
 export function planDispatch(
@@ -54,7 +54,7 @@ export function planDispatch(
   const markOnly: string[] = [];
   const groups = new Map<string, DispatchBatch>();
 
-  // Stabile Reihenfolge innerhalb einer Mail: aelteste zuerst.
+  // Stabile Reihenfolge innerhalb einer Mail: älteste zuerst.
   const ordered = [...candidates].sort(
     (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
   );
@@ -66,7 +66,7 @@ export function planDispatch(
       continue;
     }
     if (mode === "INSTANT" && c.createdAt.getTime() > cutoff) {
-      // Noch im Sammelfenster: naechster Lauf.
+      // Noch im Sammelfenster: nächster Lauf.
       continue;
     }
     if (mode === "DAILY" && !opts.digest) {
