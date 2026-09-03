@@ -5,6 +5,9 @@ describe("isValidIcon()", () => {
   it("akzeptiert Emojis inklusive Modifier und Schnellauswahl", () => {
     expect(isValidIcon("📘")).toBe(true);
     expect(isValidIcon("👍🏽")).toBe(true);
+    expect(isValidIcon("🇨🇭")).toBe(true);
+    expect(isValidIcon("1️⃣")).toBe(true);
+    expect(isValidIcon("★")).toBe(true);
     for (const icon of QUICK_ICONS) expect(isValidIcon(icon)).toBe(true);
   });
   it("lehnt Text, Ziffern, Leerraum und zu lange Eingaben ab", () => {
@@ -13,6 +16,10 @@ describe("isValidIcon()", () => {
     expect(isValidIcon("1")).toBe(false);
     expect(isValidIcon("")).toBe(false);
     expect(isValidIcon("📘 ")).toBe(false);
+    expect(isValidIcon("<>")).toBe(false);
+    expect(isValidIcon("<b>")).toBe(false);
+    expect(isValidIcon("ЯД")).toBe(false);
+    expect(isValidIcon("..")).toBe(false);
     expect(isValidIcon("📘📗📙🧭🚀")).toBe(false);
     expect(isValidIcon("")).toBe(false);
   });
