@@ -147,7 +147,7 @@ pnpm dev                 # web :3000 + collab :3001
 ## Tests
 
 ```bash
-pnpm test        # Unit-Tests (Vitest, 44 Tests)
+pnpm test        # Unit-Tests (Vitest)
 pnpm test:e2e    # Playwright-E2E: kompletter Editor-Pfad inkl.
                  # Realtime-Sync (leert die DB! Nur gegen Dev-DB laufen lassen)
 ```

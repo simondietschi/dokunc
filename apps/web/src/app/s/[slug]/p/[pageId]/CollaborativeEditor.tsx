@@ -333,7 +333,9 @@ export function CollaborativeEditor({
             <PageActions slug={slug} pageId={pageId} canManage={canManage}>
               {canManage && (
                 <>
-                  <MovePageMenuItem onOpen={() => setMoveOpen(true)} />
+                  {!isTemplate && (
+                    <MovePageMenuItem onOpen={() => setMoveOpen(true)} />
+                  )}
                   <PageMenuTemplates
                     slug={slug}
                     pageId={pageId}
