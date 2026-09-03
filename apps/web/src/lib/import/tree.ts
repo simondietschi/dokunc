@@ -149,7 +149,7 @@ function buildFolderTree(
 
   function attach(f: ImportFile, key: string, kind: ContentKind) {
     if (byKey.has(key)) {
-      warn(`"${f.path}" uebersprungen: gleichnamige Seite existiert bereits.`);
+      warn(`"${f.path}" übersprungen: gleichnamige Seite existiert bereits.`);
       return;
     }
     const node: ImportNode = {
@@ -184,7 +184,7 @@ function buildConfluenceTree(
   for (const f of pages) {
     const key = stripExt(f.path);
     if (byKey.has(key)) {
-      warn(`"${f.path}" uebersprungen: gleichnamige Seite existiert bereits.`);
+      warn(`"${f.path}" übersprungen: gleichnamige Seite existiert bereits.`);
       continue;
     }
     byKey.set(key, {

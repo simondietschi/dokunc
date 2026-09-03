@@ -5,6 +5,9 @@ import { ImportError, type ImportFile } from "./types";
 /** Obergrenzen gegen Zip-Bomben und Speicherfresser. */
 export const ZIP_MAX_ENTRIES = 2000;
 export const ZIP_MAX_UNPACKED = 500 * 1024 * 1024; // 500 MB
+/** Einzelne Eintraege ueber dieser Groesse werden uebersprungen (Bilder sind
+ *  ohnehin auf 10 MB begrenzt, Seitendateien auf MAX_PAGE_FILE_BYTES). */
+export const ZIP_MAX_FILE = 32 * 1024 * 1024; // 32 MB
 
 /** Betriebssystem-Muell, der in Zips gerne mitkommt. */
 const IGNORED_NAMES = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
@@ -19,6 +22,8 @@ export type ZipResult = {
   files: ImportFile[];
   /** Abgelehnte Eintraege (Traversal, unsichere Namen) fuer Warnungen. */
   rejected: string[];
+  /** Uebersprungene Eintraege ueber ZIP_MAX_FILE. */
+  tooLarge: string[];
 };
 
 /**
@@ -31,6 +36,7 @@ export function extractZip(data: Uint8Array): ZipResult {
   let entries = 0;
   let unpacked = 0;
   const rejected: string[] = [];
+  const tooLarge: string[] = [];
 
   let raw: Record<string, Uint8Array>;
   try {
@@ -41,13 +47,17 @@ export function extractZip(data: Uint8Array): ZipResult {
         entries += 1;
         if (entries > ZIP_MAX_ENTRIES) {
           throw new ImportError(
-            `Zip enthaelt mehr als ${ZIP_MAX_ENTRIES} Dateien.`,
+            `Zip enthält mehr als ${ZIP_MAX_ENTRIES} Dateien.`,
           );
+        }
+        if (info.originalSize > ZIP_MAX_FILE) {
+          tooLarge.push(info.name);
+          return false;
         }
         unpacked += info.originalSize;
         if (unpacked > ZIP_MAX_UNPACKED) {
           throw new ImportError(
-            `Zip ist entpackt groesser als ${Math.round(
+            `Zip ist entpackt grösser als ${Math.round(
               ZIP_MAX_UNPACKED / 1024 / 1024,
             )} MB.`,
           );
@@ -70,5 +80,5 @@ export function extractZip(data: Uint8Array): ZipResult {
     files.push({ path, data: bytes });
   }
   files.sort((a, b) => a.path.localeCompare(b.path));
-  return { files, rejected };
+  return { files, rejected, tooLarge };
 }

@@ -6,7 +6,9 @@ import type { JsonNode } from "./types";
  * Parsen nicht selbst erkennt:
  * - Codebloecke mit Sprache "mermaid" -> Mermaid-Knoten
  * - GitHub-Admonitions ("> [!NOTE]") -> Callouts
- * - leere Absaetze am Anfang/Ende entfernen
+ * - leere Absaetze am Anfang/Ende entfernen, ebenso leere Absaetze direkt
+ *   vor einem Bild (Artefakt von <p><img></p>: das Bild ist im Schema ein
+ *   Blockknoten, der Absatz bleibt leer zurueck)
  */
 
 const EMPTY_PARAGRAPH: JsonNode = { type: "paragraph" };
@@ -106,7 +108,9 @@ function admonitionToCallout(quote: JsonNode): JsonNode | null {
  */
 export function normalizeDoc(doc: JsonNode): JsonNode {
   const transformed = transform(doc);
-  const content = [...(transformed.content ?? [])];
+  const content = (transformed.content ?? []).filter(
+    (n, i, all) => !(isEmptyParagraph(n) && all[i + 1]?.type === "image"),
+  );
   while (content.length > 0 && isEmptyParagraph(content[0])) content.shift();
   while (content.length > 0 && isEmptyParagraph(content[content.length - 1])) {
     content.pop();

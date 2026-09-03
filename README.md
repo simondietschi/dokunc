@@ -48,8 +48,9 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
     (nur PNG/JPG/GIF/WebP, Magic-Byte-Prüfung), externe Bilder bleiben
     verlinkt. Es wird nie Roh-HTML gespeichert — alles läuft durch das
     Editor-Schema. Limits: `IMPORT_MAX_MB` (Default 100) pro Upload,
-    2000 Dateien / 500 MB entpackt pro Zip, 2000 Seiten pro Import,
-    5 Importe pro 10 Minuten. Fehler einzelner Dateien werden als Hinweise
+    2000 Dateien / 500 MB entpackt pro Zip (32 MB pro Zip-Eintrag,
+    Seitendateien bis 5 MB), 2000 Seiten pro Import, 5 Importe pro
+    10 Minuten. Fehler einzelner Dateien werden als Hinweise
     gesammelt, der Rest wird importiert.
 
 ## Stack

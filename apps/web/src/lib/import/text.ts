@@ -48,13 +48,14 @@ export function decodeEntities(s: string): string {
     /&(#x[0-9a-f]+|#\d+|[a-z]+);/gi,
     (match, code: string) => {
       const lower = code.toLowerCase();
-      if (lower.startsWith("#x")) {
-        const n = parseInt(lower.slice(2), 16);
-        return Number.isFinite(n) ? String.fromCodePoint(n) : match;
-      }
       if (lower.startsWith("#")) {
-        const n = parseInt(lower.slice(1), 10);
-        return Number.isFinite(n) ? String.fromCodePoint(n) : match;
+        const n = lower.startsWith("#x")
+          ? parseInt(lower.slice(2), 16)
+          : parseInt(lower.slice(1), 10);
+        // Ausserhalb von Unicode (z. B. "&#99999999;") wirft fromCodePoint.
+        return Number.isFinite(n) && n > 0 && n <= 0x10ffff
+          ? String.fromCodePoint(n)
+          : match;
       }
       return named[lower] ?? match;
     },

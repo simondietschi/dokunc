@@ -6,7 +6,7 @@ import { isSameOrigin } from "@/lib/origin";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { can } from "@/lib/permissions";
 import { log } from "@/lib/log";
-import { extractZip } from "@/lib/import/zip";
+import { extractZip, ZIP_MAX_FILE } from "@/lib/import/zip";
 import { runImport } from "@/lib/import/run";
 import { ImportError, type ImportFile } from "@/lib/import/types";
 import { extname, isPageExt, normalizePath } from "@/lib/import/paths";
@@ -109,7 +109,7 @@ export async function POST(
     for (const upload of uploads) {
       const ext = extname(upload.name);
       if (!accepted.has(ext)) {
-        warnings.push(`"${upload.name}" uebersprungen: nicht unterstuetztes Format.`);
+        warnings.push(`"${upload.name}" übersprungen: nicht unterstütztes Format.`);
         continue;
       }
       const bytes = new Uint8Array(await upload.arrayBuffer());
@@ -118,6 +118,13 @@ export async function POST(
         files.push(...zip.files);
         for (const name of zip.rejected) {
           warnings.push(`Zip-Eintrag "${name}" abgelehnt (unsicherer Pfad).`);
+        }
+        for (const name of zip.tooLarge) {
+          warnings.push(
+            `Zip-Eintrag "${name}" übersprungen (grösser als ${Math.round(
+              ZIP_MAX_FILE / 1024 / 1024,
+            )} MB).`,
+          );
         }
         continue;
       }

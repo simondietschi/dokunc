@@ -106,6 +106,19 @@ describe("markdownToDoc()", () => {
     expect(img[0].attrs?.alt).toBe("Alt");
   });
 
+  it("Bild in einem Absatz hinterlaesst keinen leeren Absatz", () => {
+    const { doc } = markdownToDoc("Text\n\n![Alt](img/bild.png)\n\nDanach\n");
+    expect(doc.content?.map((n) => n.type)).toEqual(["paragraph", "image", "paragraph"]);
+  });
+
+  it("Notion-Callout (<aside>) im Markdown-Export wird Callout", () => {
+    const { doc } = markdownToDoc("<aside>\n💡 Hinweis aus Notion\n\n</aside>\n");
+    const callouts = findNodes(doc, "callout");
+    expect(callouts).toHaveLength(1);
+    expect(callouts[0].attrs?.type).toBe("info");
+    expect(extractText(callouts[0])).toContain("Hinweis aus Notion");
+  });
+
   it("Frontmatter-Titel gewinnt, H1 bleibt dann erhalten", () => {
     const { title, doc } = markdownToDoc("---\ntitle: FM\n---\n# Andere H1\n\nText");
     expect(title).toBe("FM");

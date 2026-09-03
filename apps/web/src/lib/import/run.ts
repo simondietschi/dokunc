@@ -29,6 +29,8 @@ import {
 
 /** Obergrenze fuer Seiten pro Import (Transaktionsdauer, UI). */
 export const IMPORT_MAX_PAGES = 2000;
+/** Groessere Seitendateien werden nicht konvertiert (Speicher, Laufzeit). */
+export const MAX_PAGE_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
 
 export type ImportResult = {
   format: ImportFormat;
@@ -60,8 +62,19 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
   const warnings = new Warnings();
   const warn = (m: string) => warnings.add(m);
 
-  const format = detectFormat(opts.files);
-  const { roots, count } = buildImportTree(opts.files, format, warn);
+  const files = opts.files.filter((f) => {
+    if (!isPageExt(extname(f.path)) || f.data.length <= MAX_PAGE_FILE_BYTES) {
+      return true;
+    }
+    warn(
+      `"${f.path}" übersprungen: grösser als ${Math.round(
+        MAX_PAGE_FILE_BYTES / 1024 / 1024,
+      )} MB.`,
+    );
+    return false;
+  });
+  const format = detectFormat(files);
+  const { roots, count } = buildImportTree(files, format, warn);
   if (count === 0) {
     throw new ImportError(
       "Keine importierbaren Seiten gefunden (.md, .markdown, .txt, .html).",
@@ -134,7 +147,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
       byBase.set(base, byBase.has(base) ? null : c);
     }
   }
-  const filesByPath = new Map(opts.files.map((f) => [f.path, f]));
+  const filesByPath = new Map(files.map((f) => [f.path, f]));
 
   const imageCache = new Map<string, string | null>();
   let attachments = 0;
@@ -152,8 +165,8 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
     if (!stored.ok) {
       warn(
         stored.reason === "size"
-          ? `Bild "${name}" ist groesser als 10 MB und wurde uebersprungen.`
-          : `"${name}" ist kein unterstuetztes Bild (PNG, JPG, GIF, WebP).`,
+          ? `Bild "${name}" ist grösser als 10 MB und wurde übersprungen.`
+          : `"${name}" ist kein unterstütztes Bild (PNG, JPG, GIF, WebP).`,
       );
       return null;
     }
@@ -195,11 +208,14 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
       const target = resolveRelative(fromPath, href);
       if (!target) return null;
       const key = stripExt(target);
+      // Nur ein Dateiname ohne Verzeichnis ("[[Seite]]", "Seite.md"): darf
+      // auf eine eindeutig benannte Seite irgendwo im Import zeigen.
+      const bare = !/[\\/]/.test(href.split(/[#?]/)[0].trim());
       const hit =
         byKey.get(key) ??
         byKey.get(target) ??
         byStripped.get(stripNotionSuffixes(key)) ??
-        (!target.includes("/") ? byBase.get(basename(key).toLowerCase()) : null) ??
+        (bare ? byBase.get(basename(key).toLowerCase()) : null) ??
         null;
       if (hit) return { kind: "page", pageId: hit.id, title: hit.title };
       if (filesByPath.has(target) && !isPageExt(extname(target))) return { kind: "file" };
