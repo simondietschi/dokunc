@@ -10,6 +10,7 @@ import { resolveCollabUrl } from "@/lib/collab-url";
 import { loadAncestors } from "@/lib/page-ancestors";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
+import { PageAttachments } from "@/components/space/PageAttachments";
 
 export default async function PageView({
   params,
@@ -33,7 +34,7 @@ export default async function PageView({
     proto: requestHeaders.get("x-forwarded-proto"),
   });
 
-  const [backlinks, comments, ancestors] = await Promise.all([
+  const [backlinks, comments, ancestors, attachments] = await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -51,6 +52,20 @@ export default async function PageView({
       },
     }),
     loadAncestors(space.id, page.parentId),
+    prisma.attachment.findMany({
+      where: { pageId: page.id },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      select: {
+        id: true,
+        name: true,
+        size: true,
+        mimeType: true,
+        storedName: true,
+        createdAt: true,
+        uploader: { select: { name: true } },
+      },
+    }),
   ]);
 
   return (
@@ -91,6 +106,18 @@ export default async function PageView({
             </ul>
           </section>
         )}
+
+        <PageAttachments
+          items={attachments.map((a) => ({
+            id: a.id,
+            name: a.name,
+            size: a.size,
+            mimeType: a.mimeType,
+            url: `/api/files/${a.storedName}`,
+            createdAt: a.createdAt,
+            uploader: a.uploader?.name ?? null,
+          }))}
+        />
 
         <CommentsPanel
           slug={slug}

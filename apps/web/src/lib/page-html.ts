@@ -75,6 +75,8 @@ export function pageToPrintHtml(opts: {
   .dk-diagram { border: 1px solid #e5e7eb; border-radius: 8px; margin: 0.8em 0; padding: 8px; page-break-inside: avoid; }
   .dk-diagram-img { display: block; margin: 0 auto; max-width: 100%; }
   pre[data-mermaid] { background: #f8fafc; }
+  .dk-attachment { display: inline-block; border: 1px solid #d1d5db; border-radius: 8px; padding: 6px 12px; margin: 0.5em 0; color: #374151; font-size: 10pt; text-decoration: none; page-break-inside: avoid; }
+  .dk-attachment::before { content: "Anhang: "; color: #6b7280; }
   hr { border: none; border-top: 1px solid #d1d5db; margin: 1.2em 0; }
   iframe { display: none; }
   @media print { body { padding: 0; } }

@@ -60,6 +60,12 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   textContent (für Suche/History), `searchVector` (tsvector), position, timestamps.
 - **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit.
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
+- **Attachment** — spaceId, pageId?, uploaderId?, storedName (zufälliger
+  Name auf der Platte, unique), name (Originalname), mimeType, size.
+  Bindet jede hochgeladene Datei an einen Space; `/api/files/<storedName>`
+  liefert sie nur an angemeldete Mitglieder dieses Space aus. Uploads aus
+  früheren Versionen ohne Datensatz werden beim ersten Abruf über die
+  referenzierende Seite zugeordnet und nachgetragen.
 
 Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 
@@ -144,11 +150,17 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       Tastatur-/A11y-Weg), Brotkrumen (Vorfahren per rekursiver CTE,
       Kürzung langer Pfade) und Inhaltsverzeichnis aus den Überschriften
       (sticky Panel bei genug Platz, sonst einklappbarer Block)
+- [x] Anhänge beliebigen Typs (Attachment-Modell mit Space-Bezug):
+      Upload mit Magic-Byte-Erkennung für Bilder, konservatives MIME-
+      Mapping nach Endung, zufälliger Speichername, Limit MAX_UPLOAD_MB;
+      Auslieferung nur für Space-Mitglieder (Bilder inline, PDF optional
+      in CSP-Sandbox, Rest als Download mit nosniff, privater Cache);
+      Editor-Block "attachment" (Slash-Befehl, Drag-and-drop, Einfügen),
+      Anhangsliste unter der Seite, Altbestand wird nachgetragen
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des
-      Session-JWT im Client, Zugriffsschutz für /api/files (Attachment-
-      Modell mit Space-Bezug), Größenlimit für Yjs-Dokumente
+      Session-JWT im Client, Größenlimit für Yjs-Dokumente
 
 ## 7. Setup
 
