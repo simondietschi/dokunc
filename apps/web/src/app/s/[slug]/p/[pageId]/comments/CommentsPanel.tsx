@@ -178,12 +178,21 @@ function Thread({
 }) {
   const router = useRouter();
   const [replying, setReplying] = useState(false);
+  // Aufloesen/Wiederoeffnen sofort anzeigen; der Server bestaetigt den
+  // Zustand mit dem naechsten Refresh (dann wird die Vorgabe verworfen).
+  const [pendingResolved, setPendingResolved] = useState<boolean | null>(
+    null,
+  );
+  useEffect(() => {
+    setPendingResolved(null);
+  }, [thread.resolved]);
+  const resolved = pendingResolved ?? thread.resolved;
 
   return (
     <li
       className={cn(
         "rounded-xl border border-line bg-surface p-4 shadow-soft",
-        thread.resolved && "opacity-60",
+        resolved && "opacity-60",
       )}
     >
       {thread.anchorText && (
@@ -263,8 +272,10 @@ function Thread({
               </button>
               <form
                 action={async (fd) => {
+                  const wasResolved = resolved;
+                  setPendingResolved(!wasResolved);
                   await resolveThreadAction(fd);
-                  if (!thread.resolved) {
+                  if (!wasResolved) {
                     // Markierung im Text entfernen.
                     window.dispatchEvent(
                       new CustomEvent("dokunc:remove-comment-mark", {
@@ -278,7 +289,7 @@ function Thread({
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="threadId" value={thread.id} />
                 <button className="inline-flex items-center gap-1 text-[13px] text-muted hover:text-ink">
-                  {thread.resolved ? (
+                  {resolved ? (
                     <>
                       <RotateCcw className="h-3.5 w-3.5" />
                       Wieder öffnen
