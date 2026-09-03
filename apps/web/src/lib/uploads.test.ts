@@ -122,6 +122,8 @@ describe("sanitizeFilename()", () => {
     expect(sanitizeFilename("Übersicht ändern.docx")).toBe(
       "Übersicht ändern.docx",
     );
+    // Bidi-Steuerzeichen (Endungs-Verschleierung) werden entfernt
+    expect(sanitizeFilename("harmlos\u202Efdp.exe")).toBe("harmlosfdp.exe");
   });
 
   it("leer -> datei", () => {

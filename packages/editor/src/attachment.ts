@@ -12,6 +12,20 @@ export type AttachmentAttrs = {
 };
 
 /**
+ * Nur site-relative Pfade (/api/files/...) und http(s)-URLs gelten als
+ * sichere Link-Ziele. Alles andere (javascript:, data:, //host) wird
+ * weder im Export-HTML noch in der NodeView als href ausgegeben —
+ * das Dokument ist kollaborativ und damit von allen Schreibenden
+ * beeinflussbar.
+ */
+export function isSafeAttachmentSrc(src: unknown): src is string {
+  return (
+    typeof src === "string" &&
+    (/^\/(?!\/)/.test(src) || /^https?:\/\//i.test(src))
+  );
+}
+
+/**
  * Datei-Anhang als Atom-Block (beliebiger Dateityp, z. B. PDF, ZIP).
  * Im HTML ein schlichter Link mit data-Attributen — damit bleiben
  * Export (HTML/Markdown) und der Collab-Transformer verlustfrei.
@@ -29,7 +43,8 @@ export const Attachment = Node.create({
       src: {
         default: "",
         parseHTML: (el) => el.getAttribute("href") ?? "",
-        renderHTML: (attrs) => ({ href: attrs.src }),
+        renderHTML: (attrs) =>
+          isSafeAttachmentSrc(attrs.src) ? { href: attrs.src } : {},
       },
       name: {
         default: "Datei",

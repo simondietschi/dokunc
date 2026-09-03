@@ -63,6 +63,7 @@ export function PageAttachments({ items }: { items: PageAttachmentItem[] }) {
             <li key={item.id}>
               <a
                 href={item.url}
+                download={item.name}
                 className="flex items-center gap-3 px-3.5 py-2.5 transition-colors hover:bg-subtle"
               >
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-subtle text-muted">

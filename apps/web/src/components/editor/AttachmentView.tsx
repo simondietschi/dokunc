@@ -15,6 +15,7 @@ import {
   Presentation,
   type LucideIcon,
 } from "lucide-react";
+import { isSafeAttachmentSrc } from "@dokunc/editor";
 import { cn } from "@/lib/cn";
 import { formatFileSize, fileIconKind, type FileIconKind } from "@/lib/file-meta";
 
@@ -47,7 +48,8 @@ function typeLabel(mimeType: string, name: string): string {
  * loeschbar wie andere Bloecke.
  */
 export function AttachmentView({ node, selected }: NodeViewProps) {
-  const src = String(node.attrs.src ?? "");
+  // Unsichere Ziele (z. B. javascript:) werden nicht verlinkt.
+  const src = isSafeAttachmentSrc(node.attrs.src) ? node.attrs.src : null;
   const name = String(node.attrs.name ?? "Datei");
   const size = Number(node.attrs.size ?? 0);
   const mimeType = String(node.attrs.mimeType ?? "");
@@ -72,43 +74,54 @@ export function AttachmentView({ node, selected }: NodeViewProps) {
           <Icon className="h-5 w-5" />
         </span>
         <span className="min-w-0 flex-1">
-          <a
-            href={src}
-            target="_self"
-            className="dk-attachment-name block truncate text-[14px] font-medium text-ink no-underline hover:underline"
-            title={name}
-            data-attachment-link=""
-          >
-            {name}
-          </a>
+          {src ? (
+            <a
+              href={src}
+              target="_self"
+              className="dk-attachment-name block truncate text-[14px] font-medium text-ink no-underline hover:underline"
+              title={name}
+              data-attachment-link=""
+            >
+              {name}
+            </a>
+          ) : (
+            <span
+              className="block truncate text-[14px] font-medium text-ink"
+              title={name}
+            >
+              {name}
+            </span>
+          )}
           <span className="block text-[12px] text-faint">
             {typeLabel(mimeType, name)}
             {size > 0 ? ` · ${formatFileSize(size)}` : ""}
           </span>
         </span>
-        <span className="flex shrink-0 items-center gap-0.5">
-          {isPdf && (
+        {src && (
+          <span className="flex shrink-0 items-center gap-0.5">
+            {isPdf && (
+              <a
+                href={`${src}${src.includes("?") ? "&" : "?"}inline=1`}
+                target="_blank"
+                rel="noreferrer"
+                title="Im Browser öffnen"
+                aria-label="Im Browser öffnen"
+                className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-subtle hover:text-ink"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            )}
             <a
-              href={`${src}${src.includes("?") ? "&" : "?"}inline=1`}
-              target="_blank"
-              rel="noreferrer"
-              title="Im Browser öffnen"
-              aria-label="Im Browser öffnen"
+              href={src}
+              target="_self"
+              title="Herunterladen"
+              aria-label="Herunterladen"
               className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-subtle hover:text-ink"
             >
-              <ExternalLink className="h-4 w-4" />
+              <Download className="h-4 w-4" />
             </a>
-          )}
-          <a
-            href={src}
-            target="_self"
-            title="Herunterladen"
-            aria-label="Herunterladen"
-            className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-subtle hover:text-ink"
-          >
-            <Download className="h-4 w-4" />
-          </a>
-        </span>
+          </span>
+        )}
       </div>
     </NodeViewWrapper>
   );

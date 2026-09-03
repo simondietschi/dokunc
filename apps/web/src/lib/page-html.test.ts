@@ -91,6 +91,34 @@ describe("contentToHtml()", () => {
     expect(html).toContain("&quot;Q3&quot;");
   });
 
+  it("attachment: unsichere src (javascript:) bekommt kein href", () => {
+    const html = contentToHtml(
+      doc([
+        {
+          type: "attachment",
+          attrs: {
+            src: "javascript:alert(1)",
+            name: "boese.pdf",
+            size: 1,
+            mimeType: "application/pdf",
+          },
+        },
+      ]),
+    );
+    expect(html).toContain("data-attachment");
+    expect(html).not.toContain("href=");
+    expect(html).not.toContain("javascript:");
+    const rel = contentToHtml(
+      doc([
+        {
+          type: "attachment",
+          attrs: { src: "//evil.example/x", name: "x", size: 1, mimeType: "" },
+        },
+      ]),
+    );
+    expect(rel).not.toContain("href=");
+  });
+
   it("ungültiger Input -> leerer String", () => {
     expect(contentToHtml(null)).toBe("");
     expect(contentToHtml("kaputt")).toBe("");
