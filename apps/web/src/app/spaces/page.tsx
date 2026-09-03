@@ -20,7 +20,13 @@ export default async function SpacesPage() {
       where: { members: { some: { userId: user.id } } },
       orderBy: { createdAt: "asc" },
       include: {
-        _count: { select: { pages: true, members: true } },
+        _count: {
+          select: {
+            // Nur echte Seiten zählen (keine Vorlagen, nichts im Papierkorb).
+            pages: { where: { deletedAt: null, isTemplate: false } },
+            members: true,
+          },
+        },
       },
     }),
     prisma.notification.count({

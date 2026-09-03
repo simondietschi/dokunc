@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FilePlus2, LayoutTemplate, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -35,6 +35,7 @@ export function TemplatePicker({
       ? { kind: "builtin", key: templates.builtin[0].key }
       : null;
   const [selected, setSelected] = useState<Selection | null>(initial);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -43,6 +44,14 @@ export function TemplatePicker({
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
+
+  // Fokus in den Dialog holen (Tastatur/Screenreader) und beim
+  // Schliessen an den auslösenden Button zurückgeben.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    dialogRef.current?.focus();
+    return () => opener?.focus?.();
+  }, []);
 
   const current = useMemo(() => {
     if (!selected) return null;
@@ -83,10 +92,12 @@ export function TemplatePicker({
       }}
     >
       <div
+        ref={dialogRef}
+        tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="template-picker-title"
-        className="flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-line bg-elevated shadow-pop animate-[rise_0.25s_ease] sm:rounded-2xl"
+        className="flex max-h-[90vh] outline-none w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-line bg-elevated shadow-pop animate-[rise_0.25s_ease] sm:rounded-2xl"
       >
         <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
           <h2
@@ -154,7 +165,7 @@ export function TemplatePicker({
             </ul>
           </div>
 
-          <div className="flex min-h-0 flex-col">
+          <div className="flex min-h-0 min-w-0 flex-col">
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
               {current ? (
                 <>

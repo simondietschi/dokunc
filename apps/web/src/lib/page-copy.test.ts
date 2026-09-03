@@ -3,6 +3,7 @@ import {
   stripCommentMarks,
   copyTitle,
   planSubtreeCopy,
+  placeCopyAfter,
   type CopySource,
 } from "./page-copy";
 
@@ -148,5 +149,57 @@ describe("planSubtreeCopy()", () => {
       rootPosition: 0,
     });
     expect(steps.map((s) => s.sourceId)).toEqual(["r", "c"]);
+  });
+});
+
+describe("placeCopyAfter()", () => {
+  it("schiebt nur die Geschwister hinter dem Original nach hinten", () => {
+    const { copyPosition, updates } = placeCopyAfter(
+      [
+        { id: "a", title: "A", position: 0 },
+        { id: "b", title: "B", position: 1 },
+        { id: "c", title: "C", position: 2 },
+      ],
+      "b",
+    );
+    expect(copyPosition).toBe(2);
+    expect(updates).toEqual([{ id: "c", position: 3 }]);
+  });
+
+  it("nummeriert Altbestände mit gleichen Positionen kompakt (Anzeige-Reihenfolge)", () => {
+    // Alle auf 0: Anzeige sortiert nach Titel — die Kopie muss direkt
+    // hinter "Beta" landen, nicht am Ende.
+    const { copyPosition, updates } = placeCopyAfter(
+      [
+        { id: "g", title: "Gamma", position: 0 },
+        { id: "b", title: "Beta", position: 0 },
+        { id: "a", title: "Alpha", position: 0 },
+      ],
+      "b",
+    );
+    expect(copyPosition).toBe(2);
+    expect(updates).toEqual([
+      { id: "b", position: 1 },
+      { id: "g", position: 3 },
+    ]);
+  });
+
+  it("Original als letztes Geschwister: keine Änderungen nötig", () => {
+    const { copyPosition, updates } = placeCopyAfter(
+      [
+        { id: "a", title: "A", position: 0 },
+        { id: "b", title: "B", position: 1 },
+      ],
+      "b",
+    );
+    expect(copyPosition).toBe(2);
+    expect(updates).toEqual([]);
+  });
+
+  it("unbekanntes Original: Kopie ans Ende, keine Änderungen", () => {
+    expect(placeCopyAfter([{ id: "a", title: "A", position: 4 }], "x")).toEqual(
+      { copyPosition: 5, updates: [] },
+    );
+    expect(placeCopyAfter([], "x")).toEqual({ copyPosition: 0, updates: [] });
   });
 });

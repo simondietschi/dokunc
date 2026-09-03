@@ -114,3 +114,34 @@ export function planSubtreeCopy(
   }
   return steps;
 }
+
+export type SiblingRow = { id: string; title: string; position: number };
+
+/**
+ * Ordnet die Geschwister so, dass die Kopie direkt hinter dem Original
+ * steht: Geschwister werden in der Anzeige-Reihenfolge (position, dann
+ * Titel — wie buildTree) kompakt 0..n nummeriert, die Kopie erhält den
+ * Platz nach dem Original. Zurück kommen nur tatsächlich geänderte
+ * Positionen; damit bleiben auch Altbestände mit gleichen Positionen
+ * (z. B. alle 0) korrekt sortiert. Fehlt das Original, landet die
+ * Kopie am Ende.
+ */
+export function placeCopyAfter(
+  siblings: SiblingRow[],
+  originalId: string,
+): { copyPosition: number; updates: { id: string; position: number }[] } {
+  const ordered = [...siblings].sort(
+    (a, b) => a.position - b.position || a.title.localeCompare(b.title),
+  );
+  const index = ordered.findIndex((s) => s.id === originalId);
+  if (index < 0) {
+    const last = ordered[ordered.length - 1];
+    return { copyPosition: last ? last.position + 1 : 0, updates: [] };
+  }
+  const updates: { id: string; position: number }[] = [];
+  ordered.forEach((s, i) => {
+    const position = i <= index ? i : i + 1;
+    if (position !== s.position) updates.push({ id: s.id, position });
+  });
+  return { copyPosition: index + 1, updates };
+}

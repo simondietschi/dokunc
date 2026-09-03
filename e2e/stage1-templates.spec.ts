@@ -13,10 +13,14 @@ test.describe.configure({ mode: "serial" });
 
 async function login(page: Page) {
   await page.goto("/login");
+  // Erst nach der Hydration tippen — sonst schluckt React die Eingaben
+  // und das Formular geht leer an die Server-Action.
+  await page.waitForLoadState("networkidle");
   await page.fill('input[name="email"]', EMAIL);
   await page.fill('input[name="password"]', PASS);
   await page.click('button[type="submit"]');
-  await page.waitForURL("**/spaces");
+  await page.waitForURL("**/spaces", { waitUntil: "commit" });
+  await expect(page.locator('a[href^="/s/"]').first()).toBeVisible();
 }
 
 async function waitForLive(page: Page) {
@@ -29,21 +33,36 @@ function pageIdFromUrl(page: Page): string {
   return page.url().match(/\/p\/([^/?]+)/)![1];
 }
 
-/** In den ersten Space wechseln (Startseite ist ein Dashboard). */
+/**
+ * In den ersten Space wechseln. Volle Navigation statt Link-Klick: die
+ * Space-Startseite leitet serverseitig auf die erste Seite weiter (oder
+ * zeigt ein Dashboard) — ein Klick in diese noch laufende Transition
+ * würde die nächste Server-Action verschlucken.
+ */
 async function openFirstSpace(page: Page): Promise<string> {
   await page.goto("/spaces");
-  await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**");
-  return page.url().match(/\/s\/([^/?#]+)/)![1];
+  const href = await page.locator('a[href^="/s/"]').first().getAttribute("href");
+  const slug = href?.match(/^\/s\/([^/?#]+)/)?.[1];
+  expect(slug, "Kein Space-Link auf /spaces gefunden").toBeTruthy();
+  await page.goto(`/s/${slug}`);
+  await expect(
+    page.locator("aside").getByRole("button", { name: "Neue Seite", exact: true }),
+  ).toBeVisible();
+  return slug!;
 }
 
 /** Leere Seite über die Sidebar anlegen und Titel setzen. */
 async function createPage(page: Page, title: string): Promise<string> {
+  const before = page.url();
   await page
     .locator("aside")
     .getByRole("button", { name: "Neue Seite", exact: true })
     .click();
-  await page.waitForURL("**/p/**");
+  // Auf die NEUE Seite warten — die aktuelle URL kann bereits /p/ enthalten.
+  await page.waitForURL(
+    (url) => url.pathname.includes("/p/") && url.href !== before,
+    { timeout: 20_000 },
+  );
   await expect(page.locator('input[name="title"]')).toHaveValue("Untitled", {
     timeout: 15_000,
   });
@@ -142,10 +161,13 @@ test("Seite duplizieren, als Vorlage speichern, Seite aus Vorlage", async ({
   ).toHaveCount(1);
 
   await page.goto(`/s/${slug}/templates`);
+  const main = page.locator("main");
   await expect(
-    page.getByRole("heading", { name: "Vorlagen", exact: true }),
+    main.getByRole("heading", { name: "Vorlagen", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText(copyTitle, { exact: true })).toBeVisible();
+  // Die Kopie steht mit demselben Titel auch in der Sidebar — daher auf
+  // den Hauptbereich einschränken.
+  await expect(main.getByText(copyTitle, { exact: true })).toBeVisible();
 
   // Picker in der Sidebar: Seite aus der Standardvorlage "Meeting-Notizen".
   await page.locator('button[aria-label="Seite aus Vorlage erstellen"]').click();

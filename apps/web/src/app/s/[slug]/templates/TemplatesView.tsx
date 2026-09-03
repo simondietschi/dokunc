@@ -84,7 +84,7 @@ export function TemplatesView({
               key={t.id}
               className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-soft"
             >
-              <div className="min-w-0 flex-1">
+              <div className="min-w-[240px] flex-1">
                 <p className="truncate text-sm font-medium">
                   {t.title || "Ohne Titel"}
                 </p>
@@ -141,7 +141,7 @@ export function TemplatesView({
             key={t.key}
             className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-soft"
           >
-            <div className="min-w-0 flex-1">
+            <div className="min-w-[240px] flex-1">
               <p className="truncate text-sm font-medium">{t.title}</p>
               <p className="text-xs text-faint">{t.description}</p>
             </div>
@@ -157,14 +157,9 @@ export function TemplatesView({
               <form action={importBuiltinTemplateAction}>
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="builtin" value={t.key} />
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  type="submit"
-                  title="Als Vorlage in diesen Space kopieren"
-                >
+                <Button variant="ghost" size="sm" type="submit">
                   <CopyPlus className="h-3.5 w-3.5" />
-                  Als Vorlage kopieren
+                  Als Vorlage in diesen Space kopieren
                 </Button>
               </form>
             </div>
