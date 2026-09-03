@@ -4,8 +4,8 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   ALLOWED_IMAGE_TYPES,
-  MAX_UPLOAD_BYTES,
   UPLOAD_DIR,
+  maxUploadBytes,
   sniffImageType,
 } from "@/lib/uploads";
 
@@ -22,7 +22,7 @@ export type StoreFailure = "type" | "size";
 export async function storeImportedImage(
   bytes: Uint8Array,
 ): Promise<{ ok: true; file: StoredImage } | { ok: false; reason: StoreFailure }> {
-  if (bytes.length > MAX_UPLOAD_BYTES) return { ok: false, reason: "size" };
+  if (bytes.length > maxUploadBytes()) return { ok: false, reason: "size" };
   const mimeType = sniffImageType(bytes);
   const ext = mimeType ? ALLOWED_IMAGE_TYPES[mimeType] : undefined;
   if (!mimeType || !ext) return { ok: false, reason: "type" };
