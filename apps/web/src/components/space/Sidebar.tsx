@@ -17,6 +17,10 @@ import {
 } from "lucide-react";
 import type { TreeNode } from "@/lib/page-tree";
 import { PageTree } from "@/components/space/PageTree";
+import {
+  FavoritesSection,
+  type FavoriteEntry,
+} from "@/components/space/FavoritesSection";
 import { cn } from "@/lib/cn";
 import { Avatar } from "@/components/ui/Avatar";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
@@ -35,6 +39,7 @@ type Props = {
   canManageSpace: boolean;
   isAdmin: boolean;
   unreadCount: number;
+  favorites: FavoriteEntry[];
 };
 
 export function Sidebar({
@@ -47,6 +52,7 @@ export function Sidebar({
   canManageSpace,
   isAdmin,
   unreadCount,
+  favorites,
 }: Props) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -112,6 +118,7 @@ export function Sidebar({
       </div>
 
       <nav className="flex-1 overflow-y-auto px-2 py-1">
+        <FavoritesSection slug={slug} favorites={favorites} />
         <PageTree nodes={tree} slug={slug} canManage={canManage} />
         {tree.length === 0 && (
           <div className="mt-6 px-3 text-center">

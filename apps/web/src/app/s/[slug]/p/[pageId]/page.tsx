@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { headers } from "next/headers";
+import { after } from "next/server";
 import { Link2 } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { getRawToken } from "@/lib/session";
 import { resolveCollabUrl } from "@/lib/collab-url";
+import { recordPageVisit } from "@/lib/page-visits";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
 
@@ -23,6 +25,13 @@ export default async function PageView({
     select: { id: true, title: true },
   });
   if (!page) notFound();
+
+  // "Zuletzt besucht": nach dem Senden der Antwort, nie blockierend.
+  after(() => recordPageVisit(user.id, page.id));
+  const favoritePromise = prisma.favorite.findUnique({
+    where: { userId_pageId: { userId: user.id, pageId: page.id } },
+    select: { id: true },
+  });
 
   const token = (await getRawToken()) ?? "";
   const requestHeaders = await headers();
@@ -50,6 +59,7 @@ export default async function PageView({
       },
     }),
   ]);
+  const favorite = await favoritePromise;
 
   return (
     <div>
@@ -63,6 +73,7 @@ export default async function PageView({
         collabUrl={collabUrl}
         editable={can(role, "write")}
         canManage={can(role, "managePages")}
+        isFavorite={!!favorite}
         userName={user.name}
         pdfEnabled={!!process.env.GOTENBERG_URL}
       />
