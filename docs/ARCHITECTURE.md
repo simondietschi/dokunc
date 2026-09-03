@@ -138,14 +138,14 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       pnpm im Image vorinstalliert, DATABASE_URL-Platzhalter für
       `prisma generate` im Build); CI startet den Stack als Test
 - [x] Mail-Benachrichtigungen: Dispatcher im Collab-Prozess (Redis-Lock,
-      Sammelfenster fuer Sofort-Mails, taeglicher Digest ab
+      Sammelfenster für Sofort-Mails, täglicher Digest ab
       DIGEST_HOUR_UTC, ohne SMTP nur Markierung), reine Planungslogik
       planDispatch in packages/mail, Vorlagen mit Escaping, Einstellung
-      pro Person im Konto (Sofort / Taeglich / Aus)
+      pro Person im Konto (Sofort / Täglich / Aus)
 - [x] Versionsvergleich: eigener Myers-Zeilen-Diff plus Wort-Diff auf
       Markdown-Basis (lib/diff.ts), Vergleich einer Version gegen den
       aktuellen Stand oder die vorherige Version, gerenderte Vorschau
-      ueber das geteilte Schema, Wiederherstellen aus der Vergleichsseite
+      über das geteilte Schema, Wiederherstellen aus der Vergleichsseite
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

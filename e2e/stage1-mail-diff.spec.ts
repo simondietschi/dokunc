@@ -1,9 +1,9 @@
 import { test, expect, type Page } from "@playwright/test";
 
 /**
- * E2E fuer Mail-Einstellungen im Konto und den Versionsvergleich.
+ * E2E für Mail-Einstellungen im Konto und den Versionsvergleich.
  * Nutzt den in editor.spec.ts angelegten Nutzer (serieller Lauf). Der
- * Mail-Versand selbst ist ohne SMTP nicht pruefbar; getestet wird die
+ * Mail-Versand selbst ist ohne SMTP nicht prüfbar; getestet wird die
  * Einstellung (Speichern, nach Reload gesetzt).
  */
 
@@ -26,12 +26,17 @@ async function waitForLive(page: Page) {
   });
 }
 
-/** In einen Space navigieren (Space-Startseite ist ein Dashboard). */
+/**
+ * In den ersten Space navigieren. Die Space-Startseite leitet auf die
+ * erste Seite weiter; erst dort ist die Sidebar stabil (sonst geht der
+ * Klick auf "Neue Seite" in der Weiterleitung verloren).
+ */
 async function openFirstSpace(page: Page): Promise<string> {
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL(/\/s\/[^/]+/);
-  return page.url().match(/\/s\/([^/?#]+)/)![1];
+  await page.waitForURL("**/s/**/p/**");
+  await waitForLive(page);
+  return page.url().match(/\/s\/([^/]+)\//)![1];
 }
 
 test("Konto: Mail-Benachrichtigungen auf Aus setzen", async ({ page }) => {
@@ -54,7 +59,7 @@ test("Konto: Mail-Benachrichtigungen auf Aus setzen", async ({ page }) => {
   await page.reload();
   await expect(page.getByRole("radio", { name: /^Aus/ })).toBeChecked();
 
-  // Zuruecksetzen auf den Standard, damit andere Tests unbeeinflusst sind.
+  // Zurücksetzen auf den Standard, damit andere Tests unbeeinflusst sind.
   const instant = page.getByRole("radio", { name: /^Sofort/ });
   await instant.check();
   await page
@@ -68,6 +73,7 @@ test("Konto: Mail-Benachrichtigungen auf Aus setzen", async ({ page }) => {
 
 test("Versionsvergleich: Diff und Vorschau einer Version", async ({
   page,
+  context,
 }) => {
   test.setTimeout(120_000);
   await login(page);
@@ -100,50 +106,54 @@ test("Versionsvergleich: Diff und Vorschau einer Version", async ({
   }
   expect(saved, `Titel "${title}" wurde nicht gespeichert`).toBe(true);
 
-  const sentence = "Erster Satz fuer den Versionsvergleich.";
+  const sentence = "Erster Satz für den Versionsvergleich.";
   const editor = page.locator(".ProseMirror");
   await editor.click();
   await page.keyboard.type(sentence);
   await expect(editor).toContainText(sentence);
 
-  // Der Collab-Server persistiert kurz nach der letzten Aenderung und legt
-  // dabei die erste Version an. Verlauf pollen, bis "Vergleichen" da ist.
+  // Der Collab-Server persistiert kurz nach der letzten Änderung und legt
+  // dabei die erste Version an. Der Editor bleibt dafür in diesem Tab
+  // verbunden (sonst ginge das letzte Update beim Verlassen verloren);
+  // der Verlauf wird in einem zweiten Tab gepollt, bis "Vergleichen" da ist.
+  const history = await context.newPage();
   const historyUrl = `/s/${slug}/p/${pageId}/history`;
   await expect
     .poll(
       async () => {
-        await page.goto(historyUrl);
-        return page.getByRole("link", { name: "Vergleichen" }).count();
+        await history.goto(historyUrl);
+        return history.getByRole("link", { name: "Vergleichen" }).count();
       },
       { timeout: 60_000, intervals: [2000] },
     )
     .toBeGreaterThan(0);
+  await page.close();
 
-  await expect(page.getByText("Aktueller Stand")).toBeVisible();
-  await page.getByRole("link", { name: "Vergleichen" }).first().click();
-  await page.waitForURL(/\/history\/[a-z0-9]+/);
+  await expect(history.getByText("Aktueller Stand")).toBeVisible();
+  await history.getByRole("link", { name: "Vergleichen" }).first().click();
+  await history.waitForURL(/\/history\/[a-z0-9]+/);
 
   // Diff-Ansicht: Titelzeile ist Teil des Vergleichs (gleich oder
-  // geaendert), Zusammenfassung sichtbar.
-  const diff = page.getByTestId("diff-view");
+  // geändert), Zusammenfassung sichtbar.
+  const diff = history.getByTestId("diff-view");
   await expect(diff).toBeVisible();
   await expect(diff).toContainText(`# ${title}`);
-  await expect(page.getByTestId("diff-summary")).toBeVisible();
+  await expect(history.getByTestId("diff-summary")).toBeVisible();
 
   // Umschalter auf Vorschau: gerenderter Text der Version.
-  await page.getByRole("link", { name: "Vorschau" }).click();
-  await page.waitForURL(/view=preview/);
-  const preview = page.getByTestId("version-preview");
+  await history.getByRole("link", { name: "Vorschau" }).click();
+  await history.waitForURL(/view=preview/);
+  const preview = history.getByTestId("version-preview");
   await expect(preview).toBeVisible();
   await expect(preview).toContainText(title);
   await expect(preview).toContainText(sentence);
 
-  // Zurueck auf Aenderungen; der Vergleich "gegen aktuellen Stand" ist
+  // Zurück auf Änderungen; der Vergleich "gegen aktuellen Stand" ist
   // als aktiv markiert.
-  await page.getByRole("link", { name: "Änderungen" }).click();
-  await page.waitForURL(/view=diff/);
-  await expect(page.getByTestId("diff-view")).toBeVisible();
+  await history.getByRole("link", { name: "Änderungen" }).click();
+  await history.waitForURL(/view=diff/);
+  await expect(history.getByTestId("diff-view")).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "gegen aktuellen Stand" }),
+    history.getByRole("link", { name: "gegen aktuellen Stand" }),
   ).toHaveAttribute("aria-current", "page");
 });

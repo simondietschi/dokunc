@@ -59,7 +59,7 @@ function Row({
       </span>
       <span className="min-w-0 flex-1 whitespace-pre-wrap break-words">
         {children}
-        {/* Leere Zeilen behalten ihre Hoehe (Zero-Width-Space). */}
+        {/* Leere Zeilen behalten ihre Höhe (Zero-Width-Space). */}
         {"\u200b"}
       </span>
     </div>
