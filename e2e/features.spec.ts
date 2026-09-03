@@ -174,9 +174,11 @@ test("Diagramm-Blöcke einfügbar, Export liefert MD/HTML/Print", async ({
   await waitForLive(page);
   const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
 
-  // Excalidraw-Block per Slash-Menü
+  // Excalidraw-Block per Slash-Menü. Bewusst den letzten Absatz statt
+  // der Editor-Mitte anklicken: dort kann ein Atom-Block (z. B. die
+  // Excalidraw-Karte mit ihrer "Zeichnen"-Schaltfläche) liegen.
   const editor = page.locator(".ProseMirror");
-  await editor.click();
+  await editor.locator("p").last().click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
   await page.keyboard.type("/excali");
@@ -188,7 +190,7 @@ test("Diagramm-Blöcke einfügbar, Export liefert MD/HTML/Print", async ({
   ).toBeVisible({ timeout: 8000 });
 
   // draw.io-Block per Slash-Menü
-  await editor.click();
+  await editor.locator("p").last().click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
   await page.keyboard.type("/drawio");
