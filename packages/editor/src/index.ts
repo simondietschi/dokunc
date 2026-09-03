@@ -139,5 +139,5 @@ export { CommentMark } from "./comment-mark";
 export { chunkText } from "./text";
 export { Excalidraw, toBase64 } from "./excalidraw";
 export { Drawio } from "./drawio";
-export { Attachment } from "./attachment";
+export { Attachment, isSafeAttachmentSrc } from "./attachment";
 export type { AttachmentAttrs } from "./attachment";

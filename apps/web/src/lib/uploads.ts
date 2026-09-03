@@ -105,13 +105,14 @@ export function safeExtension(originalName: string): string {
 }
 
 /**
- * Anzeigename bereinigen: Steuerzeichen und Pfadtrenner raus, Whitespace
- * normalisieren, auf 200 Zeichen kuerzen. Leer -> "datei".
+ * Anzeigename bereinigen: Steuerzeichen (auch Unicode-Bidi-Steuerzeichen,
+ * mit denen sich Endungen verschleiern lassen) und Pfadtrenner raus,
+ * Whitespace normalisieren, auf 200 Zeichen kuerzen. Leer -> "datei".
  */
 export function sanitizeFilename(original: string): string {
   const cleaned = original
     // eslint-disable-next-line no-control-regex
-    .replace(/[\x00-\x1f\x7f-\x9f]/g, "")
+    .replace(/[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, "")
     .replace(/[\\/]/g, "_")
     .replace(/\s+/g, " ")
     .trim();
