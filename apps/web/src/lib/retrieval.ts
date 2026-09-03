@@ -70,6 +70,8 @@ async function retrieveSemantic(
     where: {
       page: {
         deletedAt: null,
+        // Vorlagen sind Platzhalter-Strukturen, keine Wissensquellen.
+        isTemplate: false,
         space: { members: { some: { userId } } },
       },
     },
@@ -133,6 +135,7 @@ async function retrieveFts(
     JOIN "SpaceMember" m ON m."spaceId" = p."spaceId"
     WHERE m."userId" = ${userId}
       AND p."deletedAt" IS NULL
+      AND p."isTemplate" = false
       AND to_tsvector('simple', c.text) @@ plainto_tsquery('simple', ${question})
     ORDER BY rank DESC
     LIMIT ${TOP_K}
