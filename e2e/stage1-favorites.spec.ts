@@ -67,7 +67,7 @@ test("Favorit setzen, Sidebar, Dashboard, Favorit entfernen", async ({
   const main = page.locator("main");
   await expect(main.locator("h1")).toBeVisible();
   await expect(
-    main.getByRole("region", { name: "Zuletzt geaendert" }),
+    main.getByRole("region", { name: "Zuletzt geändert" }),
   ).toBeVisible();
 
   const title = `Favorit ${Date.now()}`;

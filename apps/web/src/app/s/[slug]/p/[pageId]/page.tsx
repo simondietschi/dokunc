@@ -30,10 +30,6 @@ export default async function PageView({
 
   // "Zuletzt besucht": nach dem Senden der Antwort, nie blockierend.
   after(() => recordPageVisit(user.id, page.id));
-  const favoritePromise = prisma.favorite.findUnique({
-    where: { userId_pageId: { userId: user.id, pageId: page.id } },
-    select: { id: true },
-  });
 
   const token = (await getRawToken()) ?? "";
   const requestHeaders = await headers();
@@ -44,7 +40,8 @@ export default async function PageView({
   });
 
   const ancestorsPromise = loadAncestors(space.id, page.parentId);
-  const [backlinks, comments, attachments, childCount] = await Promise.all([
+  const [backlinks, comments, attachments, childCount, favorite] =
+    await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -76,9 +73,12 @@ export default async function PageView({
       },
     }),
     prisma.page.count({ where: { parentId: page.id, deletedAt: null } }),
+    prisma.favorite.findUnique({
+      where: { userId_pageId: { userId: user.id, pageId: page.id } },
+      select: { id: true },
+    }),
   ]);
   const ancestors = await ancestorsPromise;
-  const favorite = await favoritePromise;
 
   return (
     <div>

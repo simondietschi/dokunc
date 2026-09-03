@@ -22,8 +22,9 @@ export function relativeTime(
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `vor ${hours} Std.`;
 
-  // Ab einem Tag zaehlen Kalendertage, nicht 24-Stunden-Bloecke:
-  // etwas von gestern Abend ist "gestern", auch wenn es keine 24 h her ist.
+  // Ab 24 Stunden zählen Kalendertage statt 24-Stunden-Blöcke: 36 h
+  // zurück ist noch "gestern", erst ab dem übernächsten Kalendertag
+  // beginnt "vor N Tagen".
   const days = calendarDaysBetween(date, now);
   if (days <= 1) return "gestern";
   if (days < 7) return `vor ${days} Tagen`;

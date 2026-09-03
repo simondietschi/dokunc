@@ -157,12 +157,12 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       in CSP-Sandbox, Rest als Download mit nosniff, privater Cache);
       Editor-Block "attachment" (Slash-Befehl, Drag-and-drop, Einfügen),
       Anhangsliste unter der Seite, Altbestand wird nachgetragen
-- [x] Favoriten & Zuletzt besucht: persoenliche Favoriten (Favorite,
+- [x] Favoriten & Zuletzt besucht: persönliche Favoriten (Favorite,
       Stern in der Kopfzeile, einklappbarer Sidebar-Abschnitt, Palette),
       Besuche via `after()` nach dem Rendern (PageVisit, pro Person auf
-      200 Eintraege begrenzt), Space-Startseite als Dashboard statt
+      200 Einträge begrenzt), Space-Startseite als Dashboard statt
       Redirect (Kennzahlen, Zuletzt besucht, Favoriten, Zuletzt
-      geaendert), /spaces mit Einstiegen ueber alle Spaces
+      geändert), /spaces mit Einstiegen über alle Spaces
 - [x] Seitenvorlagen und Duplizieren: Vorlagen sind Seiten mit
       `isTemplate` (gleicher Editor/Collab, nicht im Seitenbaum, nicht als
       Wiki-Link-Ziel, Badge in Suche/Palette/Papierkorb), Verwaltung unter
