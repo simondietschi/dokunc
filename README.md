@@ -93,7 +93,7 @@ erzeugt und im Volume `app_data` abgelegt (überlebt Neustarts und Updates).
 
 Danach:
 
-- App: <https://localhost> (TLS über den Caddy-Proxy)
+- App: <https://localhost:7891> (TLS über den Caddy-Proxy; Port über `APP_PORT` in `.env` änderbar)
 - Die erste Registrierung wird automatisch Instanz-Admin; danach ist die
   Anmeldung nur noch per Einladung möglich.
 - Status: `docker compose ps` · Logs: `docker compose logs -f app`
@@ -105,7 +105,7 @@ Hinweise:
 - TLS nutzt Caddys **interne CA** (`localhost`). Der Browser zeigt anfangs
   eine Zertifikatswarnung — für internen/VPN-Betrieb ok, oder die Caddy-Root-CA
   importieren.
-- **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1` (kein LAN-Zugriff).
+- **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1:7891` (kein LAN-Zugriff).
   App/DB/Redis sind nur im internen Docker-Netz erreichbar.
 - Der App-Container läuft als **non-root**. Daten liegen in den Volumes
   `db_data`, `redis_data`, `uploads`, `app_data`.
@@ -118,12 +118,15 @@ nicht nötig, die Adressen werden zur Laufzeit ausgewertet:
 ```env
 SITE_ADDRESS=wiki.example.com
 APP_URL=https://wiki.example.com
+APP_PORT=443
 APP_SECRET=<openssl rand -base64 48>
 POSTGRES_PASSWORD=<eigenes Passwort>
 ```
 
 Dann `docker compose up -d`. In der `Caddyfile` `tls internal` entfernen,
-damit Caddy ein Let's-Encrypt-Zertifikat holt. Ein selbst gesetztes
+damit Caddy ein Let's-Encrypt-Zertifikat holt (dafür muss Caddy zusätzlich
+auf Port 80 erreichbar sein, also `"127.0.0.1:80:80"` bzw. ohne
+`127.0.0.1` beim Proxy unter `ports` ergänzen). Ein selbst gesetztes
 `APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
 alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs- und
 Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
