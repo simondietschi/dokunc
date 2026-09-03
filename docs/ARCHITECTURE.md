@@ -137,6 +137,13 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       gehalten, Collab-Adresse zur Laufzeit aus dem Host abgeleitet,
       pnpm im Image vorinstalliert, DATABASE_URL-Platzhalter für
       `prisma generate` im Build); CI startet den Stack als Test
+- [x] Seitenvorlagen und Duplizieren: Vorlagen sind Seiten mit
+      `isTemplate` (gleicher Editor/Collab, nicht im Seitenbaum, nicht als
+      Wiki-Link-Ziel, Badge in Suche/Palette/Papierkorb), Verwaltung unter
+      /s/[slug]/templates, Standardvorlagen als ProseMirror-JSON
+      (`lib/builtin-templates.ts`), Picker in der Sidebar; Duplizieren als
+      tiefe Kopie in einer Transaktion (Kommentar-Marks entfernt, Kopie
+      direkt hinter dem Original, Collab seedet Yjs aus Page.content)
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

@@ -19,6 +19,10 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
+- **Seitenvorlagen**: eigene Vorlagen je Space plus fünf Standardvorlagen
+  (Meeting-Notizen, ADR, Runbook, Projektbrief, Wochenbericht), Picker
+  neben „Neue Seite", **Seiten duplizieren** (optional mit Unterseiten),
+  „Als Vorlage speichern"
 - Postgres-Volltextsuche, Versionsverlauf, Papierkorb
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
