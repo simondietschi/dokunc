@@ -63,7 +63,7 @@ describe("planDispatch()", () => {
     );
   });
 
-  it("INSTANT: nur Eintraege ausserhalb des Sammelfensters", () => {
+  it("INSTANT: nur Einträge ausserhalb des Sammelfensters", () => {
     const plan = planDispatch(
       [
         candidate({ id: "old", ageMs: INSTANT_BATCH_WINDOW_MS + 1 }),
@@ -79,7 +79,7 @@ describe("planDispatch()", () => {
     expect(plan.markOnly).toEqual([]);
   });
 
-  it("INSTANT: pro Nutzer gruppiert, aelteste zuerst", () => {
+  it("INSTANT: pro Nutzer gruppiert, älteste zuerst", () => {
     const plan = planDispatch(
       [
         candidate({ id: "b", userId: "u1", ageMs: 30_000 }),
@@ -110,11 +110,11 @@ describe("planDispatch()", () => {
     const digest = planDispatch(items, NOW, { digest: true });
     expect(digest.send).toHaveLength(1);
     expect(digest.send[0].mode).toBe("DAILY");
-    // Im Digest zaehlt das Sammelfenster nicht: auch frische Eintraege.
+    // Im Digest zählt das Sammelfenster nicht: auch frische Einträge.
     expect(digest.send[0].notificationIds).toEqual(["d1", "d2"]);
   });
 
-  it("INSTANT-Eintraege werden auch im Digest-Lauf sofort versendet", () => {
+  it("INSTANT-Einträge werden auch im Digest-Lauf sofort versendet", () => {
     const plan = planDispatch(
       [
         candidate({ id: "i", mode: "INSTANT", userId: "u1" }),

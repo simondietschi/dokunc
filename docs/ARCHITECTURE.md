@@ -171,14 +171,14 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       tiefe Kopie in einer Transaktion (Kommentar-Marks entfernt, Kopie
       direkt hinter dem Original, Collab seedet Yjs aus Page.content)
 - [x] Mail-Benachrichtigungen: Dispatcher im Collab-Prozess (Redis-Lock,
-      Sammelfenster fuer Sofort-Mails, taeglicher Digest ab
+      Sammelfenster für Sofort-Mails, täglicher Digest ab
       DIGEST_HOUR_UTC, ohne SMTP nur Markierung), reine Planungslogik
       planDispatch in packages/mail, Vorlagen mit Escaping, Einstellung
-      pro Person im Konto (Sofort / Taeglich / Aus)
+      pro Person im Konto (Sofort / Täglich / Aus)
 - [x] Versionsvergleich: eigener Myers-Zeilen-Diff plus Wort-Diff auf
       Markdown-Basis (lib/diff.ts), Vergleich einer Version gegen den
       aktuellen Stand oder die vorherige Version, gerenderte Vorschau
-      ueber das geteilte Schema, Wiederherstellen aus der Vergleichsseite
+      über das geteilte Schema, Wiederherstellen aus der Vergleichsseite
 - [x] Space-Einstellungen (Name, Beschreibung, Emoji-Icon; Space verlassen
       ausser als letzter Owner; Löschen nur durch Owner mit Namens-
       Bestätigung inkl. Aufräumen der Upload-Dateien) und Import

@@ -201,7 +201,7 @@ export default async function VersionComparePage({
               </h1>
               {previewHtml ? (
                 // HTML entsteht ausschliesslich serverseitig aus dem
-                // ProseMirror-JSON ueber das geteilte Editor-Schema
+                // ProseMirror-JSON über das geteilte Editor-Schema
                 // (contentToHtml) — kein Roh-HTML aus Nutzerdaten.
                 <div
                   className="ProseMirror min-h-0!"

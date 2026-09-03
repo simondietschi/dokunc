@@ -21,7 +21,7 @@ const reply: NotificationMailItem = {
 };
 
 describe("describeNotification()", () => {
-  it("liefert deutsche Praedikate", () => {
+  it("liefert deutsche Prädikate", () => {
     expect(describeNotification("MENTION")).toBe("hat dich erwähnt");
     expect(describeNotification("COMMENT")).toBe("hat kommentiert");
     expect(describeNotification("COMMENT_REPLY")).toBe(
@@ -31,7 +31,7 @@ describe("describeNotification()", () => {
 });
 
 describe("notificationMail()", () => {
-  it("Betreff bei einer Erwaehnung", () => {
+  it("Betreff bei einer Erwähnung", () => {
     const m = notificationMail({ recipientName: "Sam", items: [mention] });
     expect(m.subject).toBe("Kim Muster hat dich in Onboarding erwähnt");
     expect(m.text).toContain("Hallo Sam,");
@@ -47,7 +47,7 @@ describe("notificationMail()", () => {
     expect(m.html).toContain("Passt so, danke!");
   });
 
-  it("Betreff bei mehreren Eintraegen zaehlt", () => {
+  it("Betreff bei mehreren Einträgen zählt", () => {
     const m = notificationMail({
       recipientName: "Sam",
       items: [mention, reply],
@@ -81,7 +81,7 @@ describe("notificationMail()", () => {
     expect(m.subject).toContain("<script>");
   });
 
-  it("kuerzt lange Auszuege", () => {
+  it("kürzt lange Auszüge", () => {
     const m = notificationMail({
       recipientName: "Sam",
       items: [{ ...reply, excerpt: "x".repeat(500) }],
@@ -92,7 +92,7 @@ describe("notificationMail()", () => {
 });
 
 describe("digestMail()", () => {
-  it("zaehlt im Betreff und listet alle Eintraege", () => {
+  it("zählt im Betreff und listet alle Einträge", () => {
     const m = digestMail({
       recipientName: "Sam",
       items: [mention, reply],

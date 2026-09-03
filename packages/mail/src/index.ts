@@ -25,6 +25,11 @@ export function mailTransport(): Transporter | null {
     host,
     port: Number(process.env.SMTP_PORT ?? 587),
     secure: process.env.SMTP_SECURE === "true",
+    // Ein hängender SMTP-Server darf weder eine Server Action noch den
+    // Dispatcher minutenlang blockieren (nodemailer-Defaults: bis 10 min).
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 30_000,
     auth: process.env.SMTP_USERNAME
       ? {
           user: process.env.SMTP_USERNAME,
