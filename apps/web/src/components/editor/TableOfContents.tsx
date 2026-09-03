@@ -108,7 +108,10 @@ export function TableOfContents({
         const el = domFor(h);
         return el ? el.getBoundingClientRect().top - top : Number.POSITIVE_INFINITY;
       });
-      setActive(activeHeadingIndex(tops, SCROLL_OFFSET + 8));
+      const atEnd =
+        container.scrollTop + container.clientHeight >=
+        container.scrollHeight - 2;
+      setActive(activeHeadingIndex(tops, SCROLL_OFFSET + 8, atEnd));
     };
     const onScroll = () => {
       if (ticking) return;

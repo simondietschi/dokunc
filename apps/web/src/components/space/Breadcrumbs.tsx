@@ -56,6 +56,7 @@ export function Breadcrumbs({
               {slot.kind === "item" ? (
                 <Link
                   href={slot.item.href}
+                  title={slot.item.title}
                   className="max-w-[180px] truncate rounded px-1 py-0.5 transition-colors hover:bg-subtle hover:text-ink"
                 >
                   {slot.item.title}

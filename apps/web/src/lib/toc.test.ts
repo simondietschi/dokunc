@@ -68,5 +68,11 @@ describe("activeHeadingIndex()", () => {
 
   it("leere Liste ergibt 0", () => {
     expect(activeHeadingIndex([], 120)).toBe(0);
+    expect(activeHeadingIndex([], 120, true)).toBe(0);
+  });
+
+  it("am Ende des Scroll-Containers ist die letzte aktiv", () => {
+    expect(activeHeadingIndex([-500, 300, 700], 120, true)).toBe(2);
+    expect(activeHeadingIndex([-500, 300, 700], 120, false)).toBe(0);
   });
 });
