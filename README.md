@@ -20,6 +20,10 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
 - Postgres-Volltextsuche, Versionsverlauf, Papierkorb
+- **Favoriten** (Stern in der Seitenkopfzeile, Abschnitt in der Sidebar,
+  Sprungziele in der Palette), **Zuletzt besucht** und ein
+  **Space-Dashboard** (Kennzahlen, zuletzt besuchte, favorisierte und
+  zuletzt geaenderte Seiten)
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
 

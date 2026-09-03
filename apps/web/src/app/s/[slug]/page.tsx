@@ -1,9 +1,10 @@
-import { redirect } from "next/navigation";
 import { FileText, Plus, Slash, Link2, AtSign } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
+import { relativeTime } from "@/lib/relative-time";
 import { Button } from "@/components/ui/Button";
+import { SpaceDashboard, changedMeta } from "@/components/space/SpaceDashboard";
 import { createPageAction } from "./actions";
 
 const TIPS = [
@@ -19,24 +20,98 @@ function stagger(i: number): React.CSSProperties {
   };
 }
 
+/** Sichtbare Seiten des Space: nicht geloescht, keine Vorlagen. */
+const visiblePages = (spaceId: string) =>
+  ({ spaceId, deletedAt: null, isTemplate: false }) as const;
+
 export default async function SpaceIndex({
   params,
 }: {
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { space, role } = await loadSpace(slug);
-
-  const first = await prisma.page.findFirst({
-    where: { spaceId: space.id, parentId: null, deletedAt: null },
-    orderBy: { position: "asc" },
-    select: { id: true },
-  });
-
-  if (first) redirect(`/s/${slug}/p/${first.id}`);
-
+  const { space, role, user } = await loadSpace(slug);
   const canCreate = can(role, "managePages");
 
+  const pageCount = await prisma.page.count({
+    where: visiblePages(space.id),
+  });
+
+  if (pageCount === 0) {
+    return (
+      <EmptySpace name={space.name} slug={space.slug} canCreate={canCreate} />
+    );
+  }
+
+  const [memberCount, visits, favorites, changed] = await Promise.all([
+    prisma.spaceMember.count({ where: { spaceId: space.id } }),
+    prisma.pageVisit.findMany({
+      where: { userId: user.id, page: visiblePages(space.id) },
+      orderBy: { visitedAt: "desc" },
+      take: 8,
+      select: { visitedAt: true, page: { select: { id: true, title: true } } },
+    }),
+    prisma.favorite.findMany({
+      where: { userId: user.id, page: visiblePages(space.id) },
+      orderBy: { createdAt: "asc" },
+      take: 8,
+      select: {
+        page: { select: { id: true, title: true, updatedAt: true } },
+      },
+    }),
+    prisma.page.findMany({
+      where: visiblePages(space.id),
+      orderBy: { updatedAt: "desc" },
+      take: 8,
+      select: {
+        id: true,
+        title: true,
+        updatedAt: true,
+        lastEditedBy: { select: { name: true } },
+      },
+    }),
+  ]);
+
+  const now = new Date();
+
+  return (
+    <SpaceDashboard
+      slug={space.slug}
+      name={space.name}
+      description={space.description}
+      icon={space.icon}
+      pageCount={pageCount}
+      memberCount={memberCount}
+      canCreate={canCreate}
+      recent={visits.map((v) => ({
+        id: v.page.id,
+        title: v.page.title,
+        meta: relativeTime(v.visitedAt, now),
+      }))}
+      favorites={favorites.map((f) => ({
+        id: f.page.id,
+        title: f.page.title,
+        meta: `Geaendert ${relativeTime(f.page.updatedAt, now)}`,
+      }))}
+      changed={changed.map((p) => ({
+        id: p.id,
+        title: p.title,
+        meta: changedMeta(p.lastEditedBy?.name, p.updatedAt, now),
+      }))}
+    />
+  );
+}
+
+/** Bestehender Empty-State: nur fuer Spaces ohne einzige Seite. */
+function EmptySpace({
+  name,
+  slug,
+  canCreate,
+}: {
+  name: string;
+  slug: string;
+  canCreate: boolean;
+}) {
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 pb-16 text-center">
       <div
@@ -49,7 +124,7 @@ export default async function SpaceIndex({
         className="mt-5 text-xl font-semibold tracking-tight"
         style={stagger(1)}
       >
-        „{space.name}“ ist noch leer
+        „{name}“ ist noch leer
       </h2>
       <p
         className="mt-1.5 max-w-sm text-sm leading-relaxed text-muted"
@@ -62,7 +137,7 @@ export default async function SpaceIndex({
 
       {canCreate && (
         <form action={createPageAction} className="mt-6" style={stagger(3)}>
-          <input type="hidden" name="slug" value={space.slug} />
+          <input type="hidden" name="slug" value={slug} />
           <Button type="submit" size="lg">
             <Plus className="h-4 w-4" />
             Erste Seite erstellen

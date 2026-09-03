@@ -31,7 +31,10 @@ test("Wiki-Links erzeugen Backlinks", async ({ page }) => {
   // Zwei Seiten anlegen: Ziel + Quelle.
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar öffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   const slug = page.url().match(/\/s\/([^/]+)\//)![1];
 
   // Hilfsfunktion: neue Seite anlegen und WARTEN, bis der frische Editor
@@ -107,7 +110,10 @@ test("Kommentar-Thread anlegen und auflösen", async ({ page }) => {
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar öffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
 
   const editor = page.locator(".ProseMirror");
@@ -159,7 +165,10 @@ test("Diagramm-Blöcke einfügbar, Export liefert MD/HTML/Print", async ({
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar öffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
   const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
 
