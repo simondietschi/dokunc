@@ -8,6 +8,7 @@ import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { InviteForm } from "./InviteForm";
 import { RoleSelect } from "./RoleSelect";
 import { revokeInvitationAction, removeMemberAction } from "./actions";
+import { LeaveSpaceForm } from "./LeaveSpaceForm";
 
 export default async function MembersPage({
   params,
@@ -132,6 +133,8 @@ export default async function MembersPage({
           </ul>
         </>
       )}
+
+      <LeaveSpaceForm slug={slug} spaceName={space.name} />
     </div>
   );
 }

@@ -14,6 +14,8 @@ import {
   Menu,
   Bell,
   Sparkles,
+  SlidersHorizontal,
+  Upload,
 } from "lucide-react";
 import type { TreeNode } from "@/lib/page-tree";
 import { PageTree } from "@/components/space/PageTree";
@@ -28,6 +30,7 @@ import { PaletteButton } from "@/components/CommandPalette";
 type Props = {
   slug: string;
   spaceName: string;
+  spaceIcon?: string | null;
   role: string;
   userName: string;
   tree: TreeNode[];
@@ -40,6 +43,7 @@ type Props = {
 export function Sidebar({
   slug,
   spaceName,
+  spaceIcon,
   role,
   userName,
   tree,
@@ -96,9 +100,18 @@ export function Sidebar({
       </Link>
 
       <div className="flex items-center gap-2.5 px-4 py-2">
-        <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-accent to-violet-500 text-[13px] font-bold text-white">
-          {spaceName[0]?.toUpperCase()}
-        </span>
+        {spaceIcon ? (
+          <span
+            data-testid="space-icon"
+            className="grid h-7 w-7 place-items-center rounded-lg bg-surface text-[17px] leading-none shadow-soft"
+          >
+            {spaceIcon}
+          </span>
+        ) : (
+          <span className="grid h-7 w-7 place-items-center rounded-lg bg-gradient-to-br from-accent to-violet-500 text-[13px] font-bold text-white">
+            {spaceName[0]?.toUpperCase()}
+          </span>
+        )}
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold">{spaceName}</p>
           <p className="text-[11px] uppercase tracking-wide text-faint">
@@ -148,6 +161,15 @@ export function Sidebar({
             Papierkorb
           </NavLink>
         )}
+        {canManage && (
+          <NavLink
+            href={`/s/${slug}/import`}
+            active={pathname === `/s/${slug}/import`}
+            icon={<Upload className="h-3.5 w-3.5" />}
+          >
+            Importieren
+          </NavLink>
+        )}
         {canManageSpace && (
           <NavLink
             href={`/s/${slug}/members`}
@@ -155,6 +177,15 @@ export function Sidebar({
             icon={<Users className="h-3.5 w-3.5" />}
           >
             Mitglieder
+          </NavLink>
+        )}
+        {canManageSpace && (
+          <NavLink
+            href={`/s/${slug}/settings`}
+            active={pathname === `/s/${slug}/settings`}
+            icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+          >
+            Einstellungen
           </NavLink>
         )}
         <NavLink
