@@ -20,6 +20,7 @@ import {
   MovePageMenuItem,
 } from "@/components/space/MovePageDialog";
 import { FavoriteButton } from "@/components/space/FavoriteButton";
+import { PageMenuTemplates } from "@/components/space/PageMenuTemplates";
 import { CalloutView } from "@/components/editor/CalloutView";
 import { MermaidView } from "@/components/editor/MermaidView";
 import { WikiLinkView } from "@/components/editor/WikiLinkView";
@@ -61,6 +62,8 @@ export function CollaborativeEditor({
   userName,
   pdfEnabled,
   breadcrumbs,
+  isTemplate = false,
+  hasChildren = false,
 }: {
   slug: string;
   spaceId: string;
@@ -75,6 +78,10 @@ export function CollaborativeEditor({
   pdfEnabled: boolean;
   /** Space-Name und Vorfahren (Wurzel zuerst) fuer die Brotkrumen. */
   breadcrumbs: { spaceName: string; ancestors: Crumb[] };
+  /** Seite ist eine Vorlage (Badge + Menüeintrag "Seite daraus erstellen"). */
+  isTemplate?: boolean;
+  /** Für "Duplizieren": Option "Unterseiten mitkopieren" nur bei Bedarf. */
+  hasChildren?: boolean;
 }) {
   const ydoc = useMemo(() => new Y.Doc(), [pageId]);
   const [moveOpen, setMoveOpen] = useState(false);
@@ -285,6 +292,11 @@ export function CollaborativeEditor({
               <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
               {statusText}
             </span>
+            {isTemplate && (
+              <span className="rounded-full border border-accent/30 bg-accent-soft px-2.5 py-1 text-[12px] font-medium text-accent">
+                Vorlage
+              </span>
+            )}
             <PeerStack peers={peers} />
           </div>
           <div className="flex items-center gap-1">
@@ -304,6 +316,12 @@ export function CollaborativeEditor({
             <PageActions slug={slug} pageId={pageId} canManage={canManage}>
               {canManage && (
                 <MovePageMenuItem onOpen={() => setMoveOpen(true)} />
+                <PageMenuTemplates
+                  slug={slug}
+                  pageId={pageId}
+                  isTemplate={isTemplate}
+                  hasChildren={hasChildren}
+                />
               )}
             </PageActions>
           </div>

@@ -27,6 +27,10 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   der Seite. **Zugriffsschutz**: jede Datei ist an ihren Space gebunden
   und nur für dessen Mitglieder abrufbar (Bilder inline, alles andere
   als Download; Limit per `MAX_UPLOAD_MB`, Default 50 MB)
+- **Seitenvorlagen**: eigene Vorlagen je Space plus fünf Standardvorlagen
+  (Meeting-Notizen, ADR, Runbook, Projektbrief, Wochenbericht), Picker
+  neben „Neue Seite", **Seiten duplizieren** (optional mit Unterseiten),
+  „Als Vorlage speichern"
 - Postgres-Volltextsuche, Versionsverlauf, Papierkorb
 - **Favoriten** (Stern in der Seitenkopfzeile, Abschnitt in der Sidebar,
   Sprungziele in der Palette), **Zuletzt besucht** und ein

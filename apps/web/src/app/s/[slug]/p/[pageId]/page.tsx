@@ -24,7 +24,7 @@ export default async function PageView({
 
   const page = await prisma.page.findFirst({
     where: { id: pageId, spaceId: space.id, deletedAt: null },
-    select: { id: true, title: true, parentId: true },
+    select: { id: true, title: true, parentId: true, isTemplate: true },
   });
   if (!page) notFound();
 
@@ -43,11 +43,8 @@ export default async function PageView({
     proto: requestHeaders.get("x-forwarded-proto"),
   });
 
-  // Brotkrumen parallel starten, aber getrennt von Promise.all erwarten:
-  // mit vier heterogenen Prisma-Promises verliert TypeScript die
-  // Tupel-Inferenz (implizites any in den Ergebnissen).
   const ancestorsPromise = loadAncestors(space.id, page.parentId);
-  const [backlinks, comments, attachments] = await Promise.all([
+  const [backlinks, comments, attachments, childCount] = await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -78,6 +75,7 @@ export default async function PageView({
         uploader: { select: { name: true } },
       },
     }),
+    prisma.page.count({ where: { parentId: page.id, deletedAt: null } }),
   ]);
   const ancestors = await ancestorsPromise;
   const favorite = await favoritePromise;
@@ -98,6 +96,8 @@ export default async function PageView({
         userName={user.name}
         pdfEnabled={!!process.env.GOTENBERG_URL}
         breadcrumbs={{ spaceName: space.name, ancestors }}
+        isTemplate={page.isTemplate}
+        hasChildren={childCount > 0}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">
