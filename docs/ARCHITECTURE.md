@@ -137,12 +137,12 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       gehalten, Collab-Adresse zur Laufzeit aus dem Host abgeleitet,
       pnpm im Image vorinstalliert, DATABASE_URL-Platzhalter für
       `prisma generate` im Build); CI startet den Stack als Test
-- [x] Favoriten & Zuletzt besucht: persoenliche Favoriten (Favorite,
+- [x] Favoriten & Zuletzt besucht: persönliche Favoriten (Favorite,
       Stern in der Kopfzeile, einklappbarer Sidebar-Abschnitt, Palette),
       Besuche via `after()` nach dem Rendern (PageVisit, pro Person auf
-      200 Eintraege begrenzt), Space-Startseite als Dashboard statt
+      200 Einträge begrenzt), Space-Startseite als Dashboard statt
       Redirect (Kennzahlen, Zuletzt besucht, Favoriten, Zuletzt
-      geaendert), /spaces mit Einstiegen ueber alle Spaces
+      geändert), /spaces mit Einstiegen über alle Spaces
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

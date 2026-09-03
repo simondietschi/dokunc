@@ -102,7 +102,7 @@ export function SpaceDashboard({
           icon={<Clock className="h-3.5 w-3.5" />}
           slug={slug}
           entries={recent}
-          empty="Seiten, die du oeffnest, erscheinen hier."
+          empty="Seiten, die du öffnest, erscheinen hier."
           style={stagger(1)}
         />
         <Section
@@ -114,11 +114,11 @@ export function SpaceDashboard({
           style={stagger(2)}
         />
         <Section
-          title="Zuletzt geaendert"
+          title="Zuletzt geändert"
           icon={<Pencil className="h-3.5 w-3.5" />}
           slug={slug}
           entries={changed}
-          empty="Noch keine Aenderungen."
+          empty="Noch keine Änderungen."
           style={stagger(3)}
         />
       </div>

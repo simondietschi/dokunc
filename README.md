@@ -23,7 +23,7 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - **Favoriten** (Stern in der Seitenkopfzeile, Abschnitt in der Sidebar,
   Sprungziele in der Palette), **Zuletzt besucht** und ein
   **Space-Dashboard** (Kennzahlen, zuletzt besuchte, favorisierte und
-  zuletzt geaenderte Seiten)
+  zuletzt geänderte Seiten)
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
 

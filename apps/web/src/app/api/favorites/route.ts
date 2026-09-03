@@ -52,5 +52,7 @@ export async function GET() {
       spaceName: r.page.space.name,
     })),
   };
-  return NextResponse.json(body);
+  return NextResponse.json(body, {
+    headers: { "Cache-Control": "private, no-store" },
+  });
 }

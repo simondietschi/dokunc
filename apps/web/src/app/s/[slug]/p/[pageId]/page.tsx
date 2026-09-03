@@ -28,10 +28,6 @@ export default async function PageView({
 
   // "Zuletzt besucht": nach dem Senden der Antwort, nie blockierend.
   after(() => recordPageVisit(user.id, page.id));
-  const favoritePromise = prisma.favorite.findUnique({
-    where: { userId_pageId: { userId: user.id, pageId: page.id } },
-    select: { id: true },
-  });
 
   const token = (await getRawToken()) ?? "";
   const requestHeaders = await headers();
@@ -41,7 +37,7 @@ export default async function PageView({
     proto: requestHeaders.get("x-forwarded-proto"),
   });
 
-  const [backlinks, comments] = await Promise.all([
+  const [backlinks, comments, favorite] = await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -58,8 +54,11 @@ export default async function PageView({
         },
       },
     }),
+    prisma.favorite.findUnique({
+      where: { userId_pageId: { userId: user.id, pageId: page.id } },
+      select: { id: true },
+    }),
   ]);
-  const favorite = await favoritePromise;
 
   return (
     <div>

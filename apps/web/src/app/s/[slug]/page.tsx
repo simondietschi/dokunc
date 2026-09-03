@@ -91,7 +91,7 @@ export default async function SpaceIndex({
       favorites={favorites.map((f) => ({
         id: f.page.id,
         title: f.page.title,
-        meta: `Geaendert ${relativeTime(f.page.updatedAt, now)}`,
+        meta: `Geändert ${relativeTime(f.page.updatedAt, now)}`,
       }))}
       changed={changed.map((p) => ({
         id: p.id,
