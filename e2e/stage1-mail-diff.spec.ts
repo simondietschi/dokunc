@@ -1,0 +1,149 @@
+import { test, expect, type Page } from "@playwright/test";
+
+/**
+ * E2E fuer Mail-Einstellungen im Konto und den Versionsvergleich.
+ * Nutzt den in editor.spec.ts angelegten Nutzer (serieller Lauf). Der
+ * Mail-Versand selbst ist ohne SMTP nicht pruefbar; getestet wird die
+ * Einstellung (Speichern, nach Reload gesetzt).
+ */
+
+const EMAIL = "e2e@dokunc.dev";
+const PASS = "superSicher123!";
+
+test.describe.configure({ mode: "serial" });
+
+async function login(page: Page) {
+  await page.goto("/login");
+  await page.fill('input[name="email"]', EMAIL);
+  await page.fill('input[name="password"]', PASS);
+  await page.click('button[type="submit"]');
+  await page.waitForURL("**/spaces");
+}
+
+async function waitForLive(page: Page) {
+  await expect(page.getByText("Live", { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
+}
+
+/** In einen Space navigieren (Space-Startseite ist ein Dashboard). */
+async function openFirstSpace(page: Page): Promise<string> {
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL(/\/s\/[^/]+/);
+  return page.url().match(/\/s\/([^/?#]+)/)![1];
+}
+
+test("Konto: Mail-Benachrichtigungen auf Aus setzen", async ({ page }) => {
+  await login(page);
+  await page.goto("/account");
+  await expect(
+    page.getByRole("heading", { name: "Benachrichtigungen per Mail" }),
+  ).toBeVisible();
+
+  const off = page.getByRole("radio", { name: /^Aus/ });
+  await off.check();
+  await page
+    .locator("form", { has: off })
+    .getByRole("button", { name: "Speichern" })
+    .click();
+  await expect(page.getByText("Mail-Benachrichtigungen: Aus.")).toBeVisible({
+    timeout: 10_000,
+  });
+
+  await page.reload();
+  await expect(page.getByRole("radio", { name: /^Aus/ })).toBeChecked();
+
+  // Zuruecksetzen auf den Standard, damit andere Tests unbeeinflusst sind.
+  const instant = page.getByRole("radio", { name: /^Sofort/ });
+  await instant.check();
+  await page
+    .locator("form", { has: instant })
+    .getByRole("button", { name: "Speichern" })
+    .click();
+  await expect(
+    page.getByText("Mail-Benachrichtigungen: Sofort."),
+  ).toBeVisible({ timeout: 10_000 });
+});
+
+test("Versionsvergleich: Diff und Vorschau einer Version", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  await login(page);
+  const slug = await openFirstSpace(page);
+
+  // Eigene Seite anlegen und warten, bis der frische Editor steht.
+  await page.click("text=Neue Seite");
+  await page.waitForURL("**/p/**");
+  await expect(page.locator('input[name="title"]')).toHaveValue("Untitled", {
+    timeout: 15_000,
+  });
+  await waitForLive(page);
+  const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
+
+  const title = `Diff-Test ${Date.now()}`;
+  const input = page.locator('input[name="title"]');
+  let saved = false;
+  for (let attempt = 0; attempt < 3 && !saved; attempt++) {
+    await input.click();
+    await input.fill(title);
+    await input.press("Enter");
+    saved = await page
+      .locator("aside")
+      .getByText(title)
+      .waitFor({ timeout: 4000 })
+      .then(
+        () => true,
+        () => false,
+      );
+  }
+  expect(saved, `Titel "${title}" wurde nicht gespeichert`).toBe(true);
+
+  const sentence = "Erster Satz fuer den Versionsvergleich.";
+  const editor = page.locator(".ProseMirror");
+  await editor.click();
+  await page.keyboard.type(sentence);
+  await expect(editor).toContainText(sentence);
+
+  // Der Collab-Server persistiert kurz nach der letzten Aenderung und legt
+  // dabei die erste Version an. Verlauf pollen, bis "Vergleichen" da ist.
+  const historyUrl = `/s/${slug}/p/${pageId}/history`;
+  await expect
+    .poll(
+      async () => {
+        await page.goto(historyUrl);
+        return page.getByRole("link", { name: "Vergleichen" }).count();
+      },
+      { timeout: 60_000, intervals: [2000] },
+    )
+    .toBeGreaterThan(0);
+
+  await expect(page.getByText("Aktueller Stand")).toBeVisible();
+  await page.getByRole("link", { name: "Vergleichen" }).first().click();
+  await page.waitForURL(/\/history\/[a-z0-9]+/);
+
+  // Diff-Ansicht: Titelzeile ist Teil des Vergleichs (gleich oder
+  // geaendert), Zusammenfassung sichtbar.
+  const diff = page.getByTestId("diff-view");
+  await expect(diff).toBeVisible();
+  await expect(diff).toContainText(`# ${title}`);
+  await expect(page.getByTestId("diff-summary")).toBeVisible();
+
+  // Umschalter auf Vorschau: gerenderter Text der Version.
+  await page.getByRole("link", { name: "Vorschau" }).click();
+  await page.waitForURL(/view=preview/);
+  const preview = page.getByTestId("version-preview");
+  await expect(preview).toBeVisible();
+  await expect(preview).toContainText(title);
+  await expect(preview).toContainText(sentence);
+
+  // Zurueck auf Aenderungen; der Vergleich "gegen aktuellen Stand" ist
+  // als aktiv markiert.
+  await page.getByRole("link", { name: "Änderungen" }).click();
+  await page.waitForURL(/view=diff/);
+  await expect(page.getByTestId("diff-view")).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "gegen aktuellen Stand" }),
+  ).toHaveAttribute("aria-current", "page");
+});

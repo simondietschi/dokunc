@@ -15,11 +15,14 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
 - **Kommentare** (textverankerte Threads) + **@-Mentions** +
-  Benachrichtigungen
+  Benachrichtigungen, optional auch **per Mail** (sofort gebündelt oder
+  als tägliche Zusammenfassung, pro Person im Konto einstellbar)
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
-- Postgres-Volltextsuche, Versionsverlauf, Papierkorb
+- Postgres-Volltextsuche, Versionsverlauf mit **Versionsvergleich**
+  (Zeilen- und Wort-Diff gegen den aktuellen Stand oder die vorherige
+  Version, Vorschau, Wiederherstellen), Papierkorb
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
 
@@ -76,7 +79,8 @@ POSTGRES_PASSWORD=<eigenes Passwort>
 Dann `docker compose up -d`. In der `Caddyfile` `tls internal` entfernen,
 damit Caddy ein Let's-Encrypt-Zertifikat holt. Ein selbst gesetztes
 `APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
-alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs-Mails,
+alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs- und
+Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
 `ANTHROPIC_API_KEY` für die KI-Funktionen — siehe `.env.example`.
 
 **Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
