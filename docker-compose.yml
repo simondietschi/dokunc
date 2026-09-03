@@ -54,6 +54,8 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-dokunc <no-reply@example.com>}
       UPLOAD_DIR: /app/uploads
+      # Import (Markdown/Confluence/Notion): Upload-Limit pro Import in MB
+      IMPORT_MAX_MB: ${IMPORT_MAX_MB:-100}
       # KI — optional; ohne Key sind die KI-Features deaktiviert
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-}
