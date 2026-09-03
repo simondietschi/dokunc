@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E für die "next level"-Features: Wiki-Links + Backlinks,
@@ -12,6 +13,7 @@ const PASS = "superSicher123!";
 test.describe.configure({ mode: "serial" });
 
 async function login(page: Page) {
+  await resetLoginRateLimit();
   await page.goto("/login");
   await page.fill('input[name="email"]', EMAIL);
   await page.fill('input[name="password"]', PASS);

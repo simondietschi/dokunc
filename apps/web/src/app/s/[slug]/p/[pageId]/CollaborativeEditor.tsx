@@ -95,6 +95,13 @@ export function CollaborativeEditor({
   function saveTitle() {
     if (!editable || titleValue === lastSavedTitle.current) return;
     lastSavedTitle.current = titleValue;
+    // Sidebar sofort nachziehen; der Server liefert den Titel spaeter
+    // ueber revalidatePath ohnehin nach.
+    window.dispatchEvent(
+      new CustomEvent("dokunc:page-renamed", {
+        detail: { pageId, title: titleValue || "Untitled" },
+      }),
+    );
     const fd = new FormData();
     fd.set("slug", slug);
     fd.set("pageId", pageId);

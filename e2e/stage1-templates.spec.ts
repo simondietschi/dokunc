@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E für Seitenvorlagen und Duplizieren: Seite anlegen, duplizieren,
@@ -12,6 +13,7 @@ const PASS = "superSicher123!";
 test.describe.configure({ mode: "serial" });
 
 async function login(page: Page) {
+  await resetLoginRateLimit();
   await page.goto("/login");
   // Erst nach der Hydration tippen — sonst schluckt React die Eingaben
   // und das Formular geht leer an die Server-Action.

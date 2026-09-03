@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E für Mail-Einstellungen im Konto und den Versionsvergleich.
@@ -13,6 +14,7 @@ const PASS = "superSicher123!";
 test.describe.configure({ mode: "serial" });
 
 async function login(page: Page) {
+  await resetLoginRateLimit();
   await page.goto("/login");
   await page.fill('input[name="email"]', EMAIL);
   await page.fill('input[name="password"]', PASS);
@@ -26,15 +28,17 @@ async function waitForLive(page: Page) {
   });
 }
 
-/**
- * In den ersten Space navigieren. Die Space-Startseite leitet auf die
- * erste Seite weiter; erst dort ist die Sidebar stabil (sonst geht der
- * Klick auf "Neue Seite" in der Weiterleitung verloren).
- */
+/** In den ersten Space navigieren und dort eine Seite öffnen. */
 async function openFirstSpace(page: Page): Promise<string> {
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL(/\/s\/[^/]+/);
+  // Die Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar
+  // öffnen, erst dort ist der Editor gemountet.
+  if (!page.url().includes("/p/")) {
+    await page.locator('aside a[href*="/p/"]').first().click();
+    await page.waitForURL("**/p/**");
+  }
   await waitForLive(page);
   return page.url().match(/\/s\/([^/]+)\//)![1];
 }

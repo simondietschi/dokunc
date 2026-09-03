@@ -67,8 +67,38 @@ export function PageTree({
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Umbenennungen aus dem Editor sofort anzeigen (Ereignis
+  // "dokunc:page-renamed"), bis der Server den neuen Titel liefert.
+  const [renamed, setRenamed] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+
+  useEffect(() => {
+    const onRenamed = (e: Event) => {
+      const { pageId, title } = (
+        e as CustomEvent<{ pageId: string; title: string }>
+      ).detail;
+      setRenamed((prev) => new Map(prev).set(pageId, title));
+    };
+    window.addEventListener("dokunc:page-renamed", onRenamed);
+    return () => window.removeEventListener("dokunc:page-renamed", onRenamed);
+  }, []);
+
   useEffect(() => {
     setOptimistic(null);
+    // Server hat den Titel uebernommen -> lokale Ueberschreibung verwerfen.
+    setRenamed((prev) => {
+      if (prev.size === 0) return prev;
+      const next = new Map(prev);
+      const drop = (list: TreeNode[]) => {
+        for (const n of list) {
+          if (next.get(n.id) === n.title) next.delete(n.id);
+          drop(n.children);
+        }
+      };
+      drop(nodes);
+      return next.size === prev.size ? prev : next;
+    });
   }, [nodes]);
 
   useEffect(() => {
@@ -77,10 +107,17 @@ export function PageTree({
     return () => clearTimeout(t);
   }, [error]);
 
-  const shown = useMemo(
-    () => (optimistic ? buildTree(optimistic) : nodes),
-    [optimistic, nodes],
-  );
+  const shown = useMemo(() => {
+    const base = optimistic ? buildTree(optimistic) : nodes;
+    if (renamed.size === 0) return base;
+    const apply = (list: TreeNode[]): TreeNode[] =>
+      list.map((n) => ({
+        ...n,
+        title: renamed.get(n.id) ?? n.title,
+        children: apply(n.children),
+      }));
+    return apply(base);
+  }, [optimistic, nodes, renamed]);
 
   const dnd = useMemo<DndApi | null>(() => {
     if (!canManage) return null;
