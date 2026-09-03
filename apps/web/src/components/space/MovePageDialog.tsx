@@ -95,6 +95,7 @@ export function MovePageDialog({
   );
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // Stabil halten: der Aufrufer reicht meist eine neue Closure pro Render.
@@ -121,12 +122,32 @@ export function MovePageDialog({
     return () => controller.abort();
   }, [spaceId]);
 
-  // Escape schliesst; Hintergrund nicht scrollen.
+  // Escape schliesst; Tab bleibt im Dialog (Fokus-Falle); Hintergrund
+  // nicht scrollen.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         onCloseRef.current();
+        return;
+      }
+      if (e.key !== "Tab" || !panelRef.current) return;
+      const focusable = Array.from(
+        panelRef.current.querySelectorAll<HTMLElement>(
+          'input, button:not([disabled]), [tabindex]:not([tabindex="-1"])',
+        ),
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const current = document.activeElement;
+      const inside = panelRef.current.contains(current);
+      if (e.shiftKey && (current === first || !inside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (current === last || !inside)) {
+        e.preventDefault();
+        first.focus();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -145,10 +166,19 @@ export function MovePageDialog({
   );
   const currentTitle = pages?.find((p) => p.id === pageId)?.title;
 
-  // Vorauswahl: aktuelle Elternseite.
+  // Vorauswahl: aktuelle Elternseite — und sie ins Sichtfeld der Liste
+  // holen, damit die Auswahl bei langen Baeumen nicht verborgen bleibt.
   useEffect(() => {
     if (pages && selected === undefined) setSelected(currentParent);
   }, [pages, selected, currentParent]);
+  const scrolledToCurrent = useRef(false);
+  useEffect(() => {
+    if (!pages || selected === undefined || scrolledToCurrent.current) return;
+    scrolledToCurrent.current = true;
+    listRef.current
+      ?.querySelector(`[data-option="${selected ?? "root"}"]`)
+      ?.scrollIntoView({ block: "center" });
+  }, [pages, selected]);
 
   const options = useMemo<Option[]>(() => {
     if (!pages) return [];
@@ -237,6 +267,7 @@ export function MovePageDialog({
       aria-labelledby="move-page-title"
     >
       <div
+        ref={panelRef}
         onMouseDown={(e) => e.stopPropagation()}
         className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-pop animate-[rise_0.25s_cubic-bezier(0.22,1,0.36,1)]"
       >

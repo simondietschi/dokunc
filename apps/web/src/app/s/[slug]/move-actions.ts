@@ -26,7 +26,7 @@ export async function movePageAction(form: FormData): Promise<MoveResult> {
   const indexRaw = str(form, "index");
   const index = indexRaw === "" ? undefined : Number(indexRaw);
   if (index !== undefined && !Number.isInteger(index)) {
-    return { ok: false, error: "Ungueltige Zielposition" };
+    return { ok: false, error: "Ungültige Zielposition" };
   }
 
   const result = await prisma.$transaction(async (tx): Promise<MoveResult> => {

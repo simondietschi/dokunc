@@ -44,8 +44,16 @@ export function collectHeadings(doc: HeadingDocLike): TocHeading[] {
  * Schwelle (Sticky-Header-Hoehe plus Puffer) erreicht oder ueberschritten
  * hat. Vor der ersten Ueberschrift ist die erste aktiv. `tops` sind die
  * Oberkanten relativ zum Scroll-Container in Dokumentreihenfolge.
+ * Ist der Container bis zum Ende gescrollt (`atEnd`), gilt die letzte
+ * Ueberschrift als aktiv — auch wenn sie die Schwelle nie erreichen kann,
+ * weil darunter zu wenig Inhalt folgt.
  */
-export function activeHeadingIndex(tops: number[], threshold: number): number {
+export function activeHeadingIndex(
+  tops: number[],
+  threshold: number,
+  atEnd = false,
+): number {
+  if (atEnd && tops.length > 0) return tops.length - 1;
   let active = 0;
   for (let i = 0; i < tops.length; i++) {
     if (tops[i] <= threshold) active = i;
