@@ -11,7 +11,11 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - Spaces mit Rollen/Berechtigungen (OWNER/ADMIN/MEMBER/VIEWER)
 - Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
   Aufgabenlisten, Bilder, Callouts, Mermaid-Diagramme, YouTube-Embeds,
-  Excalidraw-Zeichnungen, draw.io-Diagramme)
+  Excalidraw-Zeichnungen, draw.io-Diagramme); Tab rückt im Codeblock ein,
+  Tabellen-Werkzeuge (Zeile/Spalte einfügen und löschen, Kopfzeile,
+  Tabelle löschen) erscheinen in der Toolbar, sobald der Cursor in einer
+  Tabelle steht; Links öffnen im Lesemodus per Klick, beim Bearbeiten per
+  Cmd/Ctrl+Klick
 - Navigation: Seiten per Drag and Drop im Seitenbaum verschieben und
   sortieren (oder per Dialog „Verschieben nach…“), Brotkrumen über dem
   Titel, Inhaltsverzeichnis aus den Überschriften der Seite

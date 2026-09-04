@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useEditor, EditorContent, ReactNodeViewRenderer } from "@tiptap/react";
+import { Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import Placeholder from "@tiptap/extension-placeholder";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
@@ -37,6 +39,38 @@ import { createSlashCommands } from "@/components/editor/SlashCommands";
 import { createEntitySuggestion } from "@/components/editor/EntitySuggestion";
 import { cn } from "@/lib/cn";
 import { renamePageAction } from "../../actions";
+
+/**
+ * Cmd/Ctrl+Klick öffnet einen Link auch im Bearbeitungsmodus (der
+ * normale Klick setzt den Cursor, damit man Linktext editieren kann).
+ */
+const LinkClick = Extension.create({
+  name: "linkClick",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey("linkClick"),
+        props: {
+          handleClick(view, _pos, event) {
+            if (!(event.metaKey || event.ctrlKey) || event.button !== 0) {
+              return false;
+            }
+            const a = (event.target as HTMLElement | null)?.closest?.(
+              "a[href]",
+            );
+            if (!a || !view.dom.contains(a) || a.classList.contains("dk-wikilink")) {
+              return false;
+            }
+            const href = a.getAttribute("href") ?? "";
+            if (!/^(https?:|mailto:|tel:)/i.test(href)) return false;
+            window.open(href, "_blank", "noopener,noreferrer");
+            return true;
+          },
+        },
+      }),
+    ];
+  },
+});
 
 const CARET_COLORS = [
   "#5e60e8",
@@ -204,6 +238,7 @@ export function CollaborativeEditor({
         drawio: () => ReactNodeViewRenderer(DrawioView),
         attachment: () => ReactNodeViewRenderer(AttachmentView),
       }),
+      LinkClick,
       Placeholder.configure({
         placeholder:
           'Schreib etwas — "/" für Befehle, "[[" für Links, "@" für Mentions…',
@@ -254,9 +289,10 @@ export function CollaborativeEditor({
   // CommentsPanel bittet darum, eine Kommentar-Markierung zu entfernen
   // (Thread verworfen oder aufgelöst).
   useEffect(() => {
+    if (!editor) return;
     const onRemove = (e: Event) => {
       const { id } = (e as CustomEvent<{ id: string }>).detail;
-      if (!editor) return;
+      if (editor.isDestroyed) return;
       const { state } = editor;
       const markType = state.schema.marks.commentMark;
       if (!markType) return;
@@ -273,7 +309,7 @@ export function CollaborativeEditor({
     window.addEventListener("dokunc:remove-comment-mark", onRemove);
     return () =>
       window.removeEventListener("dokunc:remove-comment-mark", onRemove);
-  });
+  }, [editor]);
 
   useEffect(() => {
     const aw = conn?.provider.awareness;
@@ -381,7 +417,12 @@ export function CollaborativeEditor({
           readOnly={!editable}
           onBlur={saveTitle}
           onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
+            // Enter/Pfeil nach unten: in den Text springen (wie in Notion).
+            if (e.key === "Enter" || e.key === "ArrowDown") {
+              e.preventDefault();
+              e.currentTarget.blur();
+              editor?.commands.focus("start");
+            }
           }}
           placeholder="Ohne Titel"
           className="w-full bg-transparent text-[2.5rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-faint"

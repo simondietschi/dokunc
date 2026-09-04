@@ -4,6 +4,7 @@ import { NodeViewWrapper, NodeViewContent, type NodeViewProps } from "@tiptap/re
 import { Info, CircleCheck, TriangleAlert, OctagonAlert } from "lucide-react";
 import type { CalloutType } from "@dokunc/editor";
 import { cn } from "@/lib/cn";
+import { useCaretSync } from "./useCaretSync";
 
 const META: Record<
   CalloutType,
@@ -15,9 +16,15 @@ const META: Record<
   danger: { icon: OctagonAlert, cls: "dk-cl-danger" },
 };
 
-export function CalloutView({ node, updateAttributes, editor }: NodeViewProps) {
+export function CalloutView({
+  node,
+  updateAttributes,
+  editor,
+  getPos,
+}: NodeViewProps) {
   const type = (node.attrs.type as CalloutType) ?? "info";
   const Icon = META[type].icon;
+  useCaretSync({ editor, getPos, node });
 
   return (
     <NodeViewWrapper className={cn("dk-callout", META[type].cls)}>

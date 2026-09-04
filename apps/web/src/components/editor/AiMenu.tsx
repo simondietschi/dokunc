@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Editor } from "@tiptap/react";
+import { useEditorState, type Editor } from "@tiptap/react";
 import {
   Sparkles,
   Loader2,
@@ -11,6 +11,7 @@ import {
   PenLine,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { textToBlocks, textToInline } from "@/lib/editor-text";
 
 type Action = "improve" | "summarize" | "translate_en" | "translate_de" | "continue";
 
@@ -31,6 +32,11 @@ export function AiMenu({ editor }: { editor: Editor }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  // Live-Zustand der Auswahl (TipTap 3 rendert nicht pro Transaktion neu).
+  const hasSelection = useEditorState({
+    editor,
+    selector: ({ editor: e }) => !e.state.selection.empty,
+  });
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -77,35 +83,32 @@ export function AiMenu({ editor }: { editor: Editor }) {
       }
 
       const chain = editor.chain().focus();
+      const blocks = textToBlocks(data.result);
       if (action === "improve" || action.startsWith("translate")) {
-        // Auswahl durch Ergebnis ersetzen.
-        chain.insertContentAt({ from, to }, data.result).run();
+        // Auswahl durch Ergebnis ersetzen — innerhalb eines Absatzes
+        // inline, sonst als Absätze.
+        const sameBlock =
+          editor.state.doc.resolve(from).sameParent(editor.state.doc.resolve(to));
+        chain
+          .insertContentAt(
+            { from, to },
+            sameBlock && blocks.length <= 1
+              ? textToInline(data.result)
+              : blocks,
+          )
+          .run();
       } else if (action === "summarize") {
         // Zusammenfassung unterhalb der Auswahl einfügen.
+        const $to = editor.state.doc.resolve(to);
+        const after = $to.depth > 0 ? $to.after(1) : to;
         chain
-          .insertContentAt(to, [
-            {
-              type: "callout",
-              attrs: { type: "info" },
-              content: [
-                {
-                  type: "paragraph",
-                  content: [{ type: "text", text: data.result }],
-                },
-              ],
-            },
+          .insertContentAt(after, [
+            { type: "callout", attrs: { type: "info" }, content: blocks },
           ])
           .run();
       } else {
         // Weiterschreiben: ans Dokumentende anfügen.
-        chain
-          .insertContentAt(editor.state.doc.content.size, [
-            {
-              type: "paragraph",
-              content: [{ type: "text", text: data.result }],
-            },
-          ])
-          .run();
+        chain.insertContentAt(editor.state.doc.content.size, blocks).run();
       }
     } catch {
       window.alert("KI-Anfrage fehlgeschlagen.");
@@ -113,8 +116,6 @@ export function AiMenu({ editor }: { editor: Editor }) {
       setBusy(false);
     }
   }
-
-  const hasSelection = !editor.state.selection.empty;
 
   return (
     <div ref={ref} className="relative">

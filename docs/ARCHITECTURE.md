@@ -192,6 +192,20 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       anlegen (IDs), dann Inhalte mit Wiki-Links/Backlinks und Bildern als
       Attachment speichern; Route Handler mit Origin-Check, Rate-Limit,
       `IMPORT_MAX_MB` und managePages-Prüfung
+- [x] Editor-Fehlerbereinigung: TipTap 3 rendert nicht mehr pro
+      Transaktion neu — Toolbar und KI-Menü lesen ihren Zustand über
+      `useEditorState` (der Aktiv-Zustand war eingefroren), jede Aktion
+      baut ihre Command-Chain erst beim Klick. React-NodeViews mit Inhalt
+      (Callout) gleichen nach dem Mount die DOM-Selektion ab
+      (`useCaretSync`), sonst tippte man hinter dem frisch eingefügten
+      Block weiter. Slash-/Mention-Popup (`SuggestionPopup`) klappt bei
+      Platzmangel nach oben und folgt beim Scrollen; Enter auf leerem
+      letztem Absatz verlässt den Callout; Tab rückt im Codeblock ein;
+      Tabellen-Werkzeuge in der Toolbar; Zellen `position: relative`
+      (Auswahl-Overlay und Spaltengriff hingen sonst am Editor-Container);
+      Link-Dialog normalisiert Eingaben (`lib/editor-text`), Cmd/Ctrl+Klick
+      öffnet Links beim Bearbeiten; KI-Antworten werden als Text statt
+      als HTML eingefügt
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 - [ ] Offene Härtung: eigenes, kurzlebiges Collab-Token statt des

@@ -68,7 +68,12 @@ export function richExtensions(views: NodeViewFactories = {}) {
   return [
     StarterKit.configure({
       undoRedo: false,
-      link: { openOnClick: false, autolink: true },
+      // Im Lesemodus öffnet ein Klick den Link; beim Bearbeiten nur
+      // Cmd/Ctrl+Klick (siehe LinkClick im Client), damit man Linktext
+      // normal editieren kann.
+      link: { openOnClick: "whenNotEditable", autolink: true },
+      // Tab rückt im Codeblock ein, statt den Fokus aus dem Editor zu nehmen.
+      codeBlock: { enableTabIndentation: true, tabSize: 2 },
     }),
     Highlight.configure({ multicolor: true }),
     Image.configure({ inline: false }),
