@@ -68,7 +68,10 @@ export function richExtensions(views: NodeViewFactories = {}) {
   return [
     StarterKit.configure({
       undoRedo: false,
-      link: { openOnClick: false, autolink: true },
+      // Im Lesemodus öffnet ein Klick den Link; beim Bearbeiten nur
+      // Cmd/Ctrl+Klick (siehe LinkClick im Client), damit man Linktext
+      // normal editieren kann.
+      link: { openOnClick: "whenNotEditable", autolink: true },
       // Ersetzt durch die lowlight-Variante (gleicher Node-Name).
       codeBlock: false,
     }),

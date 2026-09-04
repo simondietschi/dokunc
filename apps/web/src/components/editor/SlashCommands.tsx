@@ -3,7 +3,6 @@
 import { Extension, type Editor, type Range } from "@tiptap/core";
 import Suggestion from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
-import { ReactRenderer } from "@tiptap/react";
 import {
   Type,
   Heading1,
@@ -26,7 +25,8 @@ import {
   Network,
   MonitorPlay as YoutubeIcon,
 } from "lucide-react";
-import { SlashMenu, type SlashMenuHandle, type SlashItem } from "./SlashMenu";
+import type { SlashItem } from "./SlashMenu";
+import { createSuggestionPopup } from "./SuggestionPopup";
 
 type Def = {
   title: string;
@@ -104,61 +104,14 @@ export function createSlashCommands(opts: SlashOptions) {
           },
           command: ({ editor, range, props }) =>
             props.run(editor, range),
-          render: () => {
-            let component: ReactRenderer<SlashMenuHandle> | null = null;
-            let el: HTMLDivElement | null = null;
-
-            const position = (rect: DOMRect | null) => {
-              if (!el || !rect) return;
-              el.style.position = "fixed";
-              el.style.left = `${rect.left}px`;
-              el.style.top = `${rect.bottom + 6}px`;
-              el.style.zIndex = "60";
-            };
-
-            return {
-              onStart: (props) => {
-                component = new ReactRenderer(SlashMenu, {
-                  props: {
-                    items: (props.items as Def[]).map<SlashItem>((d) => ({
-                      title: d.title,
-                      subtitle: d.subtitle,
-                      icon: d.icon,
-                      command: () =>
-                        props.command(d as unknown as Record<string, unknown>),
-                    })),
-                  },
-                  editor: props.editor,
-                });
-                el = document.createElement("div");
-                el.appendChild(component.element);
-                document.body.appendChild(el);
-                position(props.clientRect?.() ?? null);
-              },
-              onUpdate: (props) => {
-                component?.updateProps({
-                  items: (props.items as Def[]).map<SlashItem>((d) => ({
-                    title: d.title,
-                    subtitle: d.subtitle,
-                    icon: d.icon,
-                    command: () =>
-                      props.command(d as unknown as Record<string, unknown>),
-                  })),
-                });
-                position(props.clientRect?.() ?? null);
-              },
-              onKeyDown: (props) => {
-                if (props.event.key === "Escape") return true;
-                return component?.ref?.onKeyDown(props.event) ?? false;
-              },
-              onExit: () => {
-                el?.remove();
-                component?.destroy();
-                el = null;
-                component = null;
-              },
-            };
-          },
+          render: createSuggestionPopup<Def>((props) =>
+            props.items.map<SlashItem>((d) => ({
+              title: d.title,
+              subtitle: d.subtitle,
+              icon: d.icon,
+              command: () => props.command(d),
+            })),
+          ),
         }),
       ];
     },

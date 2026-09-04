@@ -4,6 +4,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useRef,
   useState,
 } from "react";
 import type { LucideIcon } from "lucide-react";
@@ -26,8 +27,16 @@ export const SlashMenu = forwardRef<
   { items: SlashItem[] }
 >(function SlashMenu({ items }, ref) {
   const [active, setActive] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setActive(0), [items]);
+
+  // Tastaturnavigation: aktiven Eintrag in der scrollbaren Liste sichtbar halten.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-index="${active}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [active]);
 
   useImperativeHandle(ref, () => ({
     onKeyDown: (e) => {
@@ -57,12 +66,16 @@ export const SlashMenu = forwardRef<
   }
 
   return (
-    <div className="max-h-80 w-72 overflow-y-auto rounded-xl border border-line bg-elevated p-1.5 shadow-pop">
+    <div
+      ref={listRef}
+      className="max-h-80 w-72 overflow-y-auto rounded-xl border border-line bg-elevated p-1.5 shadow-pop"
+    >
       {items.map((item, i) => {
         const Icon = item.icon;
         return (
           <button
             key={item.title}
+            data-index={i}
             type="button"
             onMouseEnter={() => setActive(i)}
             onClick={() => item.command()}

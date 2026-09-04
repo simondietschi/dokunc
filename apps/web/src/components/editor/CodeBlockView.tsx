@@ -8,14 +8,21 @@ import {
 } from "@tiptap/react";
 import { Check, Copy } from "lucide-react";
 import { CODE_LANGUAGES } from "@dokunc/editor";
+import { useCaretSync } from "./useCaretSync";
 
 /**
  * Codeblock mit Sprachauswahl und Kopieren-Knopf. Das Highlighting
  * kommt aus der lowlight-Extension (Decorations), hier nur die Hülle.
  */
-export function CodeBlockView({ node, updateAttributes, editor }: NodeViewProps) {
+export function CodeBlockView({
+  node,
+  updateAttributes,
+  editor,
+  getPos,
+}: NodeViewProps) {
   const language = (node.attrs.language as string | null) ?? "";
   const [copied, setCopied] = useState(false);
+  useCaretSync({ editor, getPos, node });
   const label =
     CODE_LANGUAGES.find((l) => l.id === language)?.label ?? "Text";
 

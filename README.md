@@ -12,8 +12,14 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
   Aufgabenlisten, Bilder, Callouts, Mermaid-Diagramme, YouTube-Embeds,
   Excalidraw-Zeichnungen, draw.io-Diagramme)
-- **Codeblöcke mit Syntax-Highlighting** (Sprachauswahl, Kopieren-Knopf;
-  auch im HTML/PDF-Export), **Drag Handle** zum Verschieben von Blöcken
+- **Codeblöcke mit Syntax-Highlighting** (Sprachauswahl, Kopieren-Knopf,
+  Tab rückt ein; auch im HTML/PDF-Export), **Drag Handle** zum Verschieben
+  von Blöcken
+- **Bilder** per Upload, aus der Zwischenablage (Screenshot einfügen) oder
+  per Drag and Drop; **Tabellen-Werkzeuge** (Zeile/Spalte einfügen und
+  löschen, Kopfzeile, Tabelle löschen) erscheinen in der Toolbar, sobald der
+  Cursor in einer Tabelle steht; Links öffnen im Lesemodus per Klick, beim
+  Bearbeiten per Cmd/Ctrl+Klick
 - **Inhaltsverzeichnis** aus den Überschriften (rechte Leiste bzw.
   Popover, Anker-Links `#abschnitt`, im Export eingebettet)
 - **Seiten-Icons** (Emoji) und **Titelbilder** (Verlauf oder Upload),

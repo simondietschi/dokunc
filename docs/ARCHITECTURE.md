@@ -171,6 +171,21 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       per rekursiver CTE, Unterseitenliste, Favoriten + zuletzt besucht,
       Versionsvergleich (eigener Myers-Diff über den Markdown-Export:
       Zeilen, innerhalb geänderter Zeilen wortgenau)
+- [x] Editor-Fehlerbereinigung: TipTap 3 rendert nicht mehr pro
+      Transaktion neu — Toolbar und KI-Menü lesen ihren Zustand über
+      `useEditorState`, und jede Aktion baut ihre Command-Chain erst beim
+      Klick (eine beim Rendern erzeugte Chain hing an einem veralteten
+      State: "Applying a mismatched transaction"). Verbindung (Y.Doc +
+      HocuspocusProvider) entsteht im Effect statt in useMemo (StrictMode
+      verband doppelt). React-NodeViews mit Inhalt (Callout, Codeblock)
+      gleichen nach dem Mount die DOM-Selektion ab, sonst tippte man
+      hinter dem frisch eingefügten Block weiter. Slash-/Mention-Popup
+      klappt bei Platzmangel nach oben und folgt beim Scrollen; Enter auf
+      leerem letztem Absatz verlässt den Callout; Tab rückt im Codeblock
+      ein; Bilder per Paste/Drop (andere Dateien werden geschluckt, sonst
+      navigiert der Browser weg); Tabellen-Werkzeuge in der Toolbar;
+      Zellen `position: relative` (Auswahl-Overlay und Spaltengriff
+      hingen sonst am Editor-Container)
 - [x] Abos + Digest (siehe Datenmodell) und Markdown-Import:
       `lib/import-markdown` plant den Baum aus Pfaden (index/README/
       gleichnamige Datei füllt die Ordnerseite, Front Matter/H1 als

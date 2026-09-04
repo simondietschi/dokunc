@@ -88,6 +88,9 @@ export const CodeBlockHighlight = CodeBlockLowlight.configure({
   lowlight,
   defaultLanguage: null,
   languageClassPrefix: "language-",
+  // Tab rückt im Codeblock ein, statt den Fokus aus dem Editor zu nehmen.
+  enableTabIndentation: true,
+  tabSize: 2,
 });
 
 type HastNode =
