@@ -49,7 +49,6 @@ function Row({
   return (
     <div
       className={cn("flex min-w-0 px-3 py-0.5", className)}
-      data-diff={marker === "+" ? "added" : marker === "-" ? "removed" : "equal"}
     >
       <span
         aria-hidden

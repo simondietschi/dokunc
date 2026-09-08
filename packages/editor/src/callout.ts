@@ -2,8 +2,6 @@ import { Node, mergeAttributes } from "@tiptap/core";
 
 export type CalloutType = "info" | "success" | "warn" | "danger";
 
-const TYPES: CalloutType[] = ["info", "success", "warn", "danger"];
-
 /**
  * Callout/Admonition-Block. Schema-Definition ist framework-neutral,
  * damit Client UND Collab-Server (Yjs-Transformer) identisch bauen.
@@ -85,8 +83,6 @@ export const Callout = Node.create({
     };
   },
 });
-
-export { TYPES as CALLOUT_TYPES };
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {

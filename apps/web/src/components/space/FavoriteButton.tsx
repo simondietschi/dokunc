@@ -13,12 +13,10 @@ export function FavoriteButton({
   slug,
   pageId,
   isFavorite,
-  className,
 }: {
   slug: string;
   pageId: string;
   isFavorite: boolean;
-  className?: string;
 }) {
   // Server-Wahrheit (Prop) -> lokaler Stand, der nach der Action mit dem
   // Ergebnis ueberschrieben wird; useOptimistic ueberbrueckt die Wartezeit.
@@ -63,7 +61,6 @@ export function FavoriteButton({
       className={cn(
         "grid h-8 w-8 place-items-center rounded-lg transition-colors hover:bg-subtle disabled:opacity-70",
         shown ? "text-accent" : "text-muted hover:text-ink",
-        className,
       )}
     >
       <Star

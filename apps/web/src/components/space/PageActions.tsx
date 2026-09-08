@@ -99,13 +99,11 @@ export function MenuItem({
   icon,
   onClick,
   children,
-  className,
   type = "button",
 }: {
   icon?: React.ReactNode;
   onClick?: () => void;
   children: React.ReactNode;
-  className?: string;
   type?: "button" | "submit";
 }) {
   return (
@@ -113,10 +111,7 @@ export function MenuItem({
       type={type}
       role="menuitem"
       onClick={onClick}
-      className={cn(
-        "flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-subtle hover:text-ink",
-        className,
-      )}
+      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-subtle hover:text-ink"
     >
       {icon}
       {children}

@@ -63,7 +63,7 @@ function utcDayKey(d: Date): string {
 export function startMailDispatcher(opts: {
   redis: Redis;
   log: Logger;
-}): () => void {
+}): void {
   const { redis } = opts;
   const log = opts.log.child({ component: "mail-dispatcher" });
   const every = intervalMs();
@@ -297,16 +297,11 @@ export function startMailDispatcher(opts: {
     }
   }
 
-  const timer = setInterval(() => void tick(), every);
+  setInterval(() => void tick(), every);
   // Erster Lauf kurz nach dem Start, ohne das volle Intervall abzuwarten.
-  const kickoff = setTimeout(() => void tick(), 5000);
+  setTimeout(() => void tick(), 5000);
   log.info(
     { intervalS: every / 1000, digestHourUtc: digestHourUtc() },
     "Mail-Dispatcher gestartet",
   );
-
-  return () => {
-    clearInterval(timer);
-    clearTimeout(kickoff);
-  };
 }

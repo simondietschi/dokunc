@@ -227,7 +227,7 @@ export function MovePageDialog({
   }
 
   function confirm() {
-    if (!canConfirm || selected === undefined) return;
+    if (!canConfirm) return;
     setError(null);
     const fd = new FormData();
     fd.set("slug", slug);

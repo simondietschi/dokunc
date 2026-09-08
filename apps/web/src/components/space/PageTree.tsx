@@ -355,7 +355,6 @@ function TreeItem({
       <div
         {...dragProps}
         data-page-id={node.id}
-        data-drop={over ?? undefined}
         className={cn(
           "group relative flex items-center gap-1 rounded-lg pr-1.5 transition-colors",
           active ? "bg-surface shadow-soft" : "hover:bg-surface/70",

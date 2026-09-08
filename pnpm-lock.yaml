@@ -202,13 +202,7 @@ importers:
       '@prisma/client':
         specifier: 7.8.0
         version: 7.8.0(prisma@7.8.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@7.0.2))(typescript@7.0.2)
-      pg:
-        specifier: 8.22.0
-        version: 8.22.0
     devDependencies:
-      '@types/pg':
-        specifier: 8.20.0
-        version: 8.20.0
       dotenv:
         specifier: 17.4.2
         version: 17.4.2
