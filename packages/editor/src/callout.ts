@@ -76,10 +76,6 @@ export const Callout = Node.create({
         (type: CalloutType = "info") =>
         ({ commands }) =>
           commands.wrapIn(this.name, { type }),
-      toggleCallout:
-        (type: CalloutType = "info") =>
-        ({ commands }) =>
-          commands.toggleWrap(this.name, { type }),
     };
   },
 });
@@ -88,7 +84,6 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     callout: {
       setCallout: (type?: CalloutType) => ReturnType;
-      toggleCallout: (type?: CalloutType) => ReturnType;
     };
   }
 }
