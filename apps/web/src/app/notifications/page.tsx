@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, AtSign, MessageSquare, Bell } from "lucide-react";
 import { prisma } from "@dokunc/db";
@@ -6,6 +7,11 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
 import { markAllReadAction } from "./actions";
+
+export const metadata: Metadata = {
+  title: "Benachrichtigungen",
+  description: "Erwähnungen und Antworten auf deine Kommentare.",
+};
 
 const TYPE_TEXT: Record<string, string> = {
   MENTION: "hat dich erwähnt",

@@ -36,8 +36,19 @@ type Def = {
   run: (editor: Editor, range: Range) => void;
 };
 
+/** Eingabe-Anfrage an die Host-Komponente (Ersatz für window.prompt). */
+export type PromptRequest = {
+  title: string;
+  description?: string;
+  label: string;
+  placeholder?: string;
+  submitLabel?: string;
+  onSubmit: (value: string) => void;
+};
+
 export type SlashOptions = {
   onImage: (editor: Editor, range: Range) => void;
+  onPrompt: (request: PromptRequest) => void;
 };
 
 function defs(opts: SlashOptions): Def[] {
@@ -69,9 +80,17 @@ function defs(opts: SlashOptions): Def[] {
       icon: YoutubeIcon,
       keywords: "youtube video embed einbetten",
       run: (e, r) => {
-        const src = window.prompt("YouTube-URL:");
-        if (src) chain(e, r).setYoutubeVideo({ src }).run();
-        else e.chain().focus().deleteRange(r).run();
+        // Erst den "/youtube"-Text entfernen, dann fragen: der Dialog ist
+        // asynchron, die Range wäre danach nicht mehr gültig.
+        chain(e, r).run();
+        opts.onPrompt({
+          title: "YouTube-Video einbetten",
+          label: "YouTube-URL",
+          placeholder: "https://www.youtube.com/watch?v=…",
+          submitLabel: "Einbetten",
+          onSubmit: (src) =>
+            e.chain().focus().setYoutubeVideo({ src }).run(),
+        });
       },
     },
   ];

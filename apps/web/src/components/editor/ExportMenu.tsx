@@ -23,8 +23,15 @@ export function ExportMenu({
     const onDoc = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   const item =
@@ -35,6 +42,8 @@ export function ExportMenu({
       <button
         type="button"
         title="Exportieren"
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
         className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-subtle hover:text-ink"
       >
@@ -43,7 +52,11 @@ export function ExportMenu({
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1.5 w-52 rounded-xl border border-line bg-elevated p-1.5 shadow-pop">
+        <div
+          role="menu"
+          aria-label="Exportformat"
+          className="absolute right-0 top-full z-30 mt-1.5 w-52 rounded-xl border border-line bg-elevated p-1.5 shadow-pop"
+        >
           <a
             className={item}
             href={`/api/pages/${pageId}/export?format=md`}

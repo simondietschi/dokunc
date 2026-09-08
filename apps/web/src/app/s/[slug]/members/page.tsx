@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Clock, Trash2, X } from "lucide-react";
 import { prisma } from "@dokunc/db";
@@ -8,6 +9,11 @@ import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { InviteForm } from "./InviteForm";
 import { RoleSelect } from "./RoleSelect";
 import { revokeInvitationAction, removeMemberAction } from "./actions";
+
+export const metadata: Metadata = {
+  title: "Mitglieder",
+  description: "Rollen und Einladungen dieses Space.",
+};
 
 export default async function MembersPage({
   params,

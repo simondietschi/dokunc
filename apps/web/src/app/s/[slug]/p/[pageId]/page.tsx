@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { Link2 } from "lucide-react";
 import { prisma } from "@dokunc/db";
@@ -7,6 +8,22 @@ import { can } from "@/lib/permissions";
 import { getRawToken } from "@/lib/session";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
+
+/** Seitentitel im Browser-Tab und im Verlauf statt eines globalen Titels. */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ pageId: string }>;
+}): Promise<Metadata> {
+  const { pageId } = await params;
+  // Bewusst ohne Space-Prüfung: nur der Titel, und die Seite selbst
+  // autorisiert unmittelbar danach.
+  const page = await prisma.page.findFirst({
+    where: { id: pageId, deletedAt: null },
+    select: { title: true },
+  });
+  return { title: page?.title || "Ohne Titel" };
+}
 
 export default async function PageView({
   params,
@@ -18,7 +35,7 @@ export default async function PageView({
 
   const page = await prisma.page.findFirst({
     where: { id: pageId, spaceId: space.id, deletedAt: null },
-    select: { id: true, title: true },
+    select: { id: true, title: true, updatedAt: true },
   });
   if (!page) notFound();
 
@@ -26,7 +43,7 @@ export default async function PageView({
   const collabUrl =
     process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:3001";
 
-  const [backlinks, comments] = await Promise.all([
+  const [backlinks, comments, lastVersion] = await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -43,6 +60,13 @@ export default async function PageView({
         },
       },
     }),
+    // Wer zuletzt gespeichert hat: der Collab-Server schreibt Snapshots
+    // mit Autor, das ist die einzige Autorenspur pro Seite.
+    prisma.pageVersion.findFirst({
+      where: { pageId: page.id },
+      orderBy: { createdAt: "desc" },
+      select: { author: { select: { name: true } } },
+    }),
   ]);
 
   return (
@@ -57,8 +81,12 @@ export default async function PageView({
         collabUrl={collabUrl}
         editable={can(role, "write")}
         canManage={can(role, "managePages")}
+        userId={user.id}
         userName={user.name}
         pdfEnabled={!!process.env.GOTENBERG_URL}
+        updatedAt={page.updatedAt.toISOString()}
+        lastEditorName={lastVersion?.author?.name ?? null}
+        commentThreadIds={comments.map((c) => c.id)}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">

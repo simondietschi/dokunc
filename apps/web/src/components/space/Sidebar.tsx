@@ -111,7 +111,7 @@ export function Sidebar({
         <PaletteButton variant="input" />
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-2 py-1">
+      <nav aria-label="Seitenbaum" className="flex-1 overflow-y-auto px-2 py-1">
         <PageTree nodes={tree} slug={slug} canManage={canManage} />
         {tree.length === 0 && (
           <div className="mt-6 px-3 text-center">

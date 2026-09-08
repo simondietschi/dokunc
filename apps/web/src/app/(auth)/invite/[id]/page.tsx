@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { CheckCircle2, ShieldAlert, MailWarning, Users } from "lucide-react";
 import { prisma } from "@dokunc/db";
@@ -6,6 +7,10 @@ import { verifyToken, normalizeEmail } from "@/lib/invitations";
 import { Button } from "@/components/ui/Button";
 import { acceptInvitationAction } from "@/app/s/[slug]/members/actions";
 import { stagger } from "../../stagger";
+
+export const metadata: Metadata = {
+  title: "Einladung",
+};
 
 function StatusHeader({
   icon,

@@ -11,6 +11,7 @@ import {
   PenLine,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useToast } from "@/components/ui/Toast";
 
 type Action = "improve" | "summarize" | "translate_en" | "translate_de" | "continue";
 
@@ -31,13 +32,21 @@ export function AiMenu({ editor }: { editor: Editor }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (!ref.current?.contains(e.target as Node)) setOpen(false);
     };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   async function run(action: Action) {
@@ -59,7 +68,11 @@ export function AiMenu({ editor }: { editor: Editor }) {
         );
     }
     if (!text.trim()) {
-      window.alert("Bitte zuerst Text markieren.");
+      toast({
+        title: "Kein Text ausgewählt",
+        description: "Markiere zuerst die Stelle, die die KI bearbeiten soll.",
+        variant: "info",
+      });
       return;
     }
 
@@ -72,7 +85,11 @@ export function AiMenu({ editor }: { editor: Editor }) {
       });
       const data = (await res.json()) as { result?: string; error?: string };
       if (!res.ok || !data.result) {
-        window.alert(data.error ?? "KI-Anfrage fehlgeschlagen.");
+        toast({
+          title: "KI-Anfrage fehlgeschlagen",
+          description: data.error ?? "Bitte später erneut versuchen.",
+          variant: "error",
+        });
         return;
       }
 
@@ -108,7 +125,11 @@ export function AiMenu({ editor }: { editor: Editor }) {
           .run();
       }
     } catch {
-      window.alert("KI-Anfrage fehlgeschlagen.");
+      toast({
+        title: "KI-Anfrage fehlgeschlagen",
+        description: "Die Verbindung zum Dienst kam nicht zustande.",
+        variant: "error",
+      });
     } finally {
       setBusy(false);
     }
@@ -121,6 +142,8 @@ export function AiMenu({ editor }: { editor: Editor }) {
       <button
         type="button"
         title="KI-Assistent"
+        aria-haspopup="menu"
+        aria-expanded={open}
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => setOpen((o) => !o)}
         disabled={busy}
@@ -140,7 +163,11 @@ export function AiMenu({ editor }: { editor: Editor }) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full z-30 mt-1.5 w-56 rounded-xl border border-line bg-elevated p-1.5 shadow-pop">
+        <div
+          role="menu"
+          aria-label="KI-Aktionen"
+          className="absolute right-0 top-full z-30 mt-1.5 w-56 rounded-xl border border-line bg-elevated p-1.5 shadow-pop"
+        >
           {ITEMS.map((item) => {
             const Icon = item.icon;
             const disabled = item.needsSelection && !hasSelection;
@@ -148,6 +175,7 @@ export function AiMenu({ editor }: { editor: Editor }) {
               <button
                 key={item.action}
                 type="button"
+                role="menuitem"
                 disabled={disabled}
                 onClick={() => run(item.action)}
                 className={cn(

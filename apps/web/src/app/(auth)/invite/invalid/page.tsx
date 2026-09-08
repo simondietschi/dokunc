@@ -1,6 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ShieldAlert } from "lucide-react";
 import { stagger } from "../../stagger";
+
+export const metadata: Metadata = {
+  title: "Einladung ungültig",
+};
 
 export default function InvalidInvite() {
   return (

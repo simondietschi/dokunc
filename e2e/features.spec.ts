@@ -134,8 +134,12 @@ test("Kommentar-Thread anlegen und auflösen", async ({ page }) => {
   await expect(page.getByText("Bitte hier präzisieren.")).toBeVisible({
     timeout: 10_000,
   });
-  // Auflösen
+  // Auflösen: erledigte Threads wandern in den eingeklappten Bereich
+  // "N erledigt" am Ende der Liste und sind erst nach dem Aufklappen da.
   await page.getByRole("button", { name: "Auflösen" }).first().click();
+  const resolvedToggle = page.getByRole("button", { name: /\d+ erledigt/ });
+  await expect(resolvedToggle).toBeVisible({ timeout: 10_000 });
+  await resolvedToggle.click();
   await expect(page.getByText("Wieder öffnen").first()).toBeVisible({
     timeout: 10_000,
   });

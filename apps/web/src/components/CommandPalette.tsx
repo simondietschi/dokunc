@@ -60,6 +60,19 @@ export function CommandPalette() {
   const disabled = isAuthPath(pathname);
 
   const close = useCallback(() => setOpen(false), []);
+  const restoreTo = useRef<HTMLElement | null>(null);
+
+  // Fokus zurückgeben und Hintergrund nicht mitscrollen lassen.
+  useEffect(() => {
+    if (!open) return;
+    restoreTo.current = document.activeElement as HTMLElement | null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      restoreTo.current?.focus?.();
+    };
+  }, [open]);
 
   // ⌘K / Ctrl+K global; Custom-Event für Buttons.
   useEffect(() => {
@@ -301,6 +314,13 @@ export function CommandPalette() {
             onKeyDown={onInputKey}
             placeholder="Suchen oder springen…"
             aria-label="Suchen oder springen"
+            role="combobox"
+            aria-expanded
+            aria-controls="cmdk-results"
+            aria-autocomplete="list"
+            aria-activedescendant={
+              items[clamped] ? `cmdk-option-${clamped}` : undefined
+            }
             autoFocus
             className="h-13 w-full bg-transparent py-4 text-[15px] text-ink outline-none placeholder:text-faint"
           />
@@ -309,7 +329,14 @@ export function CommandPalette() {
           </kbd>
         </div>
 
+        <p role="status" aria-live="polite" className="sr-only">
+          {items.length === 0
+            ? "Keine Treffer"
+            : `${items.length} Treffer`}
+        </p>
+
         <ul
+          id="cmdk-results"
           ref={listRef}
           role="listbox"
           aria-label="Ergebnisse"
@@ -329,6 +356,7 @@ export function CommandPalette() {
               <li key={item.key}>
                 {header}
                 <button
+                  id={`cmdk-option-${i}`}
                   data-index={i}
                   role="option"
                   aria-selected={i === clamped}

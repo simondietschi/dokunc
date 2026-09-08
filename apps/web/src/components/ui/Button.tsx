@@ -27,7 +27,7 @@ export function Button({
   size = "md",
   className,
   ...props
-}: React.ButtonHTMLAttributes<HTMLButtonElement> & {
+}: React.ComponentProps<"button"> & {
   variant?: Variant;
   size?: Size;
 }) {

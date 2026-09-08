@@ -49,20 +49,30 @@ export const SlashMenu = forwardRef<
 
   if (items.length === 0) {
     return (
-      <div className="w-72 rounded-xl border border-line bg-elevated p-3 text-sm text-faint shadow-pop">
+      <div
+        role="status"
+        aria-live="polite"
+        className="w-72 rounded-xl border border-line bg-elevated p-3 text-sm text-faint shadow-pop"
+      >
         Nichts gefunden
       </div>
     );
   }
 
   return (
-    <div className="max-h-80 w-72 overflow-y-auto rounded-xl border border-line bg-elevated p-1.5 shadow-pop">
+    <div
+      role="listbox"
+      aria-label="Blöcke und Befehle"
+      className="max-h-80 w-72 overflow-y-auto rounded-xl border border-line bg-elevated p-1.5 shadow-pop"
+    >
       {items.map((item, i) => {
         const Icon = item.icon;
         return (
           <button
             key={item.title}
             type="button"
+            role="option"
+            aria-selected={i === active}
             onMouseEnter={() => setActive(i)}
             onClick={() => item.command()}
             className={cn(

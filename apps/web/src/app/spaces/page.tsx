@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowUpRight, FileText, Plus, Bell, Sparkles } from "lucide-react";
 import { prisma } from "@dokunc/db";
@@ -11,6 +12,11 @@ import { logoutAction } from "../(auth)/actions";
 import { createSpaceAction } from "./actions";
 import { Onboarding, WaitingForInvite } from "./Onboarding";
 import { PaletteButton } from "@/components/CommandPalette";
+
+export const metadata: Metadata = {
+  title: "Spaces",
+  description: "Alle Bereiche, in denen du Mitglied bist.",
+};
 
 export default async function SpacesPage() {
   const user = await requireUser();

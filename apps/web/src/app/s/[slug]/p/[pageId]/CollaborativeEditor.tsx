@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   useEditor,
@@ -25,13 +25,25 @@ import { WikiLinkView } from "@/components/editor/WikiLinkView";
 import { MentionView } from "@/components/editor/MentionView";
 import { ExcalidrawView } from "@/components/editor/ExcalidrawView";
 import { DrawioView } from "@/components/editor/DrawioView";
-import { createSlashCommands } from "@/components/editor/SlashCommands";
+import {
+  createSlashCommands,
+  type PromptRequest,
+} from "@/components/editor/SlashCommands";
 import { createEntitySuggestion } from "@/components/editor/EntitySuggestion";
+import { SelectionMenu } from "@/components/editor/SelectionMenu";
+import { PromptDialog } from "@/components/ui/PromptDialog";
+import { useToast } from "@/components/ui/Toast";
+import { caretColorFor } from "@/lib/caret-color";
+import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/cn";
 import { renamePageAction, deletePageAction } from "../../actions";
 
 /** Datei wählen, hochladen, als Bild einfügen. */
-function pickAndUploadImage(editor: Editor, range?: Range) {
+function pickAndUploadImage(
+  editor: Editor,
+  range: Range | undefined,
+  onError: () => void,
+) {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = "image/png,image/jpeg,image/gif,image/webp";
@@ -52,20 +64,11 @@ function pickAndUploadImage(editor: Editor, range?: Range) {
       chain.setImage({ src: url }).run();
     } catch {
       chain.run();
-      alert("Upload fehlgeschlagen.");
+      onError();
     }
   };
   input.click();
 }
-
-const CARET_COLORS = [
-  "#5e60e8",
-  "#0ea5e9",
-  "#ec4899",
-  "#f59e0b",
-  "#10b981",
-  "#a855f7",
-];
 
 type Peer = { name: string; color: string };
 
@@ -78,8 +81,12 @@ export function CollaborativeEditor({
   collabUrl,
   editable,
   canManage,
+  userId,
   userName,
   pdfEnabled,
+  updatedAt,
+  lastEditorName,
+  commentThreadIds,
 }: {
   slug: string;
   spaceId: string;
@@ -89,8 +96,13 @@ export function CollaborativeEditor({
   collabUrl: string;
   editable: boolean;
   canManage: boolean;
+  userId: string;
   userName: string;
   pdfEnabled: boolean;
+  updatedAt: string;
+  lastEditorName: string | null;
+  /** IDs bestehender Kommentar-Threads, für den Waisen-Aufräumlauf. */
+  commentThreadIds: string[];
 }) {
   const ydoc = useMemo(() => new Y.Doc(), [pageId]);
   const [status, setStatus] = useState<
@@ -98,16 +110,43 @@ export function CollaborativeEditor({
   >("connecting");
   const [peers, setPeers] = useState<Peer[]>([]);
   const [titleValue, setTitleValue] = useState(title);
+  const [prompt, setPrompt] = useState<PromptRequest | null>(null);
   const lastSavedTitle = useRef(title);
+  const savingTitle = useRef<string | null>(null);
+  const sweptRef = useRef(false);
+  const { toast } = useToast();
 
-  function saveTitle() {
-    if (!editable || titleValue === lastSavedTitle.current) return;
-    lastSavedTitle.current = titleValue;
-    const fd = new FormData();
-    fd.set("slug", slug);
-    fd.set("pageId", pageId);
-    fd.set("title", titleValue);
-    void renamePageAction(fd);
+  const openPrompt = useCallback((request: PromptRequest) => {
+    setPrompt(request);
+  }, []);
+
+  /**
+   * Titel speichern. Der Merker wird erst NACH erfolgreicher Action
+   * gesetzt: vorher markierte ein fehlgeschlagener oder verworfener
+   * Aufruf den Titel als gespeichert, und ein zweiter Versuch lief in
+   * den Frühausstieg. Der Titel stand dann nur noch lokal im Feld.
+   */
+  async function saveTitle() {
+    const next = titleValue;
+    if (!editable || next === lastSavedTitle.current) return;
+    if (savingTitle.current === next) return; // schon unterwegs
+    savingTitle.current = next;
+    try {
+      const fd = new FormData();
+      fd.set("slug", slug);
+      fd.set("pageId", pageId);
+      fd.set("title", next);
+      await renamePageAction(fd);
+      lastSavedTitle.current = next;
+    } catch {
+      toast({
+        title: "Titel konnte nicht gespeichert werden",
+        description: "Die Änderung wurde nicht übernommen.",
+        variant: "error",
+      });
+    } finally {
+      savingTitle.current = null;
+    }
   }
 
   const provider = useMemo(
@@ -128,17 +167,23 @@ export function CollaborativeEditor({
     [collabUrl, pageId, token, ydoc],
   );
 
-  const color = useMemo(
-    () => CARET_COLORS[Math.floor(Math.random() * CARET_COLORS.length)],
-    [],
-  );
+  const color = useMemo(() => caretColorFor(userId), [userId]);
 
   const slash = useMemo(
     () =>
       createSlashCommands({
-        onImage: (e, r) => pickAndUploadImage(e, r),
+        onImage: (e, r) =>
+          pickAndUploadImage(e, r, () =>
+            toast({
+              title: "Upload fehlgeschlagen",
+              description:
+                "Erlaubt sind PNG, JPG, GIF und WebP bis 10 MB.",
+              variant: "error",
+            }),
+          ),
+        onPrompt: openPrompt,
       }),
-    [],
+    [openPrompt, toast],
   );
 
   const wikiLinkSuggest = useMemo(
@@ -197,6 +242,21 @@ export function CollaborativeEditor({
     ],
     editorProps: {
       attributes: { class: "mx-auto max-w-[760px] px-6 pb-40" },
+      // Klick auf eine kommentierte Stelle hebt den zugehörigen Thread
+      // hervor. false: der Klick wird nicht geschluckt, der Cursor darf
+      // trotzdem gesetzt werden.
+      handleClick(view, pos) {
+        const mark = view.state.doc
+          .resolve(pos)
+          .marks()
+          .find((m) => m.type.name === "commentMark");
+        const id = mark?.attrs.commentId;
+        if (typeof id !== "string" || !id) return false;
+        window.dispatchEvent(
+          new CustomEvent("dokunc:focus-comment-thread", { detail: { id } }),
+        );
+        return false;
+      },
     },
   });
 
@@ -224,14 +284,75 @@ export function CollaborativeEditor({
       window.removeEventListener("dokunc:remove-comment-mark", onRemove);
   });
 
+  // Verwaiste Kommentar-Markierungen aufräumen: ein abgebrochener Entwurf
+  // (Navigation, Reload, Absturz) setzt den Mark bereits im Yjs-Dokument,
+  // bevor der Thread in der DB existiert. Einmal nach dem Sync durchgehen
+  // und alle Marks ohne zugehörigen Thread entfernen.
+  useEffect(() => {
+    if (!editor || !editable || sweptRef.current) return;
+    const valid = new Set(commentThreadIds);
+
+    const sweep = () => {
+      // Genau einmal pro geöffneter Seite, auch wenn der Effekt durch neue
+      // Prop-Referenzen erneut läuft.
+      if (sweptRef.current || editor.isDestroyed) return;
+      sweptRef.current = true;
+      const { state } = editor;
+      const markType = state.schema.marks.commentMark;
+      if (!markType) return;
+      const tr = state.tr;
+      state.doc.descendants((node, pos) => {
+        for (const mark of node.marks) {
+          if (
+            mark.type === markType &&
+            !valid.has(String(mark.attrs.commentId))
+          ) {
+            tr.removeMark(pos, pos + node.nodeSize, markType);
+          }
+        }
+      });
+      if (tr.docChanged) editor.view.dispatch(tr);
+    };
+
+    if (provider.isSynced) {
+      sweep();
+      return;
+    }
+    provider.on("synced", sweep);
+    return () => {
+      provider.off("synced", sweep);
+    };
+  }, [editor, editable, provider, commentThreadIds]);
+
+  // Vom CommentsPanel angestossen: zur markierten Textstelle scrollen.
+  useEffect(() => {
+    const onScrollTo = (e: Event) => {
+      const { id } = (e as CustomEvent<{ id: string }>).detail;
+      const el = document.querySelector(`[data-comment-id="${CSS.escape(id)}"]`);
+      if (!el) return;
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.classList.add("dk-comment-anchor--active");
+      window.setTimeout(
+        () => el.classList.remove("dk-comment-anchor--active"),
+        1600,
+      );
+    };
+    window.addEventListener("dokunc:scroll-to-comment-mark", onScrollTo);
+    return () =>
+      window.removeEventListener("dokunc:scroll-to-comment-mark", onScrollTo);
+  }, []);
+
   useEffect(() => {
     const aw = provider.awareness;
     if (!aw) return;
     const sync = () => {
-      const seen = new Map<string, Peer>();
-      aw.getStates().forEach((s) => {
+      // Nach clientID gruppieren und den eigenen Zustand auslassen: sonst
+      // sieht man sich selbst als zweite Person im Peer-Stack.
+      const seen = new Map<number, Peer>();
+      aw.getStates().forEach((s, clientId) => {
+        if (clientId === aw.clientID) return;
         const u = (s as { user?: Peer }).user;
-        if (u?.name) seen.set(u.name + u.color, u);
+        if (u?.name) seen.set(clientId, u);
       });
       setPeers([...seen.values()]);
     };
@@ -266,12 +387,22 @@ export function CollaborativeEditor({
       {/* Sticky Header */}
       <header className="sticky top-0 z-20 border-b border-line bg-canvas/75 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-[820px] items-center justify-between px-6">
-          <div className="flex items-center gap-2.5">
-            <span className="flex items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-[12px] text-muted">
-              <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
+          <div className="flex min-w-0 items-center gap-2.5">
+            <span
+              // Statuswechsel werden Screenreadern angesagt, aber ohne die
+              // laufende Ausgabe zu unterbrechen.
+              role="status"
+              aria-live="polite"
+              className="flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-[12px] text-muted"
+            >
+              <span
+                aria-hidden="true"
+                className={cn("h-1.5 w-1.5 rounded-full", dot)}
+              />
               {statusText}
             </span>
             <PeerStack peers={peers} />
+            <LastEdited at={updatedAt} by={lastEditorName} />
           </div>
           <div className="flex items-center gap-1">
             <Link
@@ -305,10 +436,11 @@ export function CollaborativeEditor({
       <div className="mx-auto max-w-[760px] px-6 pt-12">
         <input
           name="title"
+          aria-label="Seitentitel"
           value={titleValue}
           onChange={(e) => setTitleValue(e.target.value)}
           readOnly={!editable}
-          onBlur={saveTitle}
+          onBlur={() => void saveTitle()}
           onKeyDown={(e) => {
             if (e.key === "Enter") e.currentTarget.blur();
           }}
@@ -320,7 +452,7 @@ export function CollaborativeEditor({
       {/* Toolbar */}
       {editable && (
         <div className="sticky top-14 z-10 mx-auto mt-4 max-w-[760px] px-6">
-          <EditorToolbar editor={editor} />
+          <EditorToolbar editor={editor} onPrompt={openPrompt} />
         </div>
       )}
 
@@ -328,7 +460,59 @@ export function CollaborativeEditor({
       <div className="mt-6 animate-[fade-in_0.4s_ease]">
         <EditorContent editor={editor} />
       </div>
+
+      {/* Formatieren direkt an der Auswahl. */}
+      {editable && editor && (
+        <SelectionMenu editor={editor} onPrompt={openPrompt} />
+      )}
+
+      {/* Ersetzt window.prompt für Link- und Video-URLs. */}
+      <PromptDialog
+        open={prompt !== null}
+        title={prompt?.title ?? ""}
+        description={prompt?.description}
+        label={prompt?.label ?? ""}
+        placeholder={prompt?.placeholder}
+        submitLabel={prompt?.submitLabel}
+        onSubmit={(value) => prompt?.onSubmit(value)}
+        onClose={() => setPrompt(null)}
+      />
     </div>
+  );
+}
+
+/**
+ * "Zuletzt bearbeitet" im Seitenkopf. Bewusst erst nach dem Mount
+ * gerendert: relative Zeit und lokale Zeitzone hängen vom Client ab und
+ * würden serverseitig eine andere Zeichenkette ergeben. Eine solche
+ * Hydration-Diskrepanz lässt React den Teilbaum neu aufbauen, wodurch
+ * Handler (u. a. das Speichern des Titels) kurzzeitig verloren gehen.
+ */
+function LastEdited({ at, by }: { at: string; by: string | null }) {
+  const [label, setLabel] = useState<{ text: string; title: string } | null>(
+    null,
+  );
+
+  useEffect(() => {
+    const date = new Date(at);
+    const absolute = date.toLocaleString("de-CH", {
+      dateStyle: "medium",
+      timeStyle: "short",
+    });
+    setLabel({
+      text: `Zuletzt bearbeitet ${relativeTime(date)}${by ? ` von ${by}` : ""}`,
+      title: by ? `${absolute} von ${by}` : absolute,
+    });
+  }, [at, by]);
+
+  if (!label) return null;
+  return (
+    <span
+      title={label.title}
+      className="hidden truncate text-[12px] text-faint sm:block"
+    >
+      {label.text}
+    </span>
   );
 }
 

@@ -1,6 +1,11 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { MailWarning } from "lucide-react";
 import { stagger } from "../../stagger";
+
+export const metadata: Metadata = {
+  title: "Einladung passt nicht",
+};
 
 export default function MismatchInvite() {
   return (

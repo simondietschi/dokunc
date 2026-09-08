@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Trash2, RotateCcw } from "lucide-react";
 import { prisma } from "@dokunc/db";
@@ -6,6 +7,11 @@ import { can } from "@/lib/permissions";
 import { Button } from "@/components/ui/Button";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { restorePageAction, purgePageAction } from "../actions";
+
+export const metadata: Metadata = {
+  title: "Papierkorb",
+  description: "Gelöschte Seiten wiederherstellen.",
+};
 
 export default async function TrashPage({
   params,

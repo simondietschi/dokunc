@@ -1,9 +1,15 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { requireUser } from "@/lib/current-user";
 import { Button } from "@/components/ui/Button";
 import { ProfileForm, PasswordForm } from "./AccountForms";
 import { logoutEverywhereAction } from "./actions";
+
+export const metadata: Metadata = {
+  title: "Konto",
+  description: "Profil, Passwort und angemeldete Geräte.",
+};
 
 export default async function AccountPage() {
   const user = await requireUser();

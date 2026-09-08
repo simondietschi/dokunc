@@ -1,4 +1,9 @@
+import type { Metadata } from "next";
 import { ResetForm } from "./ResetForm";
+
+export const metadata: Metadata = {
+  title: "Neues Passwort",
+};
 
 export default async function ResetPage({
   params,

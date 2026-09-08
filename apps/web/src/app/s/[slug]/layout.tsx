@@ -1,8 +1,26 @@
+import type { Metadata } from "next";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { buildTree } from "@/lib/page-tree";
 import { can } from "@/lib/permissions";
 import { Sidebar } from "@/components/space/Sidebar";
+
+/**
+ * Space-Name als Titel-Fallback für alle Unterseiten. Seiten mit eigener
+ * generateMetadata (z. B. die Seitenansicht) überschreiben das.
+ */
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}): Promise<Metadata> {
+  const { slug } = await params;
+  const space = await prisma.space.findUnique({
+    where: { slug },
+    select: { name: true },
+  });
+  return { title: { default: space?.name ?? "Space", template: "%s · dokunc" } };
+}
 
 export default async function SpaceLayout({
   children,

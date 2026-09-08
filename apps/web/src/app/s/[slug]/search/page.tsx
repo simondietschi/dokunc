@@ -1,8 +1,14 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { FileText, SearchX } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { HL_START, HL_STOP, splitHighlights } from "@/lib/palette";
+
+export const metadata: Metadata = {
+  title: "Suche",
+  description: "Volltextsuche in diesem Space.",
+};
 
 type Row = { id: string; title: string; snippet: string };
 
@@ -56,6 +62,7 @@ export default async function SearchPage({
         <input
           name="q"
           defaultValue={query}
+          aria-label="Suchbegriff"
           placeholder="Suchbegriff…"
           autoFocus={!query}
           className="w-full rounded-xl border border-line bg-surface px-4 py-3 text-[15px] text-ink shadow-soft placeholder:text-faint transition-all focus-visible:border-accent focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-accent-soft"

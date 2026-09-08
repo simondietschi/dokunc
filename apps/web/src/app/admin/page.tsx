@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, Shield, ShieldOff, UserCheck, UserX } from "lucide-react";
 import { prisma } from "@dokunc/db";
@@ -9,6 +10,11 @@ import {
   toggleUserAdminAction,
   deleteSpaceAction,
 } from "./actions";
+
+export const metadata: Metadata = {
+  title: "Administration",
+  description: "Nutzer und Spaces der Instanz verwalten.",
+};
 
 export default async function AdminPage() {
   const me = await requireAdmin();

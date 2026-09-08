@@ -1,4 +1,9 @@
+import type { Metadata } from "next";
 import { AuthForm } from "../AuthForm";
+
+export const metadata: Metadata = {
+  title: "Anmelden",
+};
 
 export default async function LoginPage({
   searchParams,

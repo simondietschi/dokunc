@@ -1,8 +1,14 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, Sparkles } from "lucide-react";
 import { requireUser } from "@/lib/current-user";
 import { aiAvailable } from "@/lib/ai";
 import { AskForm } from "./AskForm";
+
+export const metadata: Metadata = {
+  title: "Frag dein Wiki",
+  description: "Antworten aus euren Seiten, mit Quellenangabe.",
+};
 
 export default async function AskPage() {
   await requireUser();

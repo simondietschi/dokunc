@@ -19,6 +19,7 @@ export function AskForm() {
           <input
             name="question"
             required
+            aria-label="Deine Frage ans Wiki"
             placeholder="Was möchtest du wissen? z. B. „Wie deployen wir?"
             defaultValue={state?.question}
             className="h-12 flex-1 rounded-xl border border-line-strong bg-surface px-4 text-[15px] outline-none transition-all focus-visible:border-accent focus-visible:ring-4 focus-visible:ring-accent-soft"

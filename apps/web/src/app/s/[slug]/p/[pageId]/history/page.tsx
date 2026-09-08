@@ -1,3 +1,4 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, RotateCcw, Clock } from "lucide-react";
@@ -6,6 +7,11 @@ import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { Avatar } from "@/components/ui/Avatar";
 import { restoreVersionAction } from "../../../actions";
+
+export const metadata: Metadata = {
+  title: "Versionsverlauf",
+  description: "Frühere Fassungen dieser Seite.",
+};
 
 export default async function HistoryPage({
   params,
