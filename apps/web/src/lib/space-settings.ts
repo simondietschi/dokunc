@@ -67,4 +67,3 @@ export const spaceSettingsSchema = z.object({
     .refine((s) => s === null || isValidIcon(s), "Icon muss ein einzelnes Emoji sein"),
 });
 
-export type SpaceSettings = z.infer<typeof spaceSettingsSchema>;

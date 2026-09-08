@@ -4,12 +4,11 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma, type SpaceRole } from "@dokunc/db";
-import { authorizeAction, loadSpace } from "@/lib/space-context";
+import { authorizeAction } from "@/lib/space-context";
 import { requireUser } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import {
   generateInviteToken,
-  hashToken,
   inviteExpiry,
   isInvitableRole,
   normalizeEmail,
@@ -198,10 +197,4 @@ export async function acceptInvitationAction(form: FormData) {
   ]);
 
   redirect(`/s/${invitation.space.slug}`);
-}
-
-/** Wird vom Members-Layout genutzt, um manageSpace-Zugriff zu erzwingen. */
-export async function ensureManageAccess(slug: string) {
-  const ctx = await loadSpace(slug);
-  return ctx;
 }

@@ -50,10 +50,6 @@ export function stripExt(p: string): string {
   return ext ? p.slice(0, -(ext.length + 1)) : p;
 }
 
-export function joinPath(dir: string, name: string): string {
-  return dir ? `${dir}/${name}` : name;
-}
-
 export function isMarkdownExt(ext: string): boolean {
   return MARKDOWN_EXT.has(ext);
 }

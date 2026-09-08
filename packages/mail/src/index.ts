@@ -40,11 +40,6 @@ export function mailTransport(): Transporter | null {
   return cached;
 }
 
-/** Nur für Tests: Transport-Cache verwerfen. */
-export function resetMailTransport(): void {
-  cached = undefined;
-}
-
 export function appUrl(): string {
   return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
 }

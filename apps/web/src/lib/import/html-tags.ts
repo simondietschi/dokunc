@@ -157,26 +157,6 @@ export function findRegion(
   return null;
 }
 
-/** Alle Regionen, deren oeffnendes Tag `match` erfuellt (nicht rekursiv). */
-export function findRegions(
-  tokens: Token[],
-  match: (t: Extract<Token, { kind: "open" }>) => boolean,
-): { open: Extract<Token, { kind: "open" }>; inner: Token[] }[] {
-  const out: { open: Extract<Token, { kind: "open" }>; inner: Token[] }[] = [];
-  let i = 0;
-  while (i < tokens.length) {
-    const t = tokens[i];
-    if (t.kind === "open" && !t.selfClosing && match(t)) {
-      const inner = findRegion(tokens.slice(i), match) ?? [];
-      out.push({ open: t, inner });
-      i += inner.length + 2;
-      continue;
-    }
-    i++;
-  }
-  return out;
-}
-
 /** Entscheidung einer Rewrite-Regel fuer ein oeffnendes Tag. */
 export type Decision =
   | { action: "keep" }

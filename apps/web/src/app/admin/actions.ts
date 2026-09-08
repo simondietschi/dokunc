@@ -34,7 +34,7 @@ export async function toggleUserActiveAction(form: FormData) {
 }
 
 export async function toggleUserAdminAction(form: FormData) {
-  const me = await requireAdmin();
+  await requireAdmin();
   const userId = str(form, "userId");
   const target = await prisma.user.findUnique({ where: { id: userId } });
   if (!target) return;
