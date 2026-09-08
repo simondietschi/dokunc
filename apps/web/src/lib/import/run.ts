@@ -48,7 +48,7 @@ export type ImportOptions = {
   files: ImportFile[];
 };
 
-type Created = { id: string; title: string; node: ImportNode };
+type Created = { id: string; title: string };
 
 /**
  * Orchestriert einen Import:
@@ -120,7 +120,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
             },
             select: { id: true, title: true },
           });
-          created.set(node, { id: page.id, title: page.title, node });
+          created.set(node, { id: page.id, title: page.title });
           await createLevel(node.children, page.id, 0);
         }
       };

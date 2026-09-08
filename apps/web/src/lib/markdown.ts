@@ -29,10 +29,10 @@ function children(node: Node): Node[] {
   return node.content ?? [];
 }
 
-function block(node: Node, depth = 0): string {
+function block(node: Node): string {
   switch (node.type) {
     case "doc":
-      return children(node).map((n) => block(n, depth)).join("\n\n");
+      return children(node).map((n) => block(n)).join("\n\n");
     case "heading": {
       const lvl = Number(node.attrs?.level ?? 1);
       return `${"#".repeat(lvl)} ${children(node).map(inline).join("")}`;
@@ -41,7 +41,7 @@ function block(node: Node, depth = 0): string {
       return children(node).map(inline).join("");
     case "blockquote":
       return children(node)
-        .map((n) => `> ${block(n, depth)}`)
+        .map((n) => `> ${block(n)}`)
         .join("\n");
     case "codeBlock":
       return `\`\`\`${String(node.attrs?.language ?? "")}\n${children(node)
@@ -61,33 +61,33 @@ function block(node: Node, depth = 0): string {
       )})`;
     case "callout":
       return children(node)
-        .map((n) => `> ${block(n, depth)}`)
+        .map((n) => `> ${block(n)}`)
         .join("\n");
     case "bulletList":
       return children(node)
-        .map((li) => `- ${listItem(li, depth)}`)
+        .map((li) => `- ${listItem(li)}`)
         .join("\n");
     case "orderedList":
       return children(node)
-        .map((li, i) => `${i + 1}. ${listItem(li, depth)}`)
+        .map((li, i) => `${i + 1}. ${listItem(li)}`)
         .join("\n");
     case "taskList":
       return children(node)
         .map(
           (li) =>
-            `- [${li.attrs?.checked ? "x" : " "}] ${listItem(li, depth)}`,
+            `- [${li.attrs?.checked ? "x" : " "}] ${listItem(li)}`,
         )
         .join("\n");
     case "table":
       return table(node);
     default:
-      return children(node).map((n) => block(n, depth)).join("\n\n");
+      return children(node).map((n) => block(n)).join("\n\n");
   }
 }
 
-function listItem(li: Node, depth: number): string {
+function listItem(li: Node): string {
   return children(li)
-    .map((n) => block(n, depth + 1))
+    .map((n) => block(n))
     .join("\n")
     .replace(/\n/g, "\n  ");
 }

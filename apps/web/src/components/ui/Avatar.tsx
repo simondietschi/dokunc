@@ -24,12 +24,10 @@ export function Avatar({
   name,
   size = 32,
   className,
-  ring,
 }: {
   name: string;
   size?: number;
   className?: string;
-  ring?: boolean;
 }) {
   return (
     <span
@@ -38,7 +36,6 @@ export function Avatar({
       className={cn(
         "inline-flex shrink-0 items-center justify-center rounded-full bg-gradient-to-br font-semibold text-white",
         gradientFor(name),
-        ring && "ring-2 ring-canvas",
         className,
       )}
     >

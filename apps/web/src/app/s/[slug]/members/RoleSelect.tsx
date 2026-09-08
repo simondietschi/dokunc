@@ -9,12 +9,10 @@ export function RoleSelect({
   slug,
   memberId,
   role,
-  disabled,
 }: {
   slug: string;
   memberId: string;
   role: string;
-  disabled?: boolean;
 }) {
   const ref = useRef<HTMLFormElement>(null);
 
@@ -25,7 +23,6 @@ export function RoleSelect({
       <select
         name="role"
         defaultValue={role}
-        disabled={disabled}
         onChange={() => ref.current?.requestSubmit()}
         className="h-8 rounded-md border border-line bg-surface px-2 text-[13px] text-ink disabled:opacity-50 focus-visible:border-accent focus-visible:outline-none"
       >
