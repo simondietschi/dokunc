@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useEditorState, type Editor } from "@tiptap/react";
+import { Mapping } from "@tiptap/pm/transform";
+import type { Transaction } from "@tiptap/pm/state";
 import {
   Sparkles,
   Loader2,
@@ -49,6 +51,15 @@ export function AiMenu({ editor }: { editor: Editor }) {
   async function run(action: Action) {
     setOpen(false);
     const { from, to, empty } = editor.state.selection;
+    // Positionen ueber die Wartezeit hinweg mitfuehren: die KI-Anfrage
+    // dauert Sekunden, in denen Mitschreibende (oder eine gerade
+    // eintreffende Yjs-Aenderung) das Dokument verschieben. Mit den alten
+    // Zahlen zu schreiben wuerde fremden Text ueberschreiben.
+    const mapping = new Mapping();
+    const track = ({ transaction }: { transaction: Transaction }) => {
+      if (transaction.docChanged) mapping.appendMapping(transaction.mapping);
+    };
+    editor.on("transaction", track);
     const selected = empty
       ? ""
       : editor.state.doc.textBetween(from, to, "\n");
@@ -82,16 +93,20 @@ export function AiMenu({ editor }: { editor: Editor }) {
         return;
       }
 
+      // Auf den aktuellen Stand umgerechnete Positionen.
+      const mappedFrom = mapping.map(from, 1);
+      const mappedTo = mapping.map(to, -1);
       const chain = editor.chain().focus();
       const blocks = textToBlocks(data.result);
       if (action === "improve" || action.startsWith("translate")) {
         // Auswahl durch Ergebnis ersetzen — innerhalb eines Absatzes
         // inline, sonst als Absätze.
-        const sameBlock =
-          editor.state.doc.resolve(from).sameParent(editor.state.doc.resolve(to));
+        const sameBlock = editor.state.doc
+          .resolve(mappedFrom)
+          .sameParent(editor.state.doc.resolve(mappedTo));
         chain
           .insertContentAt(
-            { from, to },
+            { from: mappedFrom, to: mappedTo },
             sameBlock && blocks.length <= 1
               ? textToInline(data.result)
               : blocks,
@@ -99,7 +114,7 @@ export function AiMenu({ editor }: { editor: Editor }) {
           .run();
       } else if (action === "summarize") {
         // Zusammenfassung unterhalb der Auswahl einfügen.
-        const $to = editor.state.doc.resolve(to);
+        const $to = editor.state.doc.resolve(mappedTo);
         const after = $to.depth > 0 ? $to.after(1) : to;
         chain
           .insertContentAt(after, [
@@ -113,6 +128,7 @@ export function AiMenu({ editor }: { editor: Editor }) {
     } catch {
       window.alert("KI-Anfrage fehlgeschlagen.");
     } finally {
+      editor.off("transaction", track);
       setBusy(false);
     }
   }

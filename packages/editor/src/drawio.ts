@@ -1,5 +1,5 @@
 import { Node, mergeAttributes } from "@tiptap/core";
-import { toBase64 } from "./excalidraw";
+import { toBase64, fromBase64 } from "./excalidraw";
 
 /**
  * draw.io-Diagramm als Atom-Block (bearbeitet via embed.diagrams.net).
@@ -15,16 +15,19 @@ export const Drawio = Node.create({
 
   addAttributes() {
     return {
-      // Quelldaten leben nur im JSON/Yjs-Dokument — sie werden bewusst
-      // NICHT ins HTML gerendert (Export enthält nur die img-Vorschau).
+      // Das XML MUSS ins HTML: Kopieren/Einfügen serialisiert den Block
+      // über renderHTML und liest ihn über parseHTML zurück. Ohne das
+      // Attribut greift die Parse-Regel nicht — das Diagramm wäre nach
+      // einem Copy-Paste unwiederbringlich weg.
       xml: {
         default: "",
         parseHTML: (el) => el.getAttribute("data-drawio") ?? "",
-        renderHTML: () => ({}),
+        renderHTML: (attrs) => ({ "data-drawio": String(attrs.xml ?? "") }),
       },
+      // Vorschau aus dem data-URI des Bildes zurücklesen.
       svg: {
         default: "",
-        parseHTML: () => "",
+        parseHTML: (el) => svgFromPreview(el),
         renderHTML: () => ({}),
       },
     };
@@ -67,6 +70,19 @@ export const Drawio = Node.create({
     };
   },
 });
+
+/** SVG-Vorschau aus dem data-URI des Vorschaubilds zurücklesen. */
+function svgFromPreview(el: HTMLElement): string {
+  const src = el.querySelector("img")?.getAttribute("src") ?? "";
+  const marker = "base64,";
+  const at = src.startsWith("data:image/svg+xml") ? src.indexOf(marker) : -1;
+  if (at < 0) return "";
+  try {
+    return fromBase64(src.slice(at + marker.length));
+  } catch {
+    return "";
+  }
+}
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {

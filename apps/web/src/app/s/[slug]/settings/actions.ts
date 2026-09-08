@@ -1,14 +1,13 @@
 "use server";
 
-import { unlink } from "node:fs/promises";
-import path from "node:path";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str } from "@/lib/form";
 import { spaceSettingsSchema } from "@/lib/space-settings";
-import { UPLOAD_DIR, isSafeFilename } from "@/lib/uploads";
+import { deleteSpaceWithUploads } from "@/lib/file-access";
+import { revokeCollabAccess } from "@/lib/collab-sync";
 import { log } from "@/lib/log";
 
 export type SettingsState = { error?: string; success?: string } | undefined;
@@ -50,19 +49,8 @@ export async function deleteSpaceAction(
     return { error: "Der eingegebene Name stimmt nicht mit dem Space-Namen überein." };
   }
 
-  const attachments = await prisma.attachment.findMany({
-    where: { spaceId: space.id },
-    select: { storedName: true },
-  });
-  await prisma.space.delete({ where: { id: space.id } });
+  await deleteSpaceWithUploads(space.id);
   log.info({ spaceId: space.id, userId: user.id }, "Space gelöscht");
-
-  const base = path.resolve(UPLOAD_DIR);
-  await Promise.all(
-    attachments
-      .filter((a) => isSafeFilename(a.storedName))
-      .map((a) => unlink(path.join(base, a.storedName)).catch(() => undefined)),
-  );
 
   revalidatePath("/spaces");
   redirect("/spaces");
@@ -78,8 +66,10 @@ export async function leaveSpaceAction(
 ): Promise<SettingsState> {
   const { space, role, user } = await authorizeAction(form, "read");
   if (role === "OWNER") {
+    // Nur Owner mit aktivem Konto zaehlen — ein gesperrtes Konto kann
+    // den Space nicht verwalten.
     const owners = await prisma.spaceMember.count({
-      where: { spaceId: space.id, role: "OWNER" },
+      where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
     });
     if (owners <= 1) {
       return {
@@ -91,6 +81,7 @@ export async function leaveSpaceAction(
   await prisma.spaceMember.deleteMany({
     where: { spaceId: space.id, userId: user.id },
   });
+  await revokeCollabAccess(user.id, space.id);
   revalidatePath("/spaces");
   redirect("/spaces");
 }

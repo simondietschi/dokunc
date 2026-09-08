@@ -2,7 +2,7 @@ import Link from "next/link";
 import { FileText, SearchX } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
-import { HL_START, HL_STOP, splitHighlights } from "@/lib/palette";
+import { HL_START, HL_STOP, likeEscape, splitHighlights } from "@/lib/palette";
 
 type Row = { id: string; title: string; snippet: string; isTemplate: boolean };
 
@@ -23,20 +23,35 @@ export default async function SearchPage({
 
   let results: Row[] = [];
   if (query) {
+    // Titel-Treffer (auch Wortanfaenge) UND Volltext — dieselbe Regel wie
+    // in der ⌘K-Palette. Ohne den ILIKE-Zweig fand die Palette Seiten,
+    // die diese Seite dann nicht mehr anzeigte (Volltext matcht nur ganze
+    // Woerter).
+    const like = `%${likeEscape(query)}%`;
     results = await prisma.$queryRaw<Row[]>`
       SELECT id, title, "isTemplate",
-        ts_headline('simple', "textContent",
-          plainto_tsquery('simple', ${query}),
-          ${`StartSel=${HL_START},StopSel=${HL_STOP},MaxFragments=1,MaxWords=24,MinWords=6`}) AS snippet
+        CASE
+          WHEN to_tsvector('simple', coalesce("textContent", ''))
+               @@ plainto_tsquery('simple', ${query})
+          THEN ts_headline('simple', "textContent",
+            plainto_tsquery('simple', ${query}),
+            ${`StartSel=${HL_START},StopSel=${HL_STOP},MaxFragments=1,MaxWords=24,MinWords=6`})
+          ELSE ''
+        END AS snippet
       FROM "Page"
       WHERE "spaceId" = ${space.id}
         AND "deletedAt" IS NULL
-        AND to_tsvector('simple', coalesce(title,'') || ' ' || coalesce("textContent",''))
-            @@ plainto_tsquery('simple', ${query})
-      ORDER BY ts_rank(
-        to_tsvector('simple', coalesce(title,'') || ' ' || coalesce("textContent",'')),
-        plainto_tsquery('simple', ${query})
-      ) DESC
+        AND (
+          title ILIKE ${like}
+          OR to_tsvector('simple', coalesce(title,'') || ' ' || coalesce("textContent",''))
+             @@ plainto_tsquery('simple', ${query})
+        )
+      ORDER BY (title ILIKE ${like}) DESC,
+        ts_rank(
+          to_tsvector('simple', coalesce(title,'') || ' ' || coalesce("textContent",'')),
+          plainto_tsquery('simple', ${query})
+        ) DESC,
+        "updatedAt" DESC
       LIMIT ${pageSize} OFFSET ${offset}
     `;
   }

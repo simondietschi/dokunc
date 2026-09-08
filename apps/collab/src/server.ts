@@ -146,7 +146,22 @@ const server = new Server({
         COLLAB_FIELD,
         extensions,
       );
-      Y.applyUpdate(data.document, Y.encodeStateAsUpdate(seeded));
+      // Den frisch geseedeten Stand SOFORT festschreiben — aber nur,
+      // wenn noch keiner da ist (upsert mit leerem update gewinnt den
+      // Wettlauf atomar und liefert den Sieger zurück). Ohne das seeden
+      // zwei gleichzeitig ladende Verbindungen (oder zwei Collab-
+      // Instanzen) unabhängig voneinander, und Yjs führt beide Fassungen
+      // zusammen: die Seite stünde doppelt im Dokument.
+      const row = await prisma.collabDocument.upsert({
+        where: { pageId },
+        create: {
+          pageId,
+          state: Buffer.from(Y.encodeStateAsUpdate(seeded)),
+        },
+        update: {},
+        select: { state: true },
+      });
+      Y.applyUpdate(data.document, new Uint8Array(row.state));
     }
     return data.document;
   },
@@ -293,18 +308,36 @@ const CHUNK_SIZE = 1200;
  */
 async function indexChunks(pageId: string, text: string): Promise<void> {
   const chunks = chunkText(text, CHUNK_SIZE);
-  await prisma.$transaction([
-    prisma.pageChunk.deleteMany({
-      where: { pageId, chunkIndex: { gte: chunks.length } },
-    }),
-    ...chunks.map((chunk, i) =>
+  // Nur geänderte Chunks anfassen. Wer bei jedem Speichern ALLE
+  // Embeddings verwirft, lässt nach jedem Tastendruck-Batch die ganze
+  // Seite neu einbetten — kostenpflichtige API-Aufrufe für Text, der
+  // sich gar nicht geändert hat, und bis dahin fehlt sie der Suche.
+  const existing = await prisma.pageChunk.findMany({
+    where: { pageId },
+    select: { chunkIndex: true, text: true },
+  });
+  const before = new Map(existing.map((c) => [c.chunkIndex, c.text]));
+
+  const writes = chunks
+    .map((chunk, i) => ({ chunk, i }))
+    .filter(({ chunk, i }) => before.get(i) !== chunk)
+    .map(({ chunk, i }) =>
       prisma.pageChunk.upsert({
         where: { pageId_chunkIndex: { pageId, chunkIndex: i } },
         // embedding auf null: Text hat sich geändert -> neu einbetten.
         create: { pageId, chunkIndex: i, text: chunk },
         update: { text: chunk, embedding: null },
       }),
-    ),
+    );
+
+  const stale = existing.some((c) => c.chunkIndex >= chunks.length);
+  if (writes.length === 0 && !stale) return;
+
+  await prisma.$transaction([
+    prisma.pageChunk.deleteMany({
+      where: { pageId, chunkIndex: { gte: chunks.length } },
+    }),
+    ...writes,
   ]);
 }
 
@@ -319,8 +352,169 @@ function extractText(node: unknown): string {
   return "";
 }
 
+/**
+ * Kanal, über den die Web-App bittet, ein Dokument neu aus der Datenbank
+ * aufzubauen (Wiederherstellen einer Version). Muss zu
+ * apps/web/src/lib/collab-sync.ts passen.
+ */
+const DOC_RESET_CHANNEL = "dokunc:doc-reset";
+/** Muss zu apps/web/src/lib/collab-sync.ts passen. */
+const ACCESS_REVOKED_CHANNEL = "dokunc:access-revoked";
+
+/**
+ * Ersetzt den Inhalt eines Yjs-Dokuments durch den gespeicherten
+ * `Page.content`.
+ *
+ * Ohne das bliebe ein geöffnetes Dokument im Speicher unverändert: die
+ * Web-App schreibt beim Wiederherstellen nur `Page.content`, der nächste
+ * `onStoreDocument` schriebe den alten Speicherstand zurück — die
+ * Wiederherstellung wäre still verpufft. Über eine Direktverbindung
+ * gesetzt, ziehen offene Editoren den Stand sofort nach.
+ */
+async function resetDocument(pageId: string): Promise<boolean> {
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { content: true, deletedAt: true },
+  });
+  if (!page || page.deletedAt || !page.content) return false;
+
+  const seeded = TiptapTransformer.toYdoc(
+    page.content,
+    COLLAB_FIELD,
+    extensions,
+  );
+  // Yjs-Typen gehören zu genau einem Dokument — für das Ziel geklont.
+  // XmlHook kommt im Editor-Schema nicht vor und wird übersprungen.
+  const nodes = seeded
+    .getXmlFragment(COLLAB_FIELD)
+    .toArray()
+    .filter(
+      (node): node is Y.XmlElement | Y.XmlText =>
+        node instanceof Y.XmlElement || node instanceof Y.XmlText,
+    )
+    .map((node) => node.clone());
+
+  // `server.hocuspocus` ist die Instanz mit den Dokumenten; `server` ist
+  // nur der HTTP-/WebSocket-Aufsatz darum.
+  const connection = await server.hocuspocus.openDirectConnection(pageId);
+  try {
+    await connection.transact((doc: Y.Doc) => {
+      const fragment = doc.getXmlFragment(COLLAB_FIELD);
+      fragment.delete(0, fragment.length);
+      fragment.insert(0, nodes);
+    });
+  } finally {
+    await connection.disconnect();
+  }
+  return true;
+}
+
+/**
+ * Auf Reset-Wünsche der Web-App hören. Der Nonce-Lock stellt sicher, dass
+ * bei mehreren Instanzen GENAU EINE das Dokument ersetzt — sonst fügten
+ * zwei Instanzen ihre Kopie ein und der Inhalt stünde doppelt da.
+ */
+/**
+ * Alle offenen Verbindungen einer Person in einem Space trennen. Die
+ * Zugriffspruefung laeuft nur beim Verbinden (`onAuthenticate`) — ohne
+ * dieses Trennen behaelt jemand nach dem Entzug der Mitgliedschaft (oder
+ * nach der Herabstufung auf VIEWER) sein Schreibrecht, bis er die Seite
+ * neu laedt. Beim naechsten Verbinden greift die Pruefung wieder.
+ */
+async function disconnectUserFromSpace(
+  userId: string,
+  spaceId: string,
+): Promise<number> {
+  // Erst die offenen Dokumente sammeln, in denen diese Person haengt …
+  type Closable = {
+    context: unknown;
+    close: () => void;
+    webSocket: { close: (code?: number, reason?: string) => void };
+  };
+  const candidates = new Map<string, Closable[]>();
+  function collect(doc: { getConnections: () => unknown[] }): Closable[] {
+    return (doc.getConnections() as Closable[]).filter(
+      (c) => (c.context as { userId?: string } | null)?.userId === userId,
+    );
+  }
+  for (const [documentName, doc] of server.hocuspocus.documents) {
+    const mine = collect(doc);
+    if (mine.length > 0) candidates.set(documentName, mine);
+  }
+  if (candidates.size === 0) return 0;
+
+  // … und davon nur die trennen, deren Seite zu DIESEM Space gehoert.
+  const pages = await prisma.page.findMany({
+    where: { id: { in: [...candidates.keys()], }, spaceId },
+    select: { id: true },
+  });
+  let closed = 0;
+  for (const { id } of pages) {
+    for (const connection of candidates.get(id) ?? []) {
+      // Erst die Dokument-Verbindung sauber abmelden …
+      connection.close();
+      // … dann den Socket wirklich schliessen. Die Dokument-Nachricht
+      // allein laesst den Client verbunden ("Live") weiterlaufen; erst
+      // der Socket-Abbruch loest den Neuaufbau aus — und der scheitert
+      // dann an der Zugriffspruefung in onAuthenticate.
+      try {
+        connection.webSocket.close(1000, "Zugriff entzogen");
+      } catch {
+        /* Socket war schon zu */
+      }
+      closed += 1;
+    }
+  }
+  return closed;
+}
+
+function startDocResetListener(): void {
+  const subscriber = redis.duplicate();
+  subscriber.on("error", (e: Error) => log.warn({ err: e.message }, "redis-sub"));
+  subscriber
+    .subscribe(DOC_RESET_CHANNEL, ACCESS_REVOKED_CHANNEL)
+    .catch((e: unknown) => {
+      log.warn({ err: String(e) }, "Redis-Kanäle nicht abonniert");
+    });
+  subscriber.on("message", async (channel: string, raw: string) => {
+    try {
+      if (channel === ACCESS_REVOKED_CHANNEL) {
+        const { userId, spaceId } = JSON.parse(raw) as {
+          userId?: string;
+          spaceId?: string;
+        };
+        if (!userId || !spaceId) return;
+        const closed = await disconnectUserFromSpace(userId, spaceId);
+        if (closed > 0) {
+          log.info({ userId, spaceId, closed }, "Collab-Verbindungen getrennt");
+        }
+        return;
+      }
+      const { pageId, nonce } = JSON.parse(raw) as {
+        pageId?: string;
+        nonce?: string;
+      };
+      if (!pageId || !nonce) return;
+      const won = await redis.set(
+        `dokunc:doc-reset:${nonce}`,
+        "1",
+        "PX",
+        60_000,
+        "NX",
+      );
+      if (won !== "OK") return;
+      if (await resetDocument(pageId)) {
+        log.info({ pageId }, "Dokument aus der Datenbank neu aufgebaut");
+      }
+    } catch (e) {
+      log.warn({ err: String(e) }, "Redis-Nachricht konnte nicht verarbeitet werden");
+    }
+  });
+}
+
 server.listen().then(() => {
   log.info({ port: PORT }, "Hocuspocus läuft");
   // Mail-Versand von Benachrichtigungen (periodisch, Redis-gelockt).
   startMailDispatcher({ redis, log });
+  startDocResetListener();
 });

@@ -288,6 +288,12 @@ function Thread({
               >
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="threadId" value={thread.id} />
+                {/* Zielzustand, nicht "umschalten": siehe Server-Action. */}
+                <input
+                  type="hidden"
+                  name="resolved"
+                  value={resolved ? "0" : "1"}
+                />
                 <button className="inline-flex items-center gap-1 text-[13px] text-muted hover:text-ink">
                   {resolved ? (
                     <>
@@ -332,7 +338,10 @@ function CommentRow({
       <div className="min-w-0 flex-1">
         <p className="text-[13px]">
           <span className="font-medium">{author?.name ?? "Gelöscht"}</span>
-          <span className="ml-2 text-faint">
+          {/* Lokale Zeitzone: Server und Browser formatieren
+              unterschiedlich — der Unterschied ist erwartet und darf
+              keinen Hydration-Fehler ausloesen. */}
+          <span className="ml-2 text-faint" suppressHydrationWarning>
             {new Date(createdAt).toLocaleString("de-DE", {
               dateStyle: "medium",
               timeStyle: "short",

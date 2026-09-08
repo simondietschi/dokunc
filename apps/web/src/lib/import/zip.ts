@@ -18,6 +18,18 @@ function isJunk(path: string): boolean {
   return IGNORED_NAMES.has(name) || name.startsWith("._");
 }
 
+/**
+ * Gemeinsames Budget fuer EINEN Import-Request. Ohne das bekommt jedes
+ * Zip im selben Upload seine eigenen 2000 Eintraege / 500 MB — zwanzig
+ * kleine Zips im 100-MB-Upload entpacken dann bis zu 10 GB in den
+ * Speicher. Der Aufrufer legt ein Budget an und reicht es durch.
+ */
+export type ZipBudget = { entries: number; unpacked: number };
+
+export function newZipBudget(): ZipBudget {
+  return { entries: 0, unpacked: 0 };
+}
+
 type ZipResult = {
   files: ImportFile[];
   /** Abgelehnte Eintraege (Traversal, unsichere Namen) fuer Warnungen. */
@@ -32,9 +44,10 @@ type ZipResult = {
  * Verzeichnisse und OS-Metadaten werden ignoriert. Limits werden VOR
  * dem Entpacken anhand der Header geprueft.
  */
-export function extractZip(data: Uint8Array): ZipResult {
-  let entries = 0;
-  let unpacked = 0;
+export function extractZip(
+  data: Uint8Array,
+  budget: ZipBudget = newZipBudget(),
+): ZipResult {
   const rejected: string[] = [];
   const tooLarge: string[] = [];
 
@@ -44,20 +57,20 @@ export function extractZip(data: Uint8Array): ZipResult {
       filter: (info) => {
         if (info.name.endsWith("/")) return false; // Verzeichnis
         if (isJunk(info.name)) return false;
-        entries += 1;
-        if (entries > ZIP_MAX_ENTRIES) {
+        budget.entries += 1;
+        if (budget.entries > ZIP_MAX_ENTRIES) {
           throw new ImportError(
-            `Zip enthält mehr als ${ZIP_MAX_ENTRIES} Dateien.`,
+            `Import enthält mehr als ${ZIP_MAX_ENTRIES} Zip-Dateien.`,
           );
         }
         if (info.originalSize > ZIP_MAX_FILE) {
           tooLarge.push(info.name);
           return false;
         }
-        unpacked += info.originalSize;
-        if (unpacked > ZIP_MAX_UNPACKED) {
+        budget.unpacked += info.originalSize;
+        if (budget.unpacked > ZIP_MAX_UNPACKED) {
           throw new ImportError(
-            `Zip ist entpackt grösser als ${Math.round(
+            `Import ist entpackt grösser als ${Math.round(
               ZIP_MAX_UNPACKED / 1024 / 1024,
             )} MB.`,
           );

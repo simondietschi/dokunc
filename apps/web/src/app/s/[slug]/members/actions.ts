@@ -5,6 +5,8 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma, type SpaceRole } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
+import { canAssignRole, canRemoveMember } from "@/lib/permissions";
+import { revokeCollabAccess } from "@/lib/collab-sync";
 import { requireUser } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import {
@@ -106,7 +108,7 @@ export async function revokeInvitationAction(form: FormData) {
 }
 
 export async function changeRoleAction(form: FormData) {
-  const { space } = await authorizeAction(form, "manageSpace");
+  const { space, role: actorRole } = await authorizeAction(form, "manageSpace");
   const memberId = str(form, "memberId");
   const role = str(form, "role") as SpaceRole;
   if (!["OWNER", "ADMIN", "MEMBER", "VIEWER"].includes(role)) return;
@@ -116,10 +118,15 @@ export async function changeRoleAction(form: FormData) {
   });
   if (!member) return;
 
+  // OWNER vergibt und entzieht nur, wer selbst OWNER ist (siehe
+  // canAssignRole) — sonst macht sich jeder ADMIN per Auswahlfeld
+  // selbst zum OWNER.
+  if (!canAssignRole(actorRole, member.role, role)) return;
+
   // Letzten OWNER nicht entmachten.
   if (member.role === "OWNER" && role !== "OWNER") {
     const owners = await prisma.spaceMember.count({
-      where: { spaceId: space.id, role: "OWNER" },
+      where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
     });
     if (owners <= 1) return;
   }
@@ -128,24 +135,31 @@ export async function changeRoleAction(form: FormData) {
     where: { id: member.id },
     data: { role },
   });
+  // Offene Editor-Sitzungen trennen: das Schreibrecht wird nur beim
+  // Verbinden geprueft, eine Herabstufung auf VIEWER wuerde sonst erst
+  // beim naechsten Neuladen greifen.
+  await revokeCollabAccess(member.userId, space.id);
   revalidatePath(`/s/${space.slug}/members`);
 }
 
 export async function removeMemberAction(form: FormData) {
-  const { space } = await authorizeAction(form, "manageSpace");
+  const { space, role: actorRole } = await authorizeAction(form, "manageSpace");
   const member = await prisma.spaceMember.findFirst({
     where: { id: str(form, "memberId"), spaceId: space.id },
   });
   if (!member) return;
 
+  if (!canRemoveMember(actorRole, member.role)) return;
+
   if (member.role === "OWNER") {
     const owners = await prisma.spaceMember.count({
-      where: { spaceId: space.id, role: "OWNER" },
+      where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
     });
     if (owners <= 1) return; // letzten OWNER nicht entfernen
   }
 
   await prisma.spaceMember.delete({ where: { id: member.id } });
+  await revokeCollabAccess(member.userId, space.id);
   revalidatePath(`/s/${space.slug}/members`);
 }
 

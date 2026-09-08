@@ -69,18 +69,21 @@ export default async function MembersPage({
                 slug={slug}
                 memberId={m.id}
                 role={m.role}
+                canManageOwners={role === "OWNER"}
               />
-              <form action={removeMemberAction}>
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="memberId" value={m.id} />
-                <ConfirmButton
-                  message={`„${m.user.name}" aus diesem Space entfernen?`}
-                  title="Entfernen"
-                  className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </ConfirmButton>
-              </form>
+              {(role === "OWNER" || m.role !== "OWNER") && (
+                <form action={removeMemberAction}>
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="memberId" value={m.id} />
+                  <ConfirmButton
+                    message={`„${m.user.name}" aus diesem Space entfernen?`}
+                    title="Entfernen"
+                    className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </ConfirmButton>
+                </form>
+              )}
             </div>
           </li>
         ))}

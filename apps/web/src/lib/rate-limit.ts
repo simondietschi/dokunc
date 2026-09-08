@@ -48,6 +48,67 @@ export async function rateLimit(
   return entry.n <= limit;
 }
 
+/**
+ * Prüft den Zähler, OHNE ihn zu erhöhen. Für Limits, die nur Fehlschläge
+ * zählen sollen (Login): erst prüfen, dann — je nach Ausgang — `penalize`
+ * oder `clearLimit`. Ein erhöhender Zähler würde sonst auch erfolgreiche
+ * Anmeldungen verbrauchen und liesse sich von Dritten gegen ein fremdes
+ * Konto leeren (gezielte Aussperrung).
+ */
+export async function isRateLimited(
+  key: string,
+  limit: number,
+): Promise<boolean> {
+  const r = client();
+  if (r) {
+    try {
+      const raw = await r.get(`dokunc:rl:${key}`);
+      return Number(raw ?? 0) >= limit;
+    } catch {
+      /* fällt auf Memory zurück */
+    }
+  }
+  const entry = mem.get(key);
+  if (!entry || entry.reset < Date.now()) return false;
+  return entry.n >= limit;
+}
+
+/** Fehlversuch zählen (Fenster startet beim ersten Treffer). */
+export async function penalize(key: string, windowSec: number): Promise<void> {
+  const r = client();
+  if (r) {
+    try {
+      const k = `dokunc:rl:${key}`;
+      const n = await r.incr(k);
+      if (n === 1) await r.expire(k, windowSec);
+      return;
+    } catch {
+      /* fällt auf Memory zurück */
+    }
+  }
+  const now = Date.now();
+  const entry = mem.get(key);
+  if (!entry || entry.reset < now) {
+    if (mem.size > MEM_MAX_KEYS) pruneMem(now);
+    mem.set(key, { n: 1, reset: now + windowSec * 1000 });
+    return;
+  }
+  entry.n += 1;
+}
+
+/** Zähler zurücksetzen (nach einem erfolgreichen Versuch). */
+export async function clearLimit(key: string): Promise<void> {
+  const r = client();
+  if (r) {
+    try {
+      await r.del(`dokunc:rl:${key}`);
+    } catch {
+      /* best effort */
+    }
+  }
+  mem.delete(key);
+}
+
 /** Obergrenze für den Fallback-Speicher, bevor aufgeräumt wird. */
 const MEM_MAX_KEYS = 10_000;
 

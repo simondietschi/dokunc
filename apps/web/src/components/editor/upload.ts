@@ -122,12 +122,36 @@ export function pickAndUpload(
   input.type = "file";
   input.multiple = true;
   if (opts.accept) input.accept = opts.accept;
+
+  // Der Slash-Befehl muss in JEDEM Fall aus dem Text verschwinden — auch
+  // wenn der Dateidialog abgebrochen wird. "change" feuert dann nicht;
+  // dafuer gibt es "cancel" (und als Rueckfalltuer den Fokus-Wechsel
+  // zurueck ins Fenster).
+  let settled = false;
+  const clearRange = () => {
+    if (settled) return;
+    settled = true;
+    window.removeEventListener("focus", onWindowFocus);
+    if (opts.range) editor.chain().focus().deleteRange(opts.range).run();
+  };
+  function onWindowFocus() {
+    // Nach dem Schliessen des Dialogs; "change" kommt ggf. erst danach.
+    setTimeout(() => {
+      if (input.files && input.files.length > 0) return;
+      clearRange();
+    }, 300);
+  }
+
   input.onchange = () => {
     const files = Array.from(input.files ?? []);
+    settled = true;
+    window.removeEventListener("focus", onWindowFocus);
     let chain = editor.chain().focus();
     if (opts.range) chain = chain.deleteRange(opts.range);
     chain.run();
     if (files.length) void uploadAndInsert(editor.view, files, ctx);
   };
+  input.addEventListener("cancel", clearRange);
+  window.addEventListener("focus", onWindowFocus);
   input.click();
 }

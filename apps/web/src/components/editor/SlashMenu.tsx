@@ -77,6 +77,12 @@ export const SlashMenu = forwardRef<
             data-index={i}
             type="button"
             onMouseEnter={() => setActive(i)}
+            // preventDefault wie in der Toolbar: der mousedown darf den
+            // Fokus nicht aus dem Editor ziehen. Sonst verschiebt der
+            // Browser die Selektion, bevor der Befehl laeuft — der neue
+            // Block landet dann an einer anderen Stelle (ein Callout
+            // umschliesst z. B. den falschen Absatz).
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => item.command()}
             className={cn(
               "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors",

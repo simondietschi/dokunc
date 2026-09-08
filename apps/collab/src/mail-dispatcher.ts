@@ -34,6 +34,15 @@ const BATCH_LIMIT = 500;
 const MAX_ROUNDS = 10;
 const SEND_ATTEMPTS = 3;
 /**
+ * Ab diesem Alter wird ein unzustellbarer Eintrag aufgegeben (nur noch
+ * in der App sichtbar). Ohne diese Schranke bleiben dauerhaft
+ * unzustellbare Zeilen (ungültige Adresse, dauerhaft ablehnender Server)
+ * für immer am Kopf der nach createdAt sortierten Warteschlange stehen:
+ * sind es BATCH_LIMIT viele, wird nie wieder eine neuere Zeile geladen
+ * und der Mailversand steht komplett still.
+ */
+const GIVE_UP_AFTER_MS = 24 * 60 * 60 * 1000;
+/**
  * Lebensdauer des Locks: deutlich länger als ein Lauf dauern darf, damit
  * eine zweite Instanz nie parallel dieselben Einträge lädt. Nach dem Lauf
  * wird der Lock explizit freigegeben; stirbt der Prozess, verfällt er.
@@ -115,7 +124,7 @@ export function startMailDispatcher(opts: {
     });
   }
 
-  async function loadCandidates(): Promise<{
+  async function loadCandidates(now: Date): Promise<{
     candidates: DispatchCandidate[];
     orphanIds: string[];
     /** true, wenn das Limit erreicht wurde (es kann mehr geben). */
@@ -152,7 +161,7 @@ export function startMailDispatcher(opts: {
       pageIds.length
         ? prisma.page.findMany({
             where: { id: { in: pageIds }, deletedAt: null },
-            select: { id: true, title: true },
+            select: { id: true, title: true, spaceId: true },
           })
         : [],
       commentIds.length
@@ -163,15 +172,43 @@ export function startMailDispatcher(opts: {
         : [],
     ]);
     const titleById = new Map(pages.map((p) => [p.id, p.title]));
+    const spaceByPage = new Map(pages.map((p) => [p.id, p.spaceId]));
     const bodyById = new Map(comments.map((c) => [c.id, c.body]));
+
+    // Nur noch an Personen zustellen, die im Space der Seite Mitglied
+    // sind: eine offene Benachrichtigung darf nach dem Entzug des
+    // Zugriffs nicht weiterhin Seitentitel und Kommentartext per Mail
+    // hinaustragen.
+    const memberships = new Set<string>();
+    if (spaceByPage.size > 0) {
+      const rowsM = await prisma.spaceMember.findMany({
+        where: {
+          spaceId: { in: [...new Set(spaceByPage.values())] },
+          userId: { in: [...new Set(rows.map((r) => r.userId))] },
+        },
+        select: { userId: true, spaceId: true },
+      });
+      for (const m of rowsM) memberships.add(`${m.userId}:${m.spaceId}`);
+    }
 
     const candidates: DispatchCandidate[] = [];
     const orphanIds: string[] = [];
+    let expired = 0;
     for (const r of rows) {
       const title = r.pageId ? titleById.get(r.pageId) : undefined;
       if (!r.pageId || title === undefined) {
         // Seite gelöscht oder ohne Seitenbezug: kein sinnvoller Link.
         orphanIds.push(r.id);
+        continue;
+      }
+      const spaceId = spaceByPage.get(r.pageId);
+      if (!spaceId || !memberships.has(`${r.userId}:${spaceId}`)) {
+        orphanIds.push(r.id);
+        continue;
+      }
+      if (now.getTime() - r.createdAt.getTime() > GIVE_UP_AFTER_MS) {
+        orphanIds.push(r.id);
+        expired += 1;
         continue;
       }
       candidates.push({
@@ -188,6 +225,12 @@ export function startMailDispatcher(opts: {
           excerpt: r.commentId ? (bodyById.get(r.commentId) ?? null) : null,
         },
       });
+    }
+    if (expired > 0) {
+      log.warn(
+        { expired },
+        "Benachrichtigungen nach 24 h ohne Zustellung aufgegeben (bleiben in der App)",
+      );
     }
     return { candidates, orphanIds, full };
   }
@@ -226,8 +269,12 @@ export function startMailDispatcher(opts: {
    * Ein Batch: laden, planen, senden, markieren. Liefert, ob der Batch
    * voll war und Fortschritt gemacht wurde (dann lohnt eine weitere Runde).
    */
-  async function processBatch(now: Date, digest: boolean): Promise<boolean> {
-    const { candidates, orphanIds, full } = await loadCandidates();
+  async function processBatch(
+    now: Date,
+    digest: boolean,
+    outcome: { failed: number },
+  ): Promise<boolean> {
+    const { candidates, orphanIds, full } = await loadCandidates(now);
     await markEmailed(orphanIds, now);
     if (candidates.length === 0) return false;
 
@@ -256,6 +303,7 @@ export function startMailDispatcher(opts: {
         sent++;
       } else {
         failed++;
+        outcome.failed += 1;
       }
     }
     if (sent || failed) {
@@ -273,12 +321,16 @@ export function startMailDispatcher(opts: {
   async function runOnce(): Promise<void> {
     const now = new Date();
     const digest = await digestDue(now);
+    const outcome = { failed: 0 };
     for (let round = 0; round < MAX_ROUNDS; round++) {
-      if (!(await processBatch(now, digest))) break;
+      if (!(await processBatch(now, digest, outcome))) break;
     }
     // Erst nach allen Runden markieren, damit auch grosse Rückstände in
     // einem Digest landen statt auf den nächsten Tag zu rutschen.
-    if (digest) await markDigestDone(now);
+    // Bei fehlgeschlagenem Versand NICHT markieren: sonst gilt die
+    // Tageszusammenfassung als erledigt und der nächste Versuch käme
+    // erst 24 h später.
+    if (digest && outcome.failed === 0) await markDigestDone(now);
   }
 
   async function tick(): Promise<void> {

@@ -30,9 +30,16 @@ export default async function NotificationsPage() {
         .filter((id): id is string => !!id),
     ),
   ];
+  // Titel nur fuer Seiten, die diese Person aktuell sehen darf: eine alte
+  // Benachrichtigung aus einem verlassenen (oder entzogenen) Space soll
+  // nicht weiterhin deren Seitentitel zeigen.
   const pages = pageIds.length
     ? await prisma.page.findMany({
-        where: { id: { in: pageIds } },
+        where: {
+          id: { in: pageIds },
+          deletedAt: null,
+          space: { members: { some: { userId: user.id } } },
+        },
         select: { id: true, title: true },
       })
     : [];

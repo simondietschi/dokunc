@@ -2,6 +2,7 @@ import "server-only";
 import { cookies } from "next/headers";
 import { SignJWT, jwtVerify } from "jose";
 import { getAppSecret } from "./secret";
+import { durationToSeconds } from "./duration";
 
 // Lazy + memoisiert: NICHT beim Modul-Import berechnen — `next build`
 // läuft mit NODE_ENV=production und würde sonst ohne APP_SECRET schon
@@ -14,6 +15,8 @@ function secret(): Uint8Array {
 
 const COOKIE = "dokunc_session";
 const EXPIRES = process.env.JWT_EXPIRES_IN ?? "7d";
+// Cookie und JWT laufen gemeinsam ab (siehe lib/duration.ts).
+const MAX_AGE = durationToSeconds(EXPIRES);
 
 type SessionClaims = { sub: string; tv: number };
 
@@ -31,7 +34,7 @@ export async function createSession(userId: string, tokenVersion: number) {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 24 * 7,
+    maxAge: MAX_AGE,
   });
 }
 

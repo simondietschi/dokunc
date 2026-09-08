@@ -152,6 +152,7 @@ export default async function SpacesPage() {
                 name="name"
                 placeholder="Neuer Space…"
                 required
+                minLength={2}
                 className="h-10"
               />
               <Button type="submit" size="sm" className="w-full">

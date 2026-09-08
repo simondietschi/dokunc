@@ -5,7 +5,7 @@ import { toMarkdown } from "@/lib/markdown";
 import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
 import { htmlToPdf, gotenbergUrl } from "@/lib/pdf";
 import { inlineUploadImages } from "@/lib/inline-images";
-import { loadUpload } from "@/lib/uploads";
+import { uploadLoaderFor } from "@/lib/file-access";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -62,9 +62,11 @@ export async function GET(
   const html = pageToPrintHtml({
     title: page.title,
     spaceName: page.space.name,
+    // Nur Dateien, die diese Person auch ueber /api/files abrufen
+    // duerfte — der Export ist sonst ein zweiter Lesepfad ohne Pruefung.
     contentHtml: await inlineUploadImages(
       contentToHtml(page.content),
-      loadUpload,
+      uploadLoaderFor(user.id),
     ),
   });
 

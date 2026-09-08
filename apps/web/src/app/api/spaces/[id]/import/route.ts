@@ -6,7 +6,7 @@ import { isSameOrigin } from "@/lib/origin";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { can } from "@/lib/permissions";
 import { log } from "@/lib/log";
-import { extractZip, ZIP_MAX_FILE } from "@/lib/import/zip";
+import { extractZip, newZipBudget, ZIP_MAX_FILE } from "@/lib/import/zip";
 import { runImport } from "@/lib/import/run";
 import { ImportError, type ImportFile } from "@/lib/import/types";
 import { extname, isPageExt, normalizePath } from "@/lib/import/paths";
@@ -105,6 +105,9 @@ export async function POST(
 
   const files: ImportFile[] = [];
   const warnings: string[] = [];
+  // Ein Budget fuer den GESAMTEN Request: mehrere Zips teilen sich die
+  // Obergrenzen, statt jedes eigene zu bekommen.
+  const budget = newZipBudget();
   try {
     for (const upload of uploads) {
       const ext = extname(upload.name);
@@ -114,7 +117,7 @@ export async function POST(
       }
       const bytes = new Uint8Array(await upload.arrayBuffer());
       if (ext === "zip") {
-        const zip = extractZip(bytes);
+        const zip = extractZip(bytes, budget);
         files.push(...zip.files);
         for (const name of zip.rejected) {
           warnings.push(`Zip-Eintrag "${name}" abgelehnt (unsicherer Pfad).`);

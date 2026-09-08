@@ -169,3 +169,19 @@ describe("fileResponseHeaders()", () => {
     expect(html["X-Content-Type-Options"]).toBe("nosniff");
   });
 });
+
+describe("resolveFileAccess() — Altbestand ist an die eigenen Spaces gebunden", () => {
+  it("reicht die userId an findLegacyPage durch", async () => {
+    // Ohne die userId suchte der Fallback instanzweit nach der zuletzt
+    // bearbeiteten Seite, die den Dateinamen enthaelt — wer den Namen
+    // einer verwaisten Datei kennt, koennte sie damit in den eigenen
+    // Space holen (createAttachment schreibt die Zuordnung fest).
+    const d = deps({
+      findLegacyPage: vi.fn(async () => ({ id: "p9", spaceId: "space-b" })),
+      isMember: vi.fn(async () => true),
+      fileSize: vi.fn(async () => 5),
+    });
+    await resolveFileAccess("alt.png", "u42", d);
+    expect(d.findLegacyPage).toHaveBeenCalledWith("alt.png", "u42");
+  });
+});

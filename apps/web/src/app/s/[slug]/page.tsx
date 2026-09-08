@@ -5,6 +5,7 @@ import { can } from "@/lib/permissions";
 import { relativeTime } from "@/lib/relative-time";
 import { Button } from "@/components/ui/Button";
 import { SpaceDashboard, changedMeta } from "@/components/space/SpaceDashboard";
+import { LeaveSpaceForm } from "./members/LeaveSpaceForm";
 import { createPageAction } from "./actions";
 
 const TIPS = [
@@ -74,7 +75,14 @@ export default async function SpaceIndex({
 
   const now = new Date();
 
+  // "Space verlassen" steht sonst nur auf der Mitgliederseite — und die
+  // ist erst ab manageSpace erreichbar. MEMBER und VIEWER kaemen dort nie
+  // hin und koennten einen Space nie verlassen, obwohl die Aktion es
+  // ausdruecklich allen Rollen erlaubt.
+  const showLeave = !can(role, "manageSpace");
+
   return (
+    <>
     <SpaceDashboard
       slug={space.slug}
       name={space.name}
@@ -99,6 +107,12 @@ export default async function SpaceIndex({
         meta: changedMeta(p.lastEditedBy?.name, p.updatedAt, now),
       }))}
     />
+    {showLeave && (
+      <div className="mx-auto max-w-4xl px-8 pb-14">
+        <LeaveSpaceForm slug={space.slug} spaceName={space.name} />
+      </div>
+    )}
+    </>
   );
 }
 

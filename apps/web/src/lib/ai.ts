@@ -104,7 +104,13 @@ const ASSIST_ACTIONS = {
 type AssistAction = keyof typeof ASSIST_ACTIONS;
 
 export function isAssistAction(v: unknown): v is AssistAction {
-  return typeof v === "string" && v in ASSIST_ACTIONS;
+  // hasOwnProperty statt `in`: `in` findet auch geerbte Schluessel, mit
+  // action="toString" kaeme sonst Function.prototype.toString als Prompt
+  // durch die Allowlist.
+  return (
+    typeof v === "string" &&
+    Object.prototype.hasOwnProperty.call(ASSIST_ACTIONS, v)
+  );
 }
 
 const ASSIST_SYSTEM = `Du bist ein Schreib-Assistent in einem Team-Wiki (dokunc).

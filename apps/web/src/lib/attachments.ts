@@ -25,9 +25,15 @@ export type AttachmentInfo = {
 export type FileAccessDeps = {
   findAttachment: (storedName: string) => Promise<AttachmentInfo | null>;
   isMember: (userId: string, spaceId: string) => Promise<boolean>;
-  /** Nicht geloeschte Seite, deren Inhalt die Datei referenziert. */
+  /**
+   * Nicht geloeschte Seite, deren Inhalt die Datei referenziert — nur in
+   * Spaces, in denen `userId` Mitglied ist (sonst liesse sich eine
+   * verwaiste Datei durch Einfuegen ihres Namens in eine eigene Seite
+   * beanspruchen).
+   */
   findLegacyPage: (
     storedName: string,
+    userId: string,
   ) => Promise<{ id: string; spaceId: string } | null>;
   /** Dateigroesse auf der Platte oder null, wenn die Datei fehlt. */
   fileSize: (storedName: string) => Promise<number | null>;
@@ -47,7 +53,7 @@ export async function resolveFileAccess(
   }
 
   // Altbestand: Datei ohne Datensatz — Zuordnung ueber den Seiteninhalt.
-  const page = await deps.findLegacyPage(storedName);
+  const page = await deps.findLegacyPage(storedName, userId);
   if (!page) return null;
   if (!(await deps.isMember(userId, page.spaceId))) return null;
   const size = await deps.fileSize(storedName);

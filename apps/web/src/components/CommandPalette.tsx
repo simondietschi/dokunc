@@ -139,7 +139,11 @@ export function CommandPalette() {
           if (res.ok) setData(await res.json());
           setLoading(false);
         } catch {
-          // Abgebrochen oder offline — alte Ergebnisse stehen lassen.
+          // Ein Abbruch ist normal (jede Eingabe loest die vorige ab) —
+          // dann laeuft gleich der naechste Lauf. Bei einem echten
+          // Netzfehler muss der Spinner aber aufhoeren, sonst dreht er
+          // sich fuer immer und verdeckt den Leer-Zustand.
+          if (!controller.signal.aborted) setLoading(false);
         }
       },
       query ? 160 : 0,

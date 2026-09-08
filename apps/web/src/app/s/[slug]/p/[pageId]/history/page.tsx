@@ -21,10 +21,19 @@ export default async function HistoryPage({
   });
   if (!page) notFound();
 
+  // Nur die angezeigten Felder und eine Obergrenze: `include` zog bisher
+  // jede Version MIT vollem Dokument-JSON (bei viel Bearbeitung alle zwei
+  // Minuten eine) — auf einer vielbearbeiteten Seite Dutzende Megabyte
+  // fuer eine Liste aus Name und Datum.
   const versions = await prisma.pageVersion.findMany({
     where: { pageId },
     orderBy: { createdAt: "desc" },
-    include: { author: { select: { name: true } } },
+    take: 100,
+    select: {
+      id: true,
+      createdAt: true,
+      author: { select: { name: true } },
+    },
   });
   const canRestore = can(role, "write");
 

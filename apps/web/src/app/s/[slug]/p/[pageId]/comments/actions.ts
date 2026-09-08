@@ -72,15 +72,27 @@ export async function replyAction(form: FormData) {
     },
   });
 
-  // Thread-Teilnehmende benachrichtigen (außer der antwortenden Person).
-  const participants = new Set(
-    [thread.authorId, ...thread.replies.map((r) => r.authorId)].filter(
-      (id): id is string => !!id && id !== user.id,
+  // Thread-Teilnehmende benachrichtigen (außer der antwortenden Person)
+  // — aber nur, wer noch Mitglied des Space ist. Sonst bekaeme jemand,
+  // dessen Zugriff entzogen wurde, weiterhin Titel und Mails aus einem
+  // Space, den er nicht mehr sehen darf (der Mention-Weg im
+  // Collab-Server filtert bereits genauso).
+  const participants = [
+    ...new Set(
+      [thread.authorId, ...thread.replies.map((r) => r.authorId)].filter(
+        (id): id is string => !!id && id !== user.id,
+      ),
     ),
-  );
-  if (participants.size > 0) {
+  ];
+  const recipients = participants.length
+    ? await prisma.spaceMember.findMany({
+        where: { spaceId: space.id, userId: { in: participants } },
+        select: { userId: true },
+      })
+    : [];
+  if (recipients.length > 0) {
     await prisma.notification.createMany({
-      data: [...participants].map((userId) => ({
+      data: recipients.map(({ userId }) => ({
         userId,
         actorId: user.id,
         type: "COMMENT_REPLY" as const,
@@ -92,9 +104,17 @@ export async function replyAction(form: FormData) {
   revalidatePath(`/s/${space.slug}/p/${thread.pageId}`);
 }
 
+/**
+ * Thread aufloesen oder wieder oeffnen. Der Zielzustand kommt aus dem
+ * Formular (`resolved`), es wird NICHT blind umgeschaltet: zwei
+ * gleichzeitige "Auflösen"-Klicks (oder ein doppelt abgeschicktes
+ * Formular) haetten den Thread sonst wieder geoeffnet — waehrend die
+ * Markierung im Text bereits entfernt ist und nicht zurueckkommt.
+ */
 export async function resolveThreadAction(form: FormData) {
   const { space } = await authorizeAction(form, "write");
   const threadId = str(form, "threadId");
+  const resolved = str(form, "resolved") === "1";
   const thread = await prisma.comment.findFirst({
     where: { id: threadId, parentId: null, page: { spaceId: space.id } },
     select: { id: true, pageId: true, resolvedAt: true },
@@ -103,7 +123,7 @@ export async function resolveThreadAction(form: FormData) {
 
   await prisma.comment.update({
     where: { id: thread.id },
-    data: { resolvedAt: thread.resolvedAt ? null : new Date() },
+    data: { resolvedAt: resolved ? (thread.resolvedAt ?? new Date()) : null },
   });
   revalidatePath(`/s/${space.slug}/p/${thread.pageId}`);
 }

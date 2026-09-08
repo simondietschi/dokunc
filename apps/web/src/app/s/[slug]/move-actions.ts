@@ -111,12 +111,15 @@ export async function movePageAction(form: FormData): Promise<MoveResult> {
         position: own?.position ?? ordered.indexOf(page.id),
       },
     });
+    // Rohes SQL fuer die Geschwister: `updateMany` wuerde ueber Prismas
+    // @updatedAt auch deren Zeitstempel anfassen — unbeteiligte Seiten
+    // stuenden dann als "zuletzt geaendert" im Dashboard.
     for (const u of updates) {
       if (u.id === page.id) continue;
-      await tx.page.updateMany({
-        where: { id: u.id, spaceId: space.id },
-        data: { position: u.position },
-      });
+      await tx.$executeRaw`
+        UPDATE "Page" SET position = ${u.position}
+        WHERE id = ${u.id} AND "spaceId" = ${space.id}
+      `;
     }
 
     // Alte Geschwister ebenfalls kompakt nummerieren (Luecke schliessen).
@@ -131,10 +134,10 @@ export async function movePageAction(form: FormData): Promise<MoveResult> {
         new Map(oldSiblings.map((s) => [s.id, s.position])),
       );
       for (const u of oldUpdates) {
-        await tx.page.updateMany({
-          where: { id: u.id, spaceId: space.id },
-          data: { position: u.position },
-        });
+        await tx.$executeRaw`
+          UPDATE "Page" SET position = ${u.position}
+          WHERE id = ${u.id} AND "spaceId" = ${space.id}
+        `;
       }
     }
 

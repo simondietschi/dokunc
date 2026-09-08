@@ -8,7 +8,13 @@ import { createSession, destroySession } from "@/lib/session";
 import { safeNext } from "@/lib/safe-redirect";
 import { decideRegistration } from "@/lib/registration";
 import { normalizeEmail } from "@/lib/invitations";
-import { rateLimit, clientKey } from "@/lib/rate-limit";
+import {
+  rateLimit,
+  clientKey,
+  isRateLimited,
+  penalize,
+  clearLimit,
+} from "@/lib/rate-limit";
 
 const registerSchema = z.object({
   name: z.string().min(2, "Name zu kurz"),
@@ -50,9 +56,7 @@ export async function registerAction(
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }
 
-  if (await prisma.user.findUnique({ where: { email } })) {
-    return { error: "E-Mail bereits registriert" };
-  }
+  const exists = !!(await prisma.user.findUnique({ where: { email } }));
 
   const isFirstUser = (await prisma.user.count()) === 0;
   const hasValidInvite = isFirstUser
@@ -67,11 +71,20 @@ export async function registerAction(
       }));
 
   const decision = decideRegistration({ isFirstUser, hasValidInvite });
+  // Reihenfolge ist Absicht: ohne gültige Einladung gibt es IMMER dieselbe
+  // Antwort — auch für eine bereits registrierte Adresse. Sonst wäre
+  // /register ein Orakel dafür, wer auf dieser Instanz ein Konto hat
+  // (der Reset-Weg hält denselben Grundsatz bereits ein). Wer eine
+  // gültige Einladung für die Adresse vorweist, weiss ohnehin Bescheid
+  // und bekommt den hilfreichen Hinweis.
   if (!decision.allowed) {
     return {
       error:
         "Registrierung ist nur per Einladung möglich. Bitte deinen Admin um eine Einladung.",
     };
+  }
+  if (exists) {
+    return { error: "E-Mail bereits registriert. Bitte melde dich an." };
   }
 
   const user = await prisma.user.create({
@@ -98,9 +111,16 @@ export async function loginAction(
   const email = normalizeEmail(parsed.data.email);
   // Zwei Limits: pro IP (ein Angreifer, viele Konten) UND pro Konto
   // (viele IPs, ein Konto — Passwort-Raten aus einem Botnetz).
+  //
+  // Das Konto-Limit zählt NUR Fehlversuche und wird nach einer
+  // erfolgreichen Anmeldung geleert. Ein zählender Versuch pro Anfrage
+  // liesse sich sonst von jedem Dritten missbrauchen: zehn falsche
+  // Passwörter zu einer bekannten Adresse sperren deren Besitzerin aus
+  // (und wer sich selbst an mehreren Geräten anmeldet, sperrt sich aus).
+  const acctKey = `login:acct:${email}`;
   if (
     !(await rateLimit(await clientKey("login"), 10, 300)) ||
-    !(await rateLimit(`login:acct:${email}`, 10, 300))
+    (await isRateLimited(acctKey, 10))
   ) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }
@@ -110,11 +130,13 @@ export async function loginAction(
     !user ||
     !(await bcrypt.compare(parsed.data.password, user.passwordHash))
   ) {
+    await penalize(acctKey, 300);
     return { error: "Falsche Zugangsdaten" };
   }
   if (!user.isActive) {
     return { error: "Dieses Konto ist deaktiviert." };
   }
+  await clearLimit(acctKey);
   return startSession(user.id, user.tokenVersion, formData.get("next"));
 }
 

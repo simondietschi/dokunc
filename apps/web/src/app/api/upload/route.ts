@@ -54,7 +54,26 @@ export async function POST(req: Request) {
     );
   }
 
-  const form = await req.formData();
+  // Vor dem Puffern pruefen: `req.formData()` liest den KOMPLETTEN Body
+  // in den Speicher, bevor irgendein Limit greift — eine 5-GB-Anfrage
+  // haette den Prozess sonst schon erledigt, ehe die Groessenpruefung
+  // weiter unten ueberhaupt drankommt.
+  const declared = Number(req.headers.get("content-length") ?? 0);
+  if (Number.isFinite(declared) && declared > maxUploadBytes() + 64 * 1024) {
+    return NextResponse.json(
+      { error: `Datei zu gross (max. ${maxUploadMb()} MB)` },
+      { status: 413 },
+    );
+  }
+
+  let form: FormData;
+  try {
+    form = await req.formData();
+  } catch {
+    // Kaputter Multipart-Body: als 400 beantworten statt als 500 aus
+    // einer nicht behandelten Ablehnung.
+    return NextResponse.json({ error: "Ungültige Anfrage" }, { status: 400 });
+  }
   const file = form.get("file");
   if (!(file instanceof File)) {
     return NextResponse.json({ error: "Keine Datei" }, { status: 400 });

@@ -37,10 +37,13 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
     await page.fill('input[name="email"]', EMAIL);
     await page.fill('input[name="password"]', PASS);
     await page.click('button[type="submit"]');
+    // Ohne gültige Einladung antwortet /register bewusst generisch (die
+    // Existenz eines Kontos wird nie preisgegeben) — beide Meldungen
+    // bedeuten hier "gibt es schon, also einloggen".
     const outcome = await Promise.race([
       page.waitForURL("**/spaces").then(() => "ok" as const),
       page
-        .getByText("bereits registriert")
+        .getByText(/bereits registriert|nur per Einladung/)
         .waitFor({ timeout: 15_000 })
         .then(() => "exists" as const),
     ]);

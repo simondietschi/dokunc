@@ -119,6 +119,10 @@ export function CollaborativeEditor({
   hasChildren?: boolean;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
+  // "connected" heisst hier: authentifiziert UND erstmalig synchronisiert.
+  // Vor dem Sync ist das Yjs-Dokument noch leer bzw. unvollstaendig —
+  // wer da schon tippt, schreibt in ein Dokument, dessen Inhalt gleich
+  // erst eintrifft, und der Text landet an der falschen Stelle.
   const [status, setStatus] = useState<
     "connecting" | "connected" | "offline"
   >("connecting");
@@ -161,11 +165,14 @@ export function CollaborativeEditor({
       name: pageId,
       document: ydoc,
       token,
-      onAuthenticated: () => setStatus("connected"),
+      // Erst der abgeschlossene Erst-Sync macht das Dokument bedienbar
+      // (onAuthenticated allein kommt vor den Inhalten).
+      onSynced: () => setStatus("connected"),
       onAuthenticationFailed: () => setStatus("offline"),
       onStatus: ({ status }) => {
         if (status !== "connected") setStatus("connecting");
       },
+      onDisconnect: () => setStatus("connecting"),
     });
     setConn({ ydoc, provider });
     return () => {
@@ -224,9 +231,9 @@ export function CollaborativeEditor({
 
   const editor = useEditor(
     {
-    // Ohne Verbindung (erster Tick nach dem Mount) ist der Editor nur
-    // Platzhalter: nicht editierbar, ohne Collaboration-Extensions.
-    editable: editable && !!conn,
+    // Vor dem Erst-Sync ist der Editor nur Platzhalter: nicht editierbar
+    // (das Yjs-Dokument ist noch leer), ohne Collaboration-Extensions.
+    editable: editable && !!conn && status === "connected",
     immediatelyRender: false,
     extensions: [
       ...richExtensions({
@@ -286,6 +293,14 @@ export function CollaborativeEditor({
     [conn],
   );
 
+  // `editable` steckt in den useEditor-Optionen und wird nur beim
+  // Erzeugen gelesen — der Sync-Status aendert sich aber danach. Also
+  // nachziehen, statt den Editor dafuer neu aufzubauen.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.setEditable(editable && !!conn && status === "connected", false);
+  }, [editor, editable, conn, status]);
+
   // CommentsPanel bittet darum, eine Kommentar-Markierung zu entfernen
   // (Thread verworfen oder aufgelöst).
   useEffect(() => {
@@ -316,7 +331,10 @@ export function CollaborativeEditor({
     if (!aw) return;
     const sync = () => {
       const seen = new Map<string, Peer>();
-      aw.getStates().forEach((s) => {
+      // Der eigene Client steht auch in der Awareness — er gehoert aber
+      // nicht in die Liste der ANDEREN, die gerade mitlesen.
+      aw.getStates().forEach((s, clientId) => {
+        if (clientId === aw.clientID) return;
         const u = (s as { user?: Peer }).user;
         if (u?.name) seen.set(u.name + u.color, u);
       });
