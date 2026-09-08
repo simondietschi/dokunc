@@ -3,7 +3,7 @@
  * - die allererste Person darf sich registrieren und wird Instanz-Admin
  * - danach ist Selbst-Registrierung nur mit gültiger Einladung möglich
  */
-export type RegistrationDecision = {
+type RegistrationDecision = {
   allowed: boolean;
   isAdmin: boolean;
 };

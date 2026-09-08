@@ -20,7 +20,7 @@ import {
 } from "./actions";
 
 type Author = { id: string; name: string } | null;
-export type ThreadData = {
+type ThreadData = {
   id: string;
   body: string;
   anchorText: string | null;
@@ -36,7 +36,7 @@ export type ThreadData = {
 };
 
 /** Wird vom Editor-Toolbar-Button gefeuert (Text markiert -> Thread). */
-export type NewThreadEvent = CustomEvent<{
+type NewThreadEvent = CustomEvent<{
   id: string;
   anchorText: string;
 }>;

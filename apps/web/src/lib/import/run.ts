@@ -28,11 +28,11 @@ import {
 } from "./types";
 
 /** Obergrenze fuer Seiten pro Import (Transaktionsdauer, UI). */
-export const IMPORT_MAX_PAGES = 2000;
+const IMPORT_MAX_PAGES = 2000;
 /** Groessere Seitendateien werden nicht konvertiert (Speicher, Laufzeit). */
-export const MAX_PAGE_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
+const MAX_PAGE_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
 
-export type ImportResult = {
+type ImportResult = {
   format: ImportFormat;
   pages: number;
   attachments: number;
@@ -40,7 +40,7 @@ export type ImportResult = {
   roots: { id: string; title: string }[];
 };
 
-export type ImportOptions = {
+type ImportOptions = {
   spaceId: string;
   userId: string;
   /** Zielelternseite (bereits gegen den Space geprueft) oder null. */

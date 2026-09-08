@@ -5,7 +5,7 @@
  * sie in Editor, Export und Collab-Seeding identisch funktionieren.
  */
 
-export type BuiltinTemplate = {
+type BuiltinTemplate = {
   /** Stabiler Schlüssel (kommt aus dem Formular). */
   key: string;
   title: string;

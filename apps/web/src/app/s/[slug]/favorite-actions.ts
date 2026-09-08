@@ -5,7 +5,7 @@ import { prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str } from "@/lib/form";
 
-export type ToggleFavoriteResult = { isFavorite: boolean };
+type ToggleFavoriteResult = { isFavorite: boolean };
 
 /**
  * Favorit (Stern) einer Seite fuer die angemeldete Person umschalten.

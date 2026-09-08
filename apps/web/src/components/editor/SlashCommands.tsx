@@ -37,7 +37,7 @@ type Def = {
   run: (editor: Editor, range: Range) => void;
 };
 
-export type SlashOptions = {
+type SlashOptions = {
   onImage: (editor: Editor, range: Range) => void;
   /** Beliebige Datei als Anhang hochladen. */
   onFile: (editor: Editor, range: Range) => void;

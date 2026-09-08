@@ -25,7 +25,7 @@ export const COLLAB_FIELD = "default";
  * Server lässt sie weg — das Schema bleibt identisch, da NodeViews
  * nur das Rendering, nicht das Schema betreffen.
  */
-export type NodeViewFactories = {
+type NodeViewFactories = {
   callout?: () => unknown;
   mermaid?: () => unknown;
   wikiLink?: () => unknown;

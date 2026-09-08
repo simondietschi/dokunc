@@ -34,7 +34,7 @@ export type DispatchBatch = {
   items: NotificationMailItem[];
 };
 
-export type DispatchPlan = {
+type DispatchPlan = {
   /** Zu versendende Mails, eine pro Nutzer. */
   send: DispatchBatch[];
   /** Nur als erledigt markieren (keine Mail): aus, inaktiv oder gelesen. */

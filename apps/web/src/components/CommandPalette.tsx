@@ -32,7 +32,7 @@ import { createPageAction } from "@/app/s/[slug]/actions";
 const OPEN_EVENT = "dokunc:cmdk";
 
 /** Öffnet die Palette von beliebiger Stelle aus (Buttons, Hints). */
-export function openPalette() {
+function openPalette() {
   window.dispatchEvent(new CustomEvent(OPEN_EVENT));
 }
 

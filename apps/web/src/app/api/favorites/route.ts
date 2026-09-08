@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
 
-export type FavoriteItem = {
+type FavoriteItem = {
   id: string;
   title: string;
   slug: string;

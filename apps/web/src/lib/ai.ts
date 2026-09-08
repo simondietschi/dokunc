@@ -29,7 +29,7 @@ Regeln:
 - Verweise auf Quellen im Text als [1], [2] … entsprechend der Nummerierung der Auszüge.
 - Keine Informationen erfinden, keine externen Annahmen.`;
 
-export type AskResult = {
+type AskResult = {
   answer: string;
   sources: { pageId: string; title: string }[];
 };
@@ -93,7 +93,7 @@ export async function askWiki(
   return { answer, sources };
 }
 
-export const ASSIST_ACTIONS = {
+const ASSIST_ACTIONS = {
   improve: "Verbessere den folgenden Text sprachlich (Klarheit, Stil, Rechtschreibung). Behalte Bedeutung, Sprache und Ton bei. Gib NUR den überarbeiteten Text zurück, ohne Kommentar.",
   summarize: "Fasse den folgenden Text prägnant zusammen (Stichpunkte oder kurzer Absatz, je nachdem was besser passt). Gib NUR die Zusammenfassung zurück.",
   translate_en: "Übersetze den folgenden Text ins Englische. Gib NUR die Übersetzung zurück.",
@@ -101,7 +101,7 @@ export const ASSIST_ACTIONS = {
   continue: "Setze den folgenden Wiki-Text sinnvoll fort (1-3 Absätze, gleicher Stil und gleiche Sprache). Gib NUR die Fortsetzung zurück, ohne den Ausgangstext zu wiederholen.",
 } as const;
 
-export type AssistAction = keyof typeof ASSIST_ACTIONS;
+type AssistAction = keyof typeof ASSIST_ACTIONS;
 
 export function isAssistAction(v: unknown): v is AssistAction {
   return typeof v === "string" && v in ASSIST_ACTIONS;

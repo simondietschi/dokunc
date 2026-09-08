@@ -44,7 +44,7 @@ export function isInlineImageType(mimeType: string): boolean {
   return Object.prototype.hasOwnProperty.call(ALLOWED_IMAGE_TYPES, mimeType);
 }
 
-export const FALLBACK_MIME = "application/octet-stream";
+const FALLBACK_MIME = "application/octet-stream";
 
 /**
  * Konservatives Mapping Dateiendung -> MIME-Typ fuer Anhaenge.
@@ -52,7 +52,7 @@ export const FALLBACK_MIME = "application/octet-stream";
  * nie als aktives Dokument interpretiert werden — sie bleiben
  * application/octet-stream und werden nur als Download ausgeliefert.
  */
-export const MIME_BY_EXTENSION: Record<string, string> = {
+const MIME_BY_EXTENSION: Record<string, string> = {
   png: "image/png",
   jpg: "image/jpeg",
   jpeg: "image/jpeg",

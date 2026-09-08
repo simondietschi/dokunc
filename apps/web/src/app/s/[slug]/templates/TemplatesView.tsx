@@ -18,7 +18,7 @@ import {
   importBuiltinTemplateAction,
 } from "../template-actions";
 
-export type TemplateRow = {
+type TemplateRow = {
   id: string;
   title: string;
   updatedAt: Date;

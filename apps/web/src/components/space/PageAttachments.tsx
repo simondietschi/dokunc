@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { formatFileSize, fileIconKind, type FileIconKind } from "@/lib/file-meta";
 
-export type PageAttachmentItem = {
+type PageAttachmentItem = {
   id: string;
   name: string;
   size: number;

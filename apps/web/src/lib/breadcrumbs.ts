@@ -4,7 +4,7 @@
  * zusammengefasst, der die ausgeblendeten Eintraege mitfuehrt (fuer
  * Tooltip bzw. Aufklappen).
  */
-export type CrumbSlot<T> =
+type CrumbSlot<T> =
   | { kind: "item"; item: T }
   | { kind: "ellipsis"; hidden: T[] };
 

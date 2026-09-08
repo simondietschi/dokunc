@@ -15,7 +15,7 @@ function secret(): Uint8Array {
 const COOKIE = "dokunc_session";
 const EXPIRES = process.env.JWT_EXPIRES_IN ?? "7d";
 
-export type SessionClaims = { sub: string; tv: number };
+type SessionClaims = { sub: string; tv: number };
 
 export async function createSession(userId: string, tokenVersion: number) {
   const token = await new SignJWT({ tv: tokenVersion })

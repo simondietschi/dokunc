@@ -25,7 +25,7 @@ export type HeadingDocLike = {
   ): void;
 };
 
-export const TOC_MAX_LEVEL = 3;
+const TOC_MAX_LEVEL = 3;
 
 /** Alle Ueberschriften (Ebene 1 bis 3) in Dokumentreihenfolge. */
 export function collectHeadings(doc: HeadingDocLike): TocHeading[] {

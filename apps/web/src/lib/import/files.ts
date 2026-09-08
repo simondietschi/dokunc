@@ -15,9 +15,9 @@ import {
  * Zip werden nie als Pfad verwendet. Gibt null zurueck, wenn die Datei
  * kein erlaubtes Bild ist oder zu gross.
  */
-export type StoredImage = { storedName: string; mimeType: string; size: number };
+type StoredImage = { storedName: string; mimeType: string; size: number };
 
-export type StoreFailure = "type" | "size";
+type StoreFailure = "type" | "size";
 
 export async function storeImportedImage(
   bytes: Uint8Array,

@@ -12,11 +12,11 @@ const CONFLUENCE_MARKERS = [
   "confluence-information-macro",
 ];
 
-export function looksLikeNotionPath(path: string): boolean {
+function looksLikeNotionPath(path: string): boolean {
   return stripExt(path).split("/").some(hasNotionSuffix);
 }
 
-export function looksLikeConfluenceHtml(head: string): boolean {
+function looksLikeConfluenceHtml(head: string): boolean {
   return CONFLUENCE_MARKERS.some((m) => head.includes(m));
 }
 

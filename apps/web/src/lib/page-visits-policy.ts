@@ -10,7 +10,7 @@ export const VISIT_KEEP = 200;
 export const VISIT_PRUNE_THRESHOLD = 250;
 
 /** Anteil der Seitenaufrufe, bei denen die Anzahl geprueft wird. */
-export const VISIT_CHECK_PROBABILITY = 0.05;
+const VISIT_CHECK_PROBABILITY = 0.05;
 
 /**
  * Ob dieser Aufruf die Anzahl der Besuche pruefen soll.

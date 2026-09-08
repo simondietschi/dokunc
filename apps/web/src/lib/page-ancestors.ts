@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@dokunc/db";
 
-export type Ancestor = { id: string; title: string };
+type Ancestor = { id: string; title: string };
 
 /**
  * Vorfahren einer Seite (Wurzel zuerst, Elternseite zuletzt) per

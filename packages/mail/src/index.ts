@@ -14,7 +14,7 @@ export function isMailConfigured(): boolean {
   return !!process.env.SMTP_HOST;
 }
 
-export function mailTransport(): Transporter | null {
+function mailTransport(): Transporter | null {
   if (cached !== undefined) return cached;
   const host = process.env.SMTP_HOST;
   if (!host) {
@@ -44,7 +44,7 @@ export function appUrl(): string {
   return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
 }
 
-export function fromAddress(): string {
+function fromAddress(): string {
   return (
     process.env.MAIL_FROM_ADDRESS ??
     `dokunc <no-reply@${new URL(appUrl()).hostname}>`
@@ -65,7 +65,7 @@ export function escapeHtml(s: string): string {
   );
 }
 
-export type MailMessage = {
+type MailMessage = {
   to: string;
   subject: string;
   text: string;

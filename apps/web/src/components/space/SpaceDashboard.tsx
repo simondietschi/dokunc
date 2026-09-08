@@ -5,7 +5,7 @@ import { PaletteButton } from "@/components/CommandPalette";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { relativeTime } from "@/lib/relative-time";
 
-export type DashboardEntry = {
+type DashboardEntry = {
   id: string;
   title: string;
   /** Sekundaerzeile, z. B. "vor 5 Min." oder "Anna · gestern". */

@@ -4,7 +4,7 @@ import { ImportError, type ImportFile } from "./types";
 
 /** Obergrenzen gegen Zip-Bomben und Speicherfresser. */
 export const ZIP_MAX_ENTRIES = 2000;
-export const ZIP_MAX_UNPACKED = 500 * 1024 * 1024; // 500 MB
+const ZIP_MAX_UNPACKED = 500 * 1024 * 1024; // 500 MB
 /** Einzelne Eintraege ueber dieser Groesse werden uebersprungen (Bilder sind
  *  ohnehin auf 10 MB begrenzt, Seitendateien auf MAX_PAGE_FILE_BYTES). */
 export const ZIP_MAX_FILE = 32 * 1024 * 1024; // 32 MB
@@ -18,7 +18,7 @@ function isJunk(path: string): boolean {
   return IGNORED_NAMES.has(name) || name.startsWith("._");
 }
 
-export type ZipResult = {
+type ZipResult = {
   files: ImportFile[];
   /** Abgelehnte Eintraege (Traversal, unsichere Namen) fuer Warnungen. */
   rejected: string[];

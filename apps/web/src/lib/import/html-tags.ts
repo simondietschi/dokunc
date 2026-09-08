@@ -174,7 +174,7 @@ export type Decision =
 export type OpenToken = Extract<Token, { kind: "open" }>;
 
 /** Kontext, den eine Regel sieht: Vorfahren und die Folge-Tokens. */
-export type RuleContext = {
+type RuleContext = {
   ancestors: OpenToken[];
   /** Tokens des Elementinhalts (bis zum passenden schliessenden Tag). */
   inner: () => Token[];

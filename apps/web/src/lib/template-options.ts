@@ -2,7 +2,7 @@ import { BUILTIN_TEMPLATES } from "@/lib/builtin-templates";
 import { previewLines } from "@/lib/page-text";
 
 /** Vorlage dieses Space, wie sie der Picker in der Sidebar bekommt. */
-export type SpaceTemplateOption = {
+type SpaceTemplateOption = {
   id: string;
   title: string;
   /** ISO-Zeitstempel (serialisierbar für Client-Komponenten). */
@@ -11,7 +11,7 @@ export type SpaceTemplateOption = {
 };
 
 /** Mitgelieferte Standardvorlage (nur Metadaten + Vorschau, kein JSON). */
-export type BuiltinTemplateOption = {
+type BuiltinTemplateOption = {
   key: string;
   title: string;
   description: string;
@@ -23,7 +23,7 @@ export type TemplateOptions = {
   builtin: BuiltinTemplateOption[];
 };
 
-export const PREVIEW_LINES = 10;
+const PREVIEW_LINES = 10;
 
 /** Vorschau-Daten der Standardvorlagen (ohne den vollen Inhalt). */
 export function builtinTemplateOptions(): BuiltinTemplateOption[] {

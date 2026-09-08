@@ -88,11 +88,11 @@ const marked = new Marked({ gfm: true, breaks: false, async: false });
 marked.use({ renderer });
 
 /** Markdown -> HTML (GFM, Aufgabenlisten im TipTap-Format). */
-export function markdownToHtml(md: string): string {
+function markdownToHtml(md: string): string {
   return marked.parse(rewriteWikiSyntax(md), { async: false }) as string;
 }
 
-export type MarkdownResult = {
+type MarkdownResult = {
   title: string | null;
   doc: JsonNode;
   /** data:-Bilder, im Dokument durch DATA_IMAGE_PREFIX + Index ersetzt. */

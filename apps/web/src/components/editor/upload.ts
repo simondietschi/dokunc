@@ -5,7 +5,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import { Fragment, Slice, type Node as PMNode } from "@tiptap/pm/model";
 
 /** Antwort von /api/upload. */
-export type UploadResult = {
+type UploadResult = {
   url: string;
   name: string;
   size: number;
@@ -13,7 +13,7 @@ export type UploadResult = {
   kind: "image" | "file";
 };
 
-export type UploadContext = { spaceId: string; pageId: string };
+type UploadContext = { spaceId: string; pageId: string };
 
 /** Nur diese Typen werden inline als Bild eingebettet (SVG bewusst nicht). */
 export const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
@@ -22,7 +22,7 @@ export const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
  * Datei an /api/upload schicken. Wirft mit der Server-Fehlermeldung
  * (z. B. "Datei zu gross (max. 50 MB)"), damit der Aufrufer sie zeigen kann.
  */
-export async function uploadFile(
+async function uploadFile(
   file: File,
   ctx: UploadContext,
 ): Promise<UploadResult> {
@@ -45,7 +45,7 @@ export async function uploadFile(
 }
 
 /** ProseMirror-JSON fuer ein Upload-Ergebnis (Bild oder Anhang). */
-export function nodeForUpload(result: UploadResult) {
+function nodeForUpload(result: UploadResult) {
   if (result.kind === "image") {
     return { type: "image", attrs: { src: result.url, alt: result.name } };
   }

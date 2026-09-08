@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Input";
 
-export type EmailNotificationMode = "INSTANT" | "DAILY" | "OFF";
+type EmailNotificationMode = "INSTANT" | "DAILY" | "OFF";
 
 const NOTIFICATION_OPTIONS: {
   value: EmailNotificationMode;

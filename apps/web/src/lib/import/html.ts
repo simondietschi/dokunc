@@ -380,7 +380,7 @@ export function htmlFragmentToDoc(html: string): { doc: JsonNode; dataUrls: stri
   };
 }
 
-export type HtmlResult = {
+type HtmlResult = {
   title: string | null;
   doc: JsonNode;
   /** data:-Bilder, im Dokument durch DATA_IMAGE_PREFIX + Index ersetzt. */
@@ -407,7 +407,7 @@ export function htmlTitle(html: string, format: ImportFormat): string | null {
 /* Confluence-Struktur: index.html und Breadcrumbs                     */
 /* ------------------------------------------------------------------ */
 
-export type IndexEntry = { href: string; title: string; children: IndexEntry[] };
+type IndexEntry = { href: string; title: string; children: IndexEntry[] };
 
 /** Verschachtelte <ul><li><a href> ... </li></ul> in einen Baum lesen. */
 function parseNestedList(inner: Token[]): IndexEntry[] {

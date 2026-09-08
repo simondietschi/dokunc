@@ -31,7 +31,7 @@ import type { ContentKind, ImportFile, ImportFormat, ImportNode } from "./types"
 
 const INDEX_NAMES = new Set(["index", "readme"]);
 
-export type TreeResult = {
+type TreeResult = {
   roots: ImportNode[];
   /** Anzahl Seiten im Baum. */
   count: number;

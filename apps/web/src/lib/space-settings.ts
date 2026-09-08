@@ -10,7 +10,7 @@ export const SPACE_NAME_MIN = 2;
 export const SPACE_NAME_MAX = 80;
 export const SPACE_DESCRIPTION_MAX = 300;
 /** Ein Emoji besteht aus bis zu 4 Codepoints (Modifier, ZWJ, Variation). */
-export const SPACE_ICON_MAX_CODEPOINTS = 4;
+const SPACE_ICON_MAX_CODEPOINTS = 4;
 
 /** Schnellauswahl fuer das Space-Icon. */
 export const QUICK_ICONS = [

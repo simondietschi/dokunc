@@ -15,12 +15,12 @@ import { isSafeFilename } from "./uploads";
 /** `src="/api/files/<name>"` in bereits generiertem HTML. */
 const SRC_RE = /src="\/api\/files\/([A-Za-z0-9._-]+)"/g;
 
-export type UploadLoader = (
+type UploadLoader = (
   name: string,
 ) => Promise<{ base64: string; contentType: string } | null>;
 
 /** Obergrenze für alle eingebetteten Bilder zusammen (base64-Zeichen). */
-export const MAX_INLINE_TOTAL = 16 * 1024 * 1024;
+const MAX_INLINE_TOTAL = 16 * 1024 * 1024;
 
 export async function inlineUploadImages(
   html: string,

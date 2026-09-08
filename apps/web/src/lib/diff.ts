@@ -14,7 +14,7 @@ export type DiffToken = {
   text: string;
 };
 
-export type ChangedLine = {
+type ChangedLine = {
   removed: DiffToken[];
   added: DiffToken[];
 };
@@ -25,7 +25,7 @@ export type DiffBlock =
   | { kind: "removed"; lines: string[] }
   | { kind: "changed"; lines: ChangedLine[] };
 
-export type TextDiff = {
+type TextDiff = {
   blocks: DiffBlock[];
   /** Hinzugefügte Zeilen (geänderte zählen auf beiden Seiten). */
   added: number;

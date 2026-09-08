@@ -6,7 +6,7 @@ import { authorizeAction } from "@/lib/space-context";
 import { str, strOrNull } from "@/lib/form";
 import { insertAt, positionUpdates } from "@/lib/page-move";
 
-export type MoveResult = { ok: true } | { ok: false; error: string };
+type MoveResult = { ok: true } | { ok: false; error: string };
 
 /**
  * Verschiebt eine Seite (samt Unterbaum) unter eine andere Elternseite

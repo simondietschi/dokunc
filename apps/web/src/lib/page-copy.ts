@@ -47,7 +47,7 @@ export type CopySource = {
   position: number;
 };
 
-export type CopyStep = {
+type CopyStep = {
   /** ID der Quellseite. */
   sourceId: string;
   /** Quell-ID der Elternseite innerhalb des kopierten Baums (null = Wurzel). */
@@ -115,7 +115,7 @@ export function planSubtreeCopy(
   return steps;
 }
 
-export type SiblingRow = { id: string; title: string; position: number };
+type SiblingRow = { id: string; title: string; position: number };
 
 /**
  * Ordnet die Geschwister so, dass die Kopie direkt hinter dem Original

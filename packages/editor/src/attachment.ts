@@ -1,6 +1,6 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 
-export type AttachmentAttrs = {
+type AttachmentAttrs = {
   /** Download-URL (/api/files/<storedName>) */
   src: string;
   /** Originalname der Datei (Anzeige) */

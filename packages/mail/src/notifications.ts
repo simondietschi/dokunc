@@ -6,7 +6,7 @@ import { escapeHtml, mailButton, mailLayout } from "./index";
  * damit weder Namen noch Seitentitel HTML in die Mail schleusen können.
  */
 
-export type NotificationMailType = "MENTION" | "COMMENT" | "COMMENT_REPLY";
+type NotificationMailType = "MENTION" | "COMMENT" | "COMMENT_REPLY";
 
 export type NotificationMailItem = {
   type: NotificationMailType;
@@ -17,7 +17,7 @@ export type NotificationMailItem = {
   excerpt?: string | null;
 };
 
-export type RenderedMail = { subject: string; text: string; html: string };
+type RenderedMail = { subject: string; text: string; html: string };
 
 /** Beschreibt eine Benachrichtigung als Prädikat ("hat dich ... erwähnt"). */
 export function describeNotification(type: NotificationMailType): string {

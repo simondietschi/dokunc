@@ -6,7 +6,7 @@ import type { FlatPage, TreeNode } from "@/lib/page-tree";
  * (optimistische Anzeige, Drop-Ziel-Pruefung) gemeinsam genutzt.
  */
 
-export type MoveNode = { id: string; parentId: string | null };
+type MoveNode = { id: string; parentId: string | null };
 
 export type DropZone = "before" | "after" | "inside";
 
