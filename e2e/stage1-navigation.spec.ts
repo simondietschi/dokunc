@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { pageTree, resetLoginRateLimit } from "./helpers";
+import { dragUntil, pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E fuer Navigation (Stufe 1): Seiten verschieben (Dialog + Drag and
@@ -152,14 +152,14 @@ test("Seite verschieben (Dialog + Drag and Drop), Brotkrumen, Inhaltsverzeichnis
   // --- Drag and Drop: Kind hinter die Elternseite auf die oberste Ebene ---
   const parentRow = page.locator(`aside [data-page-id="${parentId}"]`);
   const childRow = page.locator(`aside [data-page-id="${childId}"]`);
-  const box = await parentRow.boundingBox();
-  expect(box).not.toBeNull();
-  await childRow.dragTo(parentRow, {
-    targetPosition: {
-      x: Math.floor(box!.width / 2),
-      y: Math.floor(box!.height * 0.9), // unteres Viertel = "danach"
-    },
-  });
+  // Unteres Viertel der Zielzeile = "danach", also auf die oberste Ebene.
+  await dragUntil(
+    page,
+    childRow,
+    parentRow,
+    0.9,
+    async () => (await childLink.count()) === 0,
+  );
   await expect(childLink).toHaveCount(0, { timeout: 15_000 });
   // Neu laden statt auf die laufende Ansicht zu warten. Geprueft wird, dass
   // der Zug wirklich gespeichert ist; ob die offene Seite ihn schon zeigt,
@@ -176,13 +176,13 @@ test("Seite verschieben (Dialog + Drag and Drop), Brotkrumen, Inhaltsverzeichnis
   expect(childIndex).toBe(parentIndex + 1);
 
   // --- Drag and Drop: wieder hinein (Mitte der Zeile) ---
-  const box2 = await parentRow.boundingBox();
-  await childRow.dragTo(parentRow, {
-    targetPosition: {
-      x: Math.floor(box2!.width / 2),
-      y: Math.floor(box2!.height / 2),
-    },
-  });
+  await dragUntil(
+    page,
+    childRow,
+    parentRow,
+    0.5,
+    async () => (await childLink.count()) > 0,
+  );
   await expect(childLink).toBeVisible({ timeout: 15_000 });
   await page.reload();
   await expect(crumbs).toContainText(parentTitle, { timeout: 15_000 });

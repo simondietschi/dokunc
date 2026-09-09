@@ -41,3 +41,41 @@ export async function resetLoginRateLimit(): Promise<void> {
 export function pageTree(page: Page): Locator {
   return page.locator('aside [data-page-tree="root"]');
 }
+
+/**
+ * Ziehen, bis der Zug wirklich angekommen ist.
+ *
+ * Playwright stellt HTML5-Drag-and-Drop synthetisch nach, und Chromium
+ * loest dabei nicht jedes Mal ein dragstart aus — der Zug faellt dann
+ * ersatzlos aus, ohne Fehler. Geprueft wird deshalb nach jedem Versuch
+ * am Ergebnis, und nur wenn es fehlt, wird erneut gezogen.
+ */
+export async function dragUntil(
+  page: Page,
+  source: Locator,
+  target: Locator,
+  yFactor: number,
+  done: () => Promise<boolean>,
+  attempts = 4,
+): Promise<void> {
+  for (let i = 0; i < attempts; i++) {
+    if (await done()) return;
+    const box = await target.boundingBox();
+    if (!box) {
+      await page.waitForTimeout(500);
+      continue;
+    }
+    await source.dragTo(target, {
+      targetPosition: {
+        x: Math.floor(box.width / 2),
+        y: Math.floor(box.height * yFactor),
+      },
+    });
+    // Der Zug laeuft ueber eine Server-Action; ohne diese Pause zaehlt
+    // die Pruefung noch den Stand von davor.
+    await page.waitForTimeout(2000);
+  }
+  if (!(await done())) {
+    throw new Error(`Ziehen hat nach ${attempts} Versuchen nicht gewirkt`);
+  }
+}

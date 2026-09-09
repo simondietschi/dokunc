@@ -120,6 +120,10 @@ test("Papierkorb: endgueltiges Loeschen verschont wiederhergestellte Unterseiten
   await page.goto(`/s/${slug}/p/${childId}`);
   await page.locator("aside").getByText(parentTitle).first().click();
   await page.waitForURL("**/p/**");
+  // Erst wenn der Editor steht, ruht das Layout. Wird das Menue waehrend
+  // des Aufbaus geoeffnet, verschiebt es sich noch unter dem Zeiger und
+  // Playwright wartet ergebnislos darauf, dass es zur Ruhe kommt.
+  await waitForLive(page);
   await page.getByRole("button", { name: "Weitere Aktionen" }).click();
   await page.getByTitle("Seite löschen").click();
   // Kein window.confirm mehr, sondern ein eigener Dialog: gleiche
