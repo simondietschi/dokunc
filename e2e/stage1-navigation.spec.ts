@@ -161,6 +161,11 @@ test("Seite verschieben (Dialog + Drag and Drop), Brotkrumen, Inhaltsverzeichnis
     },
   });
   await expect(childLink).toHaveCount(0, { timeout: 15_000 });
+  // Neu laden statt auf die laufende Ansicht zu warten. Geprueft wird, dass
+  // der Zug wirklich gespeichert ist; ob die offene Seite ihn schon zeigt,
+  // haengt an router.refresh() nach der Server-Action und ist unter voller
+  // Suite-Last ein Rennen. Dieselbe Konvention wie bei den Kommentaren.
+  await page.reload();
   await expect(crumbs).not.toContainText(parentTitle, { timeout: 15_000 });
   const rootHrefs = await page
     .locator("aside ul[data-page-tree='root'] > li > div > a[href*='/p/']")
@@ -179,6 +184,7 @@ test("Seite verschieben (Dialog + Drag and Drop), Brotkrumen, Inhaltsverzeichnis
     },
   });
   await expect(childLink).toBeVisible({ timeout: 15_000 });
+  await page.reload();
   await expect(crumbs).toContainText(parentTitle, { timeout: 15_000 });
 
   // Seitenbaum-API nur fuer Angemeldete (request-Fixture hat keine Session).
