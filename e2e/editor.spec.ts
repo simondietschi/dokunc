@@ -143,9 +143,7 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
     // sonst doppelt so breit gemacht.
     const tableMenu = page.getByRole("menu", { name: "Tabelle bearbeiten" });
     await page.click('button[aria-label="Tabelle bearbeiten"]');
-    await tableMenu
-      .getByRole("menuitem", { name: "Zeile darunter einfügen" })
-      .click();
+    await tableMenu.getByRole("menuitem", { name: "Zeile darunter" }).click();
     await expect(page.locator(".ProseMirror tr")).toHaveCount(4);
     await page.click('button[aria-label="Tabelle bearbeiten"]');
     await tableMenu.getByRole("menuitem", { name: "Tabelle löschen" }).click();
