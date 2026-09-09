@@ -36,6 +36,13 @@ export function PageActions({
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      // Ein Dialog aus diesem Menue (Bestaetigung vor dem Loeschen) haengt
+      // per Portal am body und liegt damit ausserhalb von ref. Ohne diese
+      // Ausnahme schliesst schon das mousedown auf "Ja, fortfahren" das
+      // Menue, der Knopf verschwindet mitsamt seinem Formular, und der
+      // Klick kommt nie an: Loeschen tat schlicht nichts.
+      if (target?.closest('[role="dialog"]')) return;
       if (!ref.current?.contains(e.target as Node)) setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
