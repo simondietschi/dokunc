@@ -8,6 +8,7 @@ import {
 } from "@tiptap/react";
 import { Check, Copy } from "lucide-react";
 import { CODE_LANGUAGES } from "@dokunc/editor";
+import { useCaretSync } from "./useCaretSync";
 
 /**
  * Code-Block mit Sprachwahl und Kopieren.
@@ -16,9 +17,20 @@ import { CODE_LANGUAGES } from "@dokunc/editor";
  * hier hängt nur die Bedienleiste daran. `contentEditable={false}` an der
  * Leiste ist wichtig, sonst tippt man beim Klicken in den Code.
  */
-export function CodeBlockView({ node, updateAttributes, editor }: NodeViewProps) {
+export function CodeBlockView({
+  node,
+  updateAttributes,
+  editor,
+  getPos,
+}: NodeViewProps) {
   const language = (node.attrs.language as string | null) ?? "";
   const [copied, setCopied] = useState(false);
+  // Wie beim Callout: die NodeView haengt ihr contentDOM erst nach dem
+  // ersten Render ein. Wird der Block per Slash-Befehl erzeugt, steht der
+  // Browser-Caret so lange draussen und das Getippte landet daneben —
+  // beim Codeblock faellt das doppelt auf, weil ohne Inhalt auch nichts
+  // hervorgehoben wird.
+  useCaretSync({ editor, getPos, node });
 
   async function copy() {
     try {

@@ -1,6 +1,7 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2, Plus } from "lucide-react";
 import { createGroupAction, type GroupState } from "./actions";
 import { Button } from "@/components/ui/Button";
@@ -12,6 +13,12 @@ export function NewGroupForm() {
     createGroupAction,
     undefined,
   );
+  const router = useRouter();
+  // Die Liste nachziehen, sobald die Meldung da ist. Das laeuft in einer
+  // eigenen Transition und haelt den Absende-Knopf nicht fest.
+  useEffect(() => {
+    if (state?.success) router.refresh();
+  }, [state, router]);
   return (
     <form
       action={action}

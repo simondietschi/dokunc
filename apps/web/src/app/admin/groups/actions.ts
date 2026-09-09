@@ -39,7 +39,11 @@ export async function createGroupAction(
     targetId: group.id,
     metadata: { name },
   });
-  revalidatePath("/admin/groups");
+  // Bewusst ohne revalidatePath: eine Revalidierung zwingt Next dazu, die
+  // ganze Seite in dieselbe Antwort zu rendern, und useActionState gibt
+  // den Spinner erst danach frei. Die Rueckmeldung haengt damit an der
+  // Dauer des Seiten-Renderings statt an der eigenen Arbeit. Die Liste
+  // zieht der Client nach (siehe GroupForms).
   return { success: `Gruppe „${name}" angelegt.` };
 }
 
