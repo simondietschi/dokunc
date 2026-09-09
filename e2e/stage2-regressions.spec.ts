@@ -120,9 +120,14 @@ test("Papierkorb: endgueltiges Loeschen verschont wiederhergestellte Unterseiten
   await page.goto(`/s/${slug}/p/${childId}`);
   await page.locator("aside").getByText(parentTitle).first().click();
   await page.waitForURL("**/p/**");
-  page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "Weitere Aktionen" }).click();
   await page.getByTitle("Seite löschen").click();
+  // Kein window.confirm mehr, sondern ein eigener Dialog: gleiche
+  // Fokusfuehrung und Screenreader-Ansage wie im Rest der App.
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Ja, fortfahren" })
+    .click();
   await page.waitForURL(`**/s/${slug}`);
 
   // Nur das KIND wiederherstellen — es haengt jetzt unter einem noch
@@ -143,8 +148,11 @@ test("Papierkorb: endgueltiges Loeschen verschont wiederhergestellte Unterseiten
     .locator("li")
     .filter({ hasText: parentTitle })
     .first();
-  page.once("dialog", (d) => d.accept());
   await parentEntry.getByTitle("Endgültig löschen").click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Ja, fortfahren" })
+    .click();
   await expect(
     page.locator("li").filter({ hasText: parentTitle }),
   ).toHaveCount(0, { timeout: 15_000 });

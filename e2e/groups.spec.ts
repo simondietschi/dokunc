@@ -35,8 +35,11 @@ async function login(page: Page) {
 async function openFirstSpace(page: Page): Promise<string> {
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
-  return page.url().match(/\/s\/([^/]+)\//)![1];
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
+  return page.url().match(/\/s\/([^/?#]+)/)![1];
 }
 
 test("Gruppe anlegen und mit Mitglied füllen", async ({ page }) => {

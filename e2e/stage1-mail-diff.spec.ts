@@ -40,7 +40,7 @@ async function openFirstSpace(page: Page): Promise<string> {
     await page.waitForURL("**/p/**");
   }
   await waitForLive(page);
-  return page.url().match(/\/s\/([^/]+)\//)![1];
+  return page.url().match(/\/s\/([^/?#]+)/)![1];
 }
 
 test("Konto: Mail-Benachrichtigungen auf Aus setzen", async ({ page }) => {

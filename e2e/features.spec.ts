@@ -42,7 +42,7 @@ test("Wiki-Links erzeugen Backlinks", async ({ page }) => {
   // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar öffnen.
   await page.locator('aside a[href*="/p/"]').first().click();
   await page.waitForURL("**/p/**");
-  const slug = page.url().match(/\/s\/([^/]+)\//)![1];
+  const slug = page.url().match(/\/s\/([^/?#]+)/)![1];
 
   // Hilfsfunktion: neue Seite anlegen und WARTEN, bis der frische Editor
   // gemountet ist (Titel-Feld = "Untitled"). Ohne das tippt der Test in
@@ -321,7 +321,10 @@ test("Collab-Ticket nur für eigene Seiten", async ({ page, baseURL }) => {
 
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
 
   // Für eine eigene Seite kommt ein kurzlebiges Ticket zurück.
@@ -361,7 +364,10 @@ test("Code-Block hebt hervor, Tabelle laesst sich bearbeiten", async ({
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
 
   const editor = page.locator(".ProseMirror");
@@ -404,7 +410,10 @@ test("Seitensymbol setzen", async ({ page }) => {
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
 
   // Symbol setzen: erscheint neben dem Titel und im Seitenbaum.
@@ -440,7 +449,10 @@ test("Seitenkommentar ohne Textstelle", async ({ page }) => {
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
 
   // Eigene Seite, aus demselben Grund wie beim Thread-Test: auf der
@@ -468,10 +480,13 @@ test("Versionsverlauf vergleicht und zeigt eine Vorschau", async ({
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
   const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
-  const slug = page.url().match(/\/s\/([^/]+)\//)![1];
+  const slug = page.url().match(/\/s\/([^/?#]+)/)![1];
 
   await page.goto(`/s/${slug}/p/${pageId}/history`);
   const view = page.getByRole("link", { name: "Ansehen" }).first();
@@ -519,7 +534,10 @@ test("Seite folgen und E-Mail-Einstellungen", async ({ page }) => {
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
 
   // Nach dem Neuladen geprueft: der Zustand steckt in der Datenbank,
@@ -556,7 +574,10 @@ test("Favorit setzen erscheint in der Seitenleiste", async ({ page }) => {
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
 
   await page.click('button[title="Zu den Favoriten"]');
@@ -576,7 +597,10 @@ test("Freigabelink: lesen ohne Konto", async ({ page, context }) => {
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
 
   await page.click('button[title="Seite teilen"]');

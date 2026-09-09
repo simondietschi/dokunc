@@ -10,7 +10,12 @@ const CI = !!process.env.CI;
 export default defineConfig({
   testDir: "./e2e",
   globalSetup: "./e2e/global-setup.ts",
-  timeout: 60_000,
+  // Mehrere Tests warten mit reloadUntil auf den gespeicherten Stand statt
+  // auf die laufende Ansicht (siehe e2e/wait.ts). Ein einzelner solcher
+  // Wartepunkt darf allein schon 45 s kosten; mit 60 s je Test reichte das
+  // Gesamtbudget nicht, und der Abbruch traf dann eine spaetere,
+  // unschuldige Zeile.
+  timeout: 120_000,
   expect: { timeout: 15_000 },
   // Sequenziell: features.spec setzt auf den in editor.spec angelegten
   // ersten Nutzer/Space auf (Invite-only). Dateien laufen alphabetisch.

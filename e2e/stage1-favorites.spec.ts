@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { resetLoginRateLimit } from "./helpers";
+import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E fuer Favoriten, "Zuletzt besucht" und das Space-Dashboard.
@@ -42,8 +42,7 @@ async function createPage(page: Page, title: string): Promise<string> {
     await input.click();
     await input.fill(title);
     await input.press("Enter");
-    saved = await page
-      .locator("aside")
+    saved = await pageTree(page)
       .getByText(title)
       .first()
       .waitFor({ timeout: 4000 })
@@ -147,7 +146,11 @@ test("Favorit setzen, Sidebar, Dashboard, Favorit entfernen", async ({
   await expect(
     page.getByRole("button", { name: "Zu Favoriten", exact: true }),
   ).toBeVisible({ timeout: 10_000 });
-  await expect(
-    page.locator("aside").locator(`section a[href$="/p/${pageId}"]`),
-  ).toHaveCount(0, { timeout: 10_000 });
+  // Nur der Favoriten-Bereich. "Zuletzt besucht" ist ebenfalls eine
+  // <section> und fuehrt dieselbe Seite — die gerade besuchte steht dort
+  // zu Recht weiter drin.
+  await expect(sidebarFavorites.locator(`a[href$="/p/${pageId}"]`)).toHaveCount(
+    0,
+    { timeout: 10_000 },
+  );
 });
