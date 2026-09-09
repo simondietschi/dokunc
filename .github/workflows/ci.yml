@@ -15,6 +15,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Billigster Schritt zuerst. Ein Konfliktmarker in einer Datei ohne
+      # Compiler oder Linter (.env.example, README, SQL) faellt sonst
+      # nirgends auf und wird ausgeliefert.
+      - name: Keine Merge-Konfliktmarker
+        run: |
+          if git grep -nE '^(<<<<<<<|>>>>>>>) ' -- . ':(exclude).github/workflows/ci.yml'; then
+            echo "Unaufgeloeste Konfliktmarker gefunden."
+            exit 1
+          fi
+
       - name: Enable Corepack (pnpm)
         run: corepack enable
 
