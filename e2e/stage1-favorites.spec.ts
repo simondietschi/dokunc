@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { pageTree, resetLoginRateLimit } from "./helpers";
+import { reloadUntil } from "./wait";
 
 /**
  * E2E fuer Favoriten, "Zuletzt besucht" und das Space-Dashboard.
@@ -149,8 +150,11 @@ test("Favorit setzen, Sidebar, Dashboard, Favorit entfernen", async ({
   // Nur der Favoriten-Bereich. "Zuletzt besucht" ist ebenfalls eine
   // <section> und fuehrt dieselbe Seite — die gerade besuchte steht dort
   // zu Recht weiter drin.
-  await expect(sidebarFavorites.locator(`a[href$="/p/${pageId}"]`)).toHaveCount(
-    0,
-    { timeout: 10_000 },
+  //
+  // Neu geladen statt auf die laufende Ansicht gewartet: der Stern
+  // schaltet optimistisch um, die Seitenleiste ist Serverzustand und
+  // haengt an der Revalidierung des Space.
+  await reloadUntil(page, async () =>
+    (await sidebarFavorites.locator(`a[href$="/p/${pageId}"]`).count()) === 0,
   );
 });

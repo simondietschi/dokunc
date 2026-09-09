@@ -486,9 +486,15 @@ test("Space-Einstellungen: umbenennen und oeffnen", async ({ page }) => {
     page.getByRole("heading", { name: "Einstellungen" }),
   ).toBeVisible({ timeout: 15_000 });
 
-  // Sichtbarkeit auf offen stellen und speichern.
+  // Sichtbarkeit auf offen stellen und speichern. Auf die Bestaetigung
+  // warten, bevor neu geladen wird: click() gibt zurueck, sobald der
+  // Klick zugestellt ist, nicht wenn die Server-Action durch ist — ein
+  // sofortiges goto bricht sie ab. Genauso haelt es stage1-import.
   await page.getByLabel("Sichtbarkeit").selectOption("OPEN");
   await page.getByRole("button", { name: "Speichern" }).click();
+  await expect(page.getByText("Einstellungen gespeichert.")).toBeVisible({
+    timeout: 20_000,
+  });
   await page.goto(`/s/${slug}/settings`);
   await expect(page.getByLabel("Sichtbarkeit")).toHaveValue("OPEN", {
     timeout: 15_000,
@@ -497,6 +503,9 @@ test("Space-Einstellungen: umbenennen und oeffnen", async ({ page }) => {
   // Wieder privat, damit spaetere Laeufe unveraendert starten.
   await page.getByLabel("Sichtbarkeit").selectOption("PRIVATE");
   await page.getByRole("button", { name: "Speichern" }).click();
+  await expect(page.getByText("Einstellungen gespeichert.")).toBeVisible({
+    timeout: 20_000,
+  });
   await page.goto(`/s/${slug}/settings`);
   await expect(page.getByLabel("Sichtbarkeit")).toHaveValue("PRIVATE", {
     timeout: 15_000,
