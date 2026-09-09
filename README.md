@@ -15,46 +15,92 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   Rolle; es gilt immer die stärkste Rolle
 - **Geschützte Seiten**: eine Seite (samt Unterseiten) nur für
   ausgewählte Personen und Gruppen sichtbar
-- Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen
-  mit voller Bedienung, Aufgabenlisten, Bilder mit Alternativtext,
-  Breite und Bildunterschrift, Dateianhänge, Code-Blöcke mit
-  Syntax-Hervorhebung, aufklappbare Abschnitte, Callouts,
+- Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
+  Aufgabenlisten, Bilder mit Alternativtext, Breite und Bildunterschrift,
+  Code-Blöcke mit Syntax-Hervorhebung, aufklappbare Abschnitte, Callouts,
   Mermaid-Diagramme, YouTube-Embeds, Excalidraw-Zeichnungen,
-  draw.io-Diagramme)
+  draw.io-Diagramme); Tab rückt im Codeblock ein, Tabellen-Werkzeuge
+  (Zeile/Spalte einfügen und löschen, Kopfzeile, Tabelle löschen)
+  erscheinen in der Toolbar, sobald der Cursor in einer Tabelle steht;
+  Links öffnen im Lesemodus per Klick, beim Bearbeiten per Cmd/Ctrl+Klick
 - Block-Griff zum Verschieben, Duplizieren und Löschen; Gliederung der
   Seite, Anker an jeder Überschrift, Wortzähler
-- Seiten-Symbol, Titelbild und Vorlagen
+- Navigation: Seiten per Drag and Drop im Seitenbaum verschieben und
+  sortieren (oder per Dialog „Verschieben nach…"), Brotkrumen über dem
+  Titel, Inhaltsverzeichnis aus den Überschriften der Seite
+- Seiten-Symbol und Titelbild
 - Markdown einfügen und importieren
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
 - **Kommentare**: textverankerte Threads und Kommentare zur ganzen
   Seite, bearbeitbar, mit Benachrichtigung an Beteiligte; auch die
-  VIEWER-Rolle darf mitreden. Dazu **@-Mentions** und die Glocke
+  VIEWER-Rolle darf mitreden. Dazu **@-Mentions** und die Glocke, die
+  sich live aktualisiert. Optional **per Mail**, sofort gebündelt oder
+  als tägliche Zusammenfassung, pro Person im Konto einstellbar; Seiten
+  lassen sich einzeln abonnieren
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
-- Postgres-Volltextsuche, Papierkorb
-- **Versionsverlauf** mit Wortvergleich zweier Fassungen und Vorschau
-  vor dem Wiederherstellen
+- **Anhänge** beliebigen Typs (PDF, Office, Archive, Medien) per
+  Slash-Befehl „Datei", Drag-and-drop oder Einfügen; Anhangsliste unter
+  der Seite. **Zugriffsschutz**: jede Datei ist an ihren Space und ihre
+  Seite gebunden und nur für Berechtigte abrufbar (Bilder inline, alles
+  andere als Download; Limit per `MAX_UPLOAD_MB`, Default 50 MB)
+- **Seitenvorlagen**: eigene Vorlagen je Space plus fünf Standardvorlagen
+  (Meeting-Notizen, ADR, Runbook, Projektbrief, Wochenbericht), Picker
+  neben „Neue Seite", **Seiten duplizieren** (optional mit Unterseiten),
+  „Als Vorlage speichern"
+- Postgres-Volltextsuche, **Versionsverlauf** mit Versionsvergleich
+  (Zeilen- und Wort-Diff gegen den aktuellen Stand oder die vorherige
+  Version, Vorschau vor dem Wiederherstellen), Papierkorb
+- **Favoriten** (Stern in der Seitenkopfzeile, Abschnitt in der Sidebar,
+  Sprungziele in der Palette), **Zuletzt besucht** und ein
+  **Space-Dashboard** (Kennzahlen, zuletzt besuchte, favorisierte und
+  zuletzt geänderte Seiten)
 - **Offline-Puffer**: Änderungen ohne Netz bleiben auf dem Gerät und
   gehen beim Neuladen nicht verloren
 - **Space-Einstellungen**: umbenennen, verlassen, offene Spaces zum
   Beitreten
-- **Seitenbaum**: Seiten per Ziehen umhängen und sortieren, Favoriten
-  und zuletzt besuchte Seiten in der Seitenleiste
 - **Audit-Log** über sicherheitsrelevante Ereignisse (Anmeldungen,
   Rollenwechsel, Einladungen, Löschungen) mit Ansicht unter `/admin/audit`
 - **Angemeldete Geräte** einzeln beenden, „angemeldet bleiben" optional
 - **Zwei-Faktor-Anmeldung** (TOTP) mit QR-Code für Authenticator-Apps
   und einmalig gültigen Wiederherstellungscodes
-- **E-Mail-Benachrichtigungen** für Erwähnungen und Kommentare, pro
-  Person abschaltbar; Seiten lassen sich einzeln abonnieren. Die Glocke
-  aktualisiert sich live, ohne Neuladen
 - **Freigabelinks**: eine Seite (auf Wunsch mit Unterseiten) ohne Konto
   lesbar machen, mit Ablauf und jederzeit widerrufbar
 - **Datenauskunft und Kontolöschung** im Konto-Bereich
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
+- **Space-Einstellungen**: Name, Beschreibung und Emoji-Icon (Sidebar und
+  Space-Übersicht), Mitgliederverwaltung, Space verlassen (nicht als
+  letzter Owner), Gefahrenzone: Space löschen (nur Owner, Bestätigung
+  durch Eintippen des Namens; Anhänge werden von der Platte entfernt)
+- **Import** (Menüpunkt „Importieren“, ab Rolle MEMBER) mit drei Formaten:
+  - **Markdown**: einzelne Dateien (.md/.markdown/.txt/.html) oder ein Zip
+    mit Ordnern. Ordner werden Elternseiten; `index.md`/`README.md` oder
+    eine gleichnamige Datei neben dem Ordner liefert deren Inhalt. Titel aus
+    Frontmatter `title:`, erster H1 oder Dateiname. Unterstützt GFM
+    (Tabellen, Aufgabenlisten), Mermaid-Codeblöcke, GitHub-Hinweise
+    (`> [!NOTE]`, `[!TIP]`, `[!WARNING]`, `[!CAUTION]` werden Callouts),
+    `[[Wiki-Links]]`.
+  - **Confluence**: HTML-Export eines Bereichs (Zip). Hierarchie und
+    Reihenfolge aus `index.html`, sonst aus den Breadcrumbs; Info-/Hinweis-/
+    Warn-/Tipp-Makros werden Callouts, Code-Makros Codeblöcke (Sprache aus
+    `brush`), Aufgabenlisten und Tabellen bleiben erhalten, Bilder aus
+    `attachments/` werden gespeichert.
+  - **Notion**: Export als „Markdown & CSV“ oder „HTML“ inklusive
+    Unterseiten (Zip). Die 32-stelligen IDs in Datei- und Ordnernamen werden
+    entfernt, To-do-Listen, Callouts und Toggle-Blöcke abgebildet,
+    Datenbanken (CSV) werden mit Hinweis übersprungen.
+  - Relative Links zwischen importierten Dateien werden zu Wiki-Links
+    (inkl. Backlinks), relative und `data:`-Bilder als Anhänge gespeichert
+    (nur PNG/JPG/GIF/WebP, Magic-Byte-Prüfung), externe Bilder bleiben
+    verlinkt. Es wird nie Roh-HTML gespeichert — alles läuft durch das
+    Editor-Schema. Limits: `IMPORT_MAX_MB` (Default 100) pro Upload,
+    2000 Dateien / 500 MB entpackt pro Zip (32 MB pro Zip-Eintrag,
+    Seitendateien bis 5 MB), 2000 Seiten pro Import, 5 Importe pro
+    10 Minuten. Fehler einzelner Dateien werden als Hinweise
+    gesammelt, der Rest wird importiert.
 
 ## Stack
 
@@ -63,29 +109,59 @@ Redis · TipTap 3 · Yjs · Hocuspocus 4 · Tailwind CSS 4 · Node 26 · pnpm.
 
 ## Schnellstart mit Docker (empfohlen)
 
-`APP_SECRET` ist Pflicht (sonst startet der Container bewusst nicht):
+Klonen, starten — mehr ist nicht nötig, keine `.env` erforderlich:
 
 ```bash
-cp .env.example .env
-# In .env ein starkes Secret setzen:  openssl rand -base64 48
-docker compose up --build
+git clone https://github.com/simondietschi/dokunc.git
+cd dokunc
+docker compose up -d
 ```
+
+Der erste Start baut das Image (einige Minuten) und richtet alles ein:
+Datenbank-Migrationen laufen automatisch, ein zufälliges `APP_SECRET` wird
+erzeugt und im Volume `app_data` abgelegt (überlebt Neustarts und Updates).
 
 Danach:
 
-- App: <https://localhost> (TLS über den Caddy-Proxy)
-- Collab läuft unter `wss://localhost/collab` (vom Proxy geroutet)
+- App: <https://localhost:7891> (TLS über den Caddy-Proxy; Port über `APP_PORT` in `.env` änderbar)
+- Die erste Registrierung wird automatisch Instanz-Admin; danach ist die
+  Anmeldung nur noch per Einladung möglich.
+- Status: `docker compose ps` · Logs: `docker compose logs -f app`
+- Stoppen: `docker compose down` (Daten bleiben) — Update:
+  `git pull && docker compose up -d --build`
 
 Hinweise:
 
 - TLS nutzt Caddys **interne CA** (`localhost`). Der Browser zeigt anfangs
   eine Zertifikatswarnung — für internen/VPN-Betrieb ok, oder die Caddy-Root-CA
-  importieren. Für eine echte Domain `SITE_ADDRESS=wiki.example.com` setzen
-  und in der `Caddyfile` `tls internal` entfernen (auto-HTTPS via Let's Encrypt).
-- **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1` (kein LAN-Zugriff).
+  importieren.
+- **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1:7891` (kein LAN-Zugriff).
   App/DB/Redis sind nur im internen Docker-Netz erreichbar.
-- Der App-Container läuft als **non-root**. Migrationen laufen automatisch.
-  Daten liegen in den Volumes `db_data`, `redis_data`, `uploads`.
+- Der App-Container läuft als **non-root**. Daten liegen in den Volumes
+  `db_data`, `redis_data`, `uploads`, `app_data`.
+
+### Eigene Domain / Produktionsbetrieb
+
+Eine `.env` neben der `docker-compose.yml` genügt — ein Rebuild ist dafür
+nicht nötig, die Adressen werden zur Laufzeit ausgewertet:
+
+```env
+SITE_ADDRESS=wiki.example.com
+APP_URL=https://wiki.example.com
+APP_PORT=443
+APP_SECRET=<openssl rand -base64 48>
+POSTGRES_PASSWORD=<eigenes Passwort>
+```
+
+Dann `docker compose up -d`. In der `Caddyfile` `tls internal` entfernen,
+damit Caddy ein Let's-Encrypt-Zertifikat holt (dafür muss Caddy zusätzlich
+auf Port 80 erreichbar sein, also `"127.0.0.1:80:80"` bzw. ohne
+`127.0.0.1` beim Proxy unter `ports` ergänzen). Ein selbst gesetztes
+`APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
+alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs- und
+Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
+`ANTHROPIC_API_KEY` für die KI-Funktionen, `MAX_UPLOAD_MB` für das
+Upload-Limit — siehe `.env.example`.
 
 **Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
 (Restore-Befehle gibt das Skript aus).

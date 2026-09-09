@@ -4,7 +4,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { prisma } from "@dokunc/db";
 import { getAppSecret } from "./secret";
 import { clientIp } from "./client-ip";
-import { parseDurationSeconds } from "./duration";
+import { durationToSeconds } from "./duration";
 
 // Lazy + memoisiert: NICHT beim Modul-Import berechnen — `next build`
 // läuft mit NODE_ENV=production und würde sonst ohne APP_SECRET schon
@@ -31,9 +31,12 @@ const EXPIRES = process.env.JWT_EXPIRES_IN ?? "7d";
  */
 const AUDIENCE = "dokunc-session";
 
-/** Laufzeit in Sekunden — dieselbe Quelle für JWT und Cookie. */
+/**
+ * Laufzeit in Sekunden — dieselbe Quelle für JWT und Cookie, damit
+ * beide gemeinsam ablaufen (siehe lib/duration.ts).
+ */
 export function sessionMaxAgeSeconds(): number {
-  return parseDurationSeconds(EXPIRES, 60 * 60 * 24 * 7);
+  return durationToSeconds(EXPIRES);
 }
 
 export type SessionClaims = { sub: string; tv: number; sid: string };
@@ -79,6 +82,8 @@ export async function createSession(
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
+    // Ohne Haken kein Ablaufdatum: die Anmeldung endet mit dem
+    // Browserfenster. Sonst laufen Cookie und JWT gemeinsam ab.
     ...(options.remember === false ? {} : { maxAge }),
   });
 }

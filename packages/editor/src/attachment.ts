@@ -1,47 +1,72 @@
 import { Node, mergeAttributes } from "@tiptap/core";
 
 export type AttachmentAttrs = {
-  url: string;
+  /** Download-URL (/api/files/<storedName>) */
+  src: string;
+  /** Originalname der Datei (Anzeige) */
   name: string;
+  /** Groesse in Bytes */
   size: number;
-  mime: string;
+  /** MIME-Typ, wie vom Server ermittelt */
+  mimeType: string;
 };
 
 /**
- * Dateianhang als Block-Atom.
+ * Nur site-relative Pfade (/api/files/...) und http(s)-URLs gelten als
+ * sichere Link-Ziele. Alles andere (javascript:, data:, //host) wird
+ * weder im Export-HTML noch in der NodeView als href ausgegeben —
+ * das Dokument ist kollaborativ und damit von allen Schreibenden
+ * beeinflussbar.
+ */
+export function isSafeAttachmentSrc(src: unknown): src is string {
+  return (
+    typeof src === "string" &&
+    (/^\/(?!\/)/.test(src) || /^https?:\/\//i.test(src))
+  );
+}
+
+/**
+ * Datei-Anhang als Atom-Block (beliebiger Dateityp, z. B. PDF, ZIP).
  *
  * Der Anhang ist bewusst nur ein Verweis: die Datei liegt im
- * Upload-Verzeichnis und wird über `/api/files/[name]` ausgeliefert,
- * das die Mitgliedschaft im Space prüft. Im Dokument steht nichts, was
- * ohne diese Prüfung nutzbar wäre.
+ * Upload-Verzeichnis und wird ueber `/api/files/[name]` ausgeliefert,
+ * das den Zugang zum Space und die Sichtbarkeit der Seite prueft. Im
+ * Dokument steht nichts, was ohne diese Pruefung nutzbar waere.
+ *
+ * Im HTML ein schlichter Link mit data-Attributen — damit bleiben
+ * Export (HTML/Markdown) und der Collab-Transformer verlustfrei.
+ * Die Karte mit Symbol und Groesse rendert clientseitig eine NodeView.
  */
 export const Attachment = Node.create({
   name: "attachment",
   group: "block",
   atom: true,
   draggable: true,
+  selectable: true,
 
   addAttributes() {
     return {
-      url: {
+      src: {
         default: "",
         parseHTML: (el) => el.getAttribute("href") ?? "",
-        renderHTML: (attrs) => ({ href: attrs.url }),
+        renderHTML: (attrs) =>
+          isSafeAttachmentSrc(attrs.src) ? { href: attrs.src } : {},
       },
       name: {
         default: "Datei",
-        parseHTML: (el) => el.getAttribute("data-name") ?? el.textContent,
+        parseHTML: (el) => el.getAttribute("data-name") ?? el.textContent ?? "",
         renderHTML: (attrs) => ({ "data-name": attrs.name }),
       },
       size: {
         default: 0,
-        parseHTML: (el) => Number(el.getAttribute("data-size") ?? 0),
+        parseHTML: (el) => Number(el.getAttribute("data-size") ?? 0) || 0,
         renderHTML: (attrs) => ({ "data-size": String(attrs.size ?? 0) }),
       },
-      mime: {
-        default: "",
-        parseHTML: (el) => el.getAttribute("data-mime") ?? "",
-        renderHTML: (attrs) => ({ "data-mime": attrs.mime }),
+      mimeType: {
+        default: "application/octet-stream",
+        parseHTML: (el) =>
+          el.getAttribute("data-mime") ?? "application/octet-stream",
+        renderHTML: (attrs) => ({ "data-mime": attrs.mimeType }),
       },
     };
   },
@@ -54,15 +79,15 @@ export const Attachment = Node.create({
     return [
       "a",
       mergeAttributes(HTMLAttributes, {
-        class: "dk-attachment",
         "data-attachment": "",
+        class: "dk-attachment",
       }),
       String(node.attrs.name ?? "Datei"),
     ];
   },
 
   renderText({ node }) {
-    return `[${node.attrs.name}](${node.attrs.url})`;
+    return String(node.attrs.name ?? "");
   },
 
   addCommands() {
@@ -85,7 +110,8 @@ export function formatBytes(bytes: number): string {
     value /= 1024;
     unit += 1;
   }
-  const rounded = value >= 10 || unit === 0 ? Math.round(value) : Math.round(value * 10) / 10;
+  const rounded =
+    value >= 10 || unit === 0 ? Math.round(value) : Math.round(value * 10) / 10;
   return `${rounded} ${units[unit]}`;
 }
 

@@ -12,15 +12,16 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    # Host-Port 7891 -> Caddy 443 (https://localhost:7891). Port 80 ist
+    # nicht gemappt: die HTTP->HTTPS-Umleitung würde auf :443 zeigen.
     ports:
-      - "127.0.0.1:443:443"
-      - "127.0.0.1:80:80"
+      - "127.0.0.1:${APP_PORT:-7891}:443"
 
   app:
     build:
       context: .
       args:
-        NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-wss://localhost/collab}
+        NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-}
     restart: unless-stopped
     depends_on:
       db:
@@ -30,14 +31,21 @@ services:
     environment:
       DATABASE_URL: postgresql://dokunc:${POSTGRES_PASSWORD:-dokunc}@db:5432/dokunc?schema=public
       REDIS_URL: redis://redis:6379
-      # Fail-closed: ohne gesetztes, ausreichend langes Secret kein Start.
-      APP_SECRET: ${APP_SECRET:?APP_SECRET muss gesetzt sein (min. 32 Zeichen)}
+      # Leer = der Container erzeugt beim ersten Start ein zufälliges
+      # Secret und legt es dauerhaft im Volume app_data ab. Ein eigenes
+      # (empfohlen, z. B. für mehrere Instanzen) hat immer Vorrang:
+      # APP_SECRET in .env setzen — openssl rand -base64 48
+      APP_SECRET: ${APP_SECRET:-}
       JWT_EXPIRES_IN: 7d
-      APP_URL: ${APP_URL:-https://localhost}
-      NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-wss://localhost/collab}
+      APP_URL: ${APP_URL:-https://localhost:7891}
+      # Leer = zur Laufzeit aus der aufgerufenen Adresse abgeleitet
+      # (wss://<host>/collab). Nur setzen, wenn der Collab-Server unter
+      # einer anderen Adresse läuft (dann Rebuild nötig, s. README).
+      NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-}
       COLLAB_PORT: 3001
       NODE_ENV: production
-      # Genau ein eigener Proxy (Caddy) steht davor.
+      # Reverse-Proxys vor der App (hier: Caddy). Bestimmt, wie die
+      # Ratenbegrenzung die Client-IP aus X-Forwarded-For liest.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       # Anzeigename der Instanz (Aussteller im Authenticator)
       APP_NAME: ${APP_NAME:-dokunc}
@@ -56,7 +64,14 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-dokunc <no-reply@example.com>}
+      # Benachrichtigungs-Mails: Prüfintervall (s) und Digest-Stunde (UTC)
+      MAIL_DISPATCH_INTERVAL_S: ${MAIL_DISPATCH_INTERVAL_S:-30}
+      DIGEST_HOUR_UTC: ${DIGEST_HOUR_UTC:-6}
       UPLOAD_DIR: /app/uploads
+      # Maximale Groesse einer hochgeladenen Datei (Bilder und Anhaenge) in MB
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      # Import (Markdown/Confluence/Notion): Upload-Limit pro Import in MB
+      IMPORT_MAX_MB: ${IMPORT_MAX_MB:-100}
       # KI — optional; ohne Key sind die KI-Features deaktiviert
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-}
@@ -66,6 +81,8 @@ services:
       GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
     volumes:
       - uploads:/app/uploads
+      # Hält u. a. das automatisch erzeugte APP_SECRET (überlebt Updates).
+      - app_data:/app/data
     # Keine Host-Ports: nur über den Proxy im internen Docker-Netz erreichbar.
     expose:
       - "3000"
@@ -80,7 +97,9 @@ services:
       timeout: 5s
       retries: 10
       start_period: 40s
-    mem_limit: 1g
+    # Zwei Node-Prozesse (Next + Hocuspocus) in einem Container; bei
+    # kleinen Hosts kann der Wert gesenkt werden.
+    mem_limit: 2g
     cpus: 1.5
 
   db:
@@ -91,7 +110,10 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dokunc}
       POSTGRES_DB: dokunc
     volumes:
-      - db_data:/var/lib/postgresql/data
+      # Ab Postgres 18 gehört der Mount auf /var/lib/postgresql (das Image
+      # legt darunter ein versionsspezifisches Verzeichnis an). Auf dem
+      # alten Pfad /var/lib/postgresql/data verweigert es den Start.
+      - db_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U dokunc"]
       interval: 5s
@@ -123,5 +145,6 @@ volumes:
   db_data:
   redis_data:
   uploads:
+  app_data:
   caddy_data:
   caddy_config:

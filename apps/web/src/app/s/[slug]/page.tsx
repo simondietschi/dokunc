@@ -1,10 +1,12 @@
-import { redirect } from "next/navigation";
 import { FileText, Plus, Slash, Link2, AtSign } from "lucide-react";
-import { prisma } from "@dokunc/db";
+import { prisma, type SpaceRole } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { visiblePageWhere } from "@/lib/page-access";
+import { relativeTime } from "@/lib/relative-time";
 import { Button } from "@/components/ui/Button";
+import { SpaceDashboard, changedMeta } from "@/components/space/SpaceDashboard";
+import { LeaveSpaceForm } from "./members/LeaveSpaceForm";
 import { createPageAction } from "./actions";
 
 const TIPS = [
@@ -20,6 +22,22 @@ function stagger(i: number): React.CSSProperties {
   };
 }
 
+/**
+ * Sichtbare Seiten des Space: nicht geloescht, keine Vorlagen — und nur
+ * das, was diese Person auch oeffnen darf. Ohne `visiblePageWhere`
+ * stuenden geschuetzte Seiten mit Titel in "zuletzt geaendert".
+ */
+const visiblePages = (
+  spaceId: string,
+  userId: string,
+  role: SpaceRole | null,
+) => ({
+  spaceId,
+  deletedAt: null,
+  isTemplate: false,
+  ...visiblePageWhere(userId, role),
+});
+
 export default async function SpaceIndex({
   params,
 }: {
@@ -27,24 +45,99 @@ export default async function SpaceIndex({
 }) {
   const { slug } = await params;
   const { space, role, user } = await loadSpace(slug);
-
-  // Die erste SICHTBARE Wurzelseite: ist die erste geschützt, landete
-  // man sonst auf einer 404 und der Space wirkte kaputt.
-  const first = await prisma.page.findFirst({
-    where: {
-      spaceId: space.id,
-      parentId: null,
-      deletedAt: null,
-      ...visiblePageWhere(user.id, role),
-    },
-    orderBy: { position: "asc" },
-    select: { id: true },
-  });
-
-  if (first) redirect(`/s/${slug}/p/${first.id}`);
-
   const canCreate = can(role, "managePages");
+  const scope = visiblePages(space.id, user.id, role);
 
+  const pageCount = await prisma.page.count({ where: scope });
+
+  if (pageCount === 0) {
+    return (
+      <EmptySpace name={space.name} slug={space.slug} canCreate={canCreate} />
+    );
+  }
+
+  const [memberCount, visits, favorites, changed] = await Promise.all([
+    prisma.spaceMember.count({ where: { spaceId: space.id } }),
+    prisma.pageVisit.findMany({
+      where: { userId: user.id, page: scope },
+      orderBy: { visitedAt: "desc" },
+      take: 8,
+      select: { visitedAt: true, page: { select: { id: true, title: true } } },
+    }),
+    prisma.favorite.findMany({
+      where: { userId: user.id, page: scope },
+      orderBy: { createdAt: "asc" },
+      take: 8,
+      select: {
+        page: { select: { id: true, title: true, updatedAt: true } },
+      },
+    }),
+    prisma.page.findMany({
+      where: scope,
+      orderBy: { updatedAt: "desc" },
+      take: 8,
+      select: {
+        id: true,
+        title: true,
+        updatedAt: true,
+        lastEditedBy: { select: { name: true } },
+      },
+    }),
+  ]);
+
+  const now = new Date();
+
+  // "Space verlassen" steht sonst nur auf der Mitgliederseite — und die
+  // ist erst ab manageSpace erreichbar. MEMBER und VIEWER kaemen dort nie
+  // hin und koennten einen Space nie verlassen, obwohl die Aktion es
+  // ausdruecklich allen Rollen erlaubt.
+  const showLeave = !can(role, "manageSpace");
+
+  return (
+    <>
+    <SpaceDashboard
+      slug={space.slug}
+      name={space.name}
+      description={space.description}
+      icon={space.icon}
+      pageCount={pageCount}
+      memberCount={memberCount}
+      canCreate={canCreate}
+      recent={visits.map((v) => ({
+        id: v.page.id,
+        title: v.page.title,
+        meta: relativeTime(v.visitedAt, now),
+      }))}
+      favorites={favorites.map((f) => ({
+        id: f.page.id,
+        title: f.page.title,
+        meta: `Geändert ${relativeTime(f.page.updatedAt, now)}`,
+      }))}
+      changed={changed.map((p) => ({
+        id: p.id,
+        title: p.title,
+        meta: changedMeta(p.lastEditedBy?.name, p.updatedAt, now),
+      }))}
+    />
+    {showLeave && (
+      <div className="mx-auto max-w-4xl px-8 pb-14">
+        <LeaveSpaceForm slug={space.slug} spaceName={space.name} />
+      </div>
+    )}
+    </>
+  );
+}
+
+/** Bestehender Empty-State: nur fuer Spaces ohne einzige Seite. */
+function EmptySpace({
+  name,
+  slug,
+  canCreate,
+}: {
+  name: string;
+  slug: string;
+  canCreate: boolean;
+}) {
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 pb-16 text-center">
       <div
@@ -57,7 +150,7 @@ export default async function SpaceIndex({
         className="mt-5 text-xl font-semibold tracking-tight"
         style={stagger(1)}
       >
-        „{space.name}“ ist noch leer
+        „{name}“ ist noch leer
       </h2>
       <p
         className="mt-1.5 max-w-sm text-sm leading-relaxed text-muted"
@@ -70,7 +163,7 @@ export default async function SpaceIndex({
 
       {canCreate && (
         <form action={createPageAction} className="mt-6" style={stagger(3)}>
-          <input type="hidden" name="slug" value={space.slug} />
+          <input type="hidden" name="slug" value={slug} />
           <Button type="submit" size="lg">
             <Plus className="h-4 w-4" />
             Erste Seite erstellen

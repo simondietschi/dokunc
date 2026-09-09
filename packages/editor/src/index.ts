@@ -85,7 +85,10 @@ export function richExtensions(views: NodeViewFactories = {}) {
       codeBlock: false,
       // Ersetzt durch die Variante mit Anker.
       heading: false,
-      link: { openOnClick: false, autolink: true },
+      // Im Lesemodus öffnet ein Klick den Link; beim Bearbeiten nur
+      // Cmd/Ctrl+Klick (siehe LinkClick im Client), damit man Linktext
+      // normal editieren kann.
+      link: { openOnClick: "whenNotEditable", autolink: true },
     }),
     AnchoredHeading,
     codeBlockExtension(views.codeBlock),
@@ -150,7 +153,6 @@ function walk(node: unknown, visit: (n: JsonNode) => void): void {
   }
 }
 
-export { Callout, CALLOUT_TYPES } from "./callout";
 export type { CalloutType } from "./callout";
 export { Mermaid } from "./mermaid";
 export { WikiLink } from "./wiki-link";
@@ -162,7 +164,7 @@ export { Toggle } from "./toggle";
 export { Excalidraw, toBase64 } from "./excalidraw";
 export { lowlight, CODE_LANGUAGES, codeBlockExtension } from "./code-block";
 export { RichImage, IMAGE_WIDTHS } from "./image";
-export { Attachment, formatBytes } from "./attachment";
+export { Attachment, formatBytes, isSafeAttachmentSrc } from "./attachment";
 export type { AttachmentAttrs } from "./attachment";
 export type { ImageWidth } from "./image";
 export { Drawio } from "./drawio";

@@ -19,6 +19,7 @@ import {
   removeSpaceGroupAction,
   revokeInvitationAction,
 } from "./actions";
+import { LeaveSpaceForm } from "./LeaveSpaceForm";
 
 export const metadata: Metadata = {
   title: "Mitglieder",
@@ -37,7 +38,9 @@ export default async function MembersPage({
   const [members, invitations, spaceGroups, allGroups] = await Promise.all([
     prisma.spaceMember.findMany({
       where: { spaceId: space.id },
-      include: { user: { select: { name: true, email: true } } },
+      include: {
+        user: { select: { name: true, email: true, isActive: true } },
+      },
       orderBy: { role: "asc" },
     }),
     prisma.spaceInvitation.findMany({
@@ -66,7 +69,12 @@ export default async function MembersPage({
     }),
   ]);
 
-  const ownerCount = members.filter((m) => m.role === "OWNER").length;
+  // Nur aktive Konten zaehlen — genau wie in changeRoleAction und
+  // removeMemberAction, sonst bietet die Oberflaeche an, was die Action
+  // dann doch ablehnt.
+  const ownerCount = members.filter(
+    (m) => m.role === "OWNER" && m.user.isActive,
+  ).length;
   const roles = assignableRoles(role);
   const assignedGroupIds = new Set(spaceGroups.map((g) => g.group.id));
   const availableGroups = allGroups.filter((g) => !assignedGroupIds.has(g.id));
@@ -132,7 +140,9 @@ export default async function MembersPage({
                   roleVerdict.allowed ? undefined : roleVerdict.reason
                 }
               />
-              {removeVerdict.allowed ? (
+              {/* Eigene Zeile ohne Entfernen-Schaltflaeche: der Austritt
+                  laeuft ueber „Space verlassen" am Seitenende. */}
+              {isSelf ? null : removeVerdict.allowed ? (
                 <form action={removeMemberAction}>
                   <input type="hidden" name="slug" value={slug} />
                   <input type="hidden" name="memberId" value={m.id} />
@@ -267,6 +277,8 @@ export default async function MembersPage({
           </ul>
         </>
       )}
+
+      <LeaveSpaceForm slug={slug} spaceName={space.name} />
     </div>
   );
 }

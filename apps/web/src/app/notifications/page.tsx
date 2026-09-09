@@ -35,8 +35,10 @@ export default async function NotificationsPage() {
     ...new Set(all.map((n) => n.pageId).filter((id): id is string => !!id)),
   ];
   // Nur Seiten, die diese Person heute noch sehen darf: eine alte
-  // Benachrichtigung soll nach einem Rechteentzug oder einem
-  // nachträglichen Schutz nicht den Titel verraten.
+  // Benachrichtigung aus einem verlassenen Space, nach einem Rechteentzug
+  // oder nach nachträglichem Schutz soll den Titel nicht mehr verraten.
+  // Die Sichtbarkeit geht über die Zugriffsschicht, damit auch Zugang
+  // über eine Gruppe zählt.
   const pages = pageIds.length
     ? await prisma.page.findMany({
         where: {

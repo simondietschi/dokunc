@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma, type SpaceRole } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
+import { revokeCollabAccess } from "@/lib/collab-sync";
 import { requireUser } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import {
@@ -142,8 +143,11 @@ export async function changeRoleAction(form: FormData) {
   });
   if (!member) return;
 
+  // Nur aktive Konten zaehlen: ein deaktiviertes OWNER-Konto kann
+  // niemanden mehr befoerdern, wuerde als Zaehler aber den letzten
+  // aktiven Eigentuemer freigeben.
   const ownerCount = await prisma.spaceMember.count({
-    where: { spaceId: space.id, role: "OWNER" },
+    where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
   });
   const verdict = canChangeRole({
     actorRole,
@@ -166,6 +170,10 @@ export async function changeRoleAction(form: FormData) {
     targetId: member.userId,
     metadata: { from: member.role, to: nextRole },
   });
+  // Offene Editor-Sitzungen trennen: das Schreibrecht wird nur beim
+  // Verbinden geprueft, eine Herabstufung auf VIEWER wuerde sonst erst
+  // beim naechsten Neuladen greifen.
+  await revokeCollabAccess(member.userId, space.id);
   revalidatePath(`/s/${space.slug}/members`);
 }
 
@@ -181,7 +189,7 @@ export async function removeMemberAction(form: FormData) {
   if (!member) return;
 
   const ownerCount = await prisma.spaceMember.count({
-    where: { spaceId: space.id, role: "OWNER" },
+    where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
   });
   const verdict = canRemoveMember({
     actorRole,
@@ -199,6 +207,9 @@ export async function removeMemberAction(form: FormData) {
     targetId: member.userId,
     metadata: { role: member.role },
   });
+  // Offene Editor-Sitzungen trennen: die Rechte werden nur beim
+  // Verbinden geprueft.
+  await revokeCollabAccess(member.userId, space.id);
   revalidatePath(`/s/${space.slug}/members`);
 }
 
@@ -258,7 +269,6 @@ export async function acceptInvitationAction(form: FormData) {
 
   redirect(`/s/${invitation.space.slug}`);
 }
-
 
 /**
  * Gruppe in den Space aufnehmen.

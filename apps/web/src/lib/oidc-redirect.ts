@@ -1,4 +1,4 @@
-import { appUrl } from "@dokunc/mailer";
+import { appUrl } from "@dokunc/mail";
 
 /**
  * Rücksprungadresse für den Anbieter.

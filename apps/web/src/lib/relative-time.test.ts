@@ -1,45 +1,86 @@
-import { describe, expect, it } from "vitest";
-import { relativeTime } from "./relative-time";
+import { describe, it, expect } from "vitest";
+import { relativeTime, calendarDaysBetween, formatDate } from "./relative-time";
 
-const NOW = new Date("2026-09-08T12:00:00.000Z");
-const ago = (seconds: number) => new Date(NOW.getTime() - seconds * 1000);
+// Fester Bezugspunkt: Donnerstag, 3. September 2026, 14:30 lokale Zeit.
+const NOW = new Date(2026, 8, 3, 14, 30, 0);
+const ago = (ms: number) => new Date(NOW.getTime() - ms);
+const MIN = 60_000;
+const HOUR = 60 * MIN;
+const DAY = 24 * HOUR;
 
-describe("relativeTime", () => {
-  it("nennt Sekunden unter einer Minute", () => {
-    expect(relativeTime(ago(5), NOW)).toContain("Sekunden");
+describe("relativeTime()", () => {
+  it("kurz zurueckliegend: gerade eben", () => {
+    expect(relativeTime(NOW, NOW)).toBe("gerade eben");
+    expect(relativeTime(ago(5_000), NOW)).toBe("gerade eben");
+    expect(relativeTime(ago(30_000), NOW)).toBe("gerade eben");
+    expect(relativeTime(ago(59_999), NOW)).toBe("gerade eben");
   });
 
-  it("wechselt ab einer Minute auf Minuten", () => {
-    expect(relativeTime(ago(60), NOW)).toContain("Minute");
-    expect(relativeTime(ago(59 * 60), NOW)).toContain("Minuten");
+  it("Zukunft (Uhrenabweichung) wird nicht negativ", () => {
+    expect(relativeTime(new Date(NOW.getTime() + 5 * MIN), NOW)).toBe(
+      "gerade eben",
+    );
+    expect(relativeTime(new Date(NOW.getTime() + 90_000), NOW)).toBeTruthy();
   });
 
-  it("wechselt ab einer Stunde auf Stunden", () => {
-    expect(relativeTime(ago(3600), NOW)).toContain("Stunde");
+  it("Minuten", () => {
+    expect(relativeTime(ago(MIN), NOW)).toBe("vor 1 Min.");
+    expect(relativeTime(ago(5 * MIN), NOW)).toBe("vor 5 Min.");
+    expect(relativeTime(ago(59 * MIN + 59_000), NOW)).toBe("vor 59 Min.");
   });
 
-  it("sagt für genau einen Tag „gestern“ (numeric: auto)", () => {
-    expect(relativeTime(ago(86400), NOW)).toBe("gestern");
+  it("Stunden", () => {
+    expect(relativeTime(ago(HOUR), NOW)).toBe("vor 1 Std.");
+    expect(relativeTime(ago(2 * HOUR), NOW)).toBe("vor 2 Std.");
+    expect(relativeTime(ago(23 * HOUR + 59 * MIN), NOW)).toBe("vor 23 Std.");
   });
 
-  it("zählt ab zwei Tagen in Tagen", () => {
-    expect(relativeTime(ago(3 * 86400), NOW)).toContain("Tagen");
+  it("gestern: ab 24 h oder Kalendertag davor", () => {
+    expect(relativeTime(ago(DAY), NOW)).toBe("gestern");
+    expect(relativeTime(ago(36 * HOUR), NOW)).toBe("gestern");
   });
 
-  it("wechselt ab einem Monat auf Monate", () => {
-    expect(relativeTime(ago(40 * 86400), NOW)).toContain("Monat");
+  it("Tage bis sechs", () => {
+    expect(relativeTime(ago(2 * DAY), NOW)).toBe("vor 2 Tagen");
+    expect(relativeTime(ago(3 * DAY), NOW)).toBe("vor 3 Tagen");
+    expect(relativeTime(ago(6 * DAY), NOW)).toBe("vor 6 Tagen");
   });
 
-  it("wechselt ab einem Jahr auf Jahre", () => {
-    expect(relativeTime(ago(400 * 86400), NOW)).toContain("Jahr");
+  it("ab sieben Tagen das Datum", () => {
+    expect(relativeTime(ago(7 * DAY), NOW)).toBe("27.08.2026");
+    expect(relativeTime(new Date(2025, 0, 5), NOW)).toBe("05.01.2025");
   });
 
-  it("verkraftet Zeitstempel aus der Zukunft (Uhren-Drift)", () => {
-    const future = new Date(NOW.getTime() + 90 * 1000);
-    expect(relativeTime(future, NOW)).toBeTruthy();
+  it("weit zurueckliegende Zeitpunkte (Monate, Jahre) bleiben Datum", () => {
+    expect(relativeTime(ago(40 * DAY), NOW)).toBe("25.07.2026");
+    expect(relativeTime(ago(400 * DAY), NOW)).toBe("30.07.2025");
+  });
+
+  it("akzeptiert ISO-Strings und Zahlen", () => {
+    expect(relativeTime(ago(5 * MIN).toISOString(), NOW)).toBe("vor 5 Min.");
+    expect(relativeTime(ago(2 * HOUR).getTime(), NOW)).toBe("vor 2 Std.");
+  });
+
+  it("ungueltige Eingaben liefern einen leeren String", () => {
+    expect(relativeTime("kein datum", NOW)).toBe("");
   });
 
   it("ist ohne now-Argument aufrufbar", () => {
-    expect(relativeTime(new Date())).toBeTruthy();
+    expect(relativeTime(new Date())).toBe("gerade eben");
+  });
+});
+
+describe("calendarDaysBetween()", () => {
+  it("zaehlt Kalendertage unabhaengig von der Uhrzeit", () => {
+    const lateEvening = new Date(2026, 8, 2, 23, 50);
+    const earlyMorning = new Date(2026, 8, 3, 0, 10);
+    expect(calendarDaysBetween(lateEvening, earlyMorning)).toBe(1);
+    expect(calendarDaysBetween(NOW, NOW)).toBe(0);
+  });
+});
+
+describe("formatDate()", () => {
+  it("fuellt Tag und Monat mit Nullen auf", () => {
+    expect(formatDate(new Date(2026, 0, 9))).toBe("09.01.2026");
   });
 });

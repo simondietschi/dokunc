@@ -6,6 +6,10 @@ import { can } from "@/lib/permissions";
 import { visiblePageWhere } from "@/lib/page-access";
 import { Sidebar } from "@/components/space/Sidebar";
 import { NotificationStream } from "@/components/NotificationStream";
+import {
+  builtinTemplateOptions,
+  spaceTemplateOptions,
+} from "@/lib/template-options";
 
 /**
  * Space-Name als Titel-Fallback für alle Unterseiten. Seiten mit eigener
@@ -39,66 +43,88 @@ export default async function SpaceLayout({
   // zurecht: der Schutz vererbt sich nach unten, es kann also keine
   // sichtbare Seite unter einer verborgenen geben.
   const visible = visiblePageWhere(user.id, role);
+  const canManage = can(role, "managePages");
 
-  const [pages, unreadCount, templates, favorites, recent] =
+  const [pages, unreadCount, favorites, recent, templateRows] =
     await Promise.all([
-    prisma.page.findMany({
-      where: { spaceId: space.id, deletedAt: null, ...visible },
-      select: {
-        id: true,
-        title: true,
-        parentId: true,
-        position: true,
-        icon: true,
-      },
-    }),
-    prisma.notification.count({
-      where: { userId: user.id, readAt: null },
-    }),
-    prisma.page.findMany({
-      where: {
-        spaceId: space.id,
-        isTemplate: true,
-        deletedAt: null,
-        ...visible,
-      },
-      select: { id: true, title: true, icon: true },
-      orderBy: { title: "asc" },
-      take: 30,
-    }),
-    prisma.pageFavorite.findMany({
-      where: {
-        userId: user.id,
-        page: { spaceId: space.id, deletedAt: null, ...visible },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 12,
-      select: { page: { select: { id: true, title: true, icon: true } } },
-    }),
-    prisma.pageVisit.findMany({
-      where: {
-        userId: user.id,
-        page: { spaceId: space.id, deletedAt: null, ...visible },
-      },
-      orderBy: { visitedAt: "desc" },
-      take: 6,
-      select: { page: { select: { id: true, title: true, icon: true } } },
-    }),
-  ]);
+      prisma.page.findMany({
+        where: {
+          spaceId: space.id,
+          deletedAt: null,
+          isTemplate: false,
+          ...visible,
+        },
+        select: {
+          id: true,
+          title: true,
+          parentId: true,
+          position: true,
+          icon: true,
+        },
+      }),
+      prisma.notification.count({
+        where: { userId: user.id, readAt: null },
+      }),
+      prisma.favorite.findMany({
+        where: {
+          userId: user.id,
+          page: {
+            spaceId: space.id,
+            deletedAt: null,
+            isTemplate: false,
+            ...visible,
+          },
+        },
+        orderBy: { createdAt: "asc" },
+        select: { page: { select: { id: true, title: true } } },
+      }),
+      prisma.pageVisit.findMany({
+        where: {
+          userId: user.id,
+          page: {
+            spaceId: space.id,
+            deletedAt: null,
+            isTemplate: false,
+            ...visible,
+          },
+        },
+        orderBy: { visitedAt: "desc" },
+        take: 6,
+        select: { page: { select: { id: true, title: true, icon: true } } },
+      }),
+      // Vorlagen nur für den Picker (Seiten anlegen = managePages).
+      canManage
+        ? prisma.page.findMany({
+            where: {
+              spaceId: space.id,
+              isTemplate: true,
+              deletedAt: null,
+              ...visible,
+            },
+            orderBy: { title: "asc" },
+            select: { id: true, title: true, updatedAt: true, content: true },
+          })
+        : Promise.resolve([]),
+    ]);
+  const templates = {
+    space: spaceTemplateOptions(templateRows),
+    builtin: builtinTemplateOptions(),
+  };
 
   return (
     <div className="flex h-screen overflow-hidden">
       <Sidebar
         slug={slug}
         spaceName={space.name}
+        spaceIcon={space.icon}
         role={role}
         userName={user.name}
         tree={buildTree(pages)}
-        canManage={can(role, "managePages")}
+        canManage={canManage}
+        templates={templates}
         canManageSpace={can(role, "manageSpace")}
         isAdmin={user.isAdmin}
         unreadCount={unreadCount}
-        templates={templates}
         favorites={favorites.map((f) => f.page)}
         recent={recent.map((v) => v.page)}
       />

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Editor } from "@tiptap/react";
+import { useEditorState, type Editor } from "@tiptap/react";
 import {
   Bold,
   Italic,
@@ -32,6 +32,7 @@ import {
 import { startCommentThread } from "@/components/editor/comment-thread";
 import { TableTools } from "@/components/editor/TableMenu";
 import type { PromptRequest } from "@/components/editor/SlashCommands";
+import { normalizeLinkInput } from "@/lib/editor-text";
 
 const HIGHLIGHTS: { label: string; color: string }[] = [
   { label: "Gelb", color: "#fde68a" },
@@ -46,7 +47,12 @@ const HIGHLIGHTS: { label: string; color: string }[] = [
 function HighlightPicker({ editor }: { editor: Editor }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const active = editor.isActive("highlight");
+  // Wie in der Leiste: der Aktivzustand muss aus useEditorState kommen,
+  // sonst friert er ein (TipTap 3 rendert nicht pro Transaktion neu).
+  const active = useEditorState({
+    editor,
+    selector: ({ editor: e }) => e.isActive("highlight"),
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -117,6 +123,80 @@ function HighlightPicker({ editor }: { editor: Editor }) {
   );
 }
 
+/**
+ * Link setzen oder entfernen. Steht der Cursor in einem Link, nimmt der
+ * Knopf ihn weg; sonst fragt der Dialog nach der Adresse.
+ */
+function editLink(
+  editor: Editor,
+  onPrompt: (request: PromptRequest) => void,
+): void {
+  // extendMarkRange: ohne Auswahl gilt der ganze Link, nicht nur die
+  // Cursorstelle — sonst bleibt beim Entfernen ein Rest stehen.
+  const linked = () => editor.chain().focus().extendMarkRange("link");
+  if (editor.isActive("link")) {
+    linked().unsetLink().run();
+    return;
+  }
+  onPrompt({
+    title: "Link einfügen",
+    label: "Ziel-URL",
+    placeholder: "https://…",
+    submitLabel: "Verlinken",
+    onSubmit: (input) => {
+      // "example.com" -> https://, Mailadressen -> mailto:.
+      const href = normalizeLinkInput(input);
+      if (!href) return;
+      if (editor.state.selection.empty) {
+        // Ohne Auswahl gäbe es keinen Text, der die Mark tragen könnte:
+        // die Adresse selbst als verlinkten Text einsetzen.
+        editor
+          .chain()
+          .focus()
+          .insertContent({
+            type: "text",
+            text: href.replace(/^mailto:/, ""),
+            marks: [{ type: "link", attrs: { href } }],
+          })
+          .run();
+        return;
+      }
+      linked().setLink({ href }).run();
+    },
+  });
+}
+
+/** Aktivzustand der Leiste in einem Zug ablesen. */
+function readState(editor: Editor) {
+  return {
+    h1: editor.isActive("heading", { level: 1 }),
+    h2: editor.isActive("heading", { level: 2 }),
+    h3: editor.isActive("heading", { level: 3 }),
+    bold: editor.isActive("bold"),
+    italic: editor.isActive("italic"),
+    underline: editor.isActive("underline"),
+    strike: editor.isActive("strike"),
+    code: editor.isActive("code"),
+    link: editor.isActive("link"),
+    bulletList: editor.isActive("bulletList"),
+    orderedList: editor.isActive("orderedList"),
+    taskList: editor.isActive("taskList"),
+    blockquote: editor.isActive("blockquote"),
+    codeBlock: editor.isActive("codeBlock"),
+    comment: editor.isActive("commentMark"),
+    hasSelection: !editor.state.selection.empty,
+    canUndo: editor.can().undo(),
+    canRedo: editor.can().redo(),
+  };
+}
+
+/**
+ * Formatierungsleiste. Der Aktiv-Zustand kommt aus `useEditorState`
+ * (TipTap 3 rendert nicht mehr bei jeder Transaktion neu), und jede
+ * Aktion baut ihre Command-Chain erst beim Klick — eine beim Rendern
+ * erzeugte Chain hängt an einem veralteten State und wirft
+ * "Applying a mismatched transaction".
+ */
 export function EditorToolbar({
   editor,
   onPrompt,
@@ -124,23 +204,13 @@ export function EditorToolbar({
   editor: Editor | null;
   onPrompt: (request: PromptRequest) => void;
 }) {
-  if (!editor) return null;
+  const s = useEditorState({
+    editor,
+    selector: ({ editor: e }) => (e ? readState(e) : null),
+  });
+  if (!editor || !s) return null;
 
   const c = () => editor.chain().focus();
-
-  function editLink() {
-    if (editor!.isActive("link")) {
-      c().unsetLink().run();
-      return;
-    }
-    onPrompt({
-      title: "Link einfügen",
-      label: "Ziel-URL",
-      placeholder: "https://…",
-      submitLabel: "Verlinken",
-      onSubmit: (href) => c().setLink({ href }).run(),
-    });
-  }
 
   return (
     <div
@@ -153,61 +223,65 @@ export function EditorToolbar({
       <EditorButton
         label="Rückgängig"
         on={() => c().undo().run()}
-        disabled={!editor.can().undo()}
+        disabled={!s.canUndo}
       >
         <Undo2 className="h-4 w-4" />
       </EditorButton>
       <EditorButton
         label="Wiederholen"
         on={() => c().redo().run()}
-        disabled={!editor.can().redo()}
+        disabled={!s.canRedo}
       >
         <Redo2 className="h-4 w-4" />
       </EditorButton>
       <EditorSeparator />
-      <EditorButton label="Überschrift 1" on={() => c().toggleHeading({ level: 1 }).run()} active={editor.isActive("heading", { level: 1 })}>
+      <EditorButton label="Überschrift 1" on={() => c().toggleHeading({ level: 1 }).run()} active={s.h1}>
         <Heading1 className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Überschrift 2" on={() => c().toggleHeading({ level: 2 }).run()} active={editor.isActive("heading", { level: 2 })}>
+      <EditorButton label="Überschrift 2" on={() => c().toggleHeading({ level: 2 }).run()} active={s.h2}>
         <Heading2 className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Überschrift 3" on={() => c().toggleHeading({ level: 3 }).run()} active={editor.isActive("heading", { level: 3 })}>
+      <EditorButton label="Überschrift 3" on={() => c().toggleHeading({ level: 3 }).run()} active={s.h3}>
         <Heading3 className="h-4 w-4" />
       </EditorButton>
       <EditorSeparator />
-      <EditorButton label="Fett" on={() => c().toggleBold().run()} active={editor.isActive("bold")}>
+      <EditorButton label="Fett" on={() => c().toggleBold().run()} active={s.bold}>
         <Bold className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Kursiv" on={() => c().toggleItalic().run()} active={editor.isActive("italic")}>
+      <EditorButton label="Kursiv" on={() => c().toggleItalic().run()} active={s.italic}>
         <Italic className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Unterstrichen" on={() => c().toggleUnderline().run()} active={editor.isActive("underline")}>
+      <EditorButton label="Unterstrichen" on={() => c().toggleUnderline().run()} active={s.underline}>
         <UnderlineIcon className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Durchgestrichen" on={() => c().toggleStrike().run()} active={editor.isActive("strike")}>
+      <EditorButton label="Durchgestrichen" on={() => c().toggleStrike().run()} active={s.strike}>
         <Strikethrough className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Code" on={() => c().toggleCode().run()} active={editor.isActive("code")}>
+      <EditorButton label="Code" on={() => c().toggleCode().run()} active={s.code}>
         <Code className="h-4 w-4" />
       </EditorButton>
       <HighlightPicker editor={editor} />
-      <EditorButton label="Link" on={editLink} active={editor.isActive("link")}>
+      <EditorButton
+        label={s.link ? "Link entfernen" : "Link"}
+        on={() => editLink(editor, onPrompt)}
+        active={s.link}
+      >
         <Link2 className="h-4 w-4" />
       </EditorButton>
       <EditorSeparator />
-      <EditorButton label="Aufzählung" on={() => c().toggleBulletList().run()} active={editor.isActive("bulletList")}>
+      <EditorButton label="Aufzählung" on={() => c().toggleBulletList().run()} active={s.bulletList}>
         <List className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Nummerierte Liste" on={() => c().toggleOrderedList().run()} active={editor.isActive("orderedList")}>
+      <EditorButton label="Nummerierte Liste" on={() => c().toggleOrderedList().run()} active={s.orderedList}>
         <ListOrdered className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Aufgabenliste" on={() => c().toggleTaskList().run()} active={editor.isActive("taskList")}>
+      <EditorButton label="Aufgabenliste" on={() => c().toggleTaskList().run()} active={s.taskList}>
         <ListChecks className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Zitat" on={() => c().toggleBlockquote().run()} active={editor.isActive("blockquote")}>
+      <EditorButton label="Zitat" on={() => c().toggleBlockquote().run()} active={s.blockquote}>
         <Quote className="h-4 w-4" />
       </EditorButton>
-      <EditorButton label="Codeblock" on={() => c().toggleCodeBlock().run()} active={editor.isActive("codeBlock")}>
+      <EditorButton label="Codeblock" on={() => c().toggleCodeBlock().run()} active={s.codeBlock}>
         <Code2 className="h-4 w-4" />
       </EditorButton>
       <EditorSeparator />
@@ -217,9 +291,14 @@ export function EditorToolbar({
       </EditorButton>
       <EditorSeparator />
       <EditorButton
-        label="Auswahl kommentieren"
+        label={
+          s.hasSelection
+            ? "Auswahl kommentieren"
+            : "Zum Kommentieren zuerst Text markieren"
+        }
         on={() => startCommentThread(editor)}
-        active={editor.isActive("commentMark")}
+        active={s.comment}
+        disabled={!s.hasSelection}
       >
         <MessageSquarePlus className="h-4 w-4" />
       </EditorButton>

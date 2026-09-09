@@ -12,7 +12,7 @@ import {
   trashPageTree,
   type PageScope,
 } from "@/lib/page-guards";
-import { findReadableUpload } from "@/lib/upload-access";
+import { findReadableAttachment } from "@/lib/file-access";
 
 /**
  * Der Kern der Autorisierung dieser App: eine Seiten- oder Versions-ID
@@ -88,19 +88,21 @@ beforeAll(async () => {
 
   foreignUploadName = `${TAG}-foreign.png`;
   homeUploadName = `${TAG}-home.png`;
-  await prisma.upload.createMany({
+  await prisma.attachment.createMany({
     data: [
       {
-        filename: foreignUploadName,
+        storedName: foreignUploadName,
+        name: foreignUploadName,
         spaceId: outsiderSpaceId,
-        contentType: "image/png",
+        mimeType: "image/png",
         size: 1,
       },
       {
-        filename: homeUploadName,
+        storedName: homeUploadName,
+        name: homeUploadName,
         spaceId: homeSpaceId,
         uploaderId: insider.id,
-        contentType: "image/png",
+        mimeType: "image/png",
         size: 1,
       },
     ],
@@ -214,18 +216,18 @@ describe("Elternseite beim Anlegen", () => {
 
 describe("Dateiauslieferung", () => {
   it("liefert eine Datei des eigenen Space", async () => {
-    const up = await findReadableUpload(insider.id, homeUploadName);
-    expect(up?.filename).toBe(homeUploadName);
+    const att = await findReadableAttachment(homeUploadName, insider.id);
+    expect(att?.storedName).toBe(homeUploadName);
   });
 
   it("liefert keine Datei eines fremden Space", async () => {
     expect(
-      await findReadableUpload(insider.id, foreignUploadName),
+      await findReadableAttachment(foreignUploadName, insider.id),
     ).toBeNull();
   });
 
   it("liefert nichts ohne Nutzer", async () => {
-    expect(await findReadableUpload("", homeUploadName)).toBeNull();
+    expect(await findReadableAttachment(homeUploadName, "")).toBeNull();
   });
 });
 

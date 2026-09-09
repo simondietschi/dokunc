@@ -78,9 +78,11 @@ function block(node: Node, depth = 0): string {
     case "drawio":
       return fenced("drawio", String(node.attrs?.xml ?? ""));
     case "attachment": {
+      // Die Adresse steht im Attribut `src` (siehe
+      // packages/editor/src/attachment.ts), nicht in `url`.
       const name = String(node.attrs?.name ?? "Datei");
-      const url = String(node.attrs?.url ?? "");
-      return url ? `[${name}](${url})` : name;
+      const src = String(node.attrs?.src ?? "");
+      return src ? `[${name}](${src})` : name;
     }
     case "youtube": {
       const src = String(node.attrs?.src ?? "");

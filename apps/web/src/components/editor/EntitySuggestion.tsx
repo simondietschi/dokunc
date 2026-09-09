@@ -3,9 +3,9 @@
 import { Extension } from "@tiptap/core";
 import Suggestion from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
-import { ReactRenderer } from "@tiptap/react";
 import type { LucideIcon } from "lucide-react";
-import { SlashMenu, type SlashMenuHandle, type SlashItem } from "./SlashMenu";
+import type { SlashItem } from "./SlashMenu";
+import { createSuggestionPopup } from "./SuggestionPopup";
 
 type EntityItem = { id: string; label: string };
 
@@ -23,16 +23,24 @@ export function createEntitySuggestion(opts: {
   icon: LucideIcon;
   subtitle: string;
 }) {
+  // Antworten kommen nicht zwingend in Reihenfolge — eine langsamere,
+  // ältere Antwort darf die aktuelle Liste nicht überschreiben.
+  let latest = 0;
+  let lastItems: EntityItem[] = [];
   async function fetchItems(query: string): Promise<EntityItem[]> {
+    const seq = ++latest;
     try {
       const res = await fetch(
         `/api/spaces/${opts.spaceId}/suggest?kind=${opts.kind}&q=${encodeURIComponent(query)}`,
       );
+      if (seq !== latest) return lastItems;
       if (!res.ok) return [];
       const data = (await res.json()) as { items: EntityItem[] };
+      if (seq !== latest) return lastItems;
+      lastItems = data.items;
       return data.items;
     } catch {
-      return [];
+      return seq === latest ? [] : lastItems;
     }
   }
 
@@ -62,62 +70,14 @@ export function createEntitySuggestion(opts: {
               ])
               .run();
           },
-          render: () => {
-            let component: ReactRenderer<SlashMenuHandle> | null = null;
-            let el: HTMLDivElement | null = null;
-
-            const position = (rect: DOMRect | null) => {
-              if (!el || !rect) return;
-              el.style.position = "fixed";
-              el.style.left = `${rect.left}px`;
-              el.style.top = `${rect.bottom + 6}px`;
-              el.style.zIndex = "60";
-            };
-
-            const toItems = (
-              items: EntityItem[],
-              command: (item: EntityItem) => void,
-            ): SlashItem[] =>
-              items.map((it) => ({
-                title: it.label,
-                subtitle: opts.subtitle,
-                icon: opts.icon,
-                command: () => command(it),
-              }));
-
-            return {
-              onStart: (props) => {
-                component = new ReactRenderer(SlashMenu, {
-                  props: {
-                    items: toItems(props.items, (it) =>
-                      props.command(it),
-                    ),
-                  },
-                  editor: props.editor,
-                });
-                el = document.createElement("div");
-                el.appendChild(component.element);
-                document.body.appendChild(el);
-                position(props.clientRect?.() ?? null);
-              },
-              onUpdate: (props) => {
-                component?.updateProps({
-                  items: toItems(props.items, (it) => props.command(it)),
-                });
-                position(props.clientRect?.() ?? null);
-              },
-              onKeyDown: (props) => {
-                if (props.event.key === "Escape") return true;
-                return component?.ref?.onKeyDown(props.event) ?? false;
-              },
-              onExit: () => {
-                el?.remove();
-                component?.destroy();
-                el = null;
-                component = null;
-              },
-            };
-          },
+          render: createSuggestionPopup<EntityItem>((props) =>
+            props.items.map<SlashItem>((it) => ({
+              title: it.label,
+              subtitle: opts.subtitle,
+              icon: opts.icon,
+              command: () => props.command(it),
+            })),
+          ),
         }),
       ];
     },

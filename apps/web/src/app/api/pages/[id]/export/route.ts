@@ -5,6 +5,8 @@ import { getCurrentUser } from "@/lib/current-user";
 import { toMarkdown } from "@/lib/markdown";
 import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
 import { htmlToPdf, gotenbergUrl } from "@/lib/pdf";
+import { inlineUploadImages } from "@/lib/inline-images";
+import { uploadLoaderFor } from "@/lib/file-access";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -53,10 +55,18 @@ export async function GET(
     });
   }
 
+  // Bilder als data:-URI einbetten — der Export muss ohne laufende App
+  // funktionieren (Gotenberg kennt keine Basis-URL, eine gespeicherte
+  // .html-Datei wird per file:// geöffnet).
   const html = pageToPrintHtml({
     title: page.title,
     spaceName: page.space.name,
-    contentHtml: contentToHtml(page.content),
+    // Nur Dateien, die diese Person auch ueber /api/files abrufen
+    // duerfte — der Export ist sonst ein zweiter Lesepfad ohne Pruefung.
+    contentHtml: await inlineUploadImages(
+      contentToHtml(page.content),
+      uploadLoaderFor(user.id),
+    ),
   });
 
   if (format === "html") {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import { Pencil, Eye } from "lucide-react";
 
@@ -10,15 +10,6 @@ export function MermaidView({ node, updateAttributes, editor }: NodeViewProps) {
   const [svg, setSvg] = useState("");
   const [error, setError] = useState<string | null>(null);
   const rawId = useId().replace(/[^a-zA-Z0-9]/g, "");
-  const mounted = useRef(true);
-
-  useEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-    };
-  }, []);
-
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -32,12 +23,12 @@ export function MermaidView({ node, updateAttributes, editor }: NodeViewProps) {
             : "default",
         });
         const { svg } = await mermaid.render(`mmd-${rawId}`, code || " ");
-        if (!cancelled && mounted.current) {
+        if (!cancelled) {
           setSvg(svg);
           setError(null);
         }
       } catch (e) {
-        if (!cancelled && mounted.current) {
+        if (!cancelled) {
           setError(e instanceof Error ? e.message : "Diagrammfehler");
         }
       }

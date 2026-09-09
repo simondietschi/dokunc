@@ -12,6 +12,91 @@ import {
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Input";
 
+type EmailNotificationMode = "INSTANT" | "DAILY" | "OFF";
+
+const NOTIFICATION_OPTIONS: {
+  value: EmailNotificationMode;
+  label: string;
+  hint: string;
+}[] = [
+  {
+    value: "INSTANT",
+    label: "Sofort",
+    hint: "Kurz nach der Erwähnung oder Antwort, mehrere Ereignisse gebündelt.",
+  },
+  {
+    value: "DAILY",
+    label: "Täglich als Zusammenfassung",
+    hint: "Eine Mail pro Tag mit allem, was seit der letzten passiert ist.",
+  },
+  {
+    value: "OFF",
+    label: "Aus",
+    hint: "Benachrichtigungen erscheinen nur in der App.",
+  },
+];
+
+export function NotificationPrefsForm({
+  mode,
+  mailConfigured,
+}: {
+  mode: EmailNotificationMode;
+  mailConfigured: boolean;
+}) {
+  const [state, action, pending] = useActionState<AccountState, FormData>(
+    updateNotificationPrefsAction,
+    undefined,
+  );
+  return (
+    <form
+      action={action}
+      className="space-y-4 rounded-xl border border-line bg-surface p-5 shadow-soft"
+    >
+      <div>
+        <h2 className="text-sm font-semibold">Benachrichtigungen per Mail</h2>
+        <p className="mt-1 text-[13px] text-muted">
+          Erwähnungen und Antworten auf deine Kommentare zusätzlich per
+          E-Mail erhalten.
+        </p>
+      </div>
+      {!mailConfigured && (
+        <p className="rounded-lg border border-line bg-subtle px-3 py-2 text-[13px] text-muted">
+          Auf dieser Instanz ist kein Mail-Versand (SMTP) eingerichtet.
+          Die Einstellung wird gespeichert, greift aber erst, sobald eine
+          Admin-Person SMTP konfiguriert.
+        </p>
+      )}
+      <fieldset className="space-y-2">
+        <legend className="sr-only">Zustellung</legend>
+        {NOTIFICATION_OPTIONS.map((o) => (
+          <label
+            key={o.value}
+            className="flex cursor-pointer items-start gap-3 rounded-lg border border-line px-3 py-2.5 transition-colors hover:bg-subtle has-[:checked]:border-accent/60 has-[:checked]:bg-accent-soft/30"
+          >
+            <input
+              type="radio"
+              name="emailNotifications"
+              value={o.value}
+              defaultChecked={mode === o.value}
+              className="mt-1 h-4 w-4 shrink-0 accent-[var(--accent)]"
+            />
+            <span className="min-w-0">
+              <span className="block text-sm font-medium text-ink">
+                {o.label}
+              </span>
+              <span className="block text-[13px] text-muted">{o.hint}</span>
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <Status state={state} />
+      <Button type="submit" disabled={pending}>
+        {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Speichern"}
+      </Button>
+    </form>
+  );
+}
+
 function Status({ state }: { state: AccountState }) {
   if (state?.error)
     return (
@@ -74,59 +159,6 @@ export function PasswordForm() {
         ) : (
           "Passwort ändern"
         )}
-      </Button>
-    </form>
-  );
-}
-
-/**
- * E-Mail-Benachrichtigungen.
- *
- * Bewusst getrennt nach Anlass: eine Erwähnung ist eine direkte
- * Ansprache, ein Kommentar auf einer verfolgten Seite ist es nicht.
- */
-export function NotificationForm({
-  emailOnMention,
-  emailOnComment,
-}: {
-  emailOnMention: boolean;
-  emailOnComment: boolean;
-}) {
-  const [state, action, pending] = useActionState<AccountState, FormData>(
-    updateNotificationPrefsAction,
-    undefined,
-  );
-  return (
-    <form
-      action={action}
-      className="space-y-3 rounded-xl border border-line bg-surface p-5 shadow-soft"
-    >
-      <h2 className="text-sm font-semibold">E-Mail-Benachrichtigungen</h2>
-      <label className="flex cursor-pointer items-center gap-2.5 text-[13px]">
-        <input
-          type="checkbox"
-          name="emailOnMention"
-          defaultChecked={emailOnMention}
-          className="h-3.5 w-3.5 rounded border-line-strong accent-[var(--accent)]"
-        />
-        Wenn mich jemand mit @ erwähnt
-      </label>
-      <label className="flex cursor-pointer items-center gap-2.5 text-[13px]">
-        <input
-          type="checkbox"
-          name="emailOnComment"
-          defaultChecked={emailOnComment}
-          className="h-3.5 w-3.5 rounded border-line-strong accent-[var(--accent)]"
-        />
-        Bei Kommentaren auf Seiten, mit denen ich zu tun habe
-      </label>
-      <p className="text-[12.5px] text-faint">
-        Ohne konfiguriertes SMTP verschickt die Instanz keine E-Mails; die
-        Glocke in der App funktioniert unabhängig davon.
-      </p>
-      <Status state={state} />
-      <Button type="submit" disabled={pending}>
-        {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Speichern"}
       </Button>
     </form>
   );

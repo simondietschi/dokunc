@@ -1,14 +1,11 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import { createReadStream } from "node:fs";
+import { stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { resolveShare } from "@/lib/share";
-import {
-  UPLOAD_DIR,
-  contentDisposition,
-  isInlineType,
-  isSafeFilename,
-} from "@/lib/uploads";
+import { fileResponseHeaders } from "@/lib/attachments";
+import { isSafeFilename, uploadPath } from "@/lib/uploads";
 
 export const runtime = "nodejs";
 
@@ -16,15 +13,19 @@ export const runtime = "nodejs";
  * Datei aus einer freigegebenen Seite.
  *
  * Der Freigabelink ersetzt hier die Anmeldung — deshalb wird er bei
- * jeder Datei erneut geprüft, und die Datei muss zum selben Space
- * gehören wie die freigegebene Seite.
+ * jeder Datei erneut geprüft. Der Space allein genügt dabei nicht:
+ * hängt der Anhang an einer Seite, muss diese Seite selbst von der
+ * Freigabe gedeckt sein (die freigegebene oder, bei `includeChildren`,
+ * eine ihrer Unterseiten). Sonst wäre ein einziger Freigabelink der
+ * Schlüssel zu allen Dateien des ganzen Space.
  */
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string; name: string }> },
 ) {
   const { id, name } = await params;
-  if (!isSafeFilename(name)) {
+  const full = uploadPath(name);
+  if (!isSafeFilename(name) || !full) {
     return new NextResponse("Bad request", { status: 400 });
   }
 
@@ -32,35 +33,33 @@ export async function GET(
   const share = await resolveShare(id, token);
   if (!share) return new NextResponse("Not found", { status: 404 });
 
-  const upload = await prisma.upload.findFirst({
-    where: { filename: name, spaceId: share.spaceId },
-    select: { originalName: true, contentType: true },
+  const attachment = await prisma.attachment.findFirst({
+    where: { storedName: name, spaceId: share.spaceId },
+    select: { name: true, mimeType: true, pageId: true },
   });
-  if (!upload) return new NextResponse("Not found", { status: 404 });
+  if (!attachment) return new NextResponse("Not found", { status: 404 });
 
-  const base = path.resolve(UPLOAD_DIR);
-  const full = path.resolve(base, name);
-  if (full !== path.join(base, name) || !full.startsWith(base + path.sep)) {
-    return new NextResponse("Bad request", { status: 400 });
+  // Anhänge älterer Uploads haben keinen Seitenbezug; für sie bleibt es
+  // beim Space der Freigabe.
+  if (attachment.pageId && attachment.pageId !== share.page.id) {
+    const owner = await resolveShare(id, token, attachment.pageId);
+    if (!owner) return new NextResponse("Not found", { status: 404 });
   }
 
-  const inline = isInlineType(upload.contentType);
+  let size: number;
   try {
-    const data = await readFile(full);
-    return new NextResponse(new Uint8Array(data), {
-      headers: {
-        "Content-Type": inline
-          ? upload.contentType
-          : "application/octet-stream",
-        "Content-Disposition": contentDisposition(
-          upload.originalName || name,
-          inline,
-        ),
-        "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "private, max-age=3600",
-      },
-    });
+    const s = await stat(full);
+    if (!s.isFile()) return new NextResponse("Not found", { status: 404 });
+    size = s.size;
   } catch {
     return new NextResponse("Not found", { status: 404 });
   }
+
+  const wantInline = new URL(req.url).searchParams.get("inline") === "1";
+  const headers = fileResponseHeaders(attachment, size, wantInline);
+
+  const stream = Readable.toWeb(
+    createReadStream(full),
+  ) as unknown as ReadableStream<Uint8Array>;
+  return new NextResponse(stream, { headers });
 }

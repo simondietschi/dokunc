@@ -42,8 +42,8 @@ export function inviteExpiry(now = Date.now()): Date {
 }
 
 /** Rollen, die per Einladung vergeben werden dürfen (kein OWNER). */
-export const INVITABLE_ROLES = ["ADMIN", "MEMBER", "VIEWER"] as const;
-export type InvitableRole = (typeof INVITABLE_ROLES)[number];
+const INVITABLE_ROLES = ["ADMIN", "MEMBER", "VIEWER"] as const;
+type InvitableRole = (typeof INVITABLE_ROLES)[number];
 
 export function isInvitableRole(v: unknown): v is InvitableRole {
   return (

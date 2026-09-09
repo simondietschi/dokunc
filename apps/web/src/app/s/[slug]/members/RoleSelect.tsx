@@ -8,6 +8,8 @@ import { changeRoleAction } from "./actions";
  * Liste: sie stammen aus derselben Regel, die die Server Action
  * durchsetzt (lib/role-policy). Was hier fehlt, wird auch serverseitig
  * abgelehnt — die Auswahl kann also gar nicht erst ins Leere laufen.
+ * Damit deckt `disabled` auch den Fall ab, den main separat behandelt
+ * hat: die eigene Zeile und die Rolle eines OWNER bleiben gesperrt.
  */
 export function RoleSelect({
   slug,

@@ -97,6 +97,7 @@ export function Onboarding({ userName }: { userName: string }) {
             placeholder="Name deines ersten Space…"
             autoFocus
             required
+            minLength={2}
             className="h-12 flex-1 text-[15px]"
           />
           <Button type="submit" size="lg">
@@ -163,6 +164,7 @@ export function WaitingForInvite() {
           name="name"
           placeholder="Eigenen Space starten…"
           required
+          minLength={2}
           className="h-11 flex-1"
         />
         <Button type="submit">Space erstellen</Button>

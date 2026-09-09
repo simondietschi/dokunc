@@ -4,6 +4,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useRef,
   useState,
 } from "react";
 import type { LucideIcon } from "lucide-react";
@@ -25,8 +26,16 @@ export const SlashMenu = forwardRef<
   { items: SlashItem[] }
 >(function SlashMenu({ items }, ref) {
   const [active, setActive] = useState(0);
+  const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setActive(0), [items]);
+
+  // Tastaturnavigation: aktiven Eintrag in der scrollbaren Liste sichtbar halten.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-index="${active}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [active]);
 
   useImperativeHandle(ref, () => ({
     onKeyDown: (e) => {
@@ -61,6 +70,7 @@ export const SlashMenu = forwardRef<
 
   return (
     <div
+      ref={listRef}
       role="listbox"
       aria-label="Blöcke und Befehle"
       className="max-h-80 w-72 overflow-y-auto rounded-xl border border-line bg-elevated p-1.5 shadow-pop"
@@ -70,10 +80,17 @@ export const SlashMenu = forwardRef<
         return (
           <button
             key={item.title}
+            data-index={i}
             type="button"
             role="option"
             aria-selected={i === active}
             onMouseEnter={() => setActive(i)}
+            // preventDefault wie in der Toolbar: der mousedown darf den
+            // Fokus nicht aus dem Editor ziehen. Sonst verschiebt der
+            // Browser die Selektion, bevor der Befehl laeuft — der neue
+            // Block landet dann an einer anderen Stelle (ein Callout
+            // umschliesst z. B. den falschen Absatz).
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => item.command()}
             className={cn(
               "flex w-full items-center gap-3 rounded-lg px-2.5 py-2 text-left transition-colors",

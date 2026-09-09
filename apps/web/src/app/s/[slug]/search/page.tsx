@@ -4,14 +4,14 @@ import { FileText, SearchX } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { seesEverything, visiblePageSql } from "@/lib/page-access";
 import { loadSpace } from "@/lib/space-context";
-import { HL_START, HL_STOP, splitHighlights } from "@/lib/palette";
+import { HL_START, HL_STOP, likeEscape, splitHighlights } from "@/lib/palette";
 
 export const metadata: Metadata = {
   title: "Suche",
   description: "Volltextsuche in diesem Space.",
 };
 
-type Row = { id: string; title: string; snippet: string };
+type Row = { id: string; title: string; snippet: string; isTemplate: boolean };
 
 export default async function SearchPage({
   params,
@@ -30,23 +30,39 @@ export default async function SearchPage({
 
   let results: Row[] = [];
   if (query) {
+    // Titel-Treffer (auch Wortanfaenge) UND Volltext — dieselbe Regel wie
+    // in der ⌘K-Palette. Ohne den ILIKE-Zweig fand die Palette Seiten,
+    // die diese Seite dann nicht mehr anzeigte (Volltext matcht nur ganze
+    // Woerter).
+    const like = `%${likeEscape(query)}%`;
     results = await prisma.$queryRaw<Row[]>`
-      SELECT p.id, p.title,
-        ts_headline('simple', p."textContent",
-          plainto_tsquery('simple', ${query}),
-          ${`StartSel=${HL_START},StopSel=${HL_STOP},MaxFragments=1,MaxWords=24,MinWords=6`}) AS snippet
+      SELECT p.id, p.title, p."isTemplate",
+        CASE
+          WHEN to_tsvector('simple', coalesce(p."textContent", ''))
+               @@ plainto_tsquery('simple', ${query})
+          THEN ts_headline('simple', p."textContent",
+            plainto_tsquery('simple', ${query}),
+            ${`StartSel=${HL_START},StopSel=${HL_STOP},MaxFragments=1,MaxWords=24,MinWords=6`})
+          ELSE ''
+        END AS snippet
       FROM "Page" p
       WHERE p."spaceId" = ${space.id}
         AND p."deletedAt" IS NULL
+        -- Geschuetzte Seiten nur dort, wo sie freigegeben sind.
         AND ${visiblePageSql(user.id, seesEverything(role) ? [space.id] : [])}
-        AND to_tsvector('simple',
-              coalesce(p.title,'') || ' ' || coalesce(p."textContent",''))
-            @@ plainto_tsquery('simple', ${query})
-      ORDER BY ts_rank(
-        to_tsvector('simple',
-          coalesce(p.title,'') || ' ' || coalesce(p."textContent",'')),
-        plainto_tsquery('simple', ${query})
-      ) DESC
+        AND (
+          p.title ILIKE ${like}
+          OR to_tsvector('simple',
+               coalesce(p.title,'') || ' ' || coalesce(p."textContent",''))
+             @@ plainto_tsquery('simple', ${query})
+        )
+      ORDER BY (p.title ILIKE ${like}) DESC,
+        ts_rank(
+          to_tsvector('simple',
+            coalesce(p.title,'') || ' ' || coalesce(p."textContent",'')),
+          plainto_tsquery('simple', ${query})
+        ) DESC,
+        p."updatedAt" DESC
       LIMIT ${pageSize} OFFSET ${offset}
     `;
   }
@@ -85,7 +101,14 @@ export default async function SearchPage({
             >
               <FileText className="mt-0.5 h-4 w-4 shrink-0 text-faint group-hover:text-accent" />
               <div className="min-w-0">
-                <p className="font-medium tracking-tight">{r.title}</p>
+                <p className="flex items-center gap-2 font-medium tracking-tight">
+                  <span className="truncate">{r.title}</span>
+                  {r.isTemplate && (
+                    <span className="shrink-0 rounded-full border border-accent/30 bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
+                      Vorlage
+                    </span>
+                  )}
+                </p>
                 {r.snippet && (
                   <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-muted">
                     {splitHighlights(r.snippet).map((seg, j) =>

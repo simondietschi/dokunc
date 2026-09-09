@@ -5,7 +5,6 @@ import { prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { str } from "@/lib/form";
-import { sendCommentEmail } from "@/lib/mail";
 import { publishNotification } from "@/lib/notify-bus";
 import { filterByPageAccess, visiblePageWhere } from "@/lib/page-access";
 
@@ -34,6 +33,15 @@ export async function createThreadAction(form: FormData) {
   });
   if (!page) return;
 
+  // Die Thread-ID kommt vom Client (sie wird zeitgleich als Mark im
+  // Dokument gesetzt). Kollidiert sie mit einem bestehenden Kommentar,
+  // wäre der Unique-Constraint-Fehler ein 500 — hier still abbrechen.
+  const taken = await prisma.comment.findUnique({
+    where: { id: threadId },
+    select: { id: true },
+  });
+  if (taken) return;
+
   await prisma.comment.create({
     data: {
       id: threadId,
@@ -43,7 +51,7 @@ export async function createThreadAction(form: FormData) {
       anchorText,
     },
   });
-  await notifyNewThread(pageId, space.id, threadId, user.id, body);
+  await notifyNewThread(pageId, space.id, threadId, user.id);
   revalidatePath(`/s/${space.slug}/p/${pageId}`);
 }
 
@@ -60,7 +68,6 @@ async function notifyNewThread(
   spaceId: string,
   commentId: string,
   actorId: string,
-  body: string,
 ): Promise<void> {
   const [commenters, editors, followers] = await Promise.all([
     prisma.comment.findMany({
@@ -100,17 +107,21 @@ async function notifyNewThread(
     pageId,
     commentId,
     actorId,
-    body,
     isReply: false,
   });
 }
 
 /**
- * Schreibt Benachrichtigungen und verschickt die zugehörigen E-Mails.
+ * Schreibt die Benachrichtigungen in die Datenbank.
  *
- * Nur an aktuelle Mitglieder: wer den Space verlassen hat, soll nichts
- * mehr über Inhalte erfahren, die er nicht mehr sieht. Der Mailversand
- * läuft nach dem Schreiben und kippt die Aktion nie.
+ * Nur an Personen mit aktuellem Zugang: wer den Space verlassen hat oder
+ * die geschützte Seite nicht öffnen darf, soll nichts mehr über deren
+ * Inhalte erfahren.
+ *
+ * Der Mailversand passiert hier bewusst NICHT: der Dispatcher im
+ * Collab-Prozess arbeitet die Warteschlange über Notification.emailedAt
+ * ab und beachtet dabei den Zustellmodus (Sofort, Täglich, Aus). Ein
+ * zusätzlicher Sofortversand an dieser Stelle würde jede Mail doppeln.
  */
 async function deliverCommentNotifications(opts: {
   recipients: string[];
@@ -118,7 +129,6 @@ async function deliverCommentNotifications(opts: {
   pageId: string;
   commentId: string;
   actorId: string;
-  body: string;
   isReply: boolean;
 }): Promise<void> {
   const members = await prisma.user.findMany({
@@ -137,7 +147,7 @@ async function deliverCommentNotifications(opts: {
         },
       ],
     },
-    select: { id: true, email: true, emailOnComment: true, isActive: true },
+    select: { id: true },
   });
   const allowed = await filterByPageAccess(opts.pageId, members);
   if (allowed.length === 0) return;
@@ -157,33 +167,6 @@ async function deliverCommentNotifications(opts: {
 
   // Glocke sofort aktualisieren, nicht erst beim nächsten Aufruf.
   await publishNotification(allowed.map((m) => m.id));
-
-  const wantMail = allowed.filter((m) => m.isActive && m.emailOnComment);
-  if (wantMail.length === 0) return;
-
-  const [actor, page] = await Promise.all([
-    prisma.user.findUnique({
-      where: { id: opts.actorId },
-      select: { name: true },
-    }),
-    prisma.page.findUnique({
-      where: { id: opts.pageId },
-      select: { title: true },
-    }),
-  ]);
-
-  await Promise.all(
-    wantMail.map((m) =>
-      sendCommentEmail({
-        to: m.email,
-        actorName: actor?.name ?? "Jemand",
-        pageTitle: page?.title || "Ohne Titel",
-        pageId: opts.pageId,
-        body: opts.body,
-        isReply: opts.isReply,
-      }),
-    ),
-  );
 }
 
 export async function replyAction(form: FormData) {
@@ -215,7 +198,9 @@ export async function replyAction(form: FormData) {
   });
 
   // Thread-Teilnehmende und Folgende benachrichtigen (ausser der
-  // antwortenden Person).
+  // antwortenden Person). Wer den Zugang verloren hat, fällt in
+  // deliverCommentNotifications heraus: sonst bekäme er weiterhin Titel
+  // und Auszug aus einem Space, den er nicht mehr sehen darf.
   const followers = await prisma.pageSubscription.findMany({
     where: { pageId: thread.pageId },
     select: { userId: true },
@@ -235,16 +220,23 @@ export async function replyAction(form: FormData) {
       pageId: thread.pageId,
       commentId: reply.id,
       actorId: user.id,
-      body,
       isReply: true,
     });
   }
   revalidatePath(`/s/${space.slug}/p/${thread.pageId}`);
 }
 
+/**
+ * Thread aufloesen oder wieder oeffnen. Der Zielzustand kommt aus dem
+ * Formular (`resolved`), es wird NICHT blind umgeschaltet: zwei
+ * gleichzeitige "Auflösen"-Klicks (oder ein doppelt abgeschicktes
+ * Formular) haetten den Thread sonst wieder geoeffnet — waehrend die
+ * Markierung im Text bereits entfernt ist und nicht zurueckkommt.
+ */
 export async function resolveThreadAction(form: FormData) {
   const { space, user, role } = await authorizeAction(form, "comment");
   const threadId = str(form, "threadId");
+  const resolved = str(form, "resolved") === "1";
   const thread = await prisma.comment.findFirst({
     where: {
       id: threadId,
@@ -262,7 +254,7 @@ export async function resolveThreadAction(form: FormData) {
 
   await prisma.comment.update({
     where: { id: thread.id },
-    data: { resolvedAt: thread.resolvedAt ? null : new Date() },
+    data: { resolvedAt: resolved ? (thread.resolvedAt ?? new Date()) : null },
   });
   revalidatePath(`/s/${space.slug}/p/${thread.pageId}`);
 }

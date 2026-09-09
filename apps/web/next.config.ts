@@ -46,17 +46,15 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@dokunc/db", "@dokunc/editor"],
+  transpilePackages: ["@dokunc/db", "@dokunc/editor", "@dokunc/mail"],
   poweredByHeader: false,
   experimental: {
     serverActions: {
       bodySizeLimit: "5mb",
-      // "localhost" nur in der Entwicklung: in Produktion duerfte
-      // sonst eine lokal laufende Seite Server Actions gegen die
-      // Instanz absetzen.
-      allowedOrigins: isProd
-        ? appUrlHost()
-        : ["localhost", ...appUrlHost()],
+      // "localhost" nur in der Entwicklung erlauben. In Produktion wäre
+      // es eine zusätzliche CSRF-Fläche: eine beliebige lokal laufende
+      // Seite dürfte sonst Server Actions dieser Instanz auslösen.
+      allowedOrigins: isProd ? appUrlHost() : ["localhost", ...appUrlHost()],
     },
   },
   async headers() {

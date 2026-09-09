@@ -18,7 +18,9 @@ const mem = new Map<string, { n: number; reset: number }>();
 
 /**
  * Der Fallback-Speicher räumt sich nicht von selbst: ohne diesen Schnitt
- * wüchse die Karte mit jeder je gesehenen Adresse weiter.
+ * wüchse die Karte mit jeder je gesehenen Adresse weiter. Bleiben danach
+ * immer noch zu viele Einträge übrig (lauter laufende Fenster), wird
+ * komplett geleert: Ratenbegrenzung ist Schutz, kein Buchhaltungssystem.
  */
 const MEM_MAX_ENTRIES = 10_000;
 function sweepMem(now: number): void {
@@ -26,6 +28,43 @@ function sweepMem(now: number): void {
   for (const [key, entry] of mem) {
     if (entry.reset < now) mem.delete(key);
   }
+  if (mem.size >= MEM_MAX_ENTRIES) mem.clear();
+}
+
+/**
+ * Zähler erhöhen und den Ablauf sicherstellen — in einem Rutsch und bei
+ * JEDEM Aufruf.
+ *
+ * Vorher wurde `expire` nur beim ersten Zugriff gesetzt. Brach die
+ * Verbindung genau dazwischen ab, blieb der Schlüssel ohne Ablauf
+ * liegen — und weil `resetLimit` nur nach einer erfolgreichen Anmeldung
+ * läuft, wäre das Konto dauerhaft ausgesperrt gewesen. `NX` verlängert
+ * ein laufendes Fenster nicht.
+ */
+async function bump(
+  r: Redis,
+  key: string,
+  windowSec: number,
+): Promise<number> {
+  const [[, n]] = (await r
+    .multi()
+    .incr(key)
+    .expire(key, windowSec, "NX")
+    .exec()) as [[Error | null, number], [Error | null, number]];
+  return n;
+}
+
+/** Zähler im Fallback-Speicher erhöhen; gibt den neuen Stand zurück. */
+function bumpMem(key: string, windowSec: number): number {
+  const now = Date.now();
+  sweepMem(now);
+  const entry = mem.get(key);
+  if (!entry || entry.reset < now) {
+    mem.set(key, { n: 1, reset: now + windowSec * 1000 });
+    return 1;
+  }
+  entry.n += 1;
+  return entry.n;
 }
 
 /**
@@ -41,36 +80,51 @@ export async function rateLimit(
   const r = client();
   if (r) {
     try {
-      const k = `dokunc:rl:${key}`;
-      /**
-       * Zähler und Ablauf in einem Rutsch, und der Ablauf bei JEDEM
-       * Aufruf.
-       *
-       * Vorher wurde `expire` nur beim ersten Zugriff gesetzt. Brach die
-       * Verbindung genau dazwischen ab, blieb der Schlüssel ohne Ablauf
-       * liegen — und weil `resetLimit` nur nach einer erfolgreichen
-       * Anmeldung läuft, wäre das Konto dauerhaft ausgesperrt gewesen.
-       * `NX` verlängert ein laufendes Fenster nicht.
-       */
-      const [[, n]] = (await r
-        .multi()
-        .incr(k)
-        .expire(k, windowSec, "NX")
-        .exec()) as [[Error | null, number], [Error | null, number]];
-      return n <= limit;
+      return (await bump(r, `dokunc:rl:${key}`, windowSec)) <= limit;
     } catch {
       /* fällt auf Memory zurück */
     }
   }
-  const now = Date.now();
-  sweepMem(now);
-  const entry = mem.get(key);
-  if (!entry || entry.reset < now) {
-    mem.set(key, { n: 1, reset: now + windowSec * 1000 });
-    return true;
+  return bumpMem(key, windowSec) <= limit;
+}
+
+/**
+ * Prüft den Zähler, OHNE ihn zu erhöhen. Für Limits, die nur Fehlschläge
+ * zählen sollen (Login): erst prüfen, dann — je nach Ausgang — `penalize`
+ * oder `resetLimit`. Ein erhöhender Zähler würde sonst auch erfolgreiche
+ * Anmeldungen verbrauchen: wer sich an mehreren Geräten anmeldet, sperrte
+ * sich damit selbst aus.
+ */
+export async function isRateLimited(
+  key: string,
+  limit: number,
+): Promise<boolean> {
+  const r = client();
+  if (r) {
+    try {
+      const raw = await r.get(`dokunc:rl:${key}`);
+      return Number(raw ?? 0) >= limit;
+    } catch {
+      /* fällt auf Memory zurück */
+    }
   }
-  entry.n += 1;
-  return entry.n <= limit;
+  const entry = mem.get(key);
+  if (!entry || entry.reset < Date.now()) return false;
+  return entry.n >= limit;
+}
+
+/** Fehlversuch zählen (Fenster startet beim ersten Treffer). */
+export async function penalize(key: string, windowSec: number): Promise<void> {
+  const r = client();
+  if (r) {
+    try {
+      await bump(r, `dokunc:rl:${key}`, windowSec);
+      return;
+    } catch {
+      /* fällt auf Memory zurück */
+    }
+  }
+  bumpMem(key, windowSec);
 }
 
 /**

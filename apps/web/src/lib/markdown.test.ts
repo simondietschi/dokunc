@@ -62,6 +62,23 @@ describe("toMarkdown()", () => {
     expect(md).toContain("graph TD;A-->B;");
   });
 
+  it("Anhang als Link mit Originalname", () => {
+    const md = toMarkdown(
+      doc([
+        {
+          type: "attachment",
+          attrs: {
+            src: "/api/files/abc123.pdf",
+            name: "Bericht Q3.pdf",
+            size: 1234,
+            mimeType: "application/pdf",
+          },
+        },
+      ]),
+    );
+    expect(md).toContain("[Bericht Q3.pdf](/api/files/abc123.pdf)");
+  });
+
   it("Tabelle als Markdown-Table", () => {
     const md = toMarkdown(
       doc([

@@ -37,10 +37,13 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
     await page.fill('input[name="email"]', EMAIL);
     await page.fill('input[name="password"]', PASS);
     await page.click('button[type="submit"]');
+    // Ohne gültige Einladung antwortet /register bewusst generisch (die
+    // Existenz eines Kontos wird nie preisgegeben) — beide Meldungen
+    // bedeuten hier "gibt es schon, also einloggen".
     const outcome = await Promise.race([
       page.waitForURL("**/spaces").then(() => "ok" as const),
       page
-        .getByText("bereits registriert")
+        .getByText(/bereits registriert|nur per Einladung/)
         .waitFor({ timeout: 15_000 })
         .then(() => "exists" as const),
     ]);
@@ -65,6 +68,10 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
       await page.click("text=Space erstellen");
     }
     await page.waitForURL("**/s/**");
+    // Die Space-Startseite ist ein Dashboard — zur ersten Seite in der
+    // Sidebar navigieren.
+    await page.locator('aside a[href*="/p/"]').first().click();
+    await page.waitForURL("**/p/**");
   });
 
   await test.step("Editor rendert und verbindet sich (Live)", async () => {
@@ -94,6 +101,49 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
     ).toBeVisible();
   });
 
+  await test.step("Toolbar wirkt auf die aktuelle Auswahl (nach dem Tippen)", async () => {
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Fetter Text");
+    await page.keyboard.down("Shift");
+    for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowLeft");
+    await page.keyboard.up("Shift");
+    await page.click('button[aria-label="Fett"]');
+    await expect(
+      page.locator(".ProseMirror strong", { hasText: "Text" }),
+    ).toBeVisible();
+    // Aktiv-Zustand folgt der Auswahl (TipTap 3 rendert nicht pro Transaktion).
+    await expect(page.locator('button[aria-label="Fett"]')).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+  });
+
+  await test.step("Callout per Slash: Cursor bleibt im Block, Enter×2 verlässt ihn", async () => {
+    await page.keyboard.press("Control+End");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("/info");
+    await expect(page.getByText("Info-Callout")).toBeVisible();
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Im Callout");
+    await expect(page.locator(".dk-callout-body")).toContainText("Im Callout");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("Danach");
+    await expect(page.locator(".dk-callout-body")).not.toContainText("Danach");
+    await expect(page.locator(".ProseMirror > p", { hasText: "Danach" })).toBeVisible();
+  });
+
+  await test.step("Tabelle: Werkzeuge erscheinen in der Tabelle", async () => {
+    await page.keyboard.press("Control+End");
+    await page.keyboard.press("Enter");
+    await page.click('button[aria-label="Tabelle einfügen"]');
+    await expect(page.locator(".ProseMirror table")).toBeVisible();
+    await page.click('button[title="Zeile darunter einfügen"]');
+    await expect(page.locator(".ProseMirror tr")).toHaveCount(4);
+    await page.click('button[title="Tabelle löschen"]');
+    await expect(page.locator(".ProseMirror table")).toHaveCount(0);
+  });
+
   await test.step("Inhalt überlebt Reload (Yjs -> Postgres)", async () => {
     const url = page.url();
     // Hocuspocus speichert debounced — kurz warten.
@@ -109,6 +159,7 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
     await expect(page.locator(".ProseMirror")).toContainText(
       "E2E Überschrift",
     );
+    await expect(page.locator(".dk-callout-body")).toContainText("Im Callout");
   });
 
   await test.step("Realtime-Sync zwischen zwei Tabs", async () => {

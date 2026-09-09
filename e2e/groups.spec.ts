@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { clearRateLimits } from "./limits";
+import { resetLoginRateLimit } from "./helpers";
 import { reloadUntil } from "./wait";
 
 /**
@@ -22,7 +22,7 @@ test.describe.configure({ mode: "serial" });
 
 // Der Lauf meldet sich pro Test neu an und liefe sonst in die
 // IP-Bremse (30 Anmeldungen je fünf Minuten).
-test.beforeEach(clearRateLimits);
+test.beforeEach(resetLoginRateLimit);
 
 async function login(page: Page) {
   await page.goto("/login");

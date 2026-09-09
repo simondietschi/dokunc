@@ -12,9 +12,19 @@ import {
   parseInviteFromNext,
   verifyToken,
 } from "@/lib/invitations";
-import { rateLimit, resetLimit, clientKey } from "@/lib/rate-limit";
+import {
+  rateLimit,
+  resetLimit,
+  isRateLimited,
+  penalize,
+  clientKey,
+} from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
-import { startPending2fa, clearPending2fa, readPending2fa } from "@/lib/pending-2fa";
+import {
+  startPending2fa,
+  clearPending2fa,
+  readPending2fa,
+} from "@/lib/pending-2fa";
 import { unseal } from "@/lib/secret-box";
 import { verifyTotpStep } from "@/lib/totp";
 import { claimTotpStep, consumeRecoveryCode } from "@/lib/totp-store";
@@ -33,11 +43,14 @@ const loginSchema = z.object({
 export type ActionState = { error?: string } | undefined;
 
 /**
- * Bremse pro Konto, zusätzlich zur Bremse pro IP.
+ * Bremse pro Konto, zusätzlich zur Bremse pro IP. Greift auch dann,
+ * wenn die Versuche über wechselnde IPs kommen.
  *
  * Bewusst ein ablaufendes Fenster und keine harte Sperre: eine echte
  * Sperre liesse sich missbrauchen, um fremde Konten gezielt
- * auszusperren. Ein erfolgreicher Login räumt den Zähler sofort.
+ * auszusperren. Gezählt werden NUR Fehlversuche, ein erfolgreicher
+ * Login räumt den Zähler sofort. Ein Zähler, der jede Anfrage frisst,
+ * sperrte sonst aus, wer sich an mehreren Geräten anmeldet.
  */
 const LOGIN_ATTEMPTS = 8;
 const LOGIN_WINDOW_SEC = 900;
@@ -95,9 +108,7 @@ export async function registerAction(
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }
 
-  if (await prisma.user.findUnique({ where: { email } })) {
-    return { error: "E-Mail bereits registriert" };
-  }
+  const exists = !!(await prisma.user.findUnique({ where: { email } }));
 
   const isFirstUser = (await prisma.user.count()) === 0;
 
@@ -130,12 +141,21 @@ export async function registerAction(
     verifyToken(invite!.token, invitation.tokenHash);
 
   const decision = decideRegistration({ isFirstUser, hasValidInvite });
+  // Reihenfolge ist Absicht: ohne gültige Einladung gibt es IMMER dieselbe
+  // Antwort — auch für eine bereits registrierte Adresse. Sonst wäre
+  // /register ein Orakel dafür, wer auf dieser Instanz ein Konto hat
+  // (der Reset-Weg hält denselben Grundsatz bereits ein). Wer eine
+  // gültige Einladung für die Adresse vorweist, weiss ohnehin Bescheid
+  // und bekommt den hilfreichen Hinweis.
   if (!decision.allowed) {
     return {
       error:
         "Registrierung ist nur über einen gültigen Einladungslink möglich. " +
         "Öffne die Einladung aus deiner E-Mail.",
     };
+  }
+  if (exists) {
+    return { error: "E-Mail bereits registriert. Bitte melde dich an." };
   }
 
   const user = await prisma.user.create({
@@ -165,6 +185,8 @@ export async function loginAction(
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
+  // Zwei Bremsen: pro IP (ein Angreifer, viele Konten) UND pro Konto
+  // (viele IPs, ein Konto — Passwort-Raten aus einem Botnetz).
   if (
     !(await rateLimit(
       await clientKey("login"),
@@ -177,8 +199,9 @@ export async function loginAction(
 
   const email = normalizeEmail(parsed.data.email);
   const accountKey = `login:account:${email}`;
-  // Greift auch dann, wenn die Angriffe über wechselnde IPs kommen.
-  if (!(await rateLimit(accountKey, LOGIN_ATTEMPTS, LOGIN_WINDOW_SEC))) {
+  // Nur prüfen, nicht zählen: gezählt wird erst der Fehlversuch weiter
+  // unten (siehe LOGIN_ATTEMPTS).
+  if (await isRateLimited(accountKey, LOGIN_ATTEMPTS)) {
     await audit({
       action: "auth.login_failed",
       metadata: { email, reason: "throttled" },
@@ -202,6 +225,7 @@ export async function loginAction(
     ? await bcrypt.compare(parsed.data.password, user.passwordHash)
     : await bcrypt.compare(parsed.data.password, DUMMY_HASH).then(() => false);
   if (!user || !passwordOk) {
+    await penalize(accountKey, LOGIN_WINDOW_SEC);
     await audit({
       action: "auth.login_failed",
       actorId: user?.id ?? null,

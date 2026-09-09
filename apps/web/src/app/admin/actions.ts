@@ -7,6 +7,7 @@ import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
 import { canDeleteUser } from "@/lib/account-deletion";
 import { orphanedSpacesFor } from "@/app/account/actions";
+import { deleteSpaceWithUploads } from "@/lib/file-access";
 
 export async function toggleUserActiveAction(form: FormData) {
   const me = await requireAdmin();
@@ -51,8 +52,13 @@ export async function toggleUserAdminAction(form: FormData) {
   if (!target) return;
 
   if (target.isAdmin) {
-    const admins = await prisma.user.count({ where: { isAdmin: true } });
-    if (admins <= 1) return; // letzten Admin nicht degradieren
+    // Nur AKTIVE Admins zaehlen: ein gesperrtes Admin-Konto kann sich
+    // nicht anmelden und haelt die Instanz sonst scheinbar am Leben,
+    // waehrend in Wahrheit niemand mehr verwalten kann.
+    const admins = await prisma.user.count({
+      where: { isAdmin: true, isActive: true },
+    });
+    if (admins <= 1 && target.isActive) return; // letzten Admin nicht degradieren
   }
   await prisma.user.update({
     where: { id: userId },
@@ -115,8 +121,9 @@ export async function deleteSpaceAction(form: FormData) {
     targetId: space.id,
     metadata: { name: space.name, slug: space.slug },
   });
-  // Harte Löschung inkl. Kaskaden (Seiten, Mitglieder, Einladungen).
-  await prisma.space.delete({ where: { id: space.id } });
+  // Harte Löschung inkl. Kaskaden (Seiten, Mitglieder, Einladungen) —
+  // und der hochgeladenen Dateien, die sonst verwaist liegen bleiben.
+  await deleteSpaceWithUploads(space.id);
   revalidatePath("/admin");
 }
 

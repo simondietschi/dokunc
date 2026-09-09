@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
+import { after } from "next/server";
 import { Link2 } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
@@ -10,8 +12,12 @@ import type {
   GrantRow,
 } from "./AccessDialog";
 import { can } from "@/lib/permissions";
+import { resolveCollabUrl } from "@/lib/collab-url";
+import { loadAncestors } from "@/lib/page-ancestors";
+import { recordPageVisit } from "@/lib/page-visits";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
+import { PageAttachments } from "@/components/space/PageAttachments";
 
 /** Seitentitel im Browser-Tab und im Verlauf statt eines globalen Titels. */
 export async function generateMetadata({
@@ -68,6 +74,7 @@ export default async function PageView({
     select: {
       id: true,
       title: true,
+      parentId: true,
       updatedAt: true,
       icon: true,
       coverUrl: true,
@@ -78,18 +85,15 @@ export default async function PageView({
   });
   if (!page) notFound();
 
-  // Besuch vermerken (für "zuletzt besucht" in der Seitenleiste).
-  // Fehler hier dürfen die Seite nicht kippen.
-  await prisma.pageVisit
-    .upsert({
-      where: { userId_pageId: { userId: user.id, pageId: page.id } },
-      create: { userId: user.id, pageId: page.id },
-      update: { visitedAt: new Date() },
-    })
-    .catch(() => {});
+  // "Zuletzt besucht": nach dem Senden der Antwort, nie blockierend.
+  after(() => recordPageVisit(user.id, page.id));
 
-  const collabUrl =
-    process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:3001";
+  const requestHeaders = await headers();
+  const collabUrl = resolveCollabUrl({
+    configured: process.env.NEXT_PUBLIC_COLLAB_URL,
+    host: requestHeaders.get("host"),
+    proto: requestHeaders.get("x-forwarded-proto"),
+  });
 
   // Zugriffsangaben nur für die Seitenverwaltung: sonst wäre es ein
   // Verzeichnis aller Konten des Space für jede Person.
@@ -97,7 +101,17 @@ export default async function PageView({
     ? await loadPageAccess(space.id, page)
     : EMPTY_ACCESS;
 
-  const [backlinks, comments, lastVersion, subscription, favorite, shares] =
+  const ancestorsPromise = loadAncestors(space.id, page.parentId);
+  const [
+    backlinks,
+    comments,
+    lastVersion,
+    subscription,
+    favorite,
+    shares,
+    attachments,
+    childCount,
+  ] =
     await Promise.all([
     prisma.pageLink.findMany({
       where: {
@@ -129,7 +143,7 @@ export default async function PageView({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },
       select: { id: true },
     }),
-    prisma.pageFavorite.findUnique({
+    prisma.favorite.findUnique({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },
       select: { id: true },
     }),
@@ -144,7 +158,25 @@ export default async function PageView({
       },
       take: 20,
     }),
+    prisma.attachment.findMany({
+      where: { pageId: page.id },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+      select: {
+        id: true,
+        name: true,
+        size: true,
+        mimeType: true,
+        storedName: true,
+        createdAt: true,
+        uploader: { select: { name: true } },
+      },
+    }),
+    prisma.page.count({
+      where: { parentId: page.id, deletedAt: null },
+    }),
   ]);
+  const ancestors = await ancestorsPromise;
 
   return (
     <div>
@@ -175,6 +207,8 @@ export default async function PageView({
           includeChildren: s.includeChildren,
         }))}
         access={access}
+        breadcrumbs={{ spaceName: space.name, ancestors }}
+        hasChildren={childCount > 0}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">
@@ -198,6 +232,18 @@ export default async function PageView({
             </ul>
           </section>
         )}
+
+        <PageAttachments
+          items={attachments.map((a) => ({
+            id: a.id,
+            name: a.name,
+            size: a.size,
+            mimeType: a.mimeType,
+            url: `/api/files/${a.storedName}`,
+            createdAt: a.createdAt,
+            uploader: a.uploader?.name ?? null,
+          }))}
+        />
 
         <CommentsPanel
           slug={slug}

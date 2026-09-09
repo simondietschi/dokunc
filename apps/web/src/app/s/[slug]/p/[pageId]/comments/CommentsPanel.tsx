@@ -26,7 +26,7 @@ import {
 } from "./actions";
 
 type Author = { id: string; name: string } | null;
-export type ThreadData = {
+type ThreadData = {
   id: string;
   body: string;
   anchorText: string | null;
@@ -45,7 +45,7 @@ export type ThreadData = {
 };
 
 /** Wird vom Editor-Toolbar-Button gefeuert (Text markiert -> Thread). */
-export type NewThreadEvent = CustomEvent<{
+type NewThreadEvent = CustomEvent<{
   id: string;
   anchorText: string;
 }>;
@@ -355,6 +355,15 @@ function Thread({
   const router = useRouter();
   const [replying, setReplying] = useState(false);
   const { toast } = useToast();
+  // Aufloesen/Wiederoeffnen sofort anzeigen. Sobald der Server den neuen
+  // Stand liefert, folgt die Anzeige wieder der Prop — waehrend des
+  // Renderns, ohne Effekt und ohne Zwischenframe.
+  const [seenResolved, setSeenResolved] = useState(thread.resolved);
+  const [resolved, setResolved] = useState(thread.resolved);
+  if (seenResolved !== thread.resolved) {
+    setSeenResolved(thread.resolved);
+    setResolved(thread.resolved);
+  }
 
   return (
     <li
@@ -362,7 +371,7 @@ function Thread({
       className={cn(
         "rounded-xl border bg-surface p-4 shadow-soft transition-colors duration-300",
         active ? "border-accent ring-2 ring-accent-soft" : "border-line",
-        thread.resolved && "opacity-60",
+        resolved && "opacity-60",
       )}
     >
       {thread.anchorText && (
@@ -455,15 +464,19 @@ function Thread({
               </button>
               <form
                 action={async (fd) => {
+                  const wasResolved = resolved;
+                  setResolved(!wasResolved);
                   await resolveThreadAction(fd);
-                  if (!thread.resolved) removeMark(thread.id);
+                  // Die Markierung im Text bleibt bewusst stehen: sie
+                  // käme beim Wiedereröffnen nicht zurück, und ohne sie
+                  // fände der Sprung zur Textstelle nichts mehr.
                   // Erledigte Threads wandern in den eingeklappten
                   // Bereich, deshalb hier sagen, wohin sie verschwinden.
                   toast({
-                    title: thread.resolved
+                    title: wasResolved
                       ? "Thread wieder geöffnet"
                       : "Thread erledigt",
-                    description: thread.resolved
+                    description: wasResolved
                       ? undefined
                       : "Zu finden im Bereich „erledigt“ am Ende der Kommentare.",
                     variant: "success",
@@ -473,8 +486,14 @@ function Thread({
               >
                 <input type="hidden" name="slug" value={slug} />
                 <input type="hidden" name="threadId" value={thread.id} />
+                {/* Zielzustand, nicht "umschalten": siehe Server-Action. */}
+                <input
+                  type="hidden"
+                  name="resolved"
+                  value={resolved ? "0" : "1"}
+                />
                 <button className="inline-flex items-center gap-1 text-[13px] text-muted hover:text-ink">
-                  {thread.resolved ? (
+                  {resolved ? (
                     <>
                       <RotateCcw className="h-3.5 w-3.5" />
                       Wieder öffnen
@@ -528,9 +547,13 @@ function CommentRow({
       <div className="min-w-0 flex-1">
         <p className="text-[13px]">
           <span className="font-medium">{author?.name ?? "Gelöscht"}</span>
+          {/* Lokale Zeitzone: Server und Browser formatieren
+              unterschiedlich — der Unterschied ist erwartet und darf
+              keinen Hydration-Fehler ausloesen. */}
           <time
             dateTime={createdAt}
             className="ml-2 text-faint"
+            suppressHydrationWarning
           >
             {new Date(createdAt).toLocaleString("de-CH", {
               dateStyle: "medium",

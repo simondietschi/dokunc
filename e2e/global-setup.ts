@@ -18,7 +18,10 @@ export default async function globalSetup() {
   await client.connect();
   try {
     await client.query(
-      'TRUNCATE "User","Space","SpaceMember","Page","PageVersion","CollabDocument","SpaceInvitation","PasswordResetToken","PageLink","Comment","Notification","PageChunk","Upload","AuditLog","Session","PageSubscription","PageFavorite","PageVisit","PageShare","TotpRecoveryCode","Group","GroupMember","SpaceGroup","PageGrant" CASCADE',
+      // Nach dem vereinigten Schema: Attachment statt Upload,
+      // Favorite statt PageFavorite. Eine falsche Tabelle hier
+      // bricht den gesamten Lauf schon im globalSetup ab.
+      `TRUNCATE "User","Space","SpaceMember","Page","PageVersion","CollabDocument","SpaceInvitation","PasswordResetToken","PageLink","Comment","Notification","PageChunk","Attachment","Favorite","PageVisit","AuditLog","Session","PageSubscription","PageShare","Group","GroupMember","SpaceGroup","PageGrant","TotpRecoveryCode" CASCADE`,
     );
   } finally {
     await client.end();

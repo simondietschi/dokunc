@@ -64,6 +64,8 @@ export async function GET(
       // Ein Vorschlag ist schon eine Auskunft: geschützte Seiten
       // dürfen hier nicht einmal mit dem Titel auftauchen.
       ...visiblePageWhere(user.id, role),
+      // Vorlagen sind keine Link-Ziele.
+      isTemplate: false,
       ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
     },
     select: { id: true, title: true },

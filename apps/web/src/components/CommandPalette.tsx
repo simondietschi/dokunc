@@ -14,6 +14,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Star,
   SunMedium,
   TextSearch,
 } from "lucide-react";
@@ -25,22 +26,25 @@ import {
   splitHighlights,
 } from "@/lib/palette";
 import type { SearchResponse } from "@/app/api/search/route";
+import type { FavoritesResponse } from "@/app/api/favorites/route";
 import { createPageAction } from "@/app/s/[slug]/actions";
 
 const OPEN_EVENT = "dokunc:cmdk";
 
 /** Öffnet die Palette von beliebiger Stelle aus (Buttons, Hints). */
-export function openPalette() {
+function openPalette() {
   window.dispatchEvent(new CustomEvent(OPEN_EVENT));
 }
 
 type Item = {
   key: string;
-  group: "Seiten" | "Spaces" | "Aktionen";
+  group: "Favoriten" | "Seiten" | "Spaces" | "Aktionen";
   icon: React.ReactNode;
   label: string;
   hint?: string;
   snippet?: string;
+  /** Kleines Badge hinter dem Label (z. B. "Vorlage"). */
+  badge?: string;
   run: () => void;
 };
 
@@ -52,6 +56,9 @@ export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [data, setData] = useState<SearchResponse>(EMPTY);
+  const [favorites, setFavorites] = useState<FavoritesResponse["favorites"]>(
+    [],
+  );
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
@@ -108,6 +115,23 @@ export function CommandPalette() {
     };
   }, [open]);
 
+  // Favoriten einmal pro Öffnen laden — Sprungziele bei leerer Eingabe.
+  useEffect(() => {
+    if (!open) return;
+    const controller = new AbortController();
+    fetch("/api/favorites", { signal: controller.signal })
+      .then(async (res) => {
+        if (res.ok) {
+          const body = (await res.json()) as FavoritesResponse;
+          setFavorites(body.favorites);
+        }
+      })
+      .catch(() => {
+        // Abgebrochen oder offline — ohne Favoriten weiterarbeiten.
+      });
+    return () => controller.abort();
+  }, [open]);
+
   // Debounced Suche (auch leer: liefert "Zuletzt aktualisiert").
   useEffect(() => {
     if (!open) return;
@@ -128,7 +152,11 @@ export function CommandPalette() {
           if (res.ok) setData(await res.json());
           setLoading(false);
         } catch {
-          // Abgebrochen oder offline — alte Ergebnisse stehen lassen.
+          // Ein Abbruch ist normal (jede Eingabe loest die vorige ab) —
+          // dann laeuft gleich der naechste Lauf. Bei einem echten
+          // Netzfehler muss der Spinner aber aufhoeren, sonst dreht er
+          // sich fuer immer und verdeckt den Leer-Zustand.
+          if (!controller.signal.aborted) setLoading(false);
         }
       },
       query ? 160 : 0,
@@ -156,7 +184,22 @@ export function CommandPalette() {
   // Enter bei schnellem Tippen veraltete Treffer.
   const stale = data.q !== query.trim().slice(0, 100);
   const items: Item[] = [];
+  const favoriteIds = new Set<string>();
+  if (!query.trim()) {
+    for (const f of favorites) {
+      favoriteIds.add(f.id);
+      items.push({
+        key: `fav:${f.id}`,
+        group: "Favoriten",
+        icon: <Star className="h-4 w-4" />,
+        label: f.title || "Untitled",
+        hint: f.spaceName,
+        run: () => go(`/s/${f.slug}/p/${f.id}`),
+      });
+    }
+  }
   for (const p of data.pages) {
+    if (favoriteIds.has(p.id)) continue;
     if (stale && !matchesQuery(p.title || "Untitled", query)) continue;
     items.push({
       key: `page:${p.id}`,
@@ -165,6 +208,7 @@ export function CommandPalette() {
       label: p.title || "Untitled",
       hint: p.spaceName,
       snippet: p.snippet,
+      badge: p.isTemplate ? "Vorlage" : undefined,
       run: () => go(`/s/${p.slug}/p/${p.id}`),
     });
   }
@@ -380,6 +424,11 @@ export function CommandPalette() {
                       <span className="truncate text-[14px] font-medium">
                         {item.label}
                       </span>
+                      {item.badge && (
+                        <span className="shrink-0 rounded-full border border-accent/30 bg-accent-soft px-1.5 py-px text-[10.5px] font-medium text-accent">
+                          {item.badge}
+                        </span>
+                      )}
                       {item.hint && (
                         <span className="shrink-0 text-[11.5px] text-faint">
                           {item.hint}

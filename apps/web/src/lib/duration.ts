@@ -1,29 +1,39 @@
 /**
- * Kurzschreibweise für Zeitspannen ("7d", "12h", "30m", "45s") in
- * Sekunden. Rein, damit testbar.
+ * Dauer im jose-Format ("7d", "12h", "90m", "3600s", "3600") in Sekunden.
+ * Rein, damit testbar.
  *
- * Wird für die Cookie-Laufzeit gebraucht: die war fest auf sieben Tage
- * verdrahtet und ignorierte JWT_EXPIRES_IN, sodass eine kürzer
- * eingestellte Sitzung trotzdem eine Woche im Browser stand.
+ * Gebraucht für die Lebensdauer des Session-Cookies: Cookie und JWT
+ * müssen gemeinsam ablaufen. Sonst hält der Browser entweder ein Cookie
+ * fest, dessen Token längst ungültig ist (scheinbar angemeldet, jede
+ * Aktion wirft einen zurück auf /login), oder er wirft ein noch gültiges
+ * Token weg (JWT_EXPIRES_IN grösser als die Cookie-Laufzeit). Vorher war
+ * die Cookie-Laufzeit fest auf sieben Tage verdrahtet und ignorierte
+ * JWT_EXPIRES_IN.
+ *
+ * Unlesbare oder nicht positive Werte fallen auf `fallback` zurück.
  */
-const UNITS: Record<string, number> = {
-  s: 1,
-  m: 60,
-  h: 3600,
-  d: 86400,
-  w: 604800,
-};
+export const DEFAULT_SESSION_SECONDS = 7 * 24 * 60 * 60;
 
-export function parseDurationSeconds(
+const DURATION_RE =
+  /^\s*(\d+(?:\.\d+)?)\s*(s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days|w|week|weeks)?\s*$/i;
+
+export function durationToSeconds(
   value: string | undefined,
-  fallbackSeconds: number,
+  fallback = DEFAULT_SESSION_SECONDS,
 ): number {
-  if (!value) return fallbackSeconds;
-  const match = value.trim().match(/^(\d+)\s*([smhdw])?$/i);
-  if (!match) return fallbackSeconds;
-  const amount = Number(match[1]);
-  if (!Number.isFinite(amount) || amount <= 0) return fallbackSeconds;
+  const m = value ? DURATION_RE.exec(value) : null;
+  if (!m) return fallback;
   // Ohne Einheit sind es Sekunden (so liest es auch jose).
-  const unit = (match[2] ?? "s").toLowerCase();
-  return amount * (UNITS[unit] ?? 1);
+  const unit = (m[2] ?? "s").toLowerCase();
+  const factor = unit.startsWith("w")
+    ? 7 * 24 * 60 * 60
+    : unit.startsWith("d")
+      ? 24 * 60 * 60
+      : unit.startsWith("h")
+        ? 60 * 60
+        : unit.startsWith("m")
+          ? 60
+          : 1;
+  const seconds = Math.floor(Number(m[1]) * factor);
+  return seconds > 0 ? seconds : fallback;
 }

@@ -29,6 +29,11 @@ export function codeBlockExtension(view?: () => unknown) {
   return base.configure({
     lowlight,
     defaultLanguage: null,
+    // Tab rueckt im Codeblock ein, statt den Fokus aus dem Editor zu
+    // nehmen. Stand vorher an StarterKits codeBlock, der hier
+    // abgeschaltet ist.
+    enableTabIndentation: true,
+    tabSize: 2,
     HTMLAttributes: { class: "dk-code" },
   });
 }

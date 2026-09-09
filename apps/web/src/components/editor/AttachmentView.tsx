@@ -2,66 +2,131 @@
 
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import {
+  Download,
+  ExternalLink,
+  File,
   FileArchive,
-  FileCode,
+  FileAudio,
+  FileCode2,
   FileImage,
   FileSpreadsheet,
   FileText,
-  Paperclip,
+  FileVideo,
+  Presentation,
+  type LucideIcon,
 } from "lucide-react";
-import { formatBytes } from "@dokunc/editor";
+import { isSafeAttachmentSrc } from "@dokunc/editor";
 import { cn } from "@/lib/cn";
+import { formatFileSize, fileIconKind, type FileIconKind } from "@/lib/file-meta";
 
-const ICONS = {
+const ICONS: Record<FileIconKind, LucideIcon> = {
   image: FileImage,
-  document: FileText,
+  pdf: FileText,
+  text: FileText,
+  spreadsheet: FileSpreadsheet,
+  presentation: Presentation,
   archive: FileArchive,
-  sheet: FileSpreadsheet,
-  code: FileCode,
-  other: Paperclip,
-} as const;
+  audio: FileAudio,
+  video: FileVideo,
+  code: FileCode2,
+  file: File,
+};
 
-/** Symbolgruppe nach Dateityp — grob, aber genug zum Wiedererkennen. */
-function iconKeyFor(mime: string, name: string): keyof typeof ICONS {
-  const ext = name.split(".").pop()?.toLowerCase() ?? "";
-  if (mime.startsWith("image/")) return "image";
-  if (mime === "application/pdf" || ext === "pdf") return "document";
-  if (["zip", "tar", "gz", "7z", "rar"].includes(ext)) return "archive";
-  if (["csv", "xls", "xlsx", "ods"].includes(ext)) return "sheet";
-  if (
-    ["json", "yml", "yaml", "xml", "ts", "js", "py", "sql", "log"].includes(ext)
-  ) {
-    return "code";
-  }
-  return "other";
+/** Kurze Typbezeichnung fuer die zweite Zeile der Karte. */
+function typeLabel(mimeType: string, name: string): string {
+  const idx = name.lastIndexOf(".");
+  const ext = idx >= 0 ? name.slice(idx + 1).toUpperCase() : "";
+  if (ext && ext.length <= 8) return ext;
+  return mimeType && mimeType !== "application/octet-stream"
+    ? mimeType
+    : "Datei";
 }
 
+/**
+ * Anhang-Karte im Editor: Symbol nach Typ, Name, Groesse, Download.
+ * Atom-Node: selektierbar (Klick auf die Karte) und per Backspace/Entf
+ * loeschbar wie andere Bloecke.
+ */
 export function AttachmentView({ node, selected }: NodeViewProps) {
+  // Unsichere Ziele (z. B. javascript:) werden nicht verlinkt.
+  const src = isSafeAttachmentSrc(node.attrs.src) ? node.attrs.src : null;
   const name = String(node.attrs.name ?? "Datei");
-  const url = String(node.attrs.url ?? "");
   const size = Number(node.attrs.size ?? 0);
-  const Icon = ICONS[iconKeyFor(String(node.attrs.mime ?? ""), name)];
+  const mimeType = String(node.attrs.mimeType ?? "");
+  const Icon = ICONS[fileIconKind(mimeType, name)];
+  const isPdf = mimeType === "application/pdf";
 
   return (
-    <NodeViewWrapper className="dk-attachment-wrap">
-      <a
-        href={url}
-        download={name}
-        // Ein Anhang gehört zum Dokument, nicht zur Bearbeitung: der
-        // Link bleibt auch im Editor klickbar.
+    <NodeViewWrapper
+      className="dk-attachment-wrap"
+      data-attachment=""
+      data-drag-handle=""
+    >
+      <div
+        className={cn(
+          "dk-attachment",
+          "flex items-center gap-3 rounded-xl border border-line bg-surface px-3.5 py-2.5 transition-colors",
+          selected ? "ring-2 ring-accent/60 border-transparent" : "hover:border-line-strong",
+        )}
+        // Ein Anhang gehört zum Dokument, nicht zur Bearbeitung: die
+        // Links bleiben auch im Editor klickbar.
         contentEditable={false}
-        className={cn("dk-attachment", selected && "dk-attachment--selected")}
       >
-        <Icon className="h-5 w-5 shrink-0 text-muted" />
+        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-subtle text-muted">
+          <Icon className="h-5 w-5" />
+        </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[13.5px] font-medium text-ink">
-            {name}
-          </span>
-          <span className="block text-[11.5px] text-faint">
-            {formatBytes(size)}
+          {src ? (
+            <a
+              href={src}
+              download={name}
+              target="_self"
+              className="dk-attachment-name block truncate text-[14px] font-medium text-ink no-underline hover:underline"
+              title={name}
+              data-attachment-link=""
+            >
+              {name}
+            </a>
+          ) : (
+            <span
+              className="block truncate text-[14px] font-medium text-ink"
+              title={name}
+            >
+              {name}
+            </span>
+          )}
+          <span className="block text-[12px] text-faint">
+            {typeLabel(mimeType, name)}
+            {size > 0 ? ` · ${formatFileSize(size)}` : ""}
           </span>
         </span>
-      </a>
+        {src && (
+          <span className="flex shrink-0 items-center gap-0.5">
+            {isPdf && (
+              <a
+                href={`${src}${src.includes("?") ? "&" : "?"}inline=1`}
+                target="_blank"
+                rel="noreferrer"
+                title="Im Browser öffnen"
+                aria-label="Im Browser öffnen"
+                className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-subtle hover:text-ink"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </a>
+            )}
+            <a
+              href={src}
+              download={name}
+              target="_self"
+              title="Herunterladen"
+              aria-label="Herunterladen"
+              className="grid h-8 w-8 place-items-center rounded-lg text-muted transition-colors hover:bg-subtle hover:text-ink"
+            >
+              <Download className="h-4 w-4" />
+            </a>
+          </span>
+        )}
+      </div>
     </NodeViewWrapper>
   );
 }

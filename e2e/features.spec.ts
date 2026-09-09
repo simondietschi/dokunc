@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { clearRateLimits } from "./limits";
+import { resetLoginRateLimit } from "./helpers";
 import { reloadUntil } from "./wait";
 
 /**
@@ -15,9 +15,10 @@ test.describe.configure({ mode: "serial" });
 
 // Der Lauf meldet sich pro Test neu an und liefe sonst in die
 // IP-Bremse (30 Anmeldungen je fünf Minuten).
-test.beforeEach(clearRateLimits);
+test.beforeEach(resetLoginRateLimit);
 
 async function login(page: Page) {
+  await resetLoginRateLimit();
   await page.goto("/login");
   await page.fill('input[name="email"]', EMAIL);
   await page.fill('input[name="password"]', PASS);
@@ -37,7 +38,10 @@ test("Wiki-Links erzeugen Backlinks", async ({ page }) => {
   // Zwei Seiten anlegen: Ziel + Quelle.
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar öffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   const slug = page.url().match(/\/s\/([^/]+)\//)![1];
 
   // Hilfsfunktion: neue Seite anlegen und WARTEN, bis der frische Editor
@@ -119,7 +123,10 @@ test("Kommentar-Thread anlegen und auflösen", async ({ page }) => {
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar öffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
 
   // Eigene Seite: die Startseite sammelt ueber die Suite hinweg
@@ -188,13 +195,18 @@ test("Diagramm-Blöcke einfügbar, Export liefert MD/HTML/Print", async ({
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**/p/**");
+  await page.waitForURL("**/s/**");
+  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar öffnen.
+  await page.locator('aside a[href*="/p/"]').first().click();
+  await page.waitForURL("**/p/**");
   await waitForLive(page);
   const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
 
-  // Excalidraw-Block per Slash-Menü
+  // Excalidraw-Block per Slash-Menü. Bewusst den letzten Absatz statt
+  // der Editor-Mitte anklicken: dort kann ein Atom-Block (z. B. die
+  // Excalidraw-Karte mit ihrer "Zeichnen"-Schaltfläche) liegen.
   const editor = page.locator(".ProseMirror");
-  await editor.click();
+  await editor.locator("p").last().click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
   await page.keyboard.type("/excali");
@@ -206,7 +218,7 @@ test("Diagramm-Blöcke einfügbar, Export liefert MD/HTML/Print", async ({
   ).toBeVisible({ timeout: 8000 });
 
   // draw.io-Block per Slash-Menü
-  await editor.click();
+  await editor.locator("p").last().click();
   await page.keyboard.press("Control+End");
   await page.keyboard.press("Enter");
   await page.keyboard.type("/drawio");

@@ -76,6 +76,8 @@ async function retrieveSemantic(
     where: {
       page: {
         deletedAt: null,
+        // Vorlagen sind Platzhalter-Strukturen, keine Wissensquellen.
+        isTemplate: false,
         ...visiblePagesAcrossSpaces(userId, await accessibleSpaces(userId)),
       },
     },
@@ -150,6 +152,7 @@ async function retrieveFts(
       spaceIds.length ? Prisma.join(spaceIds) : Prisma.sql`NULL`
     })
       AND p."deletedAt" IS NULL
+      AND p."isTemplate" = false
       AND ${visiblePageSql(userId, openSpaceIds)}
       AND to_tsvector('simple', c.text) @@ plainto_tsquery('simple', ${question})
     ORDER BY rank DESC

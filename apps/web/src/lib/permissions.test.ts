@@ -7,6 +7,10 @@ import {
   strongestRole,
 } from "./permissions";
 
+// Die Rollenvergabe selbst wird in role-policy.test.ts geprüft: dort
+// liegt seit der Härtung die einzige Fassung von canChangeRole und
+// canRemoveMember.
+
 describe("can()", () => {
   it("OWNER/ADMIN dürfen alles", () => {
     for (const r of ["OWNER", "ADMIN"] as const) {

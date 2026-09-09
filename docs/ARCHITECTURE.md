@@ -67,6 +67,12 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   textContent (für Suche/History), `searchVector` (tsvector), position, timestamps.
 - **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit.
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
+- **Attachment** — spaceId, pageId?, uploaderId?, storedName (zufälliger
+  Name auf der Platte, unique), name (Originalname), mimeType, size.
+  Bindet jede hochgeladene Datei an einen Space; `/api/files/<storedName>`
+  liefert sie nur an angemeldete Mitglieder dieses Space aus. Uploads aus
+  früheren Versionen ohne Datensatz werden beim ersten Abruf über die
+  referenzierende Seite zugeordnet und nachgetragen.
 
 Die **wirksame Rolle** einer Person in einem Space ist die stärkste aus
 eigener Mitgliedschaft und allen Gruppen, die dem Space zugeordnet sind
@@ -213,6 +219,80 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
 - [x] Export: Markdown, HTML (JSON→HTML über das geteilte Schema via
       @tiptap/html) und PDF (Gotenberg-Service im Compose; Fallback:
       Druckansicht /p/[id]/print mit window.print)
+- [x] Sicherheits-Audit: Space-Scoping aller Seiten-Actions (Umbenennen,
+      Elternseite, Versions-Rollback — die IDs kommen aus dem Formular),
+      Client-IP für das Rate-Limiting von rechts aus X-Forwarded-For
+      (TRUSTED_PROXY_HOPS), Login-Limit auch pro Konto, gedrosseltes
+      Reset-Einlösen, Server-Action-Origins in Prod ohne "localhost";
+      Export bettet Bilder als data:-URI ein (PDF/HTML self-contained)
+- [x] Zero-Config-Deployment: `docker compose up -d` läuft ohne .env
+      (APP_SECRET wird beim ersten Start erzeugt und im Volume app_data
+      gehalten, Collab-Adresse zur Laufzeit aus dem Host abgeleitet,
+      pnpm im Image vorinstalliert, DATABASE_URL-Platzhalter für
+      `prisma generate` im Build); CI startet den Stack als Test
+- [x] Navigation: Seiten verschieben/sortieren (movePageAction mit
+      Zyklus-Check per rekursiver CTE, kompakte Neunummerierung der
+      Geschwister; natives HTML5-Drag-and-Drop im Seitenbaum mit
+      optimistischer Anzeige, Dialog "Verschieben nach…" als
+      Tastatur-/A11y-Weg), Brotkrumen (Vorfahren per rekursiver CTE,
+      Kürzung langer Pfade) und Inhaltsverzeichnis aus den Überschriften
+      (sticky Panel bei genug Platz, sonst einklappbarer Block)
+- [x] Anhänge beliebigen Typs (Attachment-Modell mit Space-Bezug):
+      Upload mit Magic-Byte-Erkennung für Bilder, konservatives MIME-
+      Mapping nach Endung, zufälliger Speichername, Limit MAX_UPLOAD_MB;
+      Auslieferung nur für Space-Mitglieder (Bilder inline, PDF optional
+      in CSP-Sandbox, Rest als Download mit nosniff, privater Cache);
+      Editor-Block "attachment" (Slash-Befehl, Drag-and-drop, Einfügen),
+      Anhangsliste unter der Seite, Altbestand wird nachgetragen
+- [x] Favoriten & Zuletzt besucht: persönliche Favoriten (Favorite,
+      Stern in der Kopfzeile, einklappbarer Sidebar-Abschnitt, Palette),
+      Besuche via `after()` nach dem Rendern (PageVisit, pro Person auf
+      200 Einträge begrenzt), Space-Startseite als Dashboard statt
+      Redirect (Kennzahlen, Zuletzt besucht, Favoriten, Zuletzt
+      geändert), /spaces mit Einstiegen über alle Spaces
+- [x] Seitenvorlagen und Duplizieren: Vorlagen sind Seiten mit
+      `isTemplate` (gleicher Editor/Collab, nicht im Seitenbaum, nicht als
+      Wiki-Link-Ziel, Badge in Suche/Palette/Papierkorb), Verwaltung unter
+      /s/[slug]/templates, Standardvorlagen als ProseMirror-JSON
+      (`lib/builtin-templates.ts`), Picker in der Sidebar; Duplizieren als
+      tiefe Kopie in einer Transaktion (Kommentar-Marks entfernt, Kopie
+      direkt hinter dem Original, Collab seedet Yjs aus Page.content)
+- [x] Mail-Benachrichtigungen: Dispatcher im Collab-Prozess (Redis-Lock,
+      Sammelfenster für Sofort-Mails, täglicher Digest ab
+      DIGEST_HOUR_UTC, ohne SMTP nur Markierung), reine Planungslogik
+      planDispatch in packages/mail, Vorlagen mit Escaping, Einstellung
+      pro Person im Konto (Sofort / Täglich / Aus)
+- [x] Versionsvergleich: eigener Myers-Zeilen-Diff plus Wort-Diff auf
+      Markdown-Basis (lib/diff.ts), Vergleich einer Version gegen den
+      aktuellen Stand oder die vorherige Version, gerenderte Vorschau
+      über das geteilte Schema, Wiederherstellen aus der Vergleichsseite
+- [x] Space-Einstellungen (Name, Beschreibung, Emoji-Icon; Space verlassen
+      ausser als letzter Owner; Löschen nur durch Owner mit Namens-
+      Bestätigung inkl. Aufräumen der Upload-Dateien) und Import
+      (Markdown-Baum, Confluence-HTML-Export, Notion-Export) als reine,
+      getestete Pipeline in `apps/web/src/lib/import`: Zip entpacken mit
+      Limits und Traversal-Ablehnung -> Format erkennen -> Seitenbaum aus
+      Pfaden bzw. Confluence-Index/Breadcrumbs -> Markdown (marked, GFM)
+      bzw. HTML (eigener Tag-Rewriter für Export-Makros) über
+      `generateJSON` durch das geteilte Editor-Schema -> JSON-Nachbearbeitung
+      (Mermaid, Admonitions) -> zwei Durchläufe in der DB: erst alle Seiten
+      anlegen (IDs), dann Inhalte mit Wiki-Links/Backlinks und Bildern als
+      Attachment speichern; Route Handler mit Origin-Check, Rate-Limit,
+      `IMPORT_MAX_MB` und managePages-Prüfung
+- [x] Editor-Fehlerbereinigung: TipTap 3 rendert nicht mehr pro
+      Transaktion neu — Toolbar und KI-Menü lesen ihren Zustand über
+      `useEditorState` (der Aktiv-Zustand war eingefroren), jede Aktion
+      baut ihre Command-Chain erst beim Klick. React-NodeViews mit Inhalt
+      (Callout) gleichen nach dem Mount die DOM-Selektion ab
+      (`useCaretSync`), sonst tippte man hinter dem frisch eingefügten
+      Block weiter. Slash-/Mention-Popup (`SuggestionPopup`) klappt bei
+      Platzmangel nach oben und folgt beim Scrollen; Enter auf leerem
+      letztem Absatz verlässt den Callout; Tab rückt im Codeblock ein;
+      Tabellen-Werkzeuge in der Toolbar; Zellen `position: relative`
+      (Auswahl-Overlay und Spaltengriff hingen sonst am Editor-Container);
+      Link-Dialog normalisiert Eingaben (`lib/editor-text`), Cmd/Ctrl+Klick
+      öffnet Links beim Bearbeiten; KI-Antworten werden als Text statt
+      als HTML eingefügt
 - [x] Zwei-Faktor-Anmeldung: TOTP nach RFC 6238 (selbst gerechnet, gegen
       die Testvektoren der Norm geprüft), QR-Code zur Einrichtung,
       Geheimnis nur versiegelt in der Datenbank (`lib/secret-box`,
@@ -234,6 +314,7 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
       auch hier, damit er nicht an der Sicherheit des Anbieters hängt
 - [ ] Ausbaustufen: S3, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
+- [ ] Offene Härtung: Größenlimit für Yjs-Dokumente
 
 ## 7. Setup
 

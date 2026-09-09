@@ -15,6 +15,7 @@ export type SearchPage = {
   slug: string;
   spaceName: string;
   snippet: string;
+  isTemplate: boolean;
 };
 
 export type SearchResponse = {
@@ -74,6 +75,7 @@ export async function GET(req: Request) {
       select: {
         id: true,
         title: true,
+        isTemplate: true,
         space: { select: { slug: true, name: true } },
       },
     });
@@ -83,6 +85,7 @@ export async function GET(req: Request) {
       slug: p.space.slug,
       spaceName: p.space.name,
       snippet: "",
+      isTemplate: p.isTemplate,
     }));
     return NextResponse.json(body);
   }
@@ -93,6 +96,7 @@ export async function GET(req: Request) {
   // Hervorhebung sind kein HTML — der Client zerlegt sie sicher.
   body.pages = await prisma.$queryRaw<SearchPage[]>`
     SELECT p.id, p.title, s.slug, s.name AS "spaceName",
+      p."isTemplate",
       CASE
         WHEN to_tsvector('simple', coalesce(p."textContent", ''))
              @@ plainto_tsquery('simple', ${q})

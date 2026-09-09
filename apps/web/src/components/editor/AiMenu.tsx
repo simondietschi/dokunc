@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Editor } from "@tiptap/react";
+import { useEditorState, type Editor } from "@tiptap/react";
+import { Mapping } from "@tiptap/pm/transform";
+import type { Transaction } from "@tiptap/pm/state";
 import {
   Sparkles,
   Loader2,
@@ -12,6 +14,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useToast } from "@/components/ui/Toast";
+import { textToBlocks, textToInline } from "@/lib/editor-text";
 
 type Action = "improve" | "summarize" | "translate_en" | "translate_de" | "continue";
 
@@ -33,6 +36,11 @@ export function AiMenu({ editor }: { editor: Editor }) {
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+  // Live-Zustand der Auswahl (TipTap 3 rendert nicht pro Transaktion neu).
+  const hasSelection = useEditorState({
+    editor,
+    selector: ({ editor: e }) => !e.state.selection.empty,
+  });
 
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
@@ -52,6 +60,15 @@ export function AiMenu({ editor }: { editor: Editor }) {
   async function run(action: Action) {
     setOpen(false);
     const { from, to, empty } = editor.state.selection;
+    // Positionen ueber die Wartezeit hinweg mitfuehren: die KI-Anfrage
+    // dauert Sekunden, in denen Mitschreibende (oder eine gerade
+    // eintreffende Yjs-Aenderung) das Dokument verschieben. Mit den alten
+    // Zahlen zu schreiben wuerde fremden Text ueberschreiben.
+    const mapping = new Mapping();
+    const track = ({ transaction }: { transaction: Transaction }) => {
+      if (transaction.docChanged) mapping.appendMapping(transaction.mapping);
+    };
+    editor.on("transaction", track);
     const selected = empty
       ? ""
       : editor.state.doc.textBetween(from, to, "\n");
@@ -93,36 +110,37 @@ export function AiMenu({ editor }: { editor: Editor }) {
         return;
       }
 
+      // Auf den aktuellen Stand umgerechnete Positionen.
+      const mappedFrom = mapping.map(from, 1);
+      const mappedTo = mapping.map(to, -1);
       const chain = editor.chain().focus();
+      const blocks = textToBlocks(data.result);
       if (action === "improve" || action.startsWith("translate")) {
-        // Auswahl durch Ergebnis ersetzen.
-        chain.insertContentAt({ from, to }, data.result).run();
+        // Auswahl durch Ergebnis ersetzen — innerhalb eines Absatzes
+        // inline, sonst als Absätze.
+        const sameBlock = editor.state.doc
+          .resolve(mappedFrom)
+          .sameParent(editor.state.doc.resolve(mappedTo));
+        chain
+          .insertContentAt(
+            { from: mappedFrom, to: mappedTo },
+            sameBlock && blocks.length <= 1
+              ? textToInline(data.result)
+              : blocks,
+          )
+          .run();
       } else if (action === "summarize") {
         // Zusammenfassung unterhalb der Auswahl einfügen.
+        const $to = editor.state.doc.resolve(mappedTo);
+        const after = $to.depth > 0 ? $to.after(1) : to;
         chain
-          .insertContentAt(to, [
-            {
-              type: "callout",
-              attrs: { type: "info" },
-              content: [
-                {
-                  type: "paragraph",
-                  content: [{ type: "text", text: data.result }],
-                },
-              ],
-            },
+          .insertContentAt(after, [
+            { type: "callout", attrs: { type: "info" }, content: blocks },
           ])
           .run();
       } else {
         // Weiterschreiben: ans Dokumentende anfügen.
-        chain
-          .insertContentAt(editor.state.doc.content.size, [
-            {
-              type: "paragraph",
-              content: [{ type: "text", text: data.result }],
-            },
-          ])
-          .run();
+        chain.insertContentAt(editor.state.doc.content.size, blocks).run();
       }
     } catch {
       toast({
@@ -131,11 +149,10 @@ export function AiMenu({ editor }: { editor: Editor }) {
         variant: "error",
       });
     } finally {
+      editor.off("transaction", track);
       setBusy(false);
     }
   }
-
-  const hasSelection = !editor.state.selection.empty;
 
   return (
     <div ref={ref} className="relative">

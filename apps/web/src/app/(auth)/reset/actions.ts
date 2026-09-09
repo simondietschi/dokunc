@@ -88,6 +88,12 @@ export async function performResetAction(
   const parsed = pwSchema.safeParse({ password: form.get("password") });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
+  // Auch das Einlösen drosseln: sonst lässt sich zu einer bekannten
+  // Reset-ID unbegrenzt oft ein Token raten.
+  if (!(await rateLimit(await clientKey("reset-do"), 10, 900))) {
+    return { error: "Zu viele Versuche. Bitte später erneut." };
+  }
+
   const reset = await prisma.passwordResetToken.findUnique({
     where: { id },
   });
@@ -105,9 +111,6 @@ export async function performResetAction(
       metadata: { reason: "bad_reset_token" },
     });
     return { error: "Link ungültig oder abgelaufen." };
-  }
-  if (!(await rateLimit(await clientKey("reset-redeem"), 10, 900))) {
-    return { error: "Zu viele Versuche. Bitte später erneut." };
   }
 
   await prisma.$transaction([

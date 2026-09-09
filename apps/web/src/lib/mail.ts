@@ -1,20 +1,25 @@
 import "server-only";
 import {
   appUrl,
-  commentMail,
   escapeHtml,
-  layout,
-  mentionMail,
-  send,
-} from "@dokunc/mailer";
+  mailButton,
+  mailLayout,
+  sendMail,
+} from "@dokunc/mail";
 import { log } from "./log";
 
 /**
- * E-Mail-Versand der Web-App.
+ * Transaktionale Mails der Web-App (Passwort-Reset, Einladungen).
+ * Transport, Absender und HTML-Rahmen kommen aus @dokunc/mail, damit
+ * Web-App und Collab-/Worker-Prozess dieselbe SMTP-Konfiguration nutzen.
+ * Ohne SMTP wird der Link nur ins Log geschrieben (Dev-Fallback).
  *
- * Transport und Vorlagen liegen in `@dokunc/mailer`, weil der
- * Collab-Server dieselben braucht (Erwähnungen entstehen dort).
+ * Benachrichtigungs-Mails (Erwähnung, Kommentar) stehen bewusst NICHT
+ * hier: sie laufen über den Dispatcher im Collab-Prozess, der die
+ * Warteschlange in Notification.emailedAt abarbeitet. Ein zweiter
+ * Sofortversand aus einer Server Action würde jede Mail doppeln.
  */
+
 export function buildInviteUrl(invitationId: string, token: string): string {
   const u = new URL(`${appUrl()}/invite/${invitationId}`);
   u.searchParams.set("token", token);
@@ -31,18 +36,16 @@ export async function sendPasswordResetEmail(opts: {
   to: string;
   resetUrl: string;
 }): Promise<void> {
-  const sent = await send({
-    to: opts.to,
-    subject: "Passwort zurücksetzen — dokunc",
-    text: `Setze dein Passwort zurück:\n${opts.resetUrl}\n\nDer Link ist 1 Stunde gültig. Wenn du das nicht warst, ignoriere diese E-Mail.`,
-    html: layout({
-      heading: "Passwort zurücksetzen",
-      body: "<p>Klicke zum Zurücksetzen:</p>",
-      ctaLabel: "Neues Passwort setzen",
-      ctaUrl: opts.resetUrl,
-      footer: "Gültig für 1 Stunde. Nicht angefordert? E-Mail ignorieren.",
-    }),
+  const subject = "Passwort zurücksetzen — dokunc";
+  const text = `Setze dein Passwort zurück:\n${opts.resetUrl}\n\nDer Link ist 1 Stunde gültig. Wenn du das nicht warst, ignoriere diese E-Mail.`;
+  const html = mailLayout({
+    title: "Passwort zurücksetzen",
+    bodyHtml: `
+      <p style="color:#555;line-height:1.6">Klicke zum Zurücksetzen:</p>
+      ${mailButton(opts.resetUrl, "Neues Passwort setzen")}
+      <p style="color:#999;font-size:12px">Gültig für 1 Stunde. Nicht angefordert? E-Mail ignorieren.</p>`,
   });
+  const sent = await sendMail({ to: opts.to, subject, text, html });
   if (!sent) {
     log.warn(
       { to: opts.to, url: opts.resetUrl },
@@ -58,59 +61,27 @@ export async function sendInvitationEmail(opts: {
   role: string;
   inviteUrl: string;
 }): Promise<void> {
-  const sent = await send({
-    to: opts.to,
-    subject: `Einladung zu „${opts.spaceName}" auf dokunc`,
-    text: `${opts.inviterName} lädt dich als ${opts.role} in den Space „${opts.spaceName}" ein.\n\nEinladung annehmen:\n${opts.inviteUrl}\n\nDer Link ist 7 Tage gültig.`,
-    html: layout({
-      heading: `Einladung zu „${opts.spaceName}"`,
-      body: `<p><strong>${escapeHtml(opts.inviterName)}</strong> lädt dich als
-             <strong>${escapeHtml(opts.role)}</strong> in den Space
-             „${escapeHtml(opts.spaceName)}" auf dokunc ein.</p>`,
-      ctaLabel: "Einladung annehmen",
-      ctaUrl: opts.inviteUrl,
-      footer:
-        "Der Link ist 7 Tage gültig. Wenn du das nicht erwartet hast, ignoriere diese E-Mail.",
-    }),
+  const subject = `Einladung zu „${opts.spaceName}" auf dokunc`;
+  const text = `${opts.inviterName} lädt dich als ${opts.role} in den Space „${opts.spaceName}" ein.\n\nEinladung annehmen:\n${opts.inviteUrl}\n\nDer Link ist 7 Tage gültig.`;
+  const html = mailLayout({
+    title: `Einladung zu „${opts.spaceName}"`,
+    bodyHtml: `
+      <p style="color:#555;line-height:1.6">
+        <strong>${escapeHtml(opts.inviterName)}</strong> lädt dich als
+        <strong>${escapeHtml(opts.role)}</strong> in den Space
+        „${escapeHtml(opts.spaceName)}" auf dokunc ein.
+      </p>
+      ${mailButton(opts.inviteUrl, "Einladung annehmen")}
+      <p style="color:#999;font-size:12px">Der Link ist 7 Tage gültig.
+      Wenn du das nicht erwartet hast, ignoriere diese E-Mail.</p>`,
   });
+
+  const sent = await sendMail({ to: opts.to, subject, text, html });
   if (!sent) {
     // Dev-Fallback: kein SMTP konfiguriert.
     log.warn(
       { to: opts.to, url: opts.inviteUrl },
       "SMTP nicht konfiguriert — Einladungslink nur im Log",
     );
-  }
-}
-
-/**
- * Kommentar- oder Antwortbenachrichtigung.
- * Fehler beim Versand kippen nie die auslösende Aktion.
- */
-export async function sendCommentEmail(opts: {
-  to: string;
-  actorName: string;
-  pageTitle: string;
-  pageId: string;
-  body: string;
-  isReply: boolean;
-}): Promise<void> {
-  try {
-    await send(commentMail(opts));
-  } catch (e) {
-    log.warn({ err: String(e), to: opts.to }, "Kommentar-Mail fehlgeschlagen");
-  }
-}
-
-export async function sendMentionEmail(opts: {
-  to: string;
-  actorName: string;
-  pageTitle: string;
-  pageId: string;
-  snippet: string;
-}): Promise<void> {
-  try {
-    await send(mentionMail(opts));
-  } catch (e) {
-    log.warn({ err: String(e), to: opts.to }, "Erwähnungs-Mail fehlgeschlagen");
   }
 }

@@ -1,14 +1,18 @@
 import { describe, it, expect } from "vitest";
 import {
-  contentDisposition,
-  isInlineType,
-  safeDisplayName,
-} from "./uploads";
-import {
   isSafeFilename,
   contentTypeForFile,
   ALLOWED_IMAGE_TYPES,
   sniffImageType,
+  safeExtension,
+  sanitizeFilename,
+  mimeTypeForExtension,
+  isInlineImageType,
+  parseMaxUploadMb,
+  DEFAULT_MAX_UPLOAD_MB,
+  MAX_UPLOAD_BYTES,
+  MAX_ATTACHMENT_BYTES,
+  uploadLimitBytes,
 } from "./uploads";
 
 describe("upload helpers", () => {
@@ -23,12 +27,16 @@ describe("upload helpers", () => {
   it("contentTypeForFile mappt bekannte Endungen", () => {
     expect(contentTypeForFile("x.png")).toBe("image/png");
     expect(contentTypeForFile("x.jpg")).toBe("image/jpeg");
+    expect(contentTypeForFile("x.PDF")).toBe("application/pdf");
     expect(contentTypeForFile("x.exe")).toBe("application/octet-stream");
   });
 
   it("SVG ist nicht erlaubt (XSS-Schutz)", () => {
     expect(ALLOWED_IMAGE_TYPES["image/svg+xml"]).toBeUndefined();
     expect(ALLOWED_IMAGE_TYPES["image/png"]).toBe("png");
+    expect(isInlineImageType("image/svg+xml")).toBe(false);
+    expect(isInlineImageType("image/png")).toBe(true);
+    expect(isInlineImageType("application/pdf")).toBe(false);
   });
 
   it("sniffImageType erkennt echte Bilder an Magic Bytes", () => {
@@ -56,32 +64,112 @@ describe("upload helpers", () => {
   });
 });
 
-describe("Anhang-Auslieferung", () => {
-  it("liefert nur bekannte, harmlose Typen inline aus", () => {
-    expect(isInlineType("image/png")).toBe(true);
-    expect(isInlineType("application/pdf")).toBe(true);
-    // Beide könnten sonst Skripte im Ursprung der App ausführen.
-    expect(isInlineType("image/svg+xml")).toBe(false);
-    expect(isInlineType("text/html")).toBe(false);
-    expect(isInlineType("application/octet-stream")).toBe(false);
+describe("mimeTypeForExtension()", () => {
+  it("kennt gaengige Dokument-, Archiv- und Medientypen", () => {
+    expect(mimeTypeForExtension("pdf")).toBe("application/pdf");
+    expect(mimeTypeForExtension("txt")).toBe("text/plain");
+    expect(mimeTypeForExtension("md")).toBe("text/markdown");
+    expect(mimeTypeForExtension("csv")).toBe("text/csv");
+    expect(mimeTypeForExtension("json")).toBe("application/json");
+    expect(mimeTypeForExtension("zip")).toBe("application/zip");
+    expect(mimeTypeForExtension("docx")).toBe(
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    expect(mimeTypeForExtension("xlsx")).toBe(
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+    expect(mimeTypeForExtension("pptx")).toBe(
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    );
+    expect(mimeTypeForExtension("odt")).toBe(
+      "application/vnd.oasis.opendocument.text",
+    );
+    expect(mimeTypeForExtension("mp4")).toBe("video/mp4");
+    expect(mimeTypeForExtension("mp3")).toBe("audio/mpeg");
+    expect(mimeTypeForExtension("PDF")).toBe("application/pdf");
   });
 
-  it("räumt Pfadanteile und Steuerzeichen aus dem Anzeigenamen", () => {
-    expect(safeDisplayName("../../etc/passwd")).toBe("passwd");
-    expect(safeDisplayName('C:\\Temp\\bericht.pdf')).toBe("bericht.pdf");
-    expect(safeDisplayName('a"b.txt')).toBe("ab.txt");
-    expect(safeDisplayName("   ")).toBe("datei");
+  it("ist konservativ: aktive Inhalte und Unbekanntes -> octet-stream", () => {
+    expect(mimeTypeForExtension("html")).toBe("application/octet-stream");
+    expect(mimeTypeForExtension("svg")).toBe("application/octet-stream");
+    expect(mimeTypeForExtension("js")).toBe("application/octet-stream");
+    expect(mimeTypeForExtension("xyz")).toBe("application/octet-stream");
+    expect(mimeTypeForExtension("")).toBe("application/octet-stream");
+    // Prototyp-Eigenschaften sind keine Endungen
+    expect(mimeTypeForExtension("constructor")).toBe(
+      "application/octet-stream",
+    );
+  });
+});
+
+describe("safeExtension()", () => {
+  it("liefert nur [a-z0-9]{1,8}, sonst bin", () => {
+    expect(safeExtension("Bericht.PDF")).toBe("pdf");
+    expect(safeExtension("archiv.tar.gz")).toBe("gz");
+    expect(safeExtension("daten.7z")).toBe("7z");
+    expect(safeExtension("ohne-endung")).toBe("bin");
+    expect(safeExtension("leer.")).toBe("bin");
+    expect(safeExtension("x.ümlaut")).toBe("bin");
+    expect(safeExtension("x.toolangeendung")).toBe("bin");
+    expect(safeExtension("x.a b")).toBe("bin");
+    expect(safeExtension("../x.php%00")).toBe("bin");
+  });
+});
+
+describe("sanitizeFilename()", () => {
+  it("entfernt Steuerzeichen und Pfadtrenner, kuerzt auf 200", () => {
+    expect(sanitizeFilename("Bericht\u0000 Q3\n.pdf")).toBe("Bericht Q3.pdf");
+    expect(sanitizeFilename("../../etc/passwd")).toBe(".._.._etc_passwd");
+    expect(sanitizeFilename("  a   b  ")).toBe("a b");
+    expect(sanitizeFilename("x".repeat(300))).toHaveLength(200);
+    expect(sanitizeFilename("Übersicht ändern.docx")).toBe(
+      "Übersicht ändern.docx",
+    );
+    // Bidi-Steuerzeichen (Endungs-Verschleierung) werden entfernt
+    expect(sanitizeFilename("harmlos\u202Efdp.exe")).toBe("harmlosfdp.exe");
   });
 
-  it("kodiert den Dateinamen in Content-Disposition", () => {
-    const header = contentDisposition("Jahresbericht 2026.pdf", true);
-    expect(header.startsWith("inline;")).toBe(true);
-    expect(header).toContain('filename="Jahresbericht 2026.pdf"');
+  it("leer -> datei", () => {
+    expect(sanitizeFilename("")).toBe("datei");
+    expect(sanitizeFilename("\u0001\u0002")).toBe("datei");
+  });
+});
 
-    const umlaut = contentDisposition("Übersicht.csv", false);
-    expect(umlaut.startsWith("attachment;")).toBe(true);
-    // ASCII-Fallback plus RFC-5987-Variante.
-    expect(umlaut).toContain('filename="_bersicht.csv"');
-    expect(umlaut).toContain("filename*=UTF-8''%C3%9Cbersicht.csv");
+describe("parseMaxUploadMb()", () => {
+  it("liest positive ganze Zahlen, sonst Default", () => {
+    expect(parseMaxUploadMb("20")).toBe(20);
+    expect(parseMaxUploadMb("7.9")).toBe(7);
+    expect(parseMaxUploadMb("0")).toBe(DEFAULT_MAX_UPLOAD_MB);
+    expect(parseMaxUploadMb("-3")).toBe(DEFAULT_MAX_UPLOAD_MB);
+    expect(parseMaxUploadMb("abc")).toBe(DEFAULT_MAX_UPLOAD_MB);
+    expect(parseMaxUploadMb("")).toBe(DEFAULT_MAX_UPLOAD_MB);
+    expect(parseMaxUploadMb(undefined)).toBe(DEFAULT_MAX_UPLOAD_MB);
+    expect(DEFAULT_MAX_UPLOAD_MB).toBe(50);
+  });
+});
+
+describe("uploadLimitBytes()", () => {
+  it("begrenzt Bilder enger als Anhänge", () => {
+    const prev = process.env.MAX_UPLOAD_MB;
+    delete process.env.MAX_UPLOAD_MB;
+    try {
+      expect(uploadLimitBytes("IMAGE")).toBe(MAX_UPLOAD_BYTES);
+      expect(uploadLimitBytes("FILE")).toBe(MAX_ATTACHMENT_BYTES);
+      expect(MAX_UPLOAD_BYTES).toBeLessThan(MAX_ATTACHMENT_BYTES);
+    } finally {
+      if (prev !== undefined) process.env.MAX_UPLOAD_MB = prev;
+    }
+  });
+
+  it("die Betriebsgrenze MAX_UPLOAD_MB senkt beide", () => {
+    const prev = process.env.MAX_UPLOAD_MB;
+    process.env.MAX_UPLOAD_MB = "2";
+    try {
+      expect(uploadLimitBytes("IMAGE")).toBe(2 * 1024 * 1024);
+      expect(uploadLimitBytes("FILE")).toBe(2 * 1024 * 1024);
+    } finally {
+      if (prev === undefined) delete process.env.MAX_UPLOAD_MB;
+      else process.env.MAX_UPLOAD_MB = prev;
+    }
   });
 });

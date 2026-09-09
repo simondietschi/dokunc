@@ -8,6 +8,8 @@ import {
   ReactNodeViewRenderer,
   type Editor,
 } from "@tiptap/react";
+import { Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import Placeholder from "@tiptap/extension-placeholder";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
@@ -20,17 +22,15 @@ import * as Y from "yjs";
 import { IndexeddbPersistence } from "y-indexeddb";
 import {
   History,
-  Trash2,
   FileText,
   AtSign,
   LayoutTemplate,
   Bell,
   BellOff,
-  Star,
 } from "lucide-react";
 import { ExportMenu } from "@/components/editor/ExportMenu";
+import { TableOfContents } from "@/components/editor/TableOfContents";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
-import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { AttachmentView } from "@/components/editor/AttachmentView";
 import { BlockHandle } from "@/components/editor/BlockHandle";
 import { Outline } from "@/components/editor/Outline";
@@ -43,6 +43,14 @@ import {
 } from "./AccessDialog";
 import { ToggleView } from "@/components/editor/ToggleView";
 import { WordCount } from "@/components/editor/WordCount";
+import { PageActions, MenuItem } from "@/components/space/PageActions";
+import { Breadcrumbs, type Crumb } from "@/components/space/Breadcrumbs";
+import {
+  MovePageDialog,
+  MovePageMenuItem,
+} from "@/components/space/MovePageDialog";
+import { FavoriteButton } from "@/components/space/FavoriteButton";
+import { PageMenuTemplates } from "@/components/space/PageMenuTemplates";
 import { CalloutView } from "@/components/editor/CalloutView";
 import { CodeBlockView } from "@/components/editor/CodeBlockView";
 import { ImageView } from "@/components/editor/ImageView";
@@ -51,6 +59,11 @@ import { WikiLinkView } from "@/components/editor/WikiLinkView";
 import { MentionView } from "@/components/editor/MentionView";
 import { ExcalidrawView } from "@/components/editor/ExcalidrawView";
 import { DrawioView } from "@/components/editor/DrawioView";
+import {
+  IMAGE_ACCEPT,
+  pickAndUpload,
+  uploadAndInsert,
+} from "@/components/editor/upload";
 import {
   createSlashCommands,
   type PromptRequest,
@@ -66,57 +79,31 @@ import { cn } from "@/lib/cn";
 import { toggleSubscriptionAction } from "./comments/actions";
 import {
   renamePageAction,
-  deletePageAction,
   setPageCoverAction,
   setPageIconAction,
-  toggleFavoriteAction,
   toggleTemplateAction,
 } from "../../actions";
 
-/** Bildtypen, die der Server annimmt (siehe lib/uploads). */
-const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
-
-/** Lädt ein Bild hoch und gibt seine URL zurück. Wirft bei Ablehnung. */
-async function uploadImage(file: File, spaceId: string): Promise<string> {
+/**
+ * Titelbild hochladen. Der Rest der Dateiwege laeuft ueber
+ * `components/editor/upload` (mehrere Dateien, Fehler pro Datei); das
+ * Cover braucht nur die fertige URL einer einzelnen Datei.
+ */
+async function uploadCoverImage(
+  file: File,
+  spaceId: string,
+  pageId: string,
+): Promise<string> {
   const body = new FormData();
   body.set("file", file);
-  // Der Space entscheidet, wer die Datei später sehen darf.
+  // Space und Seite entscheiden, wer die Datei spaeter sehen darf.
   body.set("spaceId", spaceId);
+  body.set("pageId", pageId);
+  body.set("kind", "image");
   const res = await fetch("/api/upload", { method: "POST", body });
   if (!res.ok) throw new Error(`Upload abgelehnt (${res.status})`);
   const { url } = (await res.json()) as { url: string };
   return url;
-}
-
-/** Bilddateien aus Zwischenablage oder Drag-Nutzlast. */
-function imageFilesFrom(data: DataTransfer | null): File[] {
-  if (!data) return [];
-  return Array.from(data.files).filter((f) => IMAGE_TYPES.includes(f.type));
-}
-
-/**
- * Lädt Dateien hoch und setzt sie an die gegebene Stelle.
- * Die Position wird beim Einfügen frisch begrenzt: zwischen Auswahl und
- * fertigem Upload kann sich das Dokument verändert haben.
- */
-async function insertUploadedImages(
-  view: EditorView,
-  files: File[],
-  at: number,
-  spaceId: string,
-  onError: () => void,
-): Promise<void> {
-  for (const file of files) {
-    try {
-      const src = await uploadImage(file, spaceId);
-      const type = view.state.schema.nodes.image;
-      if (!type) continue;
-      const pos = Math.min(at, view.state.doc.content.size);
-      view.dispatch(view.state.tr.insert(pos, type.create({ src })));
-    } catch {
-      onError();
-    }
-  }
 }
 
 /**
@@ -159,86 +146,37 @@ function pickAndImportMarkdown(
   input.click();
 }
 
-/** Beliebige Datei wählen, hochladen, als Anhang einfügen. */
-function pickAndUploadAttachment(
-  editor: Editor,
-  range: Range | undefined,
-  spaceId: string,
-  onError: () => void,
-) {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.onchange = async () => {
-    const file = input.files?.[0];
-    let chain = editor.chain().focus();
-    if (range) chain = chain.deleteRange(range);
-    if (!file) {
-      chain.run();
-      return;
-    }
-    const body = new FormData();
-    body.set("file", file);
-    body.set("spaceId", spaceId);
-    body.set("kind", "file");
-    try {
-      const res = await fetch("/api/upload", { method: "POST", body });
-      if (!res.ok) throw new Error(String(res.status));
-      const data = (await res.json()) as {
-        url: string;
-        name: string;
-        size: number;
-        contentType: string;
-      };
-      chain
-        .setAttachment({
-          url: data.url,
-          name: data.name,
-          size: data.size,
-          mime: data.contentType,
-        })
-        .run();
-    } catch {
-      chain.run();
-      onError();
-    }
-  };
-  input.click();
-}
-
-/** Datei wählen, hochladen, als Bild einfügen. */
-function pickAndUploadImage(
-  editor: Editor,
-  range: Range | undefined,
-  spaceId: string,
-  onError: () => void,
-) {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = "image/png,image/jpeg,image/gif,image/webp";
-  input.onchange = async () => {
-    const file = input.files?.[0];
-    let chain = editor.chain().focus();
-    if (range) chain = chain.deleteRange(range);
-    if (!file) {
-      chain.run();
-      return;
-    }
-    try {
-      const url = await uploadImage(file, spaceId);
-      chain.setImage({ src: url }).run();
-    } catch {
-      chain.run();
-      onError();
-    }
-  };
-  input.click();
-}
-
 /**
- * Signal des Collab-Servers, dass der Stand dieser Seite ersetzt wurde
- * (Wiederherstellung einer Version). Gegenstück: apps/collab/src/server.ts.
+ * Cmd/Ctrl+Klick öffnet einen Link auch im Bearbeitungsmodus (der
+ * normale Klick setzt den Cursor, damit man Linktext editieren kann).
  */
-const COLLAB_RELOAD_SIGNAL = "dokunc:reload";
+const LinkClick = Extension.create({
+  name: "linkClick",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey("linkClick"),
+        props: {
+          handleClick(view, _pos, event) {
+            if (!(event.metaKey || event.ctrlKey) || event.button !== 0) {
+              return false;
+            }
+            const a = (event.target as HTMLElement | null)?.closest?.(
+              "a[href]",
+            );
+            if (!a || !view.dom.contains(a) || a.classList.contains("dk-wikilink")) {
+              return false;
+            }
+            const href = a.getAttribute("href") ?? "";
+            if (!/^(https?:|mailto:|tel:)/i.test(href)) return false;
+            window.open(href, "_blank", "noopener,noreferrer");
+            return true;
+          },
+        },
+      }),
+    ];
+  },
+});
 
 /**
  * Holt eine kurzlebige Eintrittskarte für den Collab-Server.
@@ -257,6 +195,7 @@ async function fetchCollabTicket(pageId: string): Promise<string> {
 }
 
 type Peer = { name: string; color: string };
+type Conn = { ydoc: Y.Doc; provider: HocuspocusProvider };
 
 export function CollaborativeEditor({
   slug,
@@ -274,11 +213,13 @@ export function CollaborativeEditor({
   commentThreadIds,
   icon,
   coverUrl,
-  isTemplate,
+  isTemplate = false,
   isSubscribed,
   isFavorite,
   shares,
   access,
+  breadcrumbs,
+  hasChildren = false,
 }: {
   slug: string;
   spaceId: string;
@@ -296,7 +237,8 @@ export function CollaborativeEditor({
   commentThreadIds: string[];
   icon: string | null;
   coverUrl: string | null;
-  isTemplate: boolean;
+  /** Seite ist eine Vorlage (Badge + Menüeintrag "Seite daraus erstellen"). */
+  isTemplate?: boolean;
   /** Folgt diese Person der Seite? */
   isSubscribed: boolean;
   isFavorite: boolean;
@@ -309,8 +251,16 @@ export function CollaborativeEditor({
     people: AccessCandidate[];
     groups: AccessCandidate[];
   };
+  /** Space-Name und Vorfahren (Wurzel zuerst) fuer die Brotkrumen. */
+  breadcrumbs: { spaceName: string; ancestors: Crumb[] };
+  /** Für "Duplizieren": Option "Unterseiten mitkopieren" nur bei Bedarf. */
+  hasChildren?: boolean;
 }) {
-  const ydoc = useMemo(() => new Y.Doc(), [pageId]);
+  const [moveOpen, setMoveOpen] = useState(false);
+  // "connected" heisst hier: authentifiziert UND erstmalig synchronisiert.
+  // Vor dem Sync ist das Yjs-Dokument noch leer bzw. unvollstaendig —
+  // wer da schon tippt, schreibt in ein Dokument, dessen Inhalt gleich
+  // erst eintrifft, und der Text landet an der falschen Stelle.
   const [status, setStatus] = useState<
     "connecting" | "connected" | "offline"
   >("connecting");
@@ -340,6 +290,19 @@ export function CollaborativeEditor({
     });
   }, [toast]);
 
+  /** Sidebar sofort nachziehen; der Server liefert den Titel spaeter
+   * ueber revalidatePath ohnehin nach. */
+  const announceTitle = useCallback(
+    (value: string) => {
+      window.dispatchEvent(
+        new CustomEvent("dokunc:page-renamed", {
+          detail: { pageId, title: value || "Untitled" },
+        }),
+      );
+    },
+    [pageId],
+  );
+
   /**
    * Titel speichern. Der Merker wird erst NACH erfolgreicher Action
    * gesetzt: vorher markierte ein fehlgeschlagener oder verworfener
@@ -355,6 +318,7 @@ export function CollaborativeEditor({
     if (!editable || next === lastSavedTitle.current) return;
     if (savingTitle.current === next) return; // schon unterwegs
     savingTitle.current = next;
+    announceTitle(next);
     try {
       const fd = new FormData();
       fd.set("slug", slug);
@@ -363,6 +327,9 @@ export function CollaborativeEditor({
       await renamePageAction(fd);
       lastSavedTitle.current = next;
     } catch {
+      // Der Baum hat den neuen Titel schon; ohne das Zuruecknehmen stuende
+      // dort ein Titel, den niemand gespeichert hat.
+      announceTitle(lastSavedTitle.current);
       toast({
         title: "Titel konnte nicht gespeichert werden",
         description: "Die Änderung wurde nicht übernommen.",
@@ -412,37 +379,18 @@ export function CollaborativeEditor({
   const pickCover = useCallback(() => {
     const input = document.createElement("input");
     input.type = "file";
-    input.accept = "image/png,image/jpeg,image/gif,image/webp";
+    input.accept = IMAGE_ACCEPT;
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
       try {
-        void saveCover(await uploadImage(file, spaceId));
+        void saveCover(await uploadCoverImage(file, spaceId, pageId));
       } catch {
         onUploadError();
       }
     };
     input.click();
-  }, [onUploadError, saveCover, spaceId]);
-
-  /**
-   * Lokaler Puffer.
-   *
-   * Ohne ihn lebte das Yjs-Dokument nur im Speicher des Tabs: wer bei
-   * Netzausfall weiterschrieb und dann neu lud, verlor alles. Der
-   * Puffer wird beim Wiederherstellen einer Version geleert, sonst
-   * mischte der Tab beim Reconnect seinen alten Stand wieder ein.
-   */
-  const persistenceRef = useRef<IndexeddbPersistence | null>(null);
-  useEffect(() => {
-    if (typeof indexedDB === "undefined") return;
-    const persistence = new IndexeddbPersistence(`dokunc:${pageId}`, ydoc);
-    persistenceRef.current = persistence;
-    return () => {
-      persistenceRef.current = null;
-      void persistence.destroy();
-    };
-  }, [pageId, ydoc]);
+  }, [onUploadError, pageId, saveCover, spaceId]);
 
   // Netzstatus des Browsers: "Verbinde…" ist bei gezogenem Kabel eine
   // Beschönigung, die niemandem hilft.
@@ -458,55 +406,65 @@ export function CollaborativeEditor({
     };
   }, []);
 
-  /**
-   * Der Server hat den Stand dieser Seite ersetzt (Wiederherstellung).
-   * Das Aufräumen läuft absichtlich in einem Effekt und nicht direkt im
-   * Provider-Callback: dort liegt es im Rumpf eines useMemo, und ein
-   * Zugriff auf eine Ref gehört nicht in den Renderdurchlauf.
-   */
-  const [reloadRequested, setReloadRequested] = useState(false);
+  // Y.Doc und Provider erst im Effekt erzeugen, nicht im Render: ein
+  // memoisierter Provider wuerde beim StrictMode-Doppelmount im Cleanup
+  // zerstoert und danach tot weiterverwendet (keine Updates mehr). Der
+  // Effekt legt bei jedem (Re-)Mount eine frische Verbindung an.
+  const [conn, setConn] = useState<Conn | null>(null);
   useEffect(() => {
-    if (!reloadRequested) return;
-    // Der lokale Puffer muss mit weg, sonst mischt dieser Tab beim
-    // nächsten Verbinden seinen alten Stand wieder ein.
-    void (persistenceRef.current?.clearData() ?? Promise.resolve()).finally(
-      () => window.location.reload(),
-    );
-  }, [reloadRequested]);
-
-  const provider = useMemo(
-    () =>
-      new HocuspocusProvider({
-        url: collabUrl,
-        name: pageId,
-        document: ydoc,
-        // Vor JEDEM Verbindungsversuch ein frisches Ticket holen. Die
-        // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
-        // HTML gelangt nichts Wiederverwendbares.
-        token: () => fetchCollabTicket(pageId),
-        // "Live" erst nach erfolgreicher Server-Authentifizierung —
-        // Socket-Open allein heißt noch nicht, dass wir schreiben dürfen.
-        onAuthenticated: () => setStatus("connected"),
-        onAuthenticationFailed: () => setStatus("offline"),
-        onStatus: ({ status }) => {
-          if (status !== "connected") setStatus("connecting");
-        },
-        onStateless: ({ payload }) => {
-          // Neu laden ist hier die ehrliche Antwort: ein blosser
-          // Reconnect würde den alten Yjs-Stand aus diesem Tab wieder
-          // einmischen und die Wiederherstellung zunichtemachen.
-          if (payload === COLLAB_RELOAD_SIGNAL) setReloadRequested(true);
-        },
-      }),
-    [collabUrl, pageId, ydoc],
-  );
+    const ydoc = new Y.Doc();
+    setStatus("connecting");
+    /**
+     * Lokaler Puffer. Ohne ihn lebte das Yjs-Dokument nur im Speicher des
+     * Tabs: wer bei Netzausfall weiterschrieb und dann neu lud, verlor
+     * alles.
+     */
+    const persistence =
+      typeof indexedDB === "undefined"
+        ? null
+        : new IndexeddbPersistence(`dokunc:${pageId}`, ydoc);
+    // Die Status-Callbacks gehoeren in den Konstruktor: der Provider
+    // verbindet sofort, ein spaeter registrierter Listener koennte das
+    // "authenticated"-Ereignis verpassen. "Live" erst nach erfolgreicher
+    // Server-Authentifizierung: Socket-Open allein heisst noch nicht,
+    // dass wir schreiben duerfen.
+    const provider = new HocuspocusProvider({
+      url: collabUrl,
+      name: pageId,
+      document: ydoc,
+      // Vor JEDEM Verbindungsversuch ein frisches Ticket holen. Die
+      // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
+      // HTML gelangt nichts Wiederverwendbares.
+      token: () => fetchCollabTicket(pageId),
+      // Erst der abgeschlossene Erst-Sync macht das Dokument bedienbar
+      // (onAuthenticated allein kommt vor den Inhalten).
+      onSynced: () => setStatus("connected"),
+      onAuthenticationFailed: () => setStatus("offline"),
+      onStatus: ({ status }) => {
+        if (status !== "connected") setStatus("connecting");
+      },
+      onDisconnect: () => setStatus("connecting"),
+    });
+    setConn({ ydoc, provider });
+    return () => {
+      setConn(null);
+      provider.destroy();
+      void persistence?.destroy();
+      ydoc.destroy();
+    };
+  }, [collabUrl, pageId]);
 
   const color = useMemo(() => caretColorFor(userId), [userId]);
 
   const slash = useMemo(
     () =>
       createSlashCommands({
-        onImage: (e, r) => pickAndUploadImage(e, r, spaceId, onUploadError),
+        onImage: (e, r) =>
+          pickAndUpload(
+            e,
+            { spaceId, pageId },
+            { accept: IMAGE_ACCEPT, range: r },
+          ),
         onMarkdownImport: (e, r) =>
           pickAndImportMarkdown(e, r, () =>
             toast({
@@ -515,17 +473,10 @@ export function CollaborativeEditor({
               variant: "error",
             }),
           ),
-        onAttachment: (e, r) =>
-          pickAndUploadAttachment(e, r, spaceId, () =>
-            toast({
-              title: "Anhang fehlgeschlagen",
-              description: "Dateien bis 25 MB werden angenommen.",
-              variant: "error",
-            }),
-          ),
+        onAttachment: (e, r) => pickAndUpload(e, { spaceId, pageId }, { range: r }),
         onPrompt: openPrompt,
       }),
-    [onUploadError, openPrompt, spaceId, toast],
+    [openPrompt, pageId, spaceId, toast],
   );
 
   const wikiLinkSuggest = useMemo(
@@ -556,8 +507,11 @@ export function CollaborativeEditor({
     [spaceId],
   );
 
-  const editor = useEditor({
-    editable,
+  const editor = useEditor(
+    {
+    // Vor dem Erst-Sync ist der Editor nur Platzhalter: nicht editierbar
+    // (das Yjs-Dokument ist noch leer), ohne Collaboration-Extensions.
+    editable: editable && !!conn && status === "connected",
     immediatelyRender: false,
     extensions: [
       ...richExtensions({
@@ -572,16 +526,21 @@ export function CollaborativeEditor({
         excalidraw: () => ReactNodeViewRenderer(ExcalidrawView),
         drawio: () => ReactNodeViewRenderer(DrawioView),
       }),
+      LinkClick,
       Placeholder.configure({
         placeholder:
           'Schreib etwas — "/" für Befehle, "[[" für Links, "@" für Mentions…',
         includeChildren: true,
       }),
-      Collaboration.configure({ document: ydoc, field: "default" }),
-      CollaborationCaret.configure({
-        provider,
-        user: { name: userName, color },
-      }),
+      ...(conn
+        ? [
+            Collaboration.configure({ document: conn.ydoc, field: "default" }),
+            CollaborationCaret.configure({
+              provider: conn.provider,
+              user: { name: userName, color },
+            }),
+          ]
+        : []),
       slash,
       wikiLinkSuggest,
       mentionSuggest,
@@ -603,20 +562,15 @@ export function CollaborativeEditor({
         );
         return false;
       },
+      // Dateien per Einfuegen: hochladen, dann als Bild oder Anhang
+      // einfuegen (asynchron, Editor bleibt bedienbar).
       handlePaste(view, event) {
-        if (!editable) return false;
+        if (!view.editable) return false;
 
-        // Bild aus der Zwischenablage (Screenshot) direkt hochladen.
-        const files = imageFilesFrom(event.clipboardData);
+        const files = Array.from(event.clipboardData?.files ?? []);
         if (files.length > 0) {
           event.preventDefault();
-          void insertUploadedImages(
-            view,
-            files,
-            view.state.selection.from,
-            spaceId,
-            onUploadError,
-          );
+          void uploadAndInsert(view, files, { spaceId, pageId });
           return true;
         }
 
@@ -632,29 +586,41 @@ export function CollaborativeEditor({
         }
         return false;
       },
-      // Bild aus dem Dateimanager an die Stelle ziehen, auf die man zeigt.
+      // Datei aus dem Dateimanager an die Stelle ziehen, auf die man zeigt.
       handleDrop(view, event, _slice, moved) {
         // `moved` heisst: der Block wird innerhalb des Dokuments
         // verschoben — das darf ProseMirror selbst erledigen.
-        if (moved || !editable) return false;
-        const files = imageFilesFrom(event.dataTransfer);
+        if (moved || !view.editable) return false;
+        const files = Array.from(event.dataTransfer?.files ?? []);
         if (files.length === 0) return false;
         event.preventDefault();
-        const at =
-          view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ??
-          view.state.selection.from;
-        void insertUploadedImages(view, files, at, spaceId, onUploadError);
+        const pos = view.posAtCoords({
+          left: event.clientX,
+          top: event.clientY,
+        })?.pos;
+        void uploadAndInsert(view, files, { spaceId, pageId }, pos);
         return true;
       },
     },
-  });
+    },
+    [conn],
+  );
+
+  // `editable` steckt in den useEditor-Optionen und wird nur beim
+  // Erzeugen gelesen — der Sync-Status aendert sich aber danach. Also
+  // nachziehen, statt den Editor dafuer neu aufzubauen.
+  useEffect(() => {
+    if (!editor || editor.isDestroyed) return;
+    editor.setEditable(editable && !!conn && status === "connected", false);
+  }, [editor, editable, conn, status]);
 
   // CommentsPanel bittet darum, eine Kommentar-Markierung zu entfernen
   // (Thread verworfen oder aufgelöst).
   useEffect(() => {
+    if (!editor) return;
     const onRemove = (e: Event) => {
       const { id } = (e as CustomEvent<{ id: string }>).detail;
-      if (!editor) return;
+      if (editor.isDestroyed) return;
       const { state } = editor;
       const markType = state.schema.marks.commentMark;
       if (!markType) return;
@@ -671,14 +637,15 @@ export function CollaborativeEditor({
     window.addEventListener("dokunc:remove-comment-mark", onRemove);
     return () =>
       window.removeEventListener("dokunc:remove-comment-mark", onRemove);
-  });
+  }, [editor]);
 
   // Verwaiste Kommentar-Markierungen aufräumen: ein abgebrochener Entwurf
   // (Navigation, Reload, Absturz) setzt den Mark bereits im Yjs-Dokument,
   // bevor der Thread in der DB existiert. Einmal nach dem Sync durchgehen
   // und alle Marks ohne zugehörigen Thread entfernen.
   useEffect(() => {
-    if (!editor || !editable || sweptRef.current) return;
+    const provider = conn?.provider;
+    if (!editor || !editable || !provider || sweptRef.current) return;
     const valid = new Set(commentThreadIds);
 
     const sweep = () => {
@@ -711,7 +678,7 @@ export function CollaborativeEditor({
     return () => {
       provider.off("synced", sweep);
     };
-  }, [editor, editable, provider, commentThreadIds]);
+  }, [editor, editable, conn, commentThreadIds]);
 
   // Vom CommentsPanel angestossen: zur markierten Textstelle scrollen.
   useEffect(() => {
@@ -732,7 +699,7 @@ export function CollaborativeEditor({
   }, []);
 
   useEffect(() => {
-    const aw = provider.awareness;
+    const aw = conn?.provider.awareness;
     if (!aw) return;
     const sync = () => {
       // Nach clientID gruppieren und den eigenen Zustand auslassen: sonst
@@ -748,15 +715,7 @@ export function CollaborativeEditor({
     aw.on("change", sync);
     sync();
     return () => aw.off("change", sync);
-  }, [provider]);
-
-  useEffect(
-    () => () => {
-      provider.destroy();
-      ydoc.destroy();
-    },
-    [provider, ydoc],
-  );
+  }, [conn]);
 
   // Ohne Netz ist "Verbinde…" irreführend; das Gerät versucht es gar
   // nicht erst. Der lokale Puffer trägt in dieser Zeit weiter.
@@ -799,6 +758,11 @@ export function CollaborativeEditor({
               />
               {statusText}
             </span>
+            {isTemplate && (
+              <span className="rounded-full border border-accent/30 bg-accent-soft px-2.5 py-1 text-[12px] font-medium text-accent">
+                Vorlage
+              </span>
+            )}
             <PeerStack peers={peers} />
             <WordCount editor={editor} />
             <LastEdited at={updatedAt} by={lastEditorName} />
@@ -811,7 +775,6 @@ export function CollaborativeEditor({
               <History className="h-4 w-4" />
               Verlauf
             </Link>
-            <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
             {canManage && (
               <>
                 <ShareDialog slug={slug} pageId={pageId} shares={shares} />
@@ -826,26 +789,13 @@ export function CollaborativeEditor({
                 />
               </>
             )}
-            <form action={toggleFavoriteAction}>
-              <input type="hidden" name="slug" value={slug} />
-              <input type="hidden" name="pageId" value={pageId} />
-              <button
-                title={
-                  isFavorite
-                    ? "Aus den Favoriten entfernen"
-                    : "Zu den Favoriten"
-                }
-                aria-pressed={isFavorite}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors hover:bg-subtle",
-                  isFavorite ? "text-amber-500" : "text-muted hover:text-ink",
-                )}
-              >
-                <Star
-                  className={cn("h-4 w-4", isFavorite && "fill-current")}
-                />
-              </button>
-            </form>
+            {!isTemplate && (
+              <FavoriteButton
+                slug={slug}
+                pageId={pageId}
+                isFavorite={isFavorite}
+              />
+            )}
             <form action={toggleSubscriptionAction}>
               <input type="hidden" name="slug" value={slug} />
               <input type="hidden" name="pageId" value={pageId} />
@@ -868,42 +818,45 @@ export function CollaborativeEditor({
                 )}
               </button>
             </form>
-            {canManage && (
-              <form action={toggleTemplateAction}>
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="pageId" value={pageId} />
-                <button
-                  title={
-                    isTemplate
-                      ? "Vorlagen-Markierung entfernen"
-                      : "Als Vorlage markieren"
-                  }
-                  aria-pressed={isTemplate}
-                  className={cn(
-                    "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors hover:bg-subtle",
-                    isTemplate ? "text-accent" : "text-muted hover:text-ink",
+            <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
+            <PageActions slug={slug} pageId={pageId} canManage={canManage}>
+              {canManage && (
+                <>
+                  {!isTemplate && (
+                    <MovePageMenuItem onOpen={() => setMoveOpen(true)} />
                   )}
-                >
-                  <LayoutTemplate className="h-4 w-4" />
-                </button>
-              </form>
-            )}
-            {canManage && (
-              <form action={deletePageAction}>
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="pageId" value={pageId} />
-                <ConfirmButton
-                  message="Diese Seite und alle Unterseiten in den Papierkorb verschieben?"
-                  title="Seite löschen"
-                  className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] text-muted transition-colors hover:bg-danger/10 hover:text-danger"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </ConfirmButton>
-              </form>
-            )}
+                  <PageMenuTemplates
+                    slug={slug}
+                    pageId={pageId}
+                    isTemplate={isTemplate}
+                    hasChildren={hasChildren}
+                  />
+                  <form action={toggleTemplateAction}>
+                    <input type="hidden" name="slug" value={slug} />
+                    <input type="hidden" name="pageId" value={pageId} />
+                    <MenuItem
+                      type="submit"
+                      icon={<LayoutTemplate className="h-4 w-4" />}
+                    >
+                      {isTemplate
+                        ? "Vorlagen-Markierung entfernen"
+                        : "Als Vorlage markieren"}
+                    </MenuItem>
+                  </form>
+                </>
+              )}
+            </PageActions>
           </div>
         </div>
       </header>
+      {moveOpen && (
+        <MovePageDialog
+          slug={slug}
+          spaceId={spaceId}
+          pageId={pageId}
+          onClose={() => setMoveOpen(false)}
+        />
+      )}
 
       <PageCover
         coverUrl={coverValue}
@@ -921,6 +874,12 @@ export function CollaborativeEditor({
           coverValue ? "pt-5" : "pt-12",
         )}
       >
+        <Breadcrumbs
+          slug={slug}
+          spaceName={breadcrumbs.spaceName}
+          ancestors={breadcrumbs.ancestors}
+          current={titleValue}
+        />
         <div className="mb-1 flex items-center gap-1">
           <PageIcon
             icon={iconValue}
@@ -945,7 +904,12 @@ export function CollaborativeEditor({
           readOnly={!editable}
           onBlur={() => void saveTitle()}
           onKeyDown={(e) => {
-            if (e.key === "Enter") e.currentTarget.blur();
+            // Enter/Pfeil nach unten: in den Text springen (wie in Notion).
+            if (e.key === "Enter" || e.key === "ArrowDown") {
+              e.preventDefault();
+              e.currentTarget.blur();
+              editor?.commands.focus("start");
+            }
           }}
           placeholder="Ohne Titel"
           className="w-full bg-transparent text-[2.5rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-faint"
@@ -964,7 +928,9 @@ export function CollaborativeEditor({
 
       {/* Canvas */}
       <div className="mt-6 animate-[fade-in_0.4s_ease]">
-        <EditorContent editor={editor} />
+        <TableOfContents editor={editor}>
+          <EditorContent editor={editor} />
+        </TableOfContents>
       </div>
 
       {/* Formatieren direkt an der Auswahl. */}

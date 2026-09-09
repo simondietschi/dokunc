@@ -53,6 +53,14 @@ export function can(role: SpaceRole | null | undefined, action: Action) {
 }
 
 /**
+ * Wer welche Rolle vergeben oder entziehen darf, steht in
+ * `lib/role-policy.ts` (canChangeRole, canRemoveMember). Dort — und nur
+ * dort — liegt auch die schärfere Regel, dass sich die eigene Rolle
+ * nicht ändern lässt. Eine zweite Fassung hier wäre die schwächere und
+ * damit die Lücke.
+ */
+
+/**
  * Rangfolge der Rollen.
  *
  * Gebraucht, seit eine Person ihre Rolle aus mehreren Quellen bekommen

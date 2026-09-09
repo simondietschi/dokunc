@@ -3,7 +3,6 @@
 import { Extension, type Editor, type Range } from "@tiptap/core";
 import Suggestion from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
-import { ReactRenderer } from "@tiptap/react";
 import {
   Type,
   Heading1,
@@ -29,7 +28,8 @@ import {
   Paperclip,
   ChevronRight,
 } from "lucide-react";
-import { SlashMenu, type SlashMenuHandle, type SlashItem } from "./SlashMenu";
+import type { SlashItem } from "./SlashMenu";
+import { createSuggestionPopup } from "./SuggestionPopup";
 
 type Def = {
   title: string;
@@ -52,6 +52,7 @@ export type PromptRequest = {
 export type SlashOptions = {
   onImage: (editor: Editor, range: Range) => void;
   onMarkdownImport: (editor: Editor, range: Range) => void;
+  /** Beliebige Datei als Anhang hochladen. */
   onAttachment: (editor: Editor, range: Range) => void;
   onPrompt: (request: PromptRequest) => void;
 };
@@ -71,7 +72,7 @@ function defs(opts: SlashOptions): Def[] {
     { title: "Zitat", subtitle: "Zitatblock", icon: Quote, keywords: "quote zitat blockquote", run: (e, r) => chain(e, r).toggleBlockquote().run() },
     { title: "Codeblock", subtitle: "Formatierter Code", icon: Code2, keywords: "code pre block", run: (e, r) => chain(e, r).toggleCodeBlock().run() },
     { title: "Markdown importieren", subtitle: "Datei als Blöcke einfügen", icon: FileDown, keywords: "markdown md import datei", run: opts.onMarkdownImport },
-    { title: "Datei anhängen", subtitle: "Beliebige Datei bis 25 MB", icon: Paperclip, keywords: "datei anhang attachment upload pdf", run: opts.onAttachment },
+    { title: "Datei anhängen", subtitle: "Beliebige Datei bis 25 MB", icon: Paperclip, keywords: "datei file anhang attachment upload pdf dokument", run: opts.onAttachment },
     { title: "Trennlinie", subtitle: "Horizontaler Strich", icon: Minus, keywords: "hr divider trennlinie linie", run: (e, r) => chain(e, r).setHorizontalRule().run() },
     { title: "Tabelle", subtitle: "3×3 mit Kopfzeile", icon: TableIcon, keywords: "table tabelle grid", run: (e, r) => chain(e, r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
     { title: "Bild", subtitle: "Datei hochladen", icon: ImageIcon, keywords: "image bild foto upload", run: (e, r) => opts.onImage(e, r) },
@@ -131,61 +132,14 @@ export function createSlashCommands(opts: SlashOptions) {
           },
           command: ({ editor, range, props }) =>
             props.run(editor, range),
-          render: () => {
-            let component: ReactRenderer<SlashMenuHandle> | null = null;
-            let el: HTMLDivElement | null = null;
-
-            const position = (rect: DOMRect | null) => {
-              if (!el || !rect) return;
-              el.style.position = "fixed";
-              el.style.left = `${rect.left}px`;
-              el.style.top = `${rect.bottom + 6}px`;
-              el.style.zIndex = "60";
-            };
-
-            return {
-              onStart: (props) => {
-                component = new ReactRenderer(SlashMenu, {
-                  props: {
-                    items: (props.items as Def[]).map<SlashItem>((d) => ({
-                      title: d.title,
-                      subtitle: d.subtitle,
-                      icon: d.icon,
-                      command: () =>
-                        props.command(d as unknown as Record<string, unknown>),
-                    })),
-                  },
-                  editor: props.editor,
-                });
-                el = document.createElement("div");
-                el.appendChild(component.element);
-                document.body.appendChild(el);
-                position(props.clientRect?.() ?? null);
-              },
-              onUpdate: (props) => {
-                component?.updateProps({
-                  items: (props.items as Def[]).map<SlashItem>((d) => ({
-                    title: d.title,
-                    subtitle: d.subtitle,
-                    icon: d.icon,
-                    command: () =>
-                      props.command(d as unknown as Record<string, unknown>),
-                  })),
-                });
-                position(props.clientRect?.() ?? null);
-              },
-              onKeyDown: (props) => {
-                if (props.event.key === "Escape") return true;
-                return component?.ref?.onKeyDown(props.event) ?? false;
-              },
-              onExit: () => {
-                el?.remove();
-                component?.destroy();
-                el = null;
-                component = null;
-              },
-            };
-          },
+          render: createSuggestionPopup<Def>((props) =>
+            props.items.map<SlashItem>((d) => ({
+              title: d.title,
+              subtitle: d.subtitle,
+              icon: d.icon,
+              command: () => props.command(d),
+            })),
+          ),
         }),
       ];
     },

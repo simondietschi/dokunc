@@ -24,7 +24,7 @@ export async function GET() {
     sessions,
     favorites,
     subscriptions,
-    uploads,
+    attachments,
     auditEvents,
   ] = await Promise.all([
     prisma.user.findUnique({
@@ -35,8 +35,7 @@ export async function GET() {
         name: true,
         isAdmin: true,
         isActive: true,
-        emailOnMention: true,
-        emailOnComment: true,
+        emailNotifications: true,
         // Nur das Datum, nie das Geheimnis selbst.
         totpEnabledAt: true,
         createdAt: true,
@@ -84,7 +83,7 @@ export async function GET() {
       },
       orderBy: { createdAt: "asc" },
     }),
-    prisma.pageFavorite.findMany({
+    prisma.favorite.findMany({
       where: { userId: user.id },
       select: { createdAt: true, page: { select: { id: true, title: true } } },
     }),
@@ -92,12 +91,13 @@ export async function GET() {
       where: { userId: user.id },
       select: { createdAt: true, page: { select: { id: true, title: true } } },
     }),
-    prisma.upload.findMany({
+    prisma.attachment.findMany({
       where: { uploaderId: user.id },
       select: {
-        filename: true,
-        originalName: true,
-        contentType: true,
+        storedName: true,
+        name: true,
+        mimeType: true,
+        kind: true,
         size: true,
         createdAt: true,
       },
@@ -129,7 +129,7 @@ export async function GET() {
       sessions,
       favorites,
       subscriptions,
-      uploads,
+      attachments,
       auditEvents,
     },
     null,

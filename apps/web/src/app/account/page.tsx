@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, Download, LogOut, Monitor } from "lucide-react";
 import { prisma } from "@dokunc/db";
+import { isMailConfigured } from "@dokunc/mail";
 import { requireUser } from "@/lib/current-user";
 import { describeDevice } from "@/lib/user-agent";
 import { Button } from "@/components/ui/Button";
@@ -9,7 +10,7 @@ import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import {
   ProfileForm,
   PasswordForm,
-  NotificationForm,
+  NotificationPrefsForm,
   DeleteAccountForm,
 } from "./AccountForms";
 import { TwoFactorForm } from "./TwoFactorForm";
@@ -22,14 +23,9 @@ export const metadata: Metadata = {
 
 export default async function AccountPage() {
   const user = await requireUser();
-
   const prefs = await prisma.user.findUnique({
     where: { id: user.id },
-    select: {
-      emailOnMention: true,
-      emailOnComment: true,
-      totpEnabledAt: true,
-    },
+    select: { emailNotifications: true, totpEnabledAt: true },
   });
   const unusedCodes = prefs?.totpEnabledAt
     ? await prisma.totpRecoveryCode.count({
@@ -82,9 +78,9 @@ export default async function AccountPage() {
           }
           unusedCodes={unusedCodes}
         />
-        <NotificationForm
-          emailOnMention={prefs?.emailOnMention ?? true}
-          emailOnComment={prefs?.emailOnComment ?? true}
+        <NotificationPrefsForm
+          mode={prefs?.emailNotifications ?? "INSTANT"}
+          mailConfigured={isMailConfigured()}
         />
         <div className="rounded-xl border border-line bg-surface p-5 shadow-soft">
           <h2 className="text-sm font-semibold">

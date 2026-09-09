@@ -21,10 +21,11 @@ import { createSpaceAction, joinSpaceAction } from "./actions";
 import { Onboarding, WaitingForInvite } from "./Onboarding";
 import { PaletteButton } from "@/components/CommandPalette";
 import { NotificationStream } from "@/components/NotificationStream";
+import { RecentAndFavorites } from "@/components/RecentAndFavorites";
 
 export const metadata: Metadata = {
   title: "Spaces",
-  description: "Alle Bereiche, in denen du Mitglied bist.",
+  description: "Alle Bereiche, zu denen du Zugang hast.",
 };
 
 export default async function SpacesPage() {
@@ -34,7 +35,13 @@ export default async function SpacesPage() {
       where: accessibleSpaceWhere(user.id),
       orderBy: { createdAt: "asc" },
       include: {
-        _count: { select: { pages: true, members: true } },
+        _count: {
+          select: {
+            // Nur echte Seiten zählen (keine Vorlagen, nichts im Papierkorb).
+            pages: { where: { deletedAt: null, isTemplate: false } },
+            members: true,
+          },
+        },
       },
     }),
     prisma.notification.count({
@@ -58,7 +65,15 @@ export default async function SpacesPage() {
         slug: true,
         description: true,
         joinRole: true,
-        _count: { select: { pages: true, members: true } },
+        _count: {
+          // Gleicher Zaehler wie oben: Vorlagen und Papierkorb zaehlen
+          // nicht mit, sonst verspricht die Beitrittskarte mehr Seiten,
+          // als der Space nach dem Beitritt zeigt.
+          select: {
+            pages: { where: { deletedAt: null, isTemplate: false } },
+            members: true,
+          },
+        },
       },
     }),
   ]);
@@ -184,13 +199,19 @@ export default async function SpacesPage() {
               className="group relative animate-[rise_0.5s_ease_both] overflow-hidden rounded-xl border border-line bg-surface p-5 shadow-soft transition-all duration-200 hover:-translate-y-0.5 hover:border-line-strong hover:shadow-pop"
             >
               <div className="flex items-start justify-between">
-                <span
-                  className={`grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br ${gradientFor(
-                    s.slug,
-                  )} text-lg font-bold text-white shadow-soft`}
-                >
-                  {s.name[0]?.toUpperCase()}
-                </span>
+                {s.icon ? (
+                  <span className="grid h-11 w-11 place-items-center rounded-xl border border-line bg-subtle text-2xl leading-none shadow-soft">
+                    {s.icon}
+                  </span>
+                ) : (
+                  <span
+                    className={`grid h-11 w-11 place-items-center rounded-xl bg-gradient-to-br ${gradientFor(
+                      s.slug,
+                    )} text-lg font-bold text-white shadow-soft`}
+                  >
+                    {s.name[0]?.toUpperCase()}
+                  </span>
+                )}
                 <ArrowUpRight className="h-4 w-4 text-faint transition-all duration-200 group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-accent" />
               </div>
               <h3 className="mt-4 font-semibold tracking-tight">
@@ -216,6 +237,7 @@ export default async function SpacesPage() {
                 name="name"
                 placeholder="Neuer Space…"
                 required
+                minLength={2}
                 className="h-10"
               />
               <Button type="submit" size="sm" className="w-full">
@@ -224,6 +246,8 @@ export default async function SpacesPage() {
             </div>
           </form>
         </div>
+
+        <RecentAndFavorites userId={user.id} />
 
         {discoverySection}
       </main>
