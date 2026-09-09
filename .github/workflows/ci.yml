@@ -145,20 +145,27 @@ jobs:
       # Caddy stellt beim ersten Start sein internes Zertifikat aus; bis
       # dahin bricht der TLS-Handshake ab. Der Proxy hat keinen
       # Healthcheck, auf den `--wait` warten könnte — also hier pollen.
+      #
+      # Der Port kommt aus derselben Vorgabe wie in docker-compose.yml
+      # (APP_PORT, Vorgabe 7891). Fest verdrahtetes https://localhost
+      # zeigte auf 443, und den veroeffentlicht der Proxy nicht: der
+      # Schritt scheiterte deshalb bei jedem Lauf mit "Failed to connect
+      # to localhost port 443", obwohl der Stack vollstaendig hochkam.
       - name: Health-Endpunkt über den Proxy
         run: |
+          PORT="${APP_PORT:-7891}"
           for i in $(seq 1 30); do
-            if curl -fsSk https://localhost/api/health | grep -q '"status":"ok"'; then
-              echo "Proxy antwortet (Versuch $i)"
+            if curl -fsSk "https://localhost:$PORT/api/health" | grep -q '"status":"ok"'; then
+              echo "Proxy antwortet auf Port $PORT (Versuch $i)"
               exit 0
             fi
             sleep 2
           done
-          echo "Proxy hat nach 60 s nicht geantwortet"
+          echo "Proxy hat auf Port $PORT nach 60 s nicht geantwortet"
           exit 1
 
       - name: Anmeldeseite wird ausgeliefert
-        run: curl -fsSk https://localhost/login -o /dev/null
+        run: curl -fsSk "https://localhost:${APP_PORT:-7891}/login" -o /dev/null
 
       - name: APP_SECRET wurde automatisch erzeugt
         run: |
