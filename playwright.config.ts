@@ -15,7 +15,7 @@ export default defineConfig({
   // Wartepunkt darf allein schon 45 s kosten; mit 60 s je Test reichte das
   // Gesamtbudget nicht, und der Abbruch traf dann eine spaetere,
   // unschuldige Zeile.
-  timeout: 120_000,
+  timeout: 180_000,
   expect: { timeout: 15_000 },
   // Sequenziell: features.spec setzt auf den in editor.spec angelegten
   // ersten Nutzer/Space auf (Invite-only). Dateien laufen alphabetisch.
