@@ -94,6 +94,11 @@ export function pageToPrintHtml(opts: {
   /* Eingebettete Videos: am Bildschirm spielbar, im Druck als Link. */
   iframe { width: 100%; aspect-ratio: 16 / 9; border: 1px solid #e5e7eb; border-radius: 8px; }
   .dk-embed-url { display: none; font-size: 9pt; word-break: break-all; }
+  details.dk-toggle { border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 12px; margin: 0.8em 0; page-break-inside: avoid; }
+  details.dk-toggle > summary { font-weight: 600; cursor: pointer; }
+  /* Im Druck ist ein zugeklappter Abschnitt verlorener Inhalt. */
+  @media print { details.dk-toggle > div { display: block !important; } }
+  a.dk-attachment { display: inline-block; border: 1px solid #e5e7eb; border-radius: 8px; padding: 6px 10px; margin: 0.4em 0; color: #4f46e5; }
   figure.dk-figure { margin: 1em 0; text-align: center; page-break-inside: avoid; }
   figure.dk-figure figcaption { font-size: 9pt; color: #6b7280; margin-top: 6px; }
   figure.dk-figure[data-width="small"] img { max-width: 40%; }

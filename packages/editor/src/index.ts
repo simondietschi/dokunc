@@ -8,7 +8,10 @@ import { TableHeader } from "@tiptap/extension-table-header";
 import { TableCell } from "@tiptap/extension-table-cell";
 import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
+import { Attachment } from "./attachment";
 import { Callout } from "./callout";
+import { AnchoredHeading } from "./heading";
+import { Toggle } from "./toggle";
 import { codeBlockExtension } from "./code-block";
 import { RichImage } from "./image";
 import { Mermaid } from "./mermaid";
@@ -26,7 +29,9 @@ export const COLLAB_FIELD = "default";
  * nur das Rendering, nicht das Schema betreffen.
  */
 export type NodeViewFactories = {
+  attachment?: () => unknown;
   callout?: () => unknown;
+  toggle?: () => unknown;
   codeBlock?: () => unknown;
   image?: () => unknown;
   mermaid?: () => unknown;
@@ -68,12 +73,21 @@ export function richExtensions(views: NodeViewFactories = {}) {
   const image = views.image
     ? RichImage.extend({ addNodeView: views.image as never })
     : RichImage;
+  const attachment = views.attachment
+    ? Attachment.extend({ addNodeView: views.attachment as never })
+    : Attachment;
+  const toggle = views.toggle
+    ? Toggle.extend({ addNodeView: views.toggle as never })
+    : Toggle;
   return [
     StarterKit.configure({
       undoRedo: false,
       codeBlock: false,
+      // Ersetzt durch die Variante mit Anker.
+      heading: false,
       link: { openOnClick: false, autolink: true },
     }),
+    AnchoredHeading,
     codeBlockExtension(views.codeBlock),
     Highlight.configure({ multicolor: true }),
     image.configure({ inline: false }),
@@ -91,6 +105,8 @@ export function richExtensions(views: NodeViewFactories = {}) {
     mention,
     excalidraw,
     drawio,
+    attachment,
+    toggle,
     CommentMark,
   ];
 }
@@ -140,9 +156,13 @@ export { Mermaid } from "./mermaid";
 export { WikiLink } from "./wiki-link";
 export { Mention } from "./mention";
 export { CommentMark } from "./comment-mark";
-export { chunkText } from "./text";
+export { chunkText, headingSlug } from "./text";
+export { AnchoredHeading } from "./heading";
+export { Toggle } from "./toggle";
 export { Excalidraw, toBase64 } from "./excalidraw";
 export { lowlight, CODE_LANGUAGES, codeBlockExtension } from "./code-block";
 export { RichImage, IMAGE_WIDTHS } from "./image";
+export { Attachment, formatBytes } from "./attachment";
+export type { AttachmentAttrs } from "./attachment";
 export type { ImageWidth } from "./image";
 export { Drawio } from "./drawio";

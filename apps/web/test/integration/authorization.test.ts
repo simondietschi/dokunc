@@ -2,6 +2,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@dokunc/db";
 import {
   findLivePage,
+  isDescendantOf,
+  movePageInSpace,
   findRestorableVersion,
   findTrashedPage,
   renamePageInSpace,
@@ -213,5 +215,70 @@ describe("Dateiauslieferung", () => {
 
   it("liefert nichts ohne Nutzer", async () => {
     expect(await findReadableUpload("", homeUploadName)).toBeNull();
+  });
+});
+
+describe("Seiten im Baum verschieben", () => {
+  it("erkennt Nachfahren", async () => {
+    expect(await isDescendantOf(homeSpaceId, homePageId, homeChildId)).toBe(
+      true,
+    );
+    expect(await isDescendantOf(homeSpaceId, homeChildId, homePageId)).toBe(
+      false,
+    );
+    // Eine Seite ist ihr eigener Nachfahre — sonst liesse sie sich unter
+    // sich selbst hängen.
+    expect(await isDescendantOf(homeSpaceId, homePageId, homePageId)).toBe(
+      true,
+    );
+  });
+
+  it("verweigert einen Zug unter die eigene Unterseite", async () => {
+    // Würde den ganzen Ast vom Baum abschneiden.
+    expect(
+      await movePageInSpace(homeSpaceId, homePageId, homeChildId, 0),
+    ).toBe(false);
+  });
+
+  it("verweigert einen Zug in einen fremden Space", async () => {
+    expect(
+      await movePageInSpace(homeSpaceId, foreignPageId, homePageId, 0),
+    ).toBe(false);
+    expect(
+      await movePageInSpace(homeSpaceId, homePageId, foreignPageId, 0),
+    ).toBe(false);
+  });
+
+  it("hängt eine Seite um und schreibt die Reihenfolge neu", async () => {
+    const second = await prisma.page.create({
+      data: { spaceId: homeSpaceId, title: "Zweite" },
+    });
+    try {
+      // Unterseite auf die oberste Ebene, an den Anfang.
+      expect(await movePageInSpace(homeSpaceId, homeChildId, null, 0)).toBe(
+        true,
+      );
+      const roots = await prisma.page.findMany({
+        where: { spaceId: homeSpaceId, parentId: null, deletedAt: null },
+        orderBy: { position: "asc" },
+        select: { id: true, position: true },
+      });
+      expect(roots[0].id).toBe(homeChildId);
+      expect(roots.map((r) => r.position)).toEqual(
+        roots.map((_, i) => i),
+      );
+
+      // Und wieder zurück unter die Ausgangsseite.
+      expect(
+        await movePageInSpace(homeSpaceId, homeChildId, homePageId, 0),
+      ).toBe(true);
+      const child = await prisma.page.findUnique({
+        where: { id: homeChildId },
+        select: { parentId: true },
+      });
+      expect(child?.parentId).toBe(homePageId);
+    } finally {
+      await prisma.page.delete({ where: { id: second.id } });
+    }
   });
 });

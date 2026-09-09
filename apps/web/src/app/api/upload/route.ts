@@ -11,7 +11,9 @@ import { audit } from "@/lib/audit";
 import {
   UPLOAD_DIR,
   MAX_UPLOAD_BYTES,
+  MAX_ATTACHMENT_BYTES,
   ALLOWED_IMAGE_TYPES,
+  safeDisplayName,
   sniffImageType,
 } from "@/lib/uploads";
 
@@ -61,9 +63,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Keine Datei" }, { status: 400 });
   }
 
-  if (file.size > MAX_UPLOAD_BYTES) {
+  // "file" = beliebiger Anhang, sonst gilt die strenge Bildprüfung.
+  const isAttachment = form.get("kind") === "file";
+  const limit = isAttachment ? MAX_ATTACHMENT_BYTES : MAX_UPLOAD_BYTES;
+  if (file.size > limit) {
     return NextResponse.json(
-      { error: "Datei zu groß (max. 10 MB)" },
+      {
+        error: `Datei zu groß (max. ${Math.round(limit / 1024 / 1024)} MB)`,
+      },
       { status: 413 },
     );
   }
@@ -71,16 +78,69 @@ export async function POST(req: Request) {
   const bytes = Buffer.from(await file.arrayBuffer());
 
   // Echten Typ aus den Magic Bytes ableiten — der vom Client gelieferte
-  // MIME-Header ist fälschbar und wird ignoriert.
+  // MIME-Header ist fälschbar und wird nie gespeichert.
   const sniffed = sniffImageType(bytes);
-  const ext = sniffed ? ALLOWED_IMAGE_TYPES[sniffed] : undefined;
-  if (!ext || !sniffed) {
-    return NextResponse.json(
-      { error: "Nur echte PNG-, JPG-, GIF- oder WebP-Bilder erlaubt" },
-      { status: 415 },
-    );
+  if (!isAttachment) {
+    const ext = sniffed ? ALLOWED_IMAGE_TYPES[sniffed] : undefined;
+    if (!ext || !sniffed) {
+      return NextResponse.json(
+        { error: "Nur echte PNG-, JPG-, GIF- oder WebP-Bilder erlaubt" },
+        { status: 415 },
+      );
+    }
+    return store(bytes, ext, sniffed, "IMAGE", file.name, spaceId, user.id);
   }
 
+  if (bytes.byteLength === 0) {
+    return NextResponse.json({ error: "Datei ist leer" }, { status: 400 });
+  }
+
+  // Der Typ wird auch beim Anhang vom Server bestimmt: nur was sich
+  // eindeutig erkennen lässt, darf später inline ausgeliefert werden.
+  const contentType =
+    sniffed ?? (isPdf(bytes) ? "application/pdf" : "application/octet-stream");
+  return store(
+    bytes,
+    extensionFor(file.name),
+    contentType,
+    "FILE",
+    file.name,
+    spaceId,
+    user.id,
+  );
+}
+
+/** PDF-Signatur: %PDF- */
+function isPdf(b: Uint8Array): boolean {
+  return (
+    b.length > 5 &&
+    b[0] === 0x25 &&
+    b[1] === 0x50 &&
+    b[2] === 0x44 &&
+    b[3] === 0x46 &&
+    b[4] === 0x2d
+  );
+}
+
+/**
+ * Endung für den Namen auf der Platte. Bewusst eng gefasst: der Name
+ * muss `isSafeFilename` genügen, und der Anzeigename steht ohnehin in
+ * der Datenbank.
+ */
+function extensionFor(originalName: string): string {
+  const raw = originalName.split(".").pop()?.toLowerCase() ?? "";
+  return /^[a-z0-9]{1,8}$/.test(raw) ? raw : "bin";
+}
+
+async function store(
+  bytes: Buffer,
+  ext: string,
+  contentType: string,
+  kind: "IMAGE" | "FILE",
+  originalName: string,
+  spaceId: string,
+  userId: string,
+) {
   const name = `${randomBytes(16).toString("hex")}.${ext}`;
   await mkdir(UPLOAD_DIR, { recursive: true });
   await writeFile(path.join(UPLOAD_DIR, name), bytes);
@@ -90,19 +150,26 @@ export async function POST(req: Request) {
   await prisma.upload.create({
     data: {
       filename: name,
+      originalName: safeDisplayName(originalName),
+      kind,
       spaceId,
-      uploaderId: user.id,
-      contentType: sniffed,
+      uploaderId: userId,
+      contentType,
       size: bytes.byteLength,
     },
   });
   await audit({
     action: "upload.created",
-    actorId: user.id,
+    actorId: userId,
     spaceId,
     targetId: name,
-    metadata: { contentType: sniffed, size: bytes.byteLength },
+    metadata: { contentType, size: bytes.byteLength, kind },
   });
 
-  return NextResponse.json({ url: `/api/files/${name}` });
+  return NextResponse.json({
+    url: `/api/files/${name}`,
+    name: safeDisplayName(originalName),
+    size: bytes.byteLength,
+    contentType,
+  });
 }

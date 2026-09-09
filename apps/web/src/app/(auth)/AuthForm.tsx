@@ -123,6 +123,21 @@ export function AuthForm({
           />
         </div>
 
+        {isLogin && (
+          <label
+            style={stagger(3)}
+            className="flex cursor-pointer items-center gap-2 text-[13px] text-muted"
+          >
+            <input
+              type="checkbox"
+              name="remember"
+              defaultChecked
+              className="h-3.5 w-3.5 rounded border-line-strong accent-[var(--accent)]"
+            />
+            Angemeldet bleiben
+          </label>
+        )}
+
         {state?.error && (
           <p className="dk-shake rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">
             {state.error}

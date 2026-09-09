@@ -77,6 +77,11 @@ function block(node: Node, depth = 0): string {
       return fenced("excalidraw", String(node.attrs?.data ?? ""));
     case "drawio":
       return fenced("drawio", String(node.attrs?.xml ?? ""));
+    case "attachment": {
+      const name = String(node.attrs?.name ?? "Datei");
+      const url = String(node.attrs?.url ?? "");
+      return url ? `[${name}](${url})` : name;
+    }
     case "youtube": {
       const src = String(node.attrs?.src ?? "");
       return src ? `[YouTube-Video](${src})` : "";

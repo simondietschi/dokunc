@@ -4,7 +4,8 @@ import path from "node:path";
 export const UPLOAD_DIR =
   process.env.UPLOAD_DIR ?? path.join(process.cwd(), "uploads");
 
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB
+export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB (Bilder)
+export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB (Anhänge)
 
 /** Erlaubte Bildtypen -> Dateiendung. SVG ist wegen XSS bewusst ausgeschlossen. */
 export const ALLOWED_IMAGE_TYPES: Record<string, string> = {
@@ -68,4 +69,43 @@ export function contentTypeForFile(name: string): string {
     webp: "image/webp",
   };
   return map[ext ?? ""] ?? "application/octet-stream";
+}
+
+/**
+ * Auslieferung von Anhängen.
+ *
+ * Alles ausser den bekannten Bildtypen und PDF geht als
+ * `application/octet-stream` mit Download-Aufforderung raus. Damit kann
+ * eine hochgeladene HTML- oder SVG-Datei nicht im Ursprung der App
+ * ausgeführt werden — das wäre eine gespeicherte XSS-Lücke, unabhängig
+ * davon, wie streng die Mitgliedschaft geprüft wird.
+ */
+const INLINE_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/gif",
+  "image/webp",
+  "application/pdf",
+]);
+
+export function isInlineType(contentType: string): boolean {
+  return INLINE_TYPES.has(contentType);
+}
+
+/** Sicherer Anzeigename: ohne Pfadanteile, Steuerzeichen und Anführungszeichen. */
+export function safeDisplayName(name: string): string {
+  const base = name.split(/[\\/]/).pop() ?? "";
+  // eslint-disable-next-line no-control-regex
+  const cleaned = base.replace(/[\u0000-\u001f"\\]/g, "").trim();
+  return cleaned.slice(0, 120) || "datei";
+}
+
+/** Content-Disposition-Kopfzeile mit korrekt kodiertem Dateinamen. */
+export function contentDisposition(
+  name: string,
+  inline: boolean,
+): string {
+  const safe = safeDisplayName(name);
+  const ascii = safe.replace(/[^\x20-\x7e]/g, "_");
+  return `${inline ? "inline" : "attachment"}; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(safe)}`;
 }

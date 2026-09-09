@@ -2,7 +2,9 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowLeft,
+  KeyRound,
   ScrollText,
+  Trash2,
   Shield,
   ShieldOff,
   UserCheck,
@@ -13,8 +15,10 @@ import { requireAdmin } from "@/lib/current-user";
 import { Avatar } from "@/components/ui/Avatar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import {
+  resetUserTotpAction,
   toggleUserActiveAction,
   toggleUserAdminAction,
+  deleteUserAction,
   deleteSpaceAction,
 } from "./actions";
 
@@ -35,6 +39,7 @@ export default async function AdminPage() {
         email: true,
         isAdmin: true,
         isActive: true,
+        totpEnabledAt: true,
         createdAt: true,
       },
     }),
@@ -90,6 +95,14 @@ export default async function AdminPage() {
                       deaktiviert
                     </span>
                   )}
+                  {u.totpEnabledAt && (
+                    <span
+                      title="Zwei-Faktor-Anmeldung aktiv"
+                      className="ml-2 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[11px] font-medium text-emerald-600"
+                    >
+                      2FA
+                    </span>
+                  )}
                 </p>
                 <p className="truncate text-xs text-faint">{u.email}</p>
               </div>
@@ -109,6 +122,19 @@ export default async function AdminPage() {
                     )}
                   </button>
                 </form>
+                {u.totpEnabledAt && (
+                  <form action={resetUserTotpAction}>
+                    <input type="hidden" name="userId" value={u.id} />
+                    <ConfirmButton
+                      title="Zwei-Faktor zurücksetzen"
+                      message={`Zwei-Faktor für „${u.name}" abschalten? Nur nötig, wenn Gerät und Wiederherstellungscodes verloren sind. Der Schritt landet im Audit-Log.`}
+                      confirmLabel="Zurücksetzen"
+                      className="grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-subtle hover:text-ink"
+                    >
+                      <KeyRound className="h-4 w-4" />
+                    </ConfirmButton>
+                  </form>
+                )}
                 <form action={toggleUserActiveAction}>
                   <input type="hidden" name="userId" value={u.id} />
                   <ConfirmButton
@@ -125,6 +151,17 @@ export default async function AdminPage() {
                     ) : (
                       <UserCheck className="h-4 w-4" />
                     )}
+                  </ConfirmButton>
+                </form>
+                <form action={deleteUserAction}>
+                  <input type="hidden" name="userId" value={u.id} />
+                  <ConfirmButton
+                    title="Konto löschen"
+                    message={`„${u.name}" endgültig löschen? Mitgliedschaften und Sitzungen verschwinden; Seiten und Kommentare bleiben erhalten und verlieren die Zuordnung.`}
+                    confirmLabel="Löschen"
+                    className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
+                  >
+                    <Trash2 className="h-4 w-4" />
                   </ConfirmButton>
                 </form>
               </div>

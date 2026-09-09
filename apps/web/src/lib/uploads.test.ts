@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
+  contentDisposition,
+  isInlineType,
+  safeDisplayName,
+} from "./uploads";
+import {
   isSafeFilename,
   contentTypeForFile,
   ALLOWED_IMAGE_TYPES,
@@ -48,5 +53,35 @@ describe("upload helpers", () => {
     const svg = new TextEncoder().encode("<svg onload=alert(1)></svg>");
     expect(sniffImageType(svg)).toBeNull();
     expect(sniffImageType(new Uint8Array([1, 2, 3]))).toBeNull();
+  });
+});
+
+describe("Anhang-Auslieferung", () => {
+  it("liefert nur bekannte, harmlose Typen inline aus", () => {
+    expect(isInlineType("image/png")).toBe(true);
+    expect(isInlineType("application/pdf")).toBe(true);
+    // Beide könnten sonst Skripte im Ursprung der App ausführen.
+    expect(isInlineType("image/svg+xml")).toBe(false);
+    expect(isInlineType("text/html")).toBe(false);
+    expect(isInlineType("application/octet-stream")).toBe(false);
+  });
+
+  it("räumt Pfadanteile und Steuerzeichen aus dem Anzeigenamen", () => {
+    expect(safeDisplayName("../../etc/passwd")).toBe("passwd");
+    expect(safeDisplayName('C:\\Temp\\bericht.pdf')).toBe("bericht.pdf");
+    expect(safeDisplayName('a"b.txt')).toBe("ab.txt");
+    expect(safeDisplayName("   ")).toBe("datei");
+  });
+
+  it("kodiert den Dateinamen in Content-Disposition", () => {
+    const header = contentDisposition("Jahresbericht 2026.pdf", true);
+    expect(header.startsWith("inline;")).toBe(true);
+    expect(header).toContain('filename="Jahresbericht 2026.pdf"');
+
+    const umlaut = contentDisposition("Übersicht.csv", false);
+    expect(umlaut.startsWith("attachment;")).toBe(true);
+    // ASCII-Fallback plus RFC-5987-Variante.
+    expect(umlaut).toContain('filename="_bersicht.csv"');
+    expect(umlaut).toContain("filename*=UTF-8''%C3%9Cbersicht.csv");
   });
 });

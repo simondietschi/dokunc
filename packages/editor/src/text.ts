@@ -14,3 +14,29 @@ export function chunkText(text: string, size: number): string[] {
   if (rest.trim()) chunks.push(rest.trim());
   return chunks;
 }
+
+/**
+ * Anker-Kennung aus einem Überschriftentext.
+ *
+ * Bewusst schlicht und ohne Eindeutigkeitsgarantie: zwei gleich
+ * benannte Überschriften erhalten denselben Anker, und der Browser
+ * springt zur ersten. Das ist dasselbe Verhalten wie bei GitHub und
+ * besser als gar kein Anker.
+ */
+export function headingSlug(text: string): string {
+  return (
+    text
+      .toLowerCase()
+      // Umlaute zuerst: die Zerlegung in NFKD wuerde sie sonst zu
+      // nackten Vokalen machen, und "ubersicht" liest sich falsch.
+      .replace(/ä/g, "ae")
+      .replace(/ö/g, "oe")
+      .replace(/ü/g, "ue")
+      .replace(/\u00df/g, "ss")
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "abschnitt"
+  );
+}

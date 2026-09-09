@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowUpRight, FileText, Plus, Bell, Sparkles } from "lucide-react";
+import {
+  ArrowUpRight,
+  FileText,
+  Plus,
+  Bell,
+  Sparkles,
+  Compass,
+} from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { Logo } from "@/components/ui/Logo";
@@ -9,9 +16,10 @@ import { Input } from "@/components/ui/Input";
 import { Avatar, gradientFor } from "@/components/ui/Avatar";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { logoutAction } from "../(auth)/actions";
-import { createSpaceAction } from "./actions";
+import { createSpaceAction, joinSpaceAction } from "./actions";
 import { Onboarding, WaitingForInvite } from "./Onboarding";
 import { PaletteButton } from "@/components/CommandPalette";
+import { NotificationStream } from "@/components/NotificationStream";
 
 export const metadata: Metadata = {
   title: "Spaces",
@@ -20,7 +28,7 @@ export const metadata: Metadata = {
 
 export default async function SpacesPage() {
   const user = await requireUser();
-  const [spaces, unreadCount] = await Promise.all([
+  const [spaces, unreadCount, discoverable] = await Promise.all([
     prisma.space.findMany({
       where: { members: { some: { userId: user.id } } },
       orderBy: { createdAt: "asc" },
@@ -31,10 +39,69 @@ export default async function SpacesPage() {
     prisma.notification.count({
       where: { userId: user.id, readAt: null },
     }),
+    // Offene Spaces, in denen diese Person noch nicht ist. Ohne diesen
+    // Katalog sah ein neues Teammitglied eine leere Seite, obwohl es
+    // offene Bereiche gab.
+    prisma.space.findMany({
+      where: {
+        visibility: "OPEN",
+        members: { none: { userId: user.id } },
+      },
+      orderBy: { name: "asc" },
+      take: 24,
+      select: {
+        id: true,
+        name: true,
+        slug: true,
+        description: true,
+        joinRole: true,
+        _count: { select: { pages: true, members: true } },
+      },
+    }),
   ]);
+
+  const discoverySection = discoverable.length > 0 && (
+    <section className="mx-auto mt-14 max-w-5xl px-6">
+      <h2 className="flex items-center gap-1.5 text-sm font-semibold text-muted">
+        <Compass className="h-4 w-4" />
+        Offene Spaces ({discoverable.length})
+      </h2>
+      <p className="mt-1 text-[13px] text-faint">
+        Diese Bereiche stehen allen im Team offen.
+      </p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {discoverable.map((s) => (
+          <div
+            key={s.id}
+            className="flex flex-col justify-between rounded-xl border border-dashed border-line-strong bg-subtle/30 p-4"
+          >
+            <div>
+              <h3 className="font-medium tracking-tight">{s.name}</h3>
+              {s.description && (
+                <p className="mt-1 line-clamp-2 text-[13px] text-muted">
+                  {s.description}
+                </p>
+              )}
+              <p className="mt-1.5 flex items-center gap-1.5 text-[12.5px] text-faint">
+                <FileText className="h-3.5 w-3.5" />
+                {s._count.pages} Seiten · {s._count.members} Mitglieder
+              </p>
+            </div>
+            <form action={joinSpaceAction} className="mt-3">
+              <input type="hidden" name="spaceId" value={s.id} />
+              <Button type="submit" variant="secondary" size="sm" className="w-full">
+                Beitreten als {s.joinRole}
+              </Button>
+            </form>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
 
   return (
     <div className="min-h-screen">
+      <NotificationStream />
       <header className="sticky top-0 z-10 border-b border-line bg-canvas/80 backdrop-blur-xl">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-6">
           <Logo />
@@ -92,6 +159,7 @@ export default async function SpacesPage() {
           ) : (
             <WaitingForInvite />
           )}
+          {discoverySection}
         </main>
       ) : (
       <main className="mx-auto max-w-5xl px-6 py-12">
@@ -153,6 +221,8 @@ export default async function SpacesPage() {
             </div>
           </form>
         </div>
+
+        {discoverySection}
       </main>
       )}
     </div>

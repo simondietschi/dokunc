@@ -34,14 +34,32 @@ export default async function PageView({
 
   const page = await prisma.page.findFirst({
     where: { id: pageId, spaceId: space.id, deletedAt: null },
-    select: { id: true, title: true, updatedAt: true },
+    select: {
+      id: true,
+      title: true,
+      updatedAt: true,
+      icon: true,
+      coverUrl: true,
+      isTemplate: true,
+    },
   });
   if (!page) notFound();
+
+  // Besuch vermerken (für "zuletzt besucht" in der Seitenleiste).
+  // Fehler hier dürfen die Seite nicht kippen.
+  await prisma.pageVisit
+    .upsert({
+      where: { userId_pageId: { userId: user.id, pageId: page.id } },
+      create: { userId: user.id, pageId: page.id },
+      update: { visitedAt: new Date() },
+    })
+    .catch(() => {});
 
   const collabUrl =
     process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:3001";
 
-  const [backlinks, comments, lastVersion] = await Promise.all([
+  const [backlinks, comments, lastVersion, subscription, favorite, shares] =
+    await Promise.all([
     prisma.pageLink.findMany({
       where: { targetPageId: page.id, source: { deletedAt: null } },
       select: { source: { select: { id: true, title: true } } },
@@ -65,6 +83,25 @@ export default async function PageView({
       orderBy: { createdAt: "desc" },
       select: { author: { select: { name: true } } },
     }),
+    prisma.pageSubscription.findUnique({
+      where: { userId_pageId: { userId: user.id, pageId: page.id } },
+      select: { id: true },
+    }),
+    prisma.pageFavorite.findUnique({
+      where: { userId_pageId: { userId: user.id, pageId: page.id } },
+      select: { id: true },
+    }),
+    prisma.pageShare.findMany({
+      where: { pageId: page.id, revokedAt: null },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        createdAt: true,
+        expiresAt: true,
+        includeChildren: true,
+      },
+      take: 20,
+    }),
   ]);
 
   return (
@@ -84,6 +121,17 @@ export default async function PageView({
         updatedAt={page.updatedAt.toISOString()}
         lastEditorName={lastVersion?.author?.name ?? null}
         commentThreadIds={comments.map((c) => c.id)}
+        icon={page.icon}
+        coverUrl={page.coverUrl}
+        isTemplate={page.isTemplate}
+        isSubscribed={!!subscription}
+        isFavorite={!!favorite}
+        shares={shares.map((s) => ({
+          id: s.id,
+          createdAt: s.createdAt.toISOString(),
+          expiresAt: s.expiresAt?.toISOString() ?? null,
+          includeChildren: s.includeChildren,
+        }))}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">
@@ -112,13 +160,17 @@ export default async function PageView({
           slug={slug}
           pageId={page.id}
           currentUserId={user.id}
-          canComment={can(role, "write")}
+          canComment={can(role, "comment")}
+          canAnnotate={can(role, "write")}
           threads={comments.map((c) => ({
             id: c.id,
             body: c.body,
             anchorText: c.anchorText,
             resolved: !!c.resolvedAt,
             createdAt: c.createdAt.toISOString(),
+            // Prisma setzt updatedAt beim Anlegen mit; erst ein
+            // spürbarer Abstand heisst wirklich "nachträglich geändert".
+            edited: c.updatedAt.getTime() - c.createdAt.getTime() > 1000,
             author: c.author
               ? { id: c.author.id, name: c.author.name }
               : null,
@@ -126,6 +178,7 @@ export default async function PageView({
               id: r.id,
               body: r.body,
               createdAt: r.createdAt.toISOString(),
+              edited: r.updatedAt.getTime() - r.createdAt.getTime() > 1000,
               author: r.author
                 ? { id: r.author.id, name: r.author.name }
                 : null,

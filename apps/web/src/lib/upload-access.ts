@@ -12,6 +12,12 @@ export async function findReadableUpload(userId: string, filename: string) {
   if (!userId || !filename) return null;
   return prisma.upload.findFirst({
     where: { filename, space: { members: { some: { userId } } } },
-    select: { filename: true, contentType: true, spaceId: true },
+    select: {
+      filename: true,
+      originalName: true,
+      contentType: true,
+      kind: true,
+      spaceId: true,
+    },
   });
 }

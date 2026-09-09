@@ -27,6 +27,16 @@ model User {
   isActive     Boolean  @default(true)
   /// Wird bei "überall abmelden" / Passwortwechsel erhöht -> alte JWTs ungültig.
   tokenVersion Int      @default(0)
+  /// E-Mail bei Erwaehnungen und Kommentaren (jeweils abschaltbar).
+  emailOnMention Boolean @default(true)
+  emailOnComment Boolean @default(true)
+  /// TOTP-Geheimnis, verschluesselt (siehe lib/secret-box).
+  totpSecret     String?
+  /// Gesetzt, sobald die Einrichtung mit einem gueltigen Code bestaetigt wurde.
+  totpEnabledAt  DateTime?
+  /// Zuletzt akzeptierter TOTP-Zeitschritt. Verhindert, dass derselbe
+  /// Code innerhalb seines Fensters ein zweites Mal gilt (RFC 6238, 5.2).
+  totpLastStep   Int?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -38,6 +48,32 @@ model User {
   actedNotifications Notification[] @relation("NotificationActor")
   uploads       Upload[]
   auditEvents   AuditLog[]     @relation("AuditActor")
+  sessions      Session[]
+  pageSubscriptions PageSubscription[]
+  favorites     PageFavorite[]
+  visits        PageVisit[]
+  recoveryCodes TotpRecoveryCode[]
+}
+
+/// Angemeldetes Geraet. Das JWT im Cookie traegt die Session-ID; damit
+/// laesst sich eine einzelne Anmeldung beenden, ohne alle anderen
+/// mitzureissen (dafuer gibt es weiterhin tokenVersion).
+model Session {
+  id         String    @id @default(cuid())
+  userId     String
+  /// Roher User-Agent, nur zur Wiedererkennung in der Uebersicht.
+  userAgent  String?
+  ip         String?
+  createdAt  DateTime  @default(now())
+  /// Grob nachgefuehrt (hoechstens alle paar Minuten), nicht pro Anfrage.
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+  revokedAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([expiresAt])
 }
 
 /// Tokenbasierter Passwort-Reset (nur SHA-256-Hash gespeichert).
@@ -54,13 +90,23 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+enum SpaceVisibility {
+  /// Nur mit Einladung sichtbar und betretbar.
+  PRIVATE
+  /// Fuer alle angemeldeten Personen auffindbar und beitretbar.
+  OPEN
+}
+
 model Space {
-  id          String   @id @default(cuid())
+  id          String          @id @default(cuid())
   name        String
-  slug        String   @unique
+  slug        String          @unique
   description String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  visibility  SpaceVisibility @default(PRIVATE)
+  /// Rolle, die ein Beitritt ueber die Space-Uebersicht vergibt.
+  joinRole    SpaceRole       @default(MEMBER)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
   members SpaceMember[]
   pages   Page[]
@@ -87,6 +133,12 @@ model Page {
   spaceId     String
   parentId    String?
   title       String   @default("Untitled")
+  /// Emoji vor dem Titel (Seitenbaum, Suche, Palette).
+  icon        String?
+  /// Titelbild ueber der Seite (URL aus /api/files).
+  coverUrl    String?
+  /// Vorlage: taucht beim Anlegen neuer Seiten zur Auswahl auf.
+  isTemplate  Boolean  @default(false)
   /// TipTap/ProseMirror JSON
   content     Json?
   /// Flacher Text für Suche & History
@@ -106,9 +158,14 @@ model Page {
   incomingLinks PageLink[] @relation("LinkTarget")
   comments      Comment[]
   chunks        PageChunk[]
+  subscriptions PageSubscription[]
+  favorites     PageFavorite[]
+  visits        PageVisit[]
+  shares        PageShare[]
 
   @@index([spaceId])
   @@index([parentId])
+  @@index([spaceId, isTemplate])
 }
 
 /// Wiki-Link zwischen zwei Seiten ([[Seite]]) — Basis für Backlinks.
@@ -234,15 +291,24 @@ model CollabDocument {
 /// Hochgeladene Datei. Der Space-Bezug ist die Grundlage der
 /// Zugriffskontrolle in /api/files/[name]: ohne ihn waere jedes
 /// hochgeladene Bild fuer jede angemeldete Person lesbar.
+enum UploadKind {
+  IMAGE
+  FILE
+}
+
 model Upload {
-  id          String   @id @default(cuid())
+  id          String     @id @default(cuid())
   /// Zufaelliger Dateiname auf der Platte, zugleich das URL-Segment.
-  filename    String   @unique
+  filename    String     @unique
+  /// Name, unter dem die Datei hochgeladen wurde (nur zur Anzeige).
+  originalName String    @default("")
+  /// Bilder werden inline ausgeliefert, alles andere als Download.
+  kind        UploadKind @default(IMAGE)
   spaceId     String
   uploaderId  String?
   contentType String
   size        Int
-  createdAt   DateTime @default(now())
+  createdAt   DateTime   @default(now())
 
   space    Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   uploader User? @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
@@ -273,4 +339,79 @@ model AuditLog {
   @@index([createdAt])
   @@index([spaceId, createdAt])
   @@index([actorId, createdAt])
+}
+
+/// Jemand folgt einer Seite und wird ueber Kommentare informiert,
+/// auch ohne selbst schon mitgeschrieben zu haben.
+model PageSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  pageId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pageId])
+  @@index([pageId])
+}
+
+/// Persoenliches Lesezeichen auf eine Seite.
+model PageFavorite {
+  id        String   @id @default(cuid())
+  userId    String
+  pageId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, pageId])
+  @@index([userId, createdAt])
+}
+
+/// Zuletzt besuchte Seiten, pro Person eine Zeile je Seite.
+model PageVisit {
+  userId    String
+  pageId    String
+  visitedAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@id([userId, pageId])
+  @@index([userId, visitedAt])
+}
+
+/// Freigabelink auf eine Seite: Lesen ohne Konto.
+/// Wie bei Einladungen wird nur der SHA-256-Hash des Tokens gespeichert.
+model PageShare {
+  id            String    @id @default(cuid())
+  pageId        String
+  tokenHash     String    @unique
+  createdById   String?
+  /// Untergeordnete Seiten mitfreigeben.
+  includeChildren Boolean @default(false)
+  expiresAt     DateTime?
+  revokedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId])
+}
+
+/// Wiederherstellungscode fuer die Zwei-Faktor-Anmeldung.
+/// Gespeichert wird nur der SHA-256-Hash, wie bei Einladungen.
+model TotpRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, codeHash])
+  @@index([userId, usedAt])
 }

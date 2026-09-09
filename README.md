@@ -9,19 +9,44 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 
 - Auth & Benutzer (Invite-only-Registrierung, erste Person = Admin)
 - Spaces mit Rollen/Berechtigungen (OWNER/ADMIN/MEMBER/VIEWER)
-- Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
-  Aufgabenlisten, Bilder, Callouts, Mermaid-Diagramme, YouTube-Embeds,
-  Excalidraw-Zeichnungen, draw.io-Diagramme)
+- Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen
+  mit voller Bedienung, Aufgabenlisten, Bilder mit Alternativtext,
+  Breite und Bildunterschrift, Dateianhänge, Code-Blöcke mit
+  Syntax-Hervorhebung, aufklappbare Abschnitte, Callouts,
+  Mermaid-Diagramme, YouTube-Embeds, Excalidraw-Zeichnungen,
+  draw.io-Diagramme)
+- Block-Griff zum Verschieben, Duplizieren und Löschen; Gliederung der
+  Seite, Anker an jeder Überschrift, Wortzähler
+- Seiten-Symbol, Titelbild und Vorlagen
+- Markdown einfügen und importieren
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
 - **Wiki-Links** `[[Seite]]` mit Vorschlags-Popup + **Backlinks**
-- **Kommentare** (textverankerte Threads) + **@-Mentions** +
-  Benachrichtigungen
+- **Kommentare**: textverankerte Threads und Kommentare zur ganzen
+  Seite, bearbeitbar, mit Benachrichtigung an Beteiligte; auch die
+  VIEWER-Rolle darf mitreden. Dazu **@-Mentions** und die Glocke
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
-- Postgres-Volltextsuche, Versionsverlauf, Papierkorb
+- Postgres-Volltextsuche, Papierkorb
+- **Versionsverlauf** mit Wortvergleich zweier Fassungen und Vorschau
+  vor dem Wiederherstellen
+- **Offline-Puffer**: Änderungen ohne Netz bleiben auf dem Gerät und
+  gehen beim Neuladen nicht verloren
+- **Space-Einstellungen**: umbenennen, verlassen, offene Spaces zum
+  Beitreten
+- **Seitenbaum**: Seiten per Ziehen umhängen und sortieren, Favoriten
+  und zuletzt besuchte Seiten in der Seitenleiste
 - **Audit-Log** über sicherheitsrelevante Ereignisse (Anmeldungen,
   Rollenwechsel, Einladungen, Löschungen) mit Ansicht unter `/admin/audit`
+- **Angemeldete Geräte** einzeln beenden, „angemeldet bleiben" optional
+- **Zwei-Faktor-Anmeldung** (TOTP) mit QR-Code für Authenticator-Apps
+  und einmalig gültigen Wiederherstellungscodes
+- **E-Mail-Benachrichtigungen** für Erwähnungen und Kommentare, pro
+  Person abschaltbar; Seiten lassen sich einzeln abonnieren. Die Glocke
+  aktualisiert sich live, ohne Neuladen
+- **Freigabelinks**: eine Seite (auf Wunsch mit Unterseiten) ohne Konto
+  lesbar machen, mit Ablauf und jederzeit widerrufbar
+- **Datenauskunft und Kontolöschung** im Konto-Bereich
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
 
@@ -81,10 +106,12 @@ pnpm test:e2e         # Playwright-E2E: kompletter Editor-Pfad inkl.
                       # Realtime-Sync (leert die DB! Nur gegen Dev-DB laufen lassen)
 ```
 
-Die Integrationstests prüfen, dass eine Seiten- oder Versions-ID aus einem
-Formular niemals einen fremden Space trifft. Sie brauchen eine erreichbare
-Datenbank aus `.env` und legen ihre eigenen Datensätze an (und wieder ab);
-sie leeren nichts.
+Die Integrationstests prüfen, was in Abfragebedingungen steckt statt im
+Code: dass eine Seiten- oder Versions-ID aus einem Formular niemals einen
+fremden Space trifft, und dass ein TOTP-Zeitschritt wie ein
+Wiederherstellungscode genau einmal gilt — auch bei gleichzeitigen
+Versuchen. Sie brauchen eine erreichbare Datenbank aus `.env` und legen
+ihre eigenen Datensätze an (und wieder ab); sie leeren nichts.
 
 Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
 Server) und erwartet Postgres + Redis aus `.env`. In Umgebungen mit
@@ -105,9 +132,16 @@ Kurz, was die App bewusst tut:
   blosse Kenntnis einer eingeladenen Adresse genügt nicht.
 - **Uploads** gehören einem Space und werden nur an dessen Mitglieder
   ausgeliefert.
+- **Sitzungen** sind einzeln widerrufbar; der Entzug wirkt auch auf
+  offene Editor-Verbindungen, nicht erst beim nächsten Neuladen.
 - **Rate-Limits** pro Konto und pro IP. Die IP stammt aus
   `X-Forwarded-For`, ausgewertet gemäss `TRUSTED_PROXY_HOPS` — hinter dem
   mitgelieferten Caddy setzt der Proxy den Header selbst.
+- **Zwei-Faktor-Anmeldung** nach RFC 6238, pro Konto zuschaltbar. Das
+  Geheimnis liegt mit AES-256-GCM verschlüsselt in der Datenbank (Schlüssel
+  aus `APP_SECRET`), Wiederherstellungscodes nur als SHA-256-Hash und jeder
+  genau einmal gültig. Zwischen Passwort und Code steht ein eigenes,
+  fünf Minuten gültiges Cookie — kein Sitzungscookie.
 - **Audit-Log** für Anmeldungen, Rollenwechsel, Einladungen und Löschungen.
 
 ## Projektstruktur
@@ -117,5 +151,6 @@ apps/web      Next.js (UI, Auth, API, Editor)
 apps/collab   Hocuspocus WebSocket-Server (Yjs-Persistenz)
 packages/db   Prisma-Schema + generierter Client (geteilt)
 packages/editor  Geteilte TipTap-Extensions
+packages/mailer  Geteilter E-Mail-Versand (Web + Collab)
 e2e/          Playwright-E2E-Tests
 ```

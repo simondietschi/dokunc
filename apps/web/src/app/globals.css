@@ -438,6 +438,335 @@
   outline: 2px solid var(--accent);
 }
 
+/* ---- Geteilte Ansicht ---- */
+.dk-shared {
+  font-size: 1rem;
+  line-height: 1.75;
+  color: var(--ink);
+}
+.dk-shared h1,
+.dk-shared h2,
+.dk-shared h3 {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 1.4em 0 0.4em;
+}
+.dk-shared h1 {
+  font-size: 1.75rem;
+}
+.dk-shared h2 {
+  font-size: 1.4rem;
+}
+.dk-shared h3 {
+  font-size: 1.15rem;
+}
+.dk-shared p {
+  margin: 0.7em 0;
+}
+.dk-shared ul,
+.dk-shared ol {
+  padding-left: 1.5em;
+  margin: 0.6em 0;
+}
+.dk-shared ul {
+  list-style: disc;
+}
+.dk-shared ol {
+  list-style: decimal;
+}
+.dk-shared a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dk-shared pre {
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+.dk-shared code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.dk-shared blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 1rem;
+  color: var(--muted);
+}
+.dk-shared table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+}
+.dk-shared th,
+.dk-shared td {
+  border: 1px solid var(--line);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+}
+.dk-shared img {
+  max-width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+}
+.dk-shared iframe {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+/* ---- Versions-Vorschau ---- */
+.dk-version-preview {
+  font-size: 0.9rem;
+  line-height: 1.65;
+  color: var(--ink);
+  max-height: 22rem;
+  overflow-y: auto;
+}
+.dk-version-preview h1,
+.dk-version-preview h2,
+.dk-version-preview h3 {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0.9em 0 0.3em;
+}
+.dk-version-preview h1 {
+  font-size: 1.3rem;
+}
+.dk-version-preview h2 {
+  font-size: 1.12rem;
+}
+.dk-version-preview h3 {
+  font-size: 1rem;
+}
+.dk-version-preview p {
+  margin: 0.45em 0;
+}
+.dk-version-preview ul,
+.dk-version-preview ol {
+  padding-left: 1.3em;
+  margin: 0.45em 0;
+}
+.dk-version-preview ul {
+  list-style: disc;
+}
+.dk-version-preview ol {
+  list-style: decimal;
+}
+.dk-version-preview a {
+  color: var(--accent);
+}
+.dk-version-preview pre {
+  background: var(--subtle);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.7rem 0.85rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+}
+.dk-version-preview code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+}
+.dk-version-preview blockquote {
+  border-left: 3px solid var(--accent);
+  padding-left: 0.8rem;
+  color: var(--muted);
+}
+.dk-version-preview table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.6em 0;
+}
+.dk-version-preview th,
+.dk-version-preview td {
+  border: 1px solid var(--line);
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+}
+.dk-version-preview img {
+  max-width: 100%;
+  border-radius: 10px;
+}
+/* Eingebettete Rahmen haben in einer Vorschau nichts verloren. */
+.dk-version-preview iframe {
+  display: none;
+}
+
+/* ---- Block-Griff ---- */
+.dk-block-handle {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.dk-block-handle > button {
+  display: grid;
+  place-items: center;
+  height: 1.6rem;
+  width: 1.3rem;
+  border-radius: 6px;
+  color: var(--faint);
+  cursor: grab;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.dk-block-handle > button:hover {
+  background: var(--subtle);
+  color: var(--muted);
+}
+.dk-block-menu {
+  position: absolute;
+  left: 0;
+  top: 1.8rem;
+  z-index: 40;
+  width: 11rem;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--elevated);
+  padding: 0.25rem;
+  box-shadow: var(--shadow-pop);
+}
+.dk-block-menu button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.6rem;
+  border-radius: 8px;
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+  font-size: 13px;
+  color: var(--ink);
+  transition: background 0.15s ease;
+}
+.dk-block-menu button:hover {
+  background: var(--subtle);
+}
+.dk-block-menu button.is-danger {
+  color: var(--danger);
+}
+
+/* ---- Aufklappbare Abschnitte ---- */
+.dk-toggle {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin: 0.9rem 0;
+  overflow: hidden;
+}
+.dk-toggle-head {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  background: var(--subtle);
+}
+.dk-toggle-caret {
+  display: grid;
+  place-items: center;
+  height: 1.5rem;
+  width: 1.5rem;
+  border-radius: 6px;
+  color: var(--muted);
+  transition:
+    transform 0.15s ease,
+    color 0.15s ease;
+}
+.dk-toggle.is-open .dk-toggle-caret {
+  transform: rotate(90deg);
+}
+.dk-toggle-caret:hover {
+  color: var(--ink);
+}
+.dk-toggle-summary {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  outline: none;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ink);
+}
+.dk-toggle-body {
+  padding: 0.35rem 0.9rem 0.6rem 2.1rem;
+}
+/* Zugeklappt nur ausblenden, nicht entfernen: ProseMirror braucht den
+   Inhalt durchgehend im DOM. */
+.dk-toggle:not(.is-open) .dk-toggle-body {
+  display: none;
+}
+
+/* ---- Gliederung ---- */
+.dk-outline {
+  display: none;
+}
+@media (min-width: 1400px) {
+  .dk-outline {
+    display: block;
+    position: fixed;
+    top: 7.5rem;
+    right: 2rem;
+    width: 13.5rem;
+    max-height: 65vh;
+    overflow-y: auto;
+    padding-left: 0.9rem;
+    border-left: 1px solid var(--line);
+  }
+}
+.dk-outline-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-bottom: 0.5rem;
+}
+.dk-outline li {
+  margin: 0.15rem 0;
+}
+.dk-outline a {
+  display: block;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+.dk-outline a:hover {
+  color: var(--ink);
+}
+
+/* ---- Dateianhaenge ---- */
+.dk-attachment-wrap {
+  margin: 0.75rem 0;
+}
+.dk-attachment {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  text-decoration: none;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.dk-attachment:hover {
+  border-color: var(--line-strong);
+  background: var(--subtle);
+}
+.dk-attachment--selected {
+  outline: 2px solid var(--accent);
+}
+
 /* ---- Bilder mit Breite, Alt-Text und Unterschrift ---- */
 .dk-figure {
   position: relative;

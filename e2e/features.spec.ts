@@ -49,23 +49,29 @@ test("Wiki-Links erzeugen Backlinks", async ({ page }) => {
 
     // Direkt nach der Navigation kann das erste Tippen von der noch
     // laufenden Hydration/Transition geschluckt werden — daher mit
-    // Verifikation gegen die Sidebar und Retry.
+    // Retry.
+    //
+    // Geprueft wird gegen die Persistenz (Titelfeld nach dem Neuladen),
+    // nicht gegen die Seitenleiste: deren Aktualisierung haengt an einer
+    // Layout-Revalidierung und braucht unter voller Suite-Last deutlich
+    // laenger als das Speichern selbst.
     const input = page.locator('input[name="title"]');
     let saved = false;
     for (let attempt = 0; attempt < 3 && !saved; attempt++) {
       await input.click();
       await input.fill(title);
       await input.press("Enter"); // blur -> renamePageAction
+      await page.waitForTimeout(1000);
+      await page.reload();
       saved = await page
-        .locator("aside")
-        .getByText(title)
-        .waitFor({ timeout: 4000 })
-        .then(
-          () => true,
-          () => false,
-        );
+        .locator('input[name="title"]')
+        .waitFor({ timeout: 10_000 })
+        .then(() => page.locator('input[name="title"]').inputValue())
+        .then((value) => value === title)
+        .catch(() => false);
     }
     expect(saved, `Titel "${title}" wurde nicht gespeichert`).toBe(true);
+    await waitForLive(page);
     return page.url().match(/\/p\/([^/?]+)/)![1];
   }
 
@@ -110,6 +116,16 @@ test("Kommentar-Thread anlegen und auflösen", async ({ page }) => {
   await page.waitForURL("**/s/**/p/**");
   await waitForLive(page);
 
+  // Eigene Seite: die Startseite sammelt ueber die Suite hinweg
+  // Kommentare an, und ein voller Thread-Baum macht den Test langsam
+  // und von frueheren Tests abhaengig.
+  await page.click("text=Neue Seite");
+  await page.waitForURL("**/p/**");
+  await expect(page.locator('input[name="title"]')).toHaveValue("Untitled", {
+    timeout: 15_000,
+  });
+  await waitForLive(page);
+
   const editor = page.locator(".ProseMirror");
   await editor.click();
   await page.keyboard.press("Control+End");
@@ -131,8 +147,11 @@ test("Kommentar-Thread anlegen und auflösen", async ({ page }) => {
     .click();
 
   // Thread erscheint
+  // Grosszuegig: nach dem Absenden laedt Next den Serverteil der Seite
+  // neu, und unter voller Suite-Last dauert das in kleinen Umgebungen
+  // deutlich laenger als die uebliche Erwartung.
   await expect(page.getByText("Bitte hier präzisieren.")).toBeVisible({
-    timeout: 10_000,
+    timeout: 30_000,
   });
   // Auflösen: erledigte Threads wandern in den eingeklappten Bereich
   // "N erledigt" am Ende der Liste und sind erst nach dem Aufklappen da.
@@ -351,4 +370,230 @@ test("Code-Block hebt hervor, Tabelle laesst sich bearbeiten", async ({
   await page.click('button[title="Tabelle bearbeiten"]');
   await page.getByRole("menuitem", { name: "Zeile darunter" }).click();
   await expect(rows).toHaveCount(4, { timeout: 8000 });
+});
+
+test("Seitensymbol, Anhang und Vorlage", async ({ page }) => {
+  await login(page);
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**/p/**");
+  await waitForLive(page);
+
+  // Symbol setzen: erscheint neben dem Titel und im Seitenbaum.
+  await page.getByRole("button", { name: "Symbol hinzufügen" }).click();
+  await page.getByLabel("Symbol suchen").fill("warnung");
+  await page.getByTitle("warnung").click();
+  await expect(
+    page.getByRole("button", { name: "Symbol ändern" }),
+  ).toContainText("⚠️", { timeout: 8000 });
+
+  // Als Vorlage markieren -> die Auswahl beim Anlegen taucht auf.
+  // Nach dem Neuladen geprueft, damit der Test nicht an der Laufzeit
+  // der Layout-Revalidierung haengt.
+  await page.click('button[title="Als Vorlage markieren"]');
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Aus Vorlage anlegen" }),
+  ).toBeVisible({ timeout: 15_000 });
+
+  // Wieder zuruecknehmen, damit spaetere Laeufe sauber starten.
+  await page.click('button[title="Vorlagen-Markierung entfernen"]');
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Aus Vorlage anlegen" }),
+  ).toBeHidden({ timeout: 15_000 });
+});
+
+test("Angemeldete Geraete: einzelne Sitzung beenden", async ({ page }) => {
+  await login(page);
+  await page.goto("/account");
+
+  const list = page.getByRole("listitem").filter({ hasText: "dieses Gerät" });
+  await expect(list.first()).toBeVisible({ timeout: 10_000 });
+
+  // Die eigene Sitzung beenden fuehrt zurueck zur Anmeldung.
+  await list.first().getByTitle("Gerät abmelden").click();
+  // exact: sonst trifft "Abmelden" auch "Überall abmelden" auf der Seite.
+  await page
+    .getByRole("button", { name: "Abmelden", exact: true })
+    .click();
+  await page.waitForURL("**/login", { timeout: 15_000 });
+
+  // Und das Cookie ist wirklich weg, nicht nur die Weiterleitung.
+  await page.goto("/account");
+  await page.waitForURL("**/login**", { timeout: 15_000 });
+});
+
+test("Seitenkommentar ohne Textstelle", async ({ page }) => {
+  await login(page);
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**/p/**");
+  await waitForLive(page);
+
+  // Eigene Seite, aus demselben Grund wie beim Thread-Test: auf der
+  // Startseite sammeln sich über die Suite hinweg Kommentare an, und
+  // ein voller Thread-Baum macht das Rendern last- statt sachabhängig.
+  await page.click("text=Neue Seite");
+  await page.waitForURL("**/p/**");
+  await expect(page.locator('input[name="title"]')).toHaveValue("Untitled", {
+    timeout: 15_000,
+  });
+  await waitForLive(page);
+
+  await page.getByRole("button", { name: /Kommentar zur Seite/ }).click();
+  const body = page.getByLabel("Kommentar zur Seite");
+  await body.fill("Gilt das noch?");
+  await page
+    .getByRole("button", { name: "Kommentieren", exact: true })
+    .click();
+  await expect(page.getByText("Gilt das noch?")).toBeVisible({
+    timeout: 30_000,
+  });
+});
+
+test("Versionsverlauf vergleicht und zeigt eine Vorschau", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**/p/**");
+  await waitForLive(page);
+  const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
+  const slug = page.url().match(/\/s\/([^/]+)\//)![1];
+
+  await page.goto(`/s/${slug}/p/${pageId}/history`);
+  const view = page.getByRole("link", { name: "Ansehen" }).first();
+  // Der Editor-Test hat auf dieser Seite geschrieben, es gibt also
+  // mindestens einen Snapshot.
+  await expect(view).toBeVisible({ timeout: 15_000 });
+  await view.click();
+
+  await expect(page.getByText(/Vorschau vom/)).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(page.getByText(/aktuelle Fassung/)).toBeVisible();
+});
+
+test("Space-Einstellungen: umbenennen und oeffnen", async ({ page }) => {
+  await login(page);
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**");
+  const slug = page.url().match(/\/s\/([^/]+)/)![1];
+
+  await page.goto(`/s/${slug}/settings`);
+  await expect(
+    page.getByRole("heading", { name: "Einstellungen" }),
+  ).toBeVisible({ timeout: 15_000 });
+
+  // Sichtbarkeit auf offen stellen und speichern.
+  await page.getByLabel("Sichtbarkeit").selectOption("OPEN");
+  await page.getByRole("button", { name: "Speichern" }).click();
+  await page.goto(`/s/${slug}/settings`);
+  await expect(page.getByLabel("Sichtbarkeit")).toHaveValue("OPEN", {
+    timeout: 15_000,
+  });
+
+  // Wieder privat, damit spaetere Laeufe unveraendert starten.
+  await page.getByLabel("Sichtbarkeit").selectOption("PRIVATE");
+  await page.getByRole("button", { name: "Speichern" }).click();
+  await page.goto(`/s/${slug}/settings`);
+  await expect(page.getByLabel("Sichtbarkeit")).toHaveValue("PRIVATE", {
+    timeout: 15_000,
+  });
+});
+
+test("Seite folgen und E-Mail-Einstellungen", async ({ page }) => {
+  await login(page);
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**/p/**");
+  await waitForLive(page);
+
+  // Nach dem Neuladen geprueft: der Zustand steckt in der Datenbank,
+  // die Anzeige haengt an einer Revalidierung der Serverseite.
+  await page.click('button[title="Dieser Seite folgen"]');
+  await page.reload();
+  await expect(
+    page.locator('button[title="Dieser Seite nicht mehr folgen"]'),
+  ).toBeVisible({ timeout: 20_000 });
+  // Wieder loesen, damit spaetere Laeufe unveraendert starten.
+  await page.click('button[title="Dieser Seite nicht mehr folgen"]');
+  await page.reload();
+
+  await page.goto("/account");
+  const mention = page.getByLabel("Wenn mich jemand mit @ erwähnt");
+  await expect(mention).toBeChecked();
+  await mention.uncheck();
+  await page
+    .locator("form", { hasText: "E-Mail-Benachrichtigungen" })
+    .getByRole("button", { name: "Speichern" })
+    .click();
+  await expect(page.getByText("Einstellungen gespeichert.")).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.reload();
+  await expect(
+    page.getByLabel("Wenn mich jemand mit @ erwähnt"),
+  ).not.toBeChecked();
+});
+
+test("Favorit setzen erscheint in der Seitenleiste", async ({ page }) => {
+  await login(page);
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**/p/**");
+  await waitForLive(page);
+
+  await page.click('button[title="Zu den Favoriten"]');
+  await page.reload();
+  await expect(page.getByText("Favoriten", { exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
+
+  await page.click('button[title="Aus den Favoriten entfernen"]');
+  await page.reload();
+  await expect(page.getByText("Favoriten", { exact: true })).toBeHidden({
+    timeout: 15_000,
+  });
+});
+
+test("Freigabelink: lesen ohne Konto", async ({ page, context }) => {
+  await login(page);
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**/p/**");
+  await waitForLive(page);
+
+  await page.click('button[title="Seite teilen"]');
+  await page.getByRole("button", { name: "Link erzeugen" }).click();
+  const field = page.getByLabel("Freigabelink");
+  await expect(field).toBeVisible({ timeout: 20_000 });
+  const url = await field.inputValue();
+  expect(url).toContain("/share/");
+
+  // In einem frischen Kontext ohne Cookies aufrufen.
+  const anonymous = await context.browser()!.newContext();
+  const guest = await anonymous.newPage();
+  await guest.goto(url);
+  await expect(guest.getByText("Geteilte Ansicht")).toBeVisible({
+    timeout: 20_000,
+  });
+
+  // Ohne Token gibt es nichts zu sehen.
+  const without = await guest.request.get(url.split("?")[0]);
+  expect(without.status()).toBe(404);
+  await anonymous.close();
+
+  // Zurueckziehen macht den Link wertlos.
+  await page.getByTitle("Freigabe zurückziehen").first().click();
+  // Das Zuruecknehmen laeuft als Server-Action; deshalb pollen statt
+  // sofort zu pruefen.
+  await expect
+    .poll(async () => (await page.request.get(url)).status(), {
+      timeout: 20_000,
+    })
+    .toBe(404);
 });

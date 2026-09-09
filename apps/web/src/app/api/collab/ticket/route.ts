@@ -63,6 +63,7 @@ export async function POST(req: Request) {
   const ticket = await issueCollabTicket({
     userId: user.id,
     tokenVersion: user.tokenVersion,
+    sessionId: user.sessionId,
     pageId: page.id,
   });
   return NextResponse.json(

@@ -1,39 +1,20 @@
 import "server-only";
-import nodemailer, { type Transporter } from "nodemailer";
+import {
+  appUrl,
+  commentMail,
+  escapeHtml,
+  layout,
+  mentionMail,
+  send,
+} from "@dokunc/mailer";
 import { log } from "./log";
 
-let cached: Transporter | null | undefined;
-
 /**
- * SMTP-Transport aus den Umgebungsvariablen. Ist SMTP nicht konfiguriert,
- * wird `null` zurückgegeben — der Aufrufer loggt dann den Link (Dev),
- * statt die Aktion fehlschlagen zu lassen.
+ * E-Mail-Versand der Web-App.
+ *
+ * Transport und Vorlagen liegen in `@dokunc/mailer`, weil der
+ * Collab-Server dieselben braucht (Erwähnungen entstehen dort).
  */
-function transport(): Transporter | null {
-  if (cached !== undefined) return cached;
-  const host = process.env.SMTP_HOST;
-  if (!host) {
-    cached = null;
-    return cached;
-  }
-  cached = nodemailer.createTransport({
-    host,
-    port: Number(process.env.SMTP_PORT ?? 587),
-    secure: process.env.SMTP_SECURE === "true",
-    auth: process.env.SMTP_USERNAME
-      ? {
-          user: process.env.SMTP_USERNAME,
-          pass: process.env.SMTP_PASSWORD,
-        }
-      : undefined,
-  });
-  return cached;
-}
-
-function appUrl(): string {
-  return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
-}
-
 export function buildInviteUrl(invitationId: string, token: string): string {
   const u = new URL(`${appUrl()}/invite/${invitationId}`);
   u.searchParams.set("token", token);
@@ -50,32 +31,24 @@ export async function sendPasswordResetEmail(opts: {
   to: string;
   resetUrl: string;
 }): Promise<void> {
-  const subject = "Passwort zurücksetzen — dokunc";
-  const text = `Setze dein Passwort zurück:\n${opts.resetUrl}\n\nDer Link ist 1 Stunde gültig. Wenn du das nicht warst, ignoriere diese E-Mail.`;
-  const html = `
-    <div style="font-family:ui-sans-serif,system-ui,sans-serif;max-width:480px;margin:0 auto">
-      <h2 style="font-weight:600">Passwort zurücksetzen</h2>
-      <p style="color:#555;line-height:1.6">Klicke zum Zurücksetzen:</p>
-      <p><a href="${opts.resetUrl}"
-         style="display:inline-block;background:#5e60e8;color:#fff;
-                padding:10px 18px;border-radius:10px;text-decoration:none">
-        Neues Passwort setzen</a></p>
-      <p style="color:#999;font-size:12px">Gültig für 1 Stunde. Nicht angefordert? E-Mail ignorieren.</p>
-    </div>`;
-  const t = transport();
-  if (!t) {
-    log.warn({ to: opts.to, url: opts.resetUrl }, "SMTP fehlt — Reset-Link nur im Log");
-    return;
-  }
-  await t.sendMail({
-    from:
-      process.env.MAIL_FROM_ADDRESS ??
-      `dokunc <no-reply@${new URL(appUrl()).hostname}>`,
+  const sent = await send({
     to: opts.to,
-    subject,
-    text,
-    html,
+    subject: "Passwort zurücksetzen — dokunc",
+    text: `Setze dein Passwort zurück:\n${opts.resetUrl}\n\nDer Link ist 1 Stunde gültig. Wenn du das nicht warst, ignoriere diese E-Mail.`,
+    html: layout({
+      heading: "Passwort zurücksetzen",
+      body: "<p>Klicke zum Zurücksetzen:</p>",
+      ctaLabel: "Neues Passwort setzen",
+      ctaUrl: opts.resetUrl,
+      footer: "Gültig für 1 Stunde. Nicht angefordert? E-Mail ignorieren.",
+    }),
   });
+  if (!sent) {
+    log.warn(
+      { to: opts.to, url: opts.resetUrl },
+      "SMTP fehlt — Reset-Link nur im Log",
+    );
+  }
 }
 
 export async function sendInvitationEmail(opts: {
@@ -85,57 +58,59 @@ export async function sendInvitationEmail(opts: {
   role: string;
   inviteUrl: string;
 }): Promise<void> {
-  const subject = `Einladung zu „${opts.spaceName}" auf dokunc`;
-  const text = `${opts.inviterName} lädt dich als ${opts.role} in den Space „${opts.spaceName}" ein.\n\nEinladung annehmen:\n${opts.inviteUrl}\n\nDer Link ist 7 Tage gültig.`;
-  const html = `
-    <div style="font-family:ui-sans-serif,system-ui,sans-serif;max-width:480px;margin:0 auto">
-      <h2 style="font-weight:600">Einladung zu „${escapeHtml(opts.spaceName)}"</h2>
-      <p style="color:#555;line-height:1.6">
-        <strong>${escapeHtml(opts.inviterName)}</strong> lädt dich als
-        <strong>${escapeHtml(opts.role)}</strong> in den Space
-        „${escapeHtml(opts.spaceName)}" auf dokunc ein.
-      </p>
-      <p>
-        <a href="${opts.inviteUrl}"
-           style="display:inline-block;background:#5e60e8;color:#fff;
-                  padding:10px 18px;border-radius:10px;text-decoration:none">
-          Einladung annehmen
-        </a>
-      </p>
-      <p style="color:#999;font-size:12px">Der Link ist 7 Tage gültig.
-      Wenn du das nicht erwartet hast, ignoriere diese E-Mail.</p>
-    </div>`;
-
-  const t = transport();
-  if (!t) {
+  const sent = await send({
+    to: opts.to,
+    subject: `Einladung zu „${opts.spaceName}" auf dokunc`,
+    text: `${opts.inviterName} lädt dich als ${opts.role} in den Space „${opts.spaceName}" ein.\n\nEinladung annehmen:\n${opts.inviteUrl}\n\nDer Link ist 7 Tage gültig.`,
+    html: layout({
+      heading: `Einladung zu „${opts.spaceName}"`,
+      body: `<p><strong>${escapeHtml(opts.inviterName)}</strong> lädt dich als
+             <strong>${escapeHtml(opts.role)}</strong> in den Space
+             „${escapeHtml(opts.spaceName)}" auf dokunc ein.</p>`,
+      ctaLabel: "Einladung annehmen",
+      ctaUrl: opts.inviteUrl,
+      footer:
+        "Der Link ist 7 Tage gültig. Wenn du das nicht erwartet hast, ignoriere diese E-Mail.",
+    }),
+  });
+  if (!sent) {
     // Dev-Fallback: kein SMTP konfiguriert.
     log.warn(
       { to: opts.to, url: opts.inviteUrl },
       "SMTP nicht konfiguriert — Einladungslink nur im Log",
     );
-    return;
   }
-  await t.sendMail({
-    from:
-      process.env.MAIL_FROM_ADDRESS ??
-      `dokunc <no-reply@${new URL(appUrl()).hostname}>`,
-    to: opts.to,
-    subject,
-    text,
-    html,
-  });
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(
-    /[&<>"']/g,
-    (c) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[c] as string,
-  );
+/**
+ * Kommentar- oder Antwortbenachrichtigung.
+ * Fehler beim Versand kippen nie die auslösende Aktion.
+ */
+export async function sendCommentEmail(opts: {
+  to: string;
+  actorName: string;
+  pageTitle: string;
+  pageId: string;
+  body: string;
+  isReply: boolean;
+}): Promise<void> {
+  try {
+    await send(commentMail(opts));
+  } catch (e) {
+    log.warn({ err: String(e), to: opts.to }, "Kommentar-Mail fehlgeschlagen");
+  }
+}
+
+export async function sendMentionEmail(opts: {
+  to: string;
+  actorName: string;
+  pageTitle: string;
+  pageId: string;
+  snippet: string;
+}): Promise<void> {
+  try {
+    await send(mentionMail(opts));
+  } catch (e) {
+    log.warn({ err: String(e), to: opts.to }, "Erwähnungs-Mail fehlgeschlagen");
+  }
 }

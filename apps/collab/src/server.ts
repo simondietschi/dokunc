@@ -8,6 +8,7 @@ import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
 import pino from "pino";
 import * as Y from "yjs";
 import { prisma } from "@dokunc/db";
+import { mentionMail, send } from "@dokunc/mailer";
 import {
   richExtensions,
   COLLAB_FIELD,
@@ -58,6 +59,12 @@ const COLLAB_CONTROL_CHANNEL = "dokunc:collab:control";
  * Gegenstück: apps/web/.../CollaborativeEditor.tsx.
  */
 const COLLAB_RELOAD_SIGNAL = "dokunc:reload";
+
+/**
+ * Kanal für Live-Benachrichtigungen.
+ * Gegenstück: apps/web/src/lib/notify-bus.ts.
+ */
+const NOTIFY_CHANNEL_PREFIX = "dokunc:notify:";
 
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
 const VERSION_INTERVAL_MS = 2 * 60 * 1000;
@@ -123,14 +130,28 @@ async function authorize(token: string | undefined, pageId: string) {
   if (payload.pid !== pageId) throw new Error("Ticket gilt anderer Seite");
   const userId = String(payload.sub);
   const tokenVersion = Number(payload.tv ?? 0);
+  const sessionId = String(payload.sid ?? "");
+  if (!sessionId) throw new Error("Ticket ohne Sitzung");
 
-  // Session-Revocation gilt auch für den WebSocket: Konto muss aktiv
-  // sein und die Token-Version des JWT muss aktuell sein.
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { isActive: true, tokenVersion: true },
+  // Widerruf gilt auch für den WebSocket: die Anmeldung muss noch
+  // bestehen, das Konto aktiv und die Token-Version aktuell sein.
+  const session = await prisma.session.findUnique({
+    where: { id: sessionId },
+    select: {
+      userId: true,
+      revokedAt: true,
+      expiresAt: true,
+      user: { select: { isActive: true, tokenVersion: true } },
+    },
   });
-  if (!user || !user.isActive || user.tokenVersion !== tokenVersion) {
+  if (
+    !session ||
+    session.userId !== userId ||
+    session.revokedAt !== null ||
+    session.expiresAt.getTime() < Date.now() ||
+    !session.user.isActive ||
+    session.user.tokenVersion !== tokenVersion
+  ) {
     throw new Error("Sitzung ungültig");
   }
 
@@ -147,7 +168,7 @@ async function authorize(token: string | undefined, pageId: string) {
   if (!member) throw new Error("Kein Zugriff auf diesen Space");
 
   const readOnly = member.role === "VIEWER";
-  return { userId, readOnly };
+  return { userId, tokenVersion, sessionId, readOnly };
 }
 
 // HA: mehrere Collab-Instanzen koordinieren Yjs-Dokumente + Awareness
@@ -167,12 +188,14 @@ const server = new Server({
     if (isReloading(data.documentName)) {
       throw new Error("Seite wird gerade wiederhergestellt");
     }
-    const { userId, readOnly } = await authorize(
+    const { userId, tokenVersion, sessionId, readOnly } = await authorize(
       data.token,
       data.documentName,
     );
     data.connectionConfig.readOnly = readOnly;
-    return { userId };
+    // Token-Version und Sitzung wandern in den Kontext, damit die
+    // wiederkehrende Prüfung sie ohne neues Ticket vergleichen kann.
+    return { userId, tokenVersion, sessionId };
   },
 
   async onLoadDocument(data) {
@@ -318,10 +341,22 @@ async function notifyNewMentions(
 
   const members = await prisma.spaceMember.findMany({
     where: { spaceId, userId: { in: added } },
-    select: { userId: true },
+    select: {
+      user: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          isActive: true,
+          emailOnMention: true,
+        },
+      },
+    },
   });
 
-  for (const { userId } of members) {
+  const notified: typeof members = [];
+  for (const member of members) {
+    const userId = member.user.id;
     const exists = await prisma.notification.findFirst({
       where: { userId, pageId, type: "MENTION", readAt: null },
       select: { id: true },
@@ -330,8 +365,73 @@ async function notifyNewMentions(
       await prisma.notification.create({
         data: { userId, actorId, type: "MENTION", pageId },
       });
+      notified.push(member);
     }
   }
+
+  // Glocke der erwähnten Person sofort aktualisieren.
+  await Promise.all(
+    notified.map((m) =>
+      redis
+        .publish(`${NOTIFY_CHANNEL_PREFIX}${m.user.id}`, "1")
+        .catch(() => undefined),
+    ),
+  );
+
+  await mailMentions(pageId, actorId, notified);
+}
+
+/**
+ * Erwähnungen per E-Mail.
+ *
+ * Erwähnungen entstehen hier im Collab-Server, nicht in der Web-App —
+ * ohne diesen Weg gäbe es für sie keine Nachricht. Fehler beim Versand
+ * bleiben folgenlos für das Speichern des Dokuments.
+ */
+async function mailMentions(
+  pageId: string,
+  actorId: string | undefined,
+  recipients: {
+    user: {
+      email: string;
+      isActive: boolean;
+      emailOnMention: boolean;
+    };
+  }[],
+): Promise<void> {
+  const wanted = recipients.filter(
+    (r) => r.user.isActive && r.user.emailOnMention,
+  );
+  if (wanted.length === 0) return;
+
+  const [page, actor] = await Promise.all([
+    prisma.page.findUnique({
+      where: { id: pageId },
+      select: { title: true, textContent: true },
+    }),
+    actorId
+      ? prisma.user.findUnique({
+          where: { id: actorId },
+          select: { name: true },
+        })
+      : Promise.resolve(null),
+  ]);
+
+  await Promise.all(
+    wanted.map((r) =>
+      send(
+        mentionMail({
+          to: r.user.email,
+          actorName: actor?.name ?? "Jemand",
+          pageTitle: page?.title || "Ohne Titel",
+          pageId,
+          snippet: page?.textContent ?? "",
+        }),
+      ).catch((e: unknown) =>
+        log.warn({ err: String(e) }, "Erwähnungs-Mail fehlgeschlagen"),
+      ),
+    ),
+  );
 }
 
 /** Chunk-Größe für die KI-Indexierung (Zeichen). */
@@ -440,7 +540,111 @@ function subscribeControlChannel(): void {
     );
 }
 
+/**
+ * Wiederkehrende Rechteprüfung für offene Verbindungen.
+ *
+ * `onAuthenticate` läuft genau einmal, beim Verbindungsaufbau. Wer
+ * danach aus dem Space entfernt, deaktiviert oder auf VIEWER gesetzt
+ * wurde, schrieb bisher munter weiter — bis er die Seite neu lud.
+ * Diese Runde trennt solche Verbindungen; der Client verbindet sich neu
+ * und läuft dann durch die volle Prüfung.
+ */
+const REVOCATION_INTERVAL_MS = 60_000;
+
+async function enforceRevocations(): Promise<void> {
+  const hocuspocus = server.hocuspocus;
+  const open = [...hocuspocus.documents.entries()].filter(
+    ([, doc]) => doc.connections.size > 0,
+  );
+  if (open.length === 0) return;
+
+  const pages = await prisma.page.findMany({
+    where: { id: { in: open.map(([pageId]) => pageId) } },
+    select: { id: true, spaceId: true, deletedAt: true },
+  });
+  const pageById = new Map(pages.map((p) => [p.id, p]));
+
+  const userIds = new Set<string>();
+  for (const [, doc] of open) {
+    for (const connection of doc.connections.keys()) {
+      const userId = (connection.context as { userId?: string })?.userId;
+      if (userId) userIds.add(userId);
+    }
+  }
+  if (userIds.size === 0) return;
+
+  const users = await prisma.user.findMany({
+    where: { id: { in: [...userIds] } },
+    select: { id: true, isActive: true, tokenVersion: true },
+  });
+  const userById = new Map(users.map((u) => [u.id, u]));
+
+  const sessionIds = new Set<string>();
+  for (const [, doc] of open) {
+    for (const connection of doc.connections.keys()) {
+      const sid = (connection.context as { sessionId?: string })?.sessionId;
+      if (sid) sessionIds.add(sid);
+    }
+  }
+  const sessions = await prisma.session.findMany({
+    where: { id: { in: [...sessionIds] } },
+    select: { id: true, revokedAt: true, expiresAt: true },
+  });
+  const sessionById = new Map(sessions.map((s) => [s.id, s]));
+
+  const members = await prisma.spaceMember.findMany({
+    where: { userId: { in: [...userIds] } },
+    select: { userId: true, spaceId: true, role: true },
+  });
+  const roleByKey = new Map(
+    members.map((m) => [`${m.userId}:${m.spaceId}`, m.role]),
+  );
+
+  for (const [pageId, doc] of open) {
+    const page = pageById.get(pageId);
+    for (const connection of doc.connections.keys()) {
+      const ctx = connection.context as {
+        userId?: string;
+        tokenVersion?: number;
+        sessionId?: string;
+      };
+      const session = ctx.sessionId
+        ? sessionById.get(ctx.sessionId)
+        : undefined;
+      const user = ctx.userId ? userById.get(ctx.userId) : undefined;
+      const role =
+        page && ctx.userId
+          ? roleByKey.get(`${ctx.userId}:${page.spaceId}`)
+          : undefined;
+
+      const revoked =
+        !page ||
+        page.deletedAt !== null ||
+        !session ||
+        session.revokedAt !== null ||
+        session.expiresAt.getTime() < Date.now() ||
+        !user ||
+        !user.isActive ||
+        user.tokenVersion !== ctx.tokenVersion ||
+        !role ||
+        // Herabstufung auf VIEWER: die Verbindung darf nicht mehr
+        // schreiben, also muss sie neu aufgebaut werden.
+        (role === "VIEWER") !== connection.readOnly;
+
+      if (revoked) {
+        log.info({ pageId, userId: ctx.userId }, "Verbindung getrennt: Zugriff entzogen");
+        connection.close();
+      }
+    }
+  }
+}
+
 server.listen().then(() => {
   subscribeControlChannel();
+  setInterval(() => {
+    void enforceRevocations().catch((e) =>
+      log.warn({ err: String(e) }, "Rechteprüfung fehlgeschlagen"),
+    );
+  }, REVOCATION_INTERVAL_MS).unref();
   log.info({ port: PORT }, "Hocuspocus läuft");
 });

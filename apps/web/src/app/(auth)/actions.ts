@@ -14,6 +14,10 @@ import {
 } from "@/lib/invitations";
 import { rateLimit, resetLimit, clientKey } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
+import { startPending2fa, clearPending2fa, readPending2fa } from "@/lib/pending-2fa";
+import { unseal } from "@/lib/secret-box";
+import { verifyTotpStep } from "@/lib/totp";
+import { claimTotpStep, consumeRecoveryCode } from "@/lib/totp-store";
 
 const registerSchema = z.object({
   name: z.string().min(2, "Name zu kurz"),
@@ -54,8 +58,9 @@ async function startSession(
   userId: string,
   tokenVersion: number,
   next?: unknown,
+  remember = true,
 ): Promise<never> {
-  await createSession(userId, tokenVersion);
+  await createSession(userId, tokenVersion, { remember });
   redirect(safeNext(next));
 }
 
@@ -198,11 +203,106 @@ export async function loginAction(
   }
 
   await resetLimit(accountKey);
+
+  // Zweiter Faktor: die Sitzung entsteht erst nach dem Code.
+  if (user.totpEnabledAt) {
+    await startPending2fa(user.id, safeNext(formData.get("next")));
+    redirect("/login/2fa");
+  }
+
   await audit({ action: "auth.login_succeeded", actorId: user.id });
-  return startSession(user.id, user.tokenVersion, formData.get("next"));
+  // Ohne Haken endet die Anmeldung mit dem Browserfenster.
+  return startSession(
+    user.id,
+    user.tokenVersion,
+    formData.get("next"),
+    formData.get("remember") === "on",
+  );
 }
 
 export async function logoutAction() {
   await destroySession();
   redirect("/login");
+}
+
+/**
+ * Zweiter Schritt der Anmeldung: Einmalkennwort oder
+ * Wiederherstellungscode.
+ *
+ * Auch hier greift eine Bremse pro Konto: sonst liesse sich der
+ * sechsstellige Code schlicht durchprobieren.
+ */
+export async function completeTotpLoginAction(
+  _prev: ActionState,
+  formData: FormData,
+): Promise<ActionState> {
+  const pending = await readPending2fa();
+  if (!pending) {
+    return { error: "Der Anmeldevorgang ist abgelaufen. Bitte neu beginnen." };
+  }
+
+  const code = String(formData.get("code") ?? "").trim();
+  if (!code) return { error: "Code fehlt" };
+
+  const brakeKey = `login:totp:${pending.userId}`;
+  if (!(await rateLimit(brakeKey, LOGIN_ATTEMPTS, LOGIN_WINDOW_SEC))) {
+    return { error: "Zu viele Versuche. Bitte in 15 Minuten erneut." };
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: pending.userId },
+    select: {
+      id: true,
+      isActive: true,
+      tokenVersion: true,
+      totpSecret: true,
+      totpEnabledAt: true,
+    },
+  });
+  if (!user || !user.isActive || !user.totpEnabledAt || !user.totpSecret) {
+    await clearPending2fa();
+    return { error: "Anmeldung nicht möglich." };
+  }
+
+  const secret = unseal(user.totpSecret);
+  const step = secret ? verifyTotpStep(secret, code) : null;
+
+  /**
+   * Ein passender Code allein genügt nicht: derselbe Code darf innerhalb
+   * seines Fensters kein zweites Mal öffnen (RFC 6238, Abschnitt 5.2).
+   * Wer ihn abgelesen oder abgefangen hat, kommt damit nicht hinterher.
+   * Der Vermerk läuft als bedingtes Update, damit auch zwei gleichzeitige
+   * Versuche nicht beide durchgehen.
+   */
+  const codeOk = step === null ? false : await claimTotpStep(user.id, step);
+  const replayed = step !== null && !codeOk;
+  const recoveryOk =
+    step !== null ? false : await consumeRecoveryCode(user.id, code);
+
+  if (!codeOk && !recoveryOk) {
+    await audit({
+      action: "auth.login_failed",
+      actorId: user.id,
+      metadata: { reason: replayed ? "totp_replay" : "bad_totp" },
+    });
+    return {
+      error: replayed
+        ? "Dieser Code wurde schon verwendet. Warte auf den nächsten."
+        : "Code stimmt nicht.",
+    };
+  }
+
+  await resetLimit(brakeKey);
+  await clearPending2fa();
+  await audit({
+    action: "auth.login_succeeded",
+    actorId: user.id,
+    metadata: { second_factor: recoveryOk ? "recovery" : "totp" },
+  });
+  return startSession(
+    user.id,
+    user.tokenVersion,
+    pending.next,
+    formData.get("remember") === "on",
+  );
 }

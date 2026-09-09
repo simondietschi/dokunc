@@ -17,10 +17,27 @@ import type { Range } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
 import * as Y from "yjs";
-import { History, Trash2, FileText, AtSign } from "lucide-react";
+import { IndexeddbPersistence } from "y-indexeddb";
+import {
+  History,
+  Trash2,
+  FileText,
+  AtSign,
+  LayoutTemplate,
+  Bell,
+  BellOff,
+  Star,
+} from "lucide-react";
 import { ExportMenu } from "@/components/editor/ExportMenu";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
+import { AttachmentView } from "@/components/editor/AttachmentView";
+import { BlockHandle } from "@/components/editor/BlockHandle";
+import { Outline } from "@/components/editor/Outline";
+import { PageCover, PageIcon } from "@/components/editor/PageChrome";
+import { ShareDialog, type ShareRow } from "./ShareDialog";
+import { ToggleView } from "@/components/editor/ToggleView";
+import { WordCount } from "@/components/editor/WordCount";
 import { CalloutView } from "@/components/editor/CalloutView";
 import { CodeBlockView } from "@/components/editor/CodeBlockView";
 import { ImageView } from "@/components/editor/ImageView";
@@ -41,7 +58,15 @@ import { caretColorFor } from "@/lib/caret-color";
 import { looksLikeMarkdown, markdownToHtml } from "@/lib/markdown-paste";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/cn";
-import { renamePageAction, deletePageAction } from "../../actions";
+import { toggleSubscriptionAction } from "./comments/actions";
+import {
+  renamePageAction,
+  deletePageAction,
+  setPageCoverAction,
+  setPageIconAction,
+  toggleFavoriteAction,
+  toggleTemplateAction,
+} from "../../actions";
 
 /** Bildtypen, die der Server annimmt (siehe lib/uploads). */
 const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
@@ -129,6 +154,52 @@ function pickAndImportMarkdown(
   input.click();
 }
 
+/** Beliebige Datei wählen, hochladen, als Anhang einfügen. */
+function pickAndUploadAttachment(
+  editor: Editor,
+  range: Range | undefined,
+  spaceId: string,
+  onError: () => void,
+) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    let chain = editor.chain().focus();
+    if (range) chain = chain.deleteRange(range);
+    if (!file) {
+      chain.run();
+      return;
+    }
+    const body = new FormData();
+    body.set("file", file);
+    body.set("spaceId", spaceId);
+    body.set("kind", "file");
+    try {
+      const res = await fetch("/api/upload", { method: "POST", body });
+      if (!res.ok) throw new Error(String(res.status));
+      const data = (await res.json()) as {
+        url: string;
+        name: string;
+        size: number;
+        contentType: string;
+      };
+      chain
+        .setAttachment({
+          url: data.url,
+          name: data.name,
+          size: data.size,
+          mime: data.contentType,
+        })
+        .run();
+    } catch {
+      chain.run();
+      onError();
+    }
+  };
+  input.click();
+}
+
 /** Datei wählen, hochladen, als Bild einfügen. */
 function pickAndUploadImage(
   editor: Editor,
@@ -196,6 +267,12 @@ export function CollaborativeEditor({
   updatedAt,
   lastEditorName,
   commentThreadIds,
+  icon,
+  coverUrl,
+  isTemplate,
+  isSubscribed,
+  isFavorite,
+  shares,
 }: {
   slug: string;
   spaceId: string;
@@ -211,6 +288,13 @@ export function CollaborativeEditor({
   lastEditorName: string | null;
   /** IDs bestehender Kommentar-Threads, für den Waisen-Aufräumlauf. */
   commentThreadIds: string[];
+  icon: string | null;
+  coverUrl: string | null;
+  isTemplate: boolean;
+  /** Folgt diese Person der Seite? */
+  isSubscribed: boolean;
+  isFavorite: boolean;
+  shares: ShareRow[];
 }) {
   const ydoc = useMemo(() => new Y.Doc(), [pageId]);
   const [status, setStatus] = useState<
@@ -220,6 +304,7 @@ export function CollaborativeEditor({
   const [titleValue, setTitleValue] = useState(title);
   const [prompt, setPrompt] = useState<PromptRequest | null>(null);
   const lastSavedTitle = useRef(title);
+  const titleRef = useRef<HTMLInputElement>(null);
   const savingTitle = useRef<string | null>(null);
   const sweptRef = useRef(false);
   const { toast } = useToast();
@@ -227,6 +312,11 @@ export function CollaborativeEditor({
   const openPrompt = useCallback((request: PromptRequest) => {
     setPrompt(request);
   }, []);
+
+  // Symbol und Titelbild lokal spiegeln: der Server-Roundtrip soll die
+  // Anzeige nicht ausbremsen, die Action bleibt die Wahrheit.
+  const [iconValue, setIconValue] = useState(icon);
+  const [coverValue, setCoverValue] = useState(coverUrl);
 
   const onUploadError = useCallback(() => {
     toast({
@@ -243,7 +333,11 @@ export function CollaborativeEditor({
    * den Frühausstieg. Der Titel stand dann nur noch lokal im Feld.
    */
   async function saveTitle() {
-    const next = titleValue;
+    // Der Wert kommt aus dem Feld, nicht aus dem Zustand: `onBlur` kann
+    // feuern, bevor React die letzte Eingabe gerendert hat, und würde
+    // dann den alten Titel speichern (oder gar nichts, weil er dem
+    // Merker gleicht).
+    const next = titleRef.current?.value ?? titleValue;
     if (!editable || next === lastSavedTitle.current) return;
     if (savingTitle.current === next) return; // schon unterwegs
     savingTitle.current = next;
@@ -264,6 +358,107 @@ export function CollaborativeEditor({
       savingTitle.current = null;
     }
   }
+
+  const saveIcon = useCallback(
+    async (next: string) => {
+      const previous = iconValue;
+      setIconValue(next || null);
+      try {
+        const fd = new FormData();
+        fd.set("slug", slug);
+        fd.set("pageId", pageId);
+        fd.set("icon", next);
+        await setPageIconAction(fd);
+      } catch {
+        setIconValue(previous);
+        toast({ title: "Symbol nicht gespeichert", variant: "error" });
+      }
+    },
+    [iconValue, pageId, slug, toast],
+  );
+
+  const saveCover = useCallback(
+    async (next: string) => {
+      const previous = coverValue;
+      setCoverValue(next || null);
+      try {
+        const fd = new FormData();
+        fd.set("slug", slug);
+        fd.set("pageId", pageId);
+        fd.set("coverUrl", next);
+        await setPageCoverAction(fd);
+      } catch {
+        setCoverValue(previous);
+        toast({ title: "Titelbild nicht gespeichert", variant: "error" });
+      }
+    },
+    [coverValue, pageId, slug, toast],
+  );
+
+  const pickCover = useCallback(() => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/gif,image/webp";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      try {
+        void saveCover(await uploadImage(file, spaceId));
+      } catch {
+        onUploadError();
+      }
+    };
+    input.click();
+  }, [onUploadError, saveCover, spaceId]);
+
+  /**
+   * Lokaler Puffer.
+   *
+   * Ohne ihn lebte das Yjs-Dokument nur im Speicher des Tabs: wer bei
+   * Netzausfall weiterschrieb und dann neu lud, verlor alles. Der
+   * Puffer wird beim Wiederherstellen einer Version geleert, sonst
+   * mischte der Tab beim Reconnect seinen alten Stand wieder ein.
+   */
+  const persistenceRef = useRef<IndexeddbPersistence | null>(null);
+  useEffect(() => {
+    if (typeof indexedDB === "undefined") return;
+    const persistence = new IndexeddbPersistence(`dokunc:${pageId}`, ydoc);
+    persistenceRef.current = persistence;
+    return () => {
+      persistenceRef.current = null;
+      void persistence.destroy();
+    };
+  }, [pageId, ydoc]);
+
+  // Netzstatus des Browsers: "Verbinde…" ist bei gezogenem Kabel eine
+  // Beschönigung, die niemandem hilft.
+  const [online, setOnline] = useState(true);
+  useEffect(() => {
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+
+  /**
+   * Der Server hat den Stand dieser Seite ersetzt (Wiederherstellung).
+   * Das Aufräumen läuft absichtlich in einem Effekt und nicht direkt im
+   * Provider-Callback: dort liegt es im Rumpf eines useMemo, und ein
+   * Zugriff auf eine Ref gehört nicht in den Renderdurchlauf.
+   */
+  const [reloadRequested, setReloadRequested] = useState(false);
+  useEffect(() => {
+    if (!reloadRequested) return;
+    // Der lokale Puffer muss mit weg, sonst mischt dieser Tab beim
+    // nächsten Verbinden seinen alten Stand wieder ein.
+    void (persistenceRef.current?.clearData() ?? Promise.resolve()).finally(
+      () => window.location.reload(),
+    );
+  }, [reloadRequested]);
 
   const provider = useMemo(
     () =>
@@ -286,7 +481,7 @@ export function CollaborativeEditor({
           // Neu laden ist hier die ehrliche Antwort: ein blosser
           // Reconnect würde den alten Yjs-Stand aus diesem Tab wieder
           // einmischen und die Wiederherstellung zunichtemachen.
-          if (payload === COLLAB_RELOAD_SIGNAL) window.location.reload();
+          if (payload === COLLAB_RELOAD_SIGNAL) setReloadRequested(true);
         },
       }),
     [collabUrl, pageId, ydoc],
@@ -303,6 +498,14 @@ export function CollaborativeEditor({
             toast({
               title: "Import fehlgeschlagen",
               description: "Die Datei liess sich nicht lesen.",
+              variant: "error",
+            }),
+          ),
+        onAttachment: (e, r) =>
+          pickAndUploadAttachment(e, r, spaceId, () =>
+            toast({
+              title: "Anhang fehlgeschlagen",
+              description: "Dateien bis 25 MB werden angenommen.",
               variant: "error",
             }),
           ),
@@ -344,7 +547,9 @@ export function CollaborativeEditor({
     immediatelyRender: false,
     extensions: [
       ...richExtensions({
+        attachment: () => ReactNodeViewRenderer(AttachmentView),
         callout: () => ReactNodeViewRenderer(CalloutView),
+        toggle: () => ReactNodeViewRenderer(ToggleView),
         codeBlock: () => ReactNodeViewRenderer(CodeBlockView),
         image: () => ReactNodeViewRenderer(ImageView),
         mermaid: () => ReactNodeViewRenderer(MermaidView),
@@ -539,18 +744,26 @@ export function CollaborativeEditor({
     [provider, ydoc],
   );
 
+  // Ohne Netz ist "Verbinde…" irreführend; das Gerät versucht es gar
+  // nicht erst. Der lokale Puffer trägt in dieser Zeit weiter.
+  const effectiveStatus =
+    status === "connected" ? "connected" : online ? status : "offline";
   const dot =
-    status === "connected"
+    effectiveStatus === "connected"
       ? "bg-emerald-500"
-      : status === "offline"
+      : effectiveStatus === "offline"
         ? "bg-danger"
         : "bg-amber-500";
   const statusText =
-    status === "connected"
+    effectiveStatus === "connected"
       ? "Live"
-      : status === "offline"
+      : effectiveStatus === "offline"
         ? "Offline"
         : "Verbinde…";
+  const statusTitle =
+    effectiveStatus === "offline"
+      ? "Ohne Verbindung. Änderungen werden auf diesem Gerät gesichert und später übertragen."
+      : undefined;
 
   return (
     <div>
@@ -563,6 +776,7 @@ export function CollaborativeEditor({
               // laufende Ausgabe zu unterbrechen.
               role="status"
               aria-live="polite"
+              title={statusTitle}
               className="flex shrink-0 items-center gap-1.5 rounded-full border border-line bg-surface px-2.5 py-1 text-[12px] text-muted"
             >
               <span
@@ -572,6 +786,7 @@ export function CollaborativeEditor({
               {statusText}
             </span>
             <PeerStack peers={peers} />
+            <WordCount editor={editor} />
             <LastEdited at={updatedAt} by={lastEditorName} />
           </div>
           <div className="flex items-center gap-1">
@@ -583,6 +798,71 @@ export function CollaborativeEditor({
               Verlauf
             </Link>
             <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
+            {canManage && (
+              <ShareDialog slug={slug} pageId={pageId} shares={shares} />
+            )}
+            <form action={toggleFavoriteAction}>
+              <input type="hidden" name="slug" value={slug} />
+              <input type="hidden" name="pageId" value={pageId} />
+              <button
+                title={
+                  isFavorite
+                    ? "Aus den Favoriten entfernen"
+                    : "Zu den Favoriten"
+                }
+                aria-pressed={isFavorite}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors hover:bg-subtle",
+                  isFavorite ? "text-amber-500" : "text-muted hover:text-ink",
+                )}
+              >
+                <Star
+                  className={cn("h-4 w-4", isFavorite && "fill-current")}
+                />
+              </button>
+            </form>
+            <form action={toggleSubscriptionAction}>
+              <input type="hidden" name="slug" value={slug} />
+              <input type="hidden" name="pageId" value={pageId} />
+              <button
+                title={
+                  isSubscribed
+                    ? "Dieser Seite nicht mehr folgen"
+                    : "Dieser Seite folgen"
+                }
+                aria-pressed={isSubscribed}
+                className={cn(
+                  "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors hover:bg-subtle",
+                  isSubscribed ? "text-accent" : "text-muted hover:text-ink",
+                )}
+              >
+                {isSubscribed ? (
+                  <Bell className="h-4 w-4" />
+                ) : (
+                  <BellOff className="h-4 w-4" />
+                )}
+              </button>
+            </form>
+            {canManage && (
+              <form action={toggleTemplateAction}>
+                <input type="hidden" name="slug" value={slug} />
+                <input type="hidden" name="pageId" value={pageId} />
+                <button
+                  title={
+                    isTemplate
+                      ? "Vorlagen-Markierung entfernen"
+                      : "Als Vorlage markieren"
+                  }
+                  aria-pressed={isTemplate}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[13px] transition-colors hover:bg-subtle",
+                    isTemplate ? "text-accent" : "text-muted hover:text-ink",
+                  )}
+                >
+                  <LayoutTemplate className="h-4 w-4" />
+                </button>
+              </form>
+            )}
             {canManage && (
               <form action={deletePageAction}>
                 <input type="hidden" name="slug" value={slug} />
@@ -600,11 +880,39 @@ export function CollaborativeEditor({
         </div>
       </header>
 
+      <PageCover
+        coverUrl={coverValue}
+        editable={editable}
+        onPick={pickCover}
+        onRemove={() => void saveCover("")}
+      />
+
       {/* Title — kontrolliert + explizites Speichern nur bei Änderung.
           (Kein <form action>: React 19 resettet unkontrollierte Felder
           nach Server-Actions, was Eingaben klobbern kann.) */}
-      <div className="mx-auto max-w-[760px] px-6 pt-12">
+      <div
+        className={cn(
+          "mx-auto max-w-[760px] px-6",
+          coverValue ? "pt-5" : "pt-12",
+        )}
+      >
+        <div className="mb-1 flex items-center gap-1">
+          <PageIcon
+            icon={iconValue}
+            editable={editable}
+            onChange={(next) => void saveIcon(next)}
+          />
+          {editable && !coverValue && (
+            <PageCover
+              coverUrl={null}
+              editable
+              onPick={pickCover}
+              onRemove={() => void saveCover("")}
+            />
+          )}
+        </div>
         <input
+          ref={titleRef}
           name="title"
           aria-label="Seitentitel"
           value={titleValue}
@@ -618,6 +926,9 @@ export function CollaborativeEditor({
           className="w-full bg-transparent text-[2.5rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-faint"
         />
       </div>
+
+      <Outline editor={editor} />
+      {editable && <BlockHandle editor={editor} />}
 
       {/* Toolbar */}
       {editable && (

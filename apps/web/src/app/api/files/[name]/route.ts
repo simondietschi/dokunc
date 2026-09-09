@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
-import { getUserId } from "@/lib/session";
+import { getCurrentUser } from "@/lib/current-user";
 import { findReadableUpload } from "@/lib/upload-access";
 import {
   UPLOAD_DIR,
+  contentDisposition,
+  isInlineType,
   isSafeFilename,
-  contentTypeForFile,
 } from "@/lib/uploads";
 
 export const runtime = "nodejs";
@@ -29,10 +30,12 @@ export async function GET(
     return new NextResponse("Bad request", { status: 400 });
   }
 
-  const userId = await getUserId();
-  if (!userId) return new NextResponse("Nicht angemeldet", { status: 401 });
+  // Volle Prüfung statt blossem Token-Dekodieren: eine widerrufene
+  // Sitzung soll auch keine Dateien mehr bekommen.
+  const user = await getCurrentUser();
+  if (!user) return new NextResponse("Nicht angemeldet", { status: 401 });
 
-  const upload = await findReadableUpload(userId, name);
+  const upload = await findReadableUpload(user.id, name);
   // Bewusst 404 statt 403: sonst verrät die Antwort, ob es die Datei gibt.
   // Unbekannter Datensatz heisst auch: Reste aus der Zeit vor der
   // Registrierung bleiben unlesbar.
@@ -45,11 +48,22 @@ export async function GET(
     return new NextResponse("Bad request", { status: 400 });
   }
 
+  const inline = isInlineType(upload.contentType);
   try {
     const data = await readFile(full);
     return new NextResponse(new Uint8Array(data), {
       headers: {
-        "Content-Type": upload.contentType || contentTypeForFile(name),
+        // Nur serverseitig erkannte Typen werden inline ausgeliefert;
+        // alles andere geht als Download. Eine hochgeladene HTML- oder
+        // SVG-Datei kann so nicht im Ursprung der App laufen.
+        "Content-Type": inline
+          ? upload.contentType
+          : "application/octet-stream",
+        "Content-Disposition": contentDisposition(
+          upload.originalName || name,
+          inline,
+        ),
+        "X-Content-Type-Options": "nosniff",
         // private: der Inhalt hängt an der Anmeldung, kein geteilter Cache.
         "Cache-Control": "private, max-age=31536000, immutable",
       },

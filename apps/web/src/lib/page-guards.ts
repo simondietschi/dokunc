@@ -122,3 +122,73 @@ export async function restorePageTree(
     WHERE id IN (SELECT id FROM sub) AND "deletedAt" IS NOT NULL
   `;
 }
+
+/**
+ * Ist `candidateId` ein Nachfahre von `pageId`?
+ *
+ * Muss vor jedem Verschieben geprüft werden: eine Seite unter ihre
+ * eigene Unterseite zu hängen, schneidet den ganzen Ast vom Baum ab —
+ * er wäre in der Oberfläche nicht mehr erreichbar und liesse sich auch
+ * nicht mehr zurückholen.
+ */
+export async function isDescendantOf(
+  spaceId: string,
+  pageId: string,
+  candidateId: string,
+): Promise<boolean> {
+  if (pageId === candidateId) return true;
+  const rows = await prisma.$queryRaw<{ id: string }[]>`
+    WITH RECURSIVE sub AS (
+      SELECT id FROM "Page" WHERE id = ${pageId} AND "spaceId" = ${spaceId}
+      UNION ALL
+      SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
+      WHERE p."spaceId" = ${spaceId}
+    )
+    SELECT id FROM sub WHERE id = ${candidateId}
+  `;
+  return rows.length > 0;
+}
+
+/**
+ * Hängt eine Seite an einen neuen Platz im Baum und schreibt die
+ * Reihenfolge der betroffenen Geschwister neu.
+ *
+ * Rückgabe: false, wenn der Zug nicht zulässig ist (fremder Space,
+ * fremdes Ziel oder ein Zyklus).
+ */
+export async function movePageInSpace(
+  spaceId: string,
+  pageId: string,
+  parentId: string | null,
+  index: number,
+): Promise<boolean> {
+  const page = await findLivePage(spaceId, pageId);
+  if (!page) return false;
+
+  if (parentId) {
+    const parent = await findLivePage(spaceId, parentId);
+    if (!parent) return false;
+    if (await isDescendantOf(spaceId, pageId, parentId)) return false;
+  }
+
+  const siblings = await prisma.page.findMany({
+    where: { spaceId, parentId, deletedAt: null, NOT: { id: pageId } },
+    orderBy: [{ position: "asc" }, { title: "asc" }],
+    select: { id: true },
+  });
+
+  const target = Math.max(0, Math.min(index, siblings.length));
+  const ordered = [
+    ...siblings.slice(0, target).map((p) => p.id),
+    pageId,
+    ...siblings.slice(target).map((p) => p.id),
+  ];
+
+  await prisma.$transaction([
+    prisma.page.update({ where: { id: pageId }, data: { parentId } }),
+    ...ordered.map((id, position) =>
+      prisma.page.update({ where: { id }, data: { position } }),
+    ),
+  ]);
+  return true;
+}

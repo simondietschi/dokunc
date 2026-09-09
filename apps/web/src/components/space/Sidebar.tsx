@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 import {
   ChevronRight,
   Plus,
@@ -11,17 +11,20 @@ import {
   Users,
   Trash2,
   Settings,
+  SlidersHorizontal,
   ShieldCheck,
   Menu,
   Bell,
   Sparkles,
+  Star,
+  Clock,
 } from "lucide-react";
 import type { TreeNode } from "@/lib/page-tree";
 import { cn } from "@/lib/cn";
 import { Avatar } from "@/components/ui/Avatar";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Logo } from "@/components/ui/Logo";
-import { createPageAction } from "@/app/s/[slug]/actions";
+import { createPageAction, movePageAction } from "@/app/s/[slug]/actions";
 import { logoutAction } from "@/app/(auth)/actions";
 import { PaletteButton } from "@/components/CommandPalette";
 
@@ -35,6 +38,9 @@ type Props = {
   canManageSpace: boolean;
   isAdmin: boolean;
   unreadCount: number;
+  templates: { id: string; title: string; icon: string | null }[];
+  favorites: { id: string; title: string; icon: string | null }[];
+  recent: { id: string; title: string; icon: string | null }[];
 };
 
 export function Sidebar({
@@ -47,6 +53,9 @@ export function Sidebar({
   canManageSpace,
   isAdmin,
   unreadCount,
+  templates,
+  favorites,
+  recent,
 }: Props) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
@@ -111,6 +120,25 @@ export function Sidebar({
       </div>
 
       <nav aria-label="Seitenbaum" className="flex-1 overflow-y-auto px-2 py-1">
+        <QuickList
+          title="Favoriten"
+          icon={<Star className="h-3 w-3" />}
+          slug={slug}
+          pages={favorites}
+          pathname={pathname}
+        />
+        <QuickList
+          title="Zuletzt besucht"
+          icon={<Clock className="h-3 w-3" />}
+          slug={slug}
+          pages={recent}
+          pathname={pathname}
+        />
+        {(favorites.length > 0 || recent.length > 0) && (
+          <p className="mb-1 mt-3 px-2 text-[10.5px] font-semibold uppercase tracking-wide text-faint">
+            Seiten
+          </p>
+        )}
         <PageTree nodes={tree} slug={slug} canManage={canManage} />
         {tree.length === 0 && (
           <div className="mt-6 px-3 text-center">
@@ -121,13 +149,7 @@ export function Sidebar({
       </nav>
 
       {canManage && (
-        <form action={createPageAction} className="px-3 pt-2">
-          <input type="hidden" name="slug" value={slug} />
-          <button className="flex w-full items-center gap-2 rounded-lg border border-dashed border-line-strong px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:border-accent/50 hover:text-ink">
-            <Plus className="h-3.5 w-3.5" />
-            Neue Seite
-          </button>
-        </form>
+        <NewPageButton slug={slug} templates={templates} />
       )}
 
       <div className="mt-1 space-y-0.5">
@@ -154,6 +176,15 @@ export function Sidebar({
             icon={<Users className="h-3.5 w-3.5" />}
           >
             Mitglieder
+          </NavLink>
+        )}
+        {canManageSpace && (
+          <NavLink
+            href={`/s/${slug}/settings`}
+            active={pathname === `/s/${slug}/settings`}
+            icon={<SlidersHorizontal className="h-3.5 w-3.5" />}
+          >
+            Space-Einstellungen
           </NavLink>
         )}
         <NavLink
@@ -250,6 +281,7 @@ function PageTree({
         <TreeItem
           key={n.id}
           node={n}
+          siblings={nodes}
           slug={slug}
           canManage={canManage}
           depth={depth}
@@ -259,28 +291,145 @@ function PageTree({
   );
 }
 
+/** Kurze Liste oberhalb des Baums (Favoriten, zuletzt besucht). */
+function QuickList({
+  title,
+  icon,
+  slug,
+  pages,
+  pathname,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  slug: string;
+  pages: { id: string; title: string; icon: string | null }[];
+  pathname: string;
+}) {
+  if (pages.length === 0) return null;
+  return (
+    <div className="mb-2">
+      <p className="mb-0.5 flex items-center gap-1.5 px-2 text-[10.5px] font-semibold uppercase tracking-wide text-faint">
+        {icon}
+        {title}
+      </p>
+      <ul>
+        {pages.map((p) => (
+          <li key={p.id}>
+            <Link
+              href={`/s/${slug}/p/${p.id}`}
+              className={cn(
+                "flex items-center gap-1.5 truncate rounded-lg px-2 py-1 text-[13px] transition-colors",
+                pathname === `/s/${slug}/p/${p.id}`
+                  ? "bg-surface font-medium text-ink shadow-soft"
+                  : "text-muted hover:bg-surface/70",
+              )}
+            >
+              {p.icon && <span aria-hidden>{p.icon}</span>}
+              <span className="truncate">{p.title || "Untitled"}</span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** Wohin ein gezogener Eintrag fallen soll. */
+type DropZone = "before" | "inside" | "after";
+
+/** Ziehdaten: eigener Typ, damit fremde Drops ignoriert werden. */
+const DRAG_TYPE = "application/x-dokunc-page";
+
 function TreeItem({
   node,
+  siblings,
   slug,
   canManage,
   depth,
 }: {
   node: TreeNode;
+  siblings: TreeNode[];
   slug: string;
   canManage: boolean;
   depth: number;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const active = pathname === `/s/${slug}/p/${node.id}`;
   const [open, setOpen] = useState(true);
+  const [zone, setZone] = useState<DropZone | null>(null);
   const hasKids = node.children.length > 0;
+
+  /**
+   * Zielposition aus der Mausposition.
+   * Oberes und unteres Viertel heissen "daneben", die Mitte "hinein" —
+   * dieselbe Aufteilung wie in gängigen Dateimanagern.
+   */
+  function zoneFrom(e: React.DragEvent<HTMLDivElement>): DropZone {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const offset = (e.clientY - rect.top) / rect.height;
+    if (offset < 0.25) return "before";
+    if (offset > 0.75) return "after";
+    return "inside";
+  }
+
+  async function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    e.stopPropagation();
+    const draggedId = e.dataTransfer.getData(DRAG_TYPE);
+    const target = zone;
+    setZone(null);
+    if (!draggedId || draggedId === node.id || !target) return;
+
+    // Der Server rechnet ohne die gezogene Seite; die Liste hier auch.
+    const order = siblings
+      .filter((sibling) => sibling.id !== draggedId)
+      .map((sibling) => sibling.id);
+    const at = order.indexOf(node.id);
+
+    const form = new FormData();
+    form.set("slug", slug);
+    form.set("pageId", draggedId);
+    if (target === "inside") {
+      form.set("parentId", node.id);
+      form.set("index", String(node.children.length));
+    } else {
+      if (node.parentId) form.set("parentId", node.parentId);
+      form.set("index", String(target === "before" ? at : at + 1));
+    }
+
+    try {
+      await movePageAction(form);
+      router.refresh();
+    } catch {
+      // Unzulässige Züge (etwa unter die eigene Unterseite) lässt der
+      // Server stehen; der Baum bleibt einfach, wie er war.
+      router.refresh();
+    }
+  }
 
   return (
     <li>
       <div
+        draggable={canManage}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(DRAG_TYPE, node.id);
+          e.dataTransfer.effectAllowed = "move";
+        }}
+        onDragOver={(e) => {
+          if (!canManage || !e.dataTransfer.types.includes(DRAG_TYPE)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = "move";
+          setZone(zoneFrom(e));
+        }}
+        onDragLeave={() => setZone(null)}
+        onDrop={(e) => void handleDrop(e)}
         className={cn(
           "group flex items-center gap-1 rounded-lg pr-1.5 transition-colors",
           active ? "bg-surface shadow-soft" : "hover:bg-surface/70",
+          zone === "inside" && "ring-1 ring-accent",
+          zone === "before" && "border-t-2 border-accent",
+          zone === "after" && "border-b-2 border-accent",
         )}
         style={{ paddingLeft: `${depth * 12 + 4}px` }}
       >
@@ -305,6 +454,11 @@ function TreeItem({
             active ? "font-medium text-ink" : "text-muted",
           )}
         >
+          {node.icon && (
+            <span aria-hidden className="mr-1.5">
+              {node.icon}
+            </span>
+          )}
           {node.title || "Untitled"}
         </Link>
         {canManage && (
@@ -329,5 +483,93 @@ function TreeItem({
         />
       )}
     </li>
+  );
+}
+
+/**
+ * Neue Seite anlegen — leer oder aus einer Vorlage.
+ *
+ * Die Vorlagenliste steht nur, wenn es überhaupt Vorlagen gibt; sonst
+ * bleibt der Knopf genau das, was er vorher war.
+ */
+function NewPageButton({
+  slug,
+  templates,
+}: {
+  slug: string;
+  templates: { id: string; title: string; icon: string | null }[];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative px-3 pt-2">
+      <div className="flex items-center gap-1">
+        <form action={createPageAction} className="flex-1">
+          <input type="hidden" name="slug" value={slug} />
+          <button className="flex w-full items-center gap-2 rounded-lg border border-dashed border-line-strong px-3 py-2 text-[13px] font-medium text-muted transition-colors hover:border-accent/50 hover:text-ink">
+            <Plus className="h-3.5 w-3.5" />
+            Neue Seite
+          </button>
+        </form>
+        {templates.length > 0 && (
+          <button
+            type="button"
+            aria-label="Aus Vorlage anlegen"
+            aria-expanded={open}
+            onClick={() => setOpen((o) => !o)}
+            className="grid h-[34px] w-8 place-items-center rounded-lg border border-dashed border-line-strong text-muted transition-colors hover:border-accent/50 hover:text-ink"
+          >
+            <ChevronRight
+              className={cn(
+                "h-3.5 w-3.5 transition-transform",
+                open ? "-rotate-90" : "rotate-90",
+              )}
+            />
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label="Vorlagen"
+          className="absolute bottom-full left-3 right-3 z-40 mb-1 max-h-64 overflow-y-auto rounded-xl border border-line bg-elevated p-1 shadow-pop"
+        >
+          <p className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-faint">
+            Vorlagen
+          </p>
+          {templates.map((t) => (
+            <form key={t.id} action={createPageAction}>
+              <input type="hidden" name="slug" value={slug} />
+              <input type="hidden" name="templateId" value={t.id} />
+              <button
+                role="menuitem"
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] text-ink transition-colors hover:bg-subtle"
+              >
+                <span aria-hidden>{t.icon ?? "\u{1F4C4}"}</span>
+                <span className="truncate">{t.title || "Untitled"}</span>
+              </button>
+            </form>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

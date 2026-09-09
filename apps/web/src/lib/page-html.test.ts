@@ -19,7 +19,8 @@ describe("contentToHtml()", () => {
         },
       ]),
     );
-    expect(html).toContain("<h2>Titel</h2>");
+    // Überschriften tragen einen Anker aus ihrem Text.
+    expect(html).toContain('<h2 id="titel">Titel</h2>');
     expect(html).toContain("Hallo Welt");
   });
 
@@ -82,6 +83,51 @@ describe("pageToPrintHtml()", () => {
     expect(out).toContain("Team &amp; Co");
     expect(out).toContain("<p>Inhalt</p>");
     expect(out).toContain("<!DOCTYPE html>");
+  });
+});
+
+describe("Aufklappbare Abschnitte", () => {
+  it("rendert ein natives details mit Zusammenfassung", () => {
+    const html = contentToHtml(
+      doc([
+        {
+          type: "toggle",
+          attrs: { summary: "Details", open: true },
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "Inhalt" }] },
+          ],
+        },
+      ]),
+    );
+    expect(html).toContain("<details");
+    expect(html).toContain("<summary>Details</summary>");
+    expect(html).toContain("Inhalt");
+  });
+
+  it("klappt zugeklappte Abschnitte im Druck auf", () => {
+    // Sonst wäre der Inhalt im PDF schlicht nicht vorhanden.
+    const out = pageToPrintHtml({ title: "T", contentHtml: "" });
+    expect(out).toContain("details.dk-toggle > div { display: block !important; }");
+  });
+});
+
+describe("Dateianhänge", () => {
+  it("rendert den Anhang als Link mit Namen", () => {
+    const html = contentToHtml(
+      doc([
+        {
+          type: "attachment",
+          attrs: {
+            url: "/api/files/abc.pdf",
+            name: "Bericht.pdf",
+            size: 1024,
+            mime: "application/pdf",
+          },
+        },
+      ]),
+    );
+    expect(html).toContain('href="/api/files/abc.pdf"');
+    expect(html).toContain("Bericht.pdf");
   });
 });
 

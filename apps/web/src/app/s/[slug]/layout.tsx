@@ -4,6 +4,7 @@ import { loadSpace } from "@/lib/space-context";
 import { buildTree } from "@/lib/page-tree";
 import { can } from "@/lib/permissions";
 import { Sidebar } from "@/components/space/Sidebar";
+import { NotificationStream } from "@/components/NotificationStream";
 
 /**
  * Space-Name als Titel-Fallback für alle Unterseiten. Seiten mit eigener
@@ -32,13 +33,38 @@ export default async function SpaceLayout({
   const { slug } = await params;
   const { space, role, user } = await loadSpace(slug);
 
-  const [pages, unreadCount] = await Promise.all([
+  const [pages, unreadCount, templates, favorites, recent] =
+    await Promise.all([
     prisma.page.findMany({
       where: { spaceId: space.id, deletedAt: null },
-      select: { id: true, title: true, parentId: true, position: true },
+      select: {
+        id: true,
+        title: true,
+        parentId: true,
+        position: true,
+        icon: true,
+      },
     }),
     prisma.notification.count({
       where: { userId: user.id, readAt: null },
+    }),
+    prisma.page.findMany({
+      where: { spaceId: space.id, isTemplate: true, deletedAt: null },
+      select: { id: true, title: true, icon: true },
+      orderBy: { title: "asc" },
+      take: 30,
+    }),
+    prisma.pageFavorite.findMany({
+      where: { userId: user.id, page: { spaceId: space.id, deletedAt: null } },
+      orderBy: { createdAt: "desc" },
+      take: 12,
+      select: { page: { select: { id: true, title: true, icon: true } } },
+    }),
+    prisma.pageVisit.findMany({
+      where: { userId: user.id, page: { spaceId: space.id, deletedAt: null } },
+      orderBy: { visitedAt: "desc" },
+      take: 6,
+      select: { page: { select: { id: true, title: true, icon: true } } },
     }),
   ]);
 
@@ -54,7 +80,11 @@ export default async function SpaceLayout({
         canManageSpace={can(role, "manageSpace")}
         isAdmin={user.isAdmin}
         unreadCount={unreadCount}
+        templates={templates}
+        favorites={favorites.map((f) => f.page)}
+        recent={recent.map((v) => v.page)}
       />
+      <NotificationStream />
       <main className="flex-1 overflow-y-auto pt-14 md:pt-0">
         {children}
       </main>

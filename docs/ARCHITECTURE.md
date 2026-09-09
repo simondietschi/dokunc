@@ -53,7 +53,9 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 
 ## 4. Datenmodell
 
-- **User** — id, email, name, passwordHash, createdAt.
+- **User** — id, email, name, passwordHash, createdAt; optional
+  `totpSecret` (AES-256-GCM-versiegelt) und `totpEnabledAt`.
+- **TotpRecoveryCode** — userId, SHA-256-Hash, usedAt; ein Code pro Notfall.
 - **Space** — id, name, slug, description.
 - **SpaceMember** — userId, spaceId, role (`OWNER|ADMIN|MEMBER|VIEWER`).
 - **Page** — id, spaceId, parentId (Baum), title, content (TipTap-JSON),
@@ -69,6 +71,10 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 | ADMIN  | ✓ | ✓ | ✓ | ✓ |
 | MEMBER | ✓ | ✓ | ✓ | – |
 | VIEWER | ✓ | – | – | – |
+
+Kommentieren hängt nicht am Schreibrecht: jede Rolle darf kommentieren.
+Anmerkungen an einer einzelnen Textstelle brauchen es trotzdem, weil die
+Markierung im Dokument selbst liegt.
 
 ## 5. Realtime-Fluss
 
@@ -131,6 +137,31 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
       (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) über
       Claude API (claude-opus-4-8, adaptive thinking, Prompt-Caching);
       graceful deaktiviert ohne ANTHROPIC_API_KEY
+- [x] Editor-Parität: Syntax-Hervorhebung (lowlight), volle
+      Tabellenbedienung, Bilder per Einfügen und Ziehen samt
+      Alternativtext, Breite und Unterschrift, Dateianhänge,
+      aufklappbare Abschnitte, Block-Griff, Gliederung, Anker,
+      Wortzähler, Seiten-Symbol, Titelbild, Vorlagen, Markdown
+      einfügen und importieren, vollständiger Export
+- [x] Freigabelinks: Lesen ohne Konto über ein gehashtes Token, Dateien
+      über eine eigene, an die Freigabe gebundene Route; Live-Glocke über
+      Server-Sent Events und Redis; Datenauskunft als JSON und
+      Kontolöschung mit Schranken (letzter Admin, verwaiste Spaces)
+- [x] Seitenbaum: Verschieben per Ziehen mit Zyklusschutz
+      (`isDescendantOf`, DB-gestützt getestet), Favoriten, zuletzt
+      besuchte Seiten
+- [x] Benachrichtigungen: E-Mail für Erwähnungen und Kommentare über ein
+      geteiltes Paket `@dokunc/mailer` (Erwähnungen entstehen im
+      Collab-Server, Kommentare in der Web-App), Seiten-Abonnements,
+      Einstellungen pro Person
+- [x] Verlauf und Verwaltung: Versionsvergleich mit Wort-Diff und
+      Vorschau, Paginierung; lokaler Offline-Puffer (y-indexeddb) mit
+      ehrlichem Verbindungsstatus; Space umbenennen, verlassen und
+      offene Spaces zum Beitreten
+- [x] Zusammenarbeit: Kommentare zur ganzen Seite, Bearbeiten eigener
+      Kommentare, Benachrichtigung bei neuem Thread, Kommentarrecht für
+      VIEWER; Sitzungsverwaltung mit einzeln abmeldbaren Geräten und
+      wiederkehrender Rechteprüfung im Collab-Server
 - [x] Sicherheitsfundament: alle Space-gebundenen Schreibzugriffe über
       geprüfte Guards (`lib/page-guards`, DB-gestützte Autorisierungstests),
       Collab-Ticket statt Sitzungs-JWT im Client, autorisierte
@@ -146,6 +177,13 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
 - [x] Export: Markdown, HTML (JSON→HTML über das geteilte Schema via
       @tiptap/html) und PDF (Gotenberg-Service im Compose; Fallback:
       Druckansicht /p/[id]/print mit window.print)
+- [x] Zwei-Faktor-Anmeldung: TOTP nach RFC 6238 (selbst gerechnet, gegen
+      die Testvektoren der Norm geprüft), QR-Code zur Einrichtung,
+      Geheimnis nur versiegelt in der Datenbank (`lib/secret-box`,
+      Schlüssel aus `APP_SECRET`), einmalig gültige
+      Wiederherstellungscodes als Hash; zwischen Passwort und Code steht
+      ein eigenes Cookie mit eigener Audience (`dokunc-2fa`, fünf
+      Minuten) statt einer halbfertigen Sitzung
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 

@@ -5,6 +5,7 @@ describe("can()", () => {
   it("OWNER/ADMIN dürfen alles", () => {
     for (const r of ["OWNER", "ADMIN"] as const) {
       expect(can(r, "read")).toBe(true);
+      expect(can(r, "comment")).toBe(true);
       expect(can(r, "write")).toBe(true);
       expect(can(r, "managePages")).toBe(true);
       expect(can(r, "manageSpace")).toBe(true);
@@ -17,10 +18,18 @@ describe("can()", () => {
     expect(can("MEMBER", "manageSpace")).toBe(false);
   });
 
-  it("VIEWER darf nur lesen", () => {
+  it("VIEWER darf lesen und kommentieren, aber nicht schreiben", () => {
     expect(can("VIEWER", "read")).toBe(true);
+    expect(can("VIEWER", "comment")).toBe(true);
     expect(can("VIEWER", "write")).toBe(false);
     expect(can("VIEWER", "managePages")).toBe(false);
+    expect(can("VIEWER", "manageSpace")).toBe(false);
+  });
+
+  it("jede Rolle darf kommentieren", () => {
+    for (const r of ["OWNER", "ADMIN", "MEMBER", "VIEWER"] as const) {
+      expect(can(r, "comment")).toBe(true);
+    }
   });
 
   it("keine Rolle = kein Zugriff", () => {

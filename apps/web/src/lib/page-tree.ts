@@ -3,6 +3,7 @@ export type FlatPage = {
   title: string;
   parentId: string | null;
   position: number;
+  icon?: string | null;
 };
 
 export type TreeNode = FlatPage & { children: TreeNode[] };

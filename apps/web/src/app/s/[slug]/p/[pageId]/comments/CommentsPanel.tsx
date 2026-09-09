@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   MessageSquare,
+  Pencil,
   CheckCircle2,
   RotateCcw,
   Trash2,
@@ -18,6 +19,7 @@ import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { useToast } from "@/components/ui/Toast";
 import {
   createThreadAction,
+  editCommentAction,
   replyAction,
   resolveThreadAction,
   deleteCommentAction,
@@ -28,6 +30,8 @@ export type ThreadData = {
   id: string;
   body: string;
   anchorText: string | null;
+  /** Wurde der Text nach dem Anlegen geändert? */
+  edited: boolean;
   resolved: boolean;
   createdAt: string;
   author: Author;
@@ -35,6 +39,7 @@ export type ThreadData = {
     id: string;
     body: string;
     createdAt: string;
+    edited: boolean;
     author: Author;
   }[];
 };
@@ -64,12 +69,15 @@ export function CommentsPanel({
   pageId,
   currentUserId,
   canComment,
+  canAnnotate,
   threads,
 }: {
   slug: string;
   pageId: string;
   currentUserId: string;
   canComment: boolean;
+  /** Darf diese Person Markierungen im Dokument setzen? */
+  canAnnotate: boolean;
   threads: ThreadData[];
 }) {
   const router = useRouter();
@@ -132,21 +140,7 @@ export function CommentsPanel({
 
   // Leerer Zustand: bisher rendert das Panel gar nichts, es gab also
   // keinen sichtbaren Einstieg in die Kommentarfunktion.
-  if (!draft && threads.length === 0) {
-    if (!canComment) return null;
-    return (
-      <section className="mt-6 border-t border-line pt-6">
-        <h2 className="flex items-center gap-1.5 text-[13px] font-semibold text-muted">
-          <MessageSquare className="h-3.5 w-3.5" />
-          Kommentare
-        </h2>
-        <p className="mt-2 text-[13px] text-faint">
-          Noch keine Kommentare. Markiere eine Textstelle und klicke in der
-          Leiste auf das Kommentar-Symbol, um einen Thread zu starten.
-        </p>
-      </section>
-    );
-  }
+  if (!draft && threads.length === 0 && !canComment) return null;
 
   return (
     <section className="mt-6 border-t border-line pt-6">
@@ -154,6 +148,14 @@ export function CommentsPanel({
         <MessageSquare className="h-3.5 w-3.5" />
         Kommentare ({open.length})
       </h2>
+
+      {threads.length === 0 && !draft && (
+        <p className="mt-2 text-[13px] text-faint">
+          {canAnnotate
+            ? "Noch keine Kommentare. Markiere eine Textstelle für eine Anmerkung an genau dieser Stelle — oder schreib unten einen Kommentar zur ganzen Seite."
+            : "Noch keine Kommentare. Schreib unten einen Kommentar zur ganzen Seite. Anmerkungen an einer einzelnen Textstelle brauchen Schreibrechte, weil die Markierung im Dokument selbst liegt."}
+        </p>
+      )}
 
       {draft && (
         <div
@@ -252,7 +254,88 @@ export function CommentsPanel({
           )}
         </div>
       )}
+
+      {canComment && !draft && (
+        <PageCommentComposer slug={slug} pageId={pageId} />
+      )}
     </section>
+  );
+}
+
+/**
+ * Kommentar zur ganzen Seite, ohne Textstelle.
+ *
+ * Bisher gab es nur textverankerte Threads — eine allgemeine Rückfrage
+ * zur Seite hatte gar keinen Ort. Der Thread entsteht mit derselben
+ * Action, nur ohne Anker und ohne Markierung im Dokument.
+ */
+function PageCommentComposer({
+  slug,
+  pageId,
+}: {
+  slug: string;
+  pageId: string;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  // Die Thread-ID muss dieselbe Form haben wie bei verankerten Threads.
+  const [threadId, setThreadId] = useState<string | null>(null);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setThreadId(crypto.randomUUID());
+          setOpen(true);
+        }}
+        className="mt-4 flex w-full items-center gap-2 rounded-xl border border-dashed border-line-strong px-3.5 py-2.5 text-left text-[13px] text-muted transition-colors hover:border-accent/50 hover:text-ink"
+      >
+        <MessageSquare className="h-3.5 w-3.5" />
+        Kommentar zur Seite schreiben
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="mt-4 rounded-xl border border-line bg-surface p-4 shadow-soft"
+      action={async (fd) => {
+        await createThreadAction(fd);
+        setOpen(false);
+        setThreadId(null);
+        router.refresh();
+      }}
+    >
+      <input type="hidden" name="slug" value={slug} />
+      <input type="hidden" name="pageId" value={pageId} />
+      <input type="hidden" name="threadId" value={threadId ?? ""} />
+      <textarea
+        name="body"
+        required
+        autoFocus
+        rows={2}
+        aria-label="Kommentar zur Seite"
+        placeholder="Kommentar zur ganzen Seite…"
+        className="w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent"
+      />
+      <div className="mt-2 flex gap-2">
+        <Button type="submit" size="sm">
+          Kommentieren
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            setOpen(false);
+            setThreadId(null);
+          }}
+        >
+          Abbrechen
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -297,7 +380,9 @@ function Thread({
         author={thread.author}
         body={thread.body}
         createdAt={thread.createdAt}
+        edited={thread.edited}
         canDelete={canComment && thread.author?.id === currentUserId}
+        canEdit={canComment && thread.author?.id === currentUserId}
         commentId={thread.id}
         isThreadRoot
         slug={slug}
@@ -311,7 +396,9 @@ function Thread({
                 author={r.author}
                 body={r.body}
                 createdAt={r.createdAt}
+                edited={r.edited}
                 canDelete={canComment && r.author?.id === currentUserId}
+                canEdit={canComment && r.author?.id === currentUserId}
                 commentId={r.id}
                 slug={slug}
               />
@@ -412,7 +499,9 @@ function CommentRow({
   author,
   body,
   createdAt,
+  edited = false,
   canDelete,
+  canEdit = false,
   commentId,
   isThreadRoot = false,
   slug,
@@ -420,7 +509,10 @@ function CommentRow({
   author: Author;
   body: string;
   createdAt: string;
+  /** Wurde der Text nach dem Anlegen geändert? */
+  edited?: boolean;
   canDelete: boolean;
+  canEdit?: boolean;
   commentId: string;
   /** Beim Löschen des Wurzelkommentars muss die Textmarkierung mit weg. */
   isThreadRoot?: boolean;
@@ -428,6 +520,8 @@ function CommentRow({
 }) {
   const router = useRouter();
   const { toast } = useToast();
+  const [editing, setEditing] = useState(false);
+
   return (
     <div className="group flex items-start gap-2.5">
       <Avatar name={author?.name ?? "Gelöscht"} size={26} />
@@ -443,9 +537,61 @@ function CommentRow({
               timeStyle: "short",
             })}
           </time>
+          {edited && (
+            <span className="ml-1.5 text-faint" title="Nachträglich geändert">
+              (bearbeitet)
+            </span>
+          )}
         </p>
-        <p className="mt-0.5 whitespace-pre-wrap text-sm">{body}</p>
+        {editing ? (
+          <form
+            className="mt-1"
+            action={async (fd) => {
+              await editCommentAction(fd);
+              setEditing(false);
+              router.refresh();
+            }}
+          >
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="commentId" value={commentId} />
+            <textarea
+              name="body"
+              required
+              autoFocus
+              rows={2}
+              defaultValue={body}
+              aria-label="Kommentar bearbeiten"
+              className="w-full rounded-lg border border-line-strong bg-surface p-2 text-sm outline-none focus-visible:border-accent"
+            />
+            <div className="mt-1.5 flex gap-2">
+              <Button type="submit" size="sm">
+                Speichern
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setEditing(false)}
+              >
+                Abbrechen
+              </Button>
+            </div>
+          </form>
+        ) : (
+          <p className="mt-0.5 whitespace-pre-wrap text-sm">{body}</p>
+        )}
       </div>
+      {canEdit && !editing && (
+        <button
+          type="button"
+          title="Kommentar bearbeiten"
+          aria-label="Kommentar bearbeiten"
+          onClick={() => setEditing(true)}
+          className="grid h-6 w-6 place-items-center rounded text-faint opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+      )}
       {canDelete && (
         <form
           action={async (fd) => {

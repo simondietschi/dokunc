@@ -27,9 +27,16 @@ function secret(): Uint8Array {
 export async function issueCollabTicket(opts: {
   userId: string;
   tokenVersion: number;
+  sessionId: string;
   pageId: string;
 }): Promise<string> {
-  return new SignJWT({ tv: opts.tokenVersion, pid: opts.pageId })
+  // sid mitzugeben heisst: wird diese Anmeldung beendet, endet auch die
+  // Verbindung zum Collab-Server, nicht erst mit dem nächsten Ticket.
+  return new SignJWT({
+    tv: opts.tokenVersion,
+    sid: opts.sessionId,
+    pid: opts.pageId,
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(opts.userId)
     .setAudience(COLLAB_AUDIENCE)

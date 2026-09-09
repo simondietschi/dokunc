@@ -1,30 +1,55 @@
 import "server-only";
 import { redirect } from "next/navigation";
 import { prisma } from "@dokunc/db";
-import { getSessionClaims } from "./session";
+import { getSessionClaims, touchSession } from "./session";
 
 /**
- * Liefert den angemeldeten Nutzer — nur wenn das Konto aktiv ist UND
- * die Token-Version stimmt (Session-Revocation: Passwortwechsel /
- * "überall abmelden" erhöhen tokenVersion und entwerten alte JWTs).
+ * Liefert den angemeldeten Nutzer.
+ *
+ * Geprüft wird in einer Abfrage: die Sitzung muss existieren, nicht
+ * widerrufen und nicht abgelaufen sein, das Konto aktiv und die
+ * Token-Version aktuell (Passwortwechsel und "überall abmelden"
+ * erhöhen sie und entwerten damit alle alten JWTs auf einen Schlag).
  */
 export async function getCurrentUser() {
   const claims = await getSessionClaims();
-  if (!claims) return null;
-  const user = await prisma.user.findUnique({
-    where: { id: claims.sub },
+  if (!claims?.sid) return null;
+
+  const session = await prisma.session.findUnique({
+    where: { id: claims.sid },
     select: {
       id: true,
-      email: true,
-      name: true,
-      isAdmin: true,
-      isActive: true,
-      tokenVersion: true,
+      userId: true,
+      revokedAt: true,
+      expiresAt: true,
+      lastSeenAt: true,
+      user: {
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          isAdmin: true,
+          isActive: true,
+          tokenVersion: true,
+        },
+      },
     },
   });
-  if (!user || !user.isActive || user.tokenVersion !== claims.tv) {
+
+  if (
+    !session ||
+    session.revokedAt !== null ||
+    session.expiresAt.getTime() < Date.now() ||
+    session.userId !== claims.sub
+  ) {
     return null;
   }
+
+  const user = session.user;
+  if (!user.isActive || user.tokenVersion !== claims.tv) return null;
+
+  await touchSession(session.id, session.lastSeenAt);
+
   return {
     id: user.id,
     email: user.email,
@@ -32,6 +57,7 @@ export async function getCurrentUser() {
     isAdmin: user.isAdmin,
     // Für kurzlebige Tickets (Collab), die dieselbe Widerrufbarkeit erben.
     tokenVersion: user.tokenVersion,
+    sessionId: session.id,
   };
 }
 
