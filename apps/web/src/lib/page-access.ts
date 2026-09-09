@@ -188,24 +188,33 @@ export async function filterByPageAccess<T extends { id: string }>(
  * Wer schützt, wird selbst eingetragen: sonst verschwindet die Seite
  * im selben Moment aus der eigenen Ansicht, sobald die Person nicht
  * zur Space-Verwaltung gehört.
+ *
+ * Alle drei Schritte in EINEM Zug. Nacheinander ausgeführt gibt es
+ * zwischen dem Setzen des Schutzes und dem Eintrag ein Fenster, in dem
+ * die Seite geschützt ist und niemanden zulässt — wer in diesem Moment
+ * liest, sieht eine Seite, die selbst der schützenden Person entzogen
+ * ist. Genau das trat auf: die Datenbank war am Ende richtig, ein Aufruf
+ * mitten im Vorgang zeigte trotzdem "Zugriff haben (0)".
  */
 export async function setPageRestricted(
   pageId: string,
   restricted: boolean,
   actorId: string,
 ): Promise<void> {
-  await prisma.page.update({
-    where: { id: pageId },
-    data: { isRestricted: restricted },
-  });
-  if (restricted) {
-    await prisma.pageGrant.upsert({
-      where: { pageId_userId: { pageId, userId: actorId } },
-      create: { pageId, userId: actorId },
-      update: {},
+  await prisma.$transaction(async (tx) => {
+    await tx.page.update({
+      where: { id: pageId },
+      data: { isRestricted: restricted },
     });
-  } else {
-    await prisma.pageGrant.deleteMany({ where: { pageId } });
-  }
-  await refreshAccessRoots(pageId);
+    if (restricted) {
+      await tx.pageGrant.upsert({
+        where: { pageId_userId: { pageId, userId: actorId } },
+        create: { pageId, userId: actorId },
+        update: {},
+      });
+    } else {
+      await tx.pageGrant.deleteMany({ where: { pageId } });
+    }
+    await refreshAccessRoots(pageId, tx);
+  });
 }
