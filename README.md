@@ -262,6 +262,6 @@ apps/web      Next.js (UI, Auth, API, Editor)
 apps/collab   Hocuspocus WebSocket-Server (Yjs-Persistenz)
 packages/db   Prisma-Schema + Client + geteilte Zugriffsregeln
 packages/editor  Geteilte TipTap-Extensions
-packages/mailer  Geteilter E-Mail-Versand (Web + Collab)
+packages/mail    Geteilter E-Mail-Versand (Web + Collab)
 e2e/          Playwright-E2E-Tests
 ```

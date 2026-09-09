@@ -193,7 +193,7 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
       (`isDescendantOf`, DB-gestützt getestet), Favoriten, zuletzt
       besuchte Seiten
 - [x] Benachrichtigungen: E-Mail für Erwähnungen und Kommentare über ein
-      geteiltes Paket `@dokunc/mailer` (Erwähnungen entstehen im
+      geteiltes Paket `@dokunc/mail` (Erwähnungen entstehen im
       Collab-Server, Kommentare in der Web-App), Seiten-Abonnements,
       Einstellungen pro Person
 - [x] Verlauf und Verwaltung: Versionsvergleich mit Wort-Diff und

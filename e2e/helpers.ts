@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { Locator, Page } from "@playwright/test";
 import { Redis } from "ioredis";
 import { config as loadEnv } from "dotenv";
 
@@ -26,4 +27,17 @@ export async function resetLoginRateLimit(): Promise<void> {
   } finally {
     redis.disconnect();
   }
+}
+
+/**
+ * Der Seitenbaum in der Seitenleiste.
+ *
+ * Ueber dem Baum stehen "Favoriten" und "Zuletzt besucht", und dieselbe
+ * Seite taucht dort noch einmal auf. Ein Zugriff auf die ganze `aside`
+ * findet sie deshalb doppelt und trifft mit `.first()` die falsche
+ * Zeile: die Eintraege der beiden oberen Listen sind blosse Links ohne
+ * die Knoepfe des Baums.
+ */
+export function pageTree(page: Page): Locator {
+  return page.locator('aside [data-page-tree="root"]');
 }

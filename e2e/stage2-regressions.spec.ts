@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { resetLoginRateLimit } from "./helpers";
+import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * Regressionstests fuer zwei stille Datenverluste:
@@ -86,8 +86,8 @@ test("Papierkorb: endgueltiges Loeschen verschont wiederhergestellte Unterseiten
   const childTitle = `Purge-Kind ${stamp}`;
 
   await createPage(page, parentTitle);
-  const parentRow = page
-    .locator("aside li")
+  const parentRow = pageTree(page)
+    .locator("li")
     .filter({ hasText: parentTitle })
     .first();
   await parentRow.hover();
