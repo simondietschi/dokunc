@@ -166,8 +166,18 @@ function editLink(
   });
 }
 
-/** Aktivzustand der Leiste in einem Zug ablesen. */
+/**
+ * Aktivzustand der Leiste in einem Zug ablesen.
+ *
+ * Gibt null zurueck, solange der Editor abgebaut wird. Waehrend eines
+ * Seitenwechsels laeuft der Selektor noch einmal, obwohl die Sicht schon
+ * geloest ist; `can()` greift dann intern auf einen Kontext zu, den es
+ * nicht mehr gibt, und wirft "Cannot read properties of null (reading
+ * 'can')". Die Fehlergrenze faengt das ab und ersetzt die ganze Seite
+ * durch "Das hat nicht geklappt".
+ */
 function readState(editor: Editor) {
+  if (editor.isDestroyed) return null;
   return {
     h1: editor.isActive("heading", { level: 1 }),
     h2: editor.isActive("heading", { level: 2 }),
@@ -206,7 +216,7 @@ export function EditorToolbar({
 }) {
   const s = useEditorState({
     editor,
-    selector: ({ editor: e }) => (e ? readState(e) : null),
+    selector: ({ editor: e }) => (e && !e.isDestroyed ? readState(e) : null),
   });
   if (!editor || !s) return null;
 

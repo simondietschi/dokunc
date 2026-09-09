@@ -34,17 +34,23 @@ export function SelectionMenu({
   // Stand, den die Auswahl beim Aufklappen hatte.
   const active = useEditorState({
     editor,
-    selector: ({ editor: e }) => ({
-      bold: e.isActive("bold"),
-      italic: e.isActive("italic"),
-      underline: e.isActive("underline"),
-      strike: e.isActive("strike"),
-      code: e.isActive("code"),
-      highlight: e.isActive("highlight"),
-      link: e.isActive("link"),
-      comment: e.isActive("commentMark"),
-    }),
+    // Waehrend des Abbaus laeuft der Selektor noch einmal, die Sicht ist
+    // dann aber schon geloest.
+    selector: ({ editor: e }) =>
+      !e || e.isDestroyed
+        ? null
+        : ({
+            bold: e.isActive("bold"),
+            italic: e.isActive("italic"),
+            underline: e.isActive("underline"),
+            strike: e.isActive("strike"),
+            code: e.isActive("code"),
+            highlight: e.isActive("highlight"),
+            link: e.isActive("link"),
+            comment: e.isActive("commentMark"),
+          } as const),
   });
+  if (!active) return null;
 
   return (
     <BubbleMenu

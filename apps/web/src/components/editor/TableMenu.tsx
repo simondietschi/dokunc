@@ -39,7 +39,9 @@ export function TableTools({ editor }: { editor: Editor }) {
   // wieder heraus nicht: TipTap 3 rendert nicht bei jeder Transaktion neu.
   const inTable = useEditorState({
     editor,
-    selector: ({ editor: e }) => e.isActive("table"),
+    // Gleiche Absicherung wie in der Werkzeugleiste: waehrend des Abbaus
+    // laeuft der Selektor noch einmal, die Sicht ist dann aber schon weg.
+    selector: ({ editor: e }) => !!e && !e.isDestroyed && e.isActive("table"),
   });
 
   useEffect(() => {
@@ -109,7 +111,7 @@ export function TableTools({ editor }: { editor: Editor }) {
       },
       {
         label: "Zellen verbinden oder teilen",
-        icon: editor.can().mergeCells() ? Combine : Split,
+        icon: editor.isDestroyed || editor.can().mergeCells() ? Combine : Split,
         run: () => c().mergeOrSplit().run(),
       },
     ],
