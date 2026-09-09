@@ -161,9 +161,17 @@ export function PageTree({
             if (!res.ok) {
               setError(res.error);
               setOptimistic(null);
-            } else {
-              router.refresh();
+              return;
             }
+            // Eigene Transition fuer den Refresh: React fuehrt eine
+            // async-Transition nur bis zum ersten await; alles danach
+            // gehoert nicht mehr dazu und faellt mit ihrem Ende weg.
+            // Der Baum merkt davon nichts, weil er bis zum naechsten
+            // Server-Baum seine optimistische Liste zeigt — die Seite
+            // daneben (Brotkrumen, Titel) bliebe aber stehen.
+            startTransition(() => {
+              router.refresh();
+            });
           } catch {
             setError("Verschieben fehlgeschlagen");
             setOptimistic(null);

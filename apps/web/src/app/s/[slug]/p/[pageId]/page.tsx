@@ -101,7 +101,12 @@ export default async function PageView({
     ? await loadPageAccess(space.id, page)
     : EMPTY_ACCESS;
 
-  const ancestorsPromise = loadAncestors(space.id, page.parentId);
+  const ancestorsPromise = loadAncestors(
+    space.id,
+    page.parentId,
+    user.id,
+    role,
+  );
   const [
     backlinks,
     comments,

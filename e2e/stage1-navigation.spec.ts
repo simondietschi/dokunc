@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { resetLoginRateLimit } from "./helpers";
+import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E fuer Navigation (Stufe 1): Seiten verschieben (Dialog + Drag and
@@ -59,8 +59,7 @@ async function createPage(page: Page, title: string): Promise<string> {
     await input.click();
     await input.fill(title);
     await input.press("Enter"); // blur -> renamePageAction
-    saved = await page
-      .locator("aside")
+    saved = await pageTree(page)
       .getByText(title)
       .waitFor({ timeout: 4000 })
       .then(
@@ -99,7 +98,9 @@ test("Seite verschieben (Dialog + Drag and Drop), Brotkrumen, Inhaltsverzeichnis
   await expect(dialog).toBeHidden({ timeout: 15_000 });
 
   // Sidebar zeigt die Verschachtelung: Kind-Link innerhalb des Eltern-<li>.
-  const parentItem = page.locator("aside li", {
+  // Nur der Baum: "Favoriten" und "Zuletzt besucht" fuehren dieselbe
+  // Seite ein zweites Mal, ein "aside li" traefe beide.
+  const parentItem = pageTree(page).locator("li", {
     has: page.locator(`a[href$="/p/${parentId}"]`),
   });
   const childLink = parentItem.locator(`a[href$="/p/${childId}"]`);

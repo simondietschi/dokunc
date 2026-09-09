@@ -100,8 +100,16 @@ export async function canSeePage(
  * und ein Abbruch mittendrin liesse Seiten sichtbar, die es nicht sein
  * dürfen.
  */
-export async function refreshAccessRoots(pageId: string): Promise<void> {
-  await prisma.$executeRaw`
+export async function refreshAccessRoots(
+  pageId: string,
+  /**
+   * Optional der Client einer laufenden Transaktion. Wer die Wurzeln
+   * beim Umhaengen nachzieht, muss das im selben Zug tun: sonst steht
+   * der Zug schon in der Datenbank, wenn das Nachziehen scheitert.
+   */
+  tx: Pick<typeof prisma, "$executeRaw"> = prisma,
+): Promise<void> {
+  await tx.$executeRaw`
     WITH RECURSIVE seed AS (
       SELECT p.id,
              CASE

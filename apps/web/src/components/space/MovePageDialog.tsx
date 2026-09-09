@@ -244,7 +244,11 @@ export function MovePageDialog({
           setError(res.error);
           return;
         }
-        router.refresh();
+        // Wie im Seitenbaum: nach dem await braucht der Refresh eine
+        // eigene Transition, sonst endet er mit der laufenden.
+        startTransition(() => {
+          router.refresh();
+        });
         onClose();
       } catch {
         setError("Verschieben fehlgeschlagen.");

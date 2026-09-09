@@ -295,12 +295,18 @@ export async function movePageInSpace(
       }
     }
 
+    // Der Zug kann den Ast unter eine geschuetzte Seite gehaengt oder aus
+    // ihr herausgeholt haben; ohne das Nachziehen bliebe der Unterbaum mit
+    // der alten Zugriffswurzel stehen — sichtbar fuer die Falschen.
+    //
+    // Bewusst INNERHALB der Transaktion: draussen bliebe bei einem Fehler
+    // der Zug bestehen, die Action wuerde trotzdem werfen, und damit fiele
+    // auch das revalidatePath aus — verschobene Seite, alte Anzeige, und
+    // fuer die handelnde Person eine Fehlermeldung.
+    await refreshAccessRoots(page.id, tx);
+
     return { ok: true };
   });
 
-  // Der Zug kann den Ast unter eine geschuetzte Seite gehaengt oder aus
-  // ihr herausgeholt haben; ohne das Nachziehen bliebe der Unterbaum mit
-  // der alten Zugriffswurzel stehen — sichtbar fuer die Falschen.
-  if (result.ok) await refreshAccessRoots(pageId);
   return result;
 }

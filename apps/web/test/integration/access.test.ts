@@ -9,6 +9,7 @@ import {
   visiblePageWhere,
 } from "@/lib/page-access";
 import { findLivePage, movePageInSpace } from "@/lib/page-guards";
+import { loadAncestors } from "@/lib/page-ancestors";
 
 /**
  * Gruppen und geschützte Seiten.
@@ -254,6 +255,66 @@ describe("Sichtbarkeit in Abfragen", () => {
  * Sichtbarkeit geliefert: Gruppenmitglieder bekamen 403, und wer
  * hineinkam, sah die Titel geschuetzter Seiten. Beides steht hier fest.
  */
+/**
+ * Die Kruemelspur. Wer auf einer geschuetzten Seite eine Freigabe hat,
+ * sieht diese Seite zu Recht — die Titel der geschuetzten Seiten
+ * darueber aber nicht. Ohne Filter stand genau das in der Krume.
+ */
+describe("Kruemelspur", () => {
+  let hiddenTop: string;
+  let middle: string;
+  let grantedLeaf: string;
+
+  beforeAll(async () => {
+    const top = await prisma.page.create({
+      data: { spaceId, title: "Verborgene Wurzel" },
+      select: { id: true },
+    });
+    hiddenTop = top.id;
+    const mid = await prisma.page.create({
+      data: { spaceId, parentId: hiddenTop, title: "Zwischenseite" },
+      select: { id: true },
+    });
+    middle = mid.id;
+    const leaf = await prisma.page.create({
+      data: { spaceId, parentId: middle, title: "Freigegebenes Blatt" },
+      select: { id: true },
+    });
+    grantedLeaf = leaf.id;
+
+    // Oben geschuetzt (ohne Freigabe), unten geschuetzt MIT Freigabe fuer
+    // die Gruppe: das Blatt ist sichtbar, sein Weg dorthin nicht.
+    await setPageRestricted(hiddenTop, true, plain);
+    await setPageRestricted(grantedLeaf, true, plain);
+    await prisma.pageGrant.create({
+      data: { pageId: grantedLeaf, groupId },
+    });
+    await refreshAccessRoots(hiddenTop);
+  });
+
+  afterAll(async () => {
+    await prisma.page.deleteMany({ where: { id: hiddenTop } });
+  });
+
+  it("zeigt das Blatt, weil die Gruppe freigegeben ist", async () => {
+    expect(await canSeePage(grantedLeaf, viaGroup, "VIEWER")).toBe(true);
+    expect(await canSeePage(middle, viaGroup, "VIEWER")).toBe(false);
+  });
+
+  it("nennt die verborgenen Elternseiten nicht", async () => {
+    const crumbs = await loadAncestors(spaceId, middle, viaGroup, "VIEWER");
+    expect(crumbs).toEqual([]);
+  });
+
+  it("zeigt der Verwaltung den ganzen Weg", async () => {
+    const crumbs = await loadAncestors(spaceId, middle, manager, "ADMIN");
+    expect(crumbs.map((c) => c.title)).toEqual([
+      "Verborgene Wurzel",
+      "Zwischenseite",
+    ]);
+  });
+});
+
 describe("Seitenbaum für Auswahl-Dialoge", () => {
   async function treeFor(userId: string) {
     const role = await effectiveRole(userId, spaceId);
