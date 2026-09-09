@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { resetLoginRateLimit } from "./helpers";
+import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E fuer Anhaenge: Datei per Slash-Befehl hochladen, Anhangskarte im
@@ -54,8 +54,7 @@ async function openNewPage(page: Page, title: string) {
     await input.click();
     await input.fill(title);
     await input.press("Enter");
-    saved = await page
-      .locator("aside")
+    saved = await pageTree(page)
       .getByText(title)
       .waitFor({ timeout: 4000 })
       .then(

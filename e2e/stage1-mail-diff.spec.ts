@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { resetLoginRateLimit } from "./helpers";
+import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E für Mail-Einstellungen im Konto und den Versionsvergleich.
@@ -99,8 +99,7 @@ test("Versionsvergleich: Diff und Vorschau einer Version", async ({
     await input.click();
     await input.fill(title);
     await input.press("Enter");
-    saved = await page
-      .locator("aside")
+    saved = await pageTree(page)
       .getByText(title)
       .waitFor({ timeout: 4000 })
       .then(

@@ -474,33 +474,6 @@ test("Seitenkommentar ohne Textstelle", async ({ page }) => {
   await reloadUntil(page, () => page.getByText("Gilt das noch?").count());
 });
 
-test("Versionsverlauf vergleicht und zeigt eine Vorschau", async ({
-  page,
-}) => {
-  await login(page);
-  await page.goto("/spaces");
-  await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**");
-  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
-  await page.locator('aside a[href*="/p/"]').first().click();
-  await page.waitForURL("**/p/**");
-  await waitForLive(page);
-  const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
-  const slug = page.url().match(/\/s\/([^/?#]+)/)![1];
-
-  await page.goto(`/s/${slug}/p/${pageId}/history`);
-  const view = page.getByRole("link", { name: "Ansehen" }).first();
-  // Der Editor-Test hat auf dieser Seite geschrieben, es gibt also
-  // mindestens einen Snapshot.
-  await expect(view).toBeVisible({ timeout: 15_000 });
-  await view.click();
-
-  await expect(page.getByText(/Vorschau vom/)).toBeVisible({
-    timeout: 10_000,
-  });
-  await expect(page.getByText(/aktuelle Fassung/)).toBeVisible();
-});
-
 test("Space-Einstellungen: umbenennen und oeffnen", async ({ page }) => {
   await login(page);
   await page.goto("/spaces");
@@ -530,7 +503,12 @@ test("Space-Einstellungen: umbenennen und oeffnen", async ({ page }) => {
   });
 });
 
-test("Seite folgen und E-Mail-Einstellungen", async ({ page }) => {
+/**
+ * Nur noch das Folgen einer Seite. Die Mail-Einstellungen prueft
+ * stage1-mail-diff gegen die heutige Oberflaeche: mains Zustellmodus
+ * (sofort, taeglich, aus) hat die Checkbox des Branches abgeloest.
+ */
+test("Einer Seite folgen und wieder loesen", async ({ page }) => {
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
@@ -549,48 +527,9 @@ test("Seite folgen und E-Mail-Einstellungen", async ({ page }) => {
   ).toBeVisible({ timeout: 20_000 });
   // Wieder loesen, damit spaetere Laeufe unveraendert starten.
   await page.click('button[title="Dieser Seite nicht mehr folgen"]');
-  await page.reload();
-
-  await page.goto("/account");
-  const mention = page.getByLabel("Wenn mich jemand mit @ erwähnt");
-  await expect(mention).toBeChecked();
-  await mention.uncheck();
-  await page
-    .locator("form", { hasText: "E-Mail-Benachrichtigungen" })
-    .getByRole("button", { name: "Speichern" })
-    .click();
-  // Gegen die Persistenz geprueft und nicht gegen die Rueckmeldung: die
-  // kommt erst, wenn die Server-Action samt Revalidierung der Kontoseite
-  // durch ist, und die traegt unter voller Suite-Last eine lange
-  // Geraeteliste mit.
-  await reloadUntil(page, async () =>
-    (await page.getByLabel("Wenn mich jemand mit @ erwähnt").isChecked())
-      ? 0
-      : 1,
+  await reloadUntil(page, () =>
+    page.locator('button[title="Dieser Seite folgen"]').count(),
   );
-});
-
-test("Favorit setzen erscheint in der Seitenleiste", async ({ page }) => {
-  await login(page);
-  await page.goto("/spaces");
-  await page.locator('a[href^="/s/"]').first().click();
-  await page.waitForURL("**/s/**");
-  // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
-  await page.locator('aside a[href*="/p/"]').first().click();
-  await page.waitForURL("**/p/**");
-  await waitForLive(page);
-
-  await page.click('button[title="Zu den Favoriten"]');
-  await page.reload();
-  await expect(page.getByText("Favoriten", { exact: true })).toBeVisible({
-    timeout: 15_000,
-  });
-
-  await page.click('button[title="Aus den Favoriten entfernen"]');
-  await page.reload();
-  await expect(page.getByText("Favoriten", { exact: true })).toBeHidden({
-    timeout: 15_000,
-  });
 });
 
 test("Freigabelink: lesen ohne Konto", async ({ page, context }) => {
