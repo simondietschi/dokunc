@@ -89,7 +89,10 @@ test("Favorit setzen, Sidebar, Dashboard, Favorit entfernen", async ({
   const sidebarFavorites = page
     .locator("aside")
     .getByRole("region", { name: "Favoriten" });
-  await expect(sidebarFavorites).toBeVisible({ timeout: 10_000 });
+  // Der Stern schaltet optimistisch um, der Abschnitt in der Seitenleiste
+  // ist Serverzustand und entsteht erst mit der Revalidierung des Space.
+  // Gleiche Behandlung wie bei der Gegenprobe am Ende des Tests.
+  await reloadUntil(page, () => sidebarFavorites.count());
   await expect(
     sidebarFavorites.locator(`a[href$="/p/${pageId}"]`),
   ).toContainText(title);
