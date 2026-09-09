@@ -138,9 +138,17 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
     await page.keyboard.press("Enter");
     await page.click('button[aria-label="Tabelle einfügen"]');
     await expect(page.locator(".ProseMirror table")).toBeVisible();
-    await page.click('button[title="Zeile darunter einfügen"]');
+    // Steht der Cursor in einer Tabelle, wird aus dem Einfuegen-Knopf ein
+    // Klappmenue: acht Tabellenbefehle einzeln in der Leiste haetten sie
+    // sonst doppelt so breit gemacht.
+    const tableMenu = page.getByRole("menu", { name: "Tabelle bearbeiten" });
+    await page.click('button[aria-label="Tabelle bearbeiten"]');
+    await tableMenu
+      .getByRole("menuitem", { name: "Zeile darunter einfügen" })
+      .click();
     await expect(page.locator(".ProseMirror tr")).toHaveCount(4);
-    await page.click('button[title="Tabelle löschen"]');
+    await page.click('button[aria-label="Tabelle bearbeiten"]');
+    await tableMenu.getByRole("menuitem", { name: "Tabelle löschen" }).click();
     await expect(page.locator(".ProseMirror table")).toHaveCount(0);
   });
 
