@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import type { Editor } from "@tiptap/react";
+import { useEditorState, type Editor } from "@tiptap/react";
 import {
   ArrowDownToLine,
   ArrowLeftToLine,
@@ -35,7 +35,12 @@ type Item = {
 export function TableTools({ editor }: { editor: Editor }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const inTable = editor.isActive("table");
+  // Ohne useEditorState merkt der Knopf den Wechsel in die Tabelle und
+  // wieder heraus nicht: TipTap 3 rendert nicht bei jeder Transaktion neu.
+  const inTable = useEditorState({
+    editor,
+    selector: ({ editor: e }) => e.isActive("table"),
+  });
 
   useEffect(() => {
     if (!open) return;

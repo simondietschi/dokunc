@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
+import { effectiveRole } from "@/lib/space-access";
+import { visiblePageWhere } from "@/lib/page-access";
 
 export const runtime = "nodejs";
 
@@ -15,7 +17,12 @@ export type SpacePagesResponse = {
 
 /**
  * Flacher Seitenbaum eines Space (ohne Vorlagen, ohne Papierkorb) fuer
- * Auswahl-Dialoge wie "Verschieben nach...". Nur fuer Space-Mitglieder.
+ * Auswahl-Dialoge wie "Verschieben nach...".
+ *
+ * Zugang zaehlt hier wie ueberall: eigene Mitgliedschaft ODER eine
+ * Gruppe. Und die Liste haelt sich an dieselbe Sichtbarkeit wie der
+ * Seitenbaum — sonst stuenden die Titel geschuetzter Seiten in einer
+ * Antwort, die jedes Mitglied abrufen kann.
  */
 export async function GET(
   _req: Request,
@@ -27,16 +34,18 @@ export async function GET(
   }
   const { id: spaceId } = await params;
 
-  const member = await prisma.spaceMember.findUnique({
-    where: { userId_spaceId: { userId: user.id, spaceId } },
-    select: { id: true },
-  });
-  if (!member) {
+  const role = await effectiveRole(user.id, spaceId);
+  if (!role) {
     return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
   }
 
   const pages = await prisma.page.findMany({
-    where: { spaceId, deletedAt: null, isTemplate: false },
+    where: {
+      spaceId,
+      deletedAt: null,
+      isTemplate: false,
+      ...visiblePageWhere(user.id, role),
+    },
     select: { id: true, title: true, parentId: true, position: true },
     orderBy: [{ position: "asc" }, { title: "asc" }],
   });

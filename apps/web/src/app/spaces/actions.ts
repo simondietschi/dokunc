@@ -5,10 +5,8 @@ import { revalidatePath } from "next/cache";
 import { prisma, Prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { slugify } from "@/lib/slug";
-import { str, strOrNull } from "@/lib/form";
+import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
-import { authorizeAction } from "@/lib/space-context";
-import { revokeCollabAccess } from "@/lib/collab-sync";
 
 export async function createSpaceAction(formData: FormData) {
   const user = await requireUser();
@@ -76,82 +74,6 @@ function createSpace(userId: string, name: string, slug: string) {
       },
     },
   });
-}
-
-const VISIBILITIES = ["PRIVATE", "OPEN"] as const;
-const JOIN_ROLES = ["MEMBER", "VIEWER"] as const;
-
-/**
- * Space umbenennen und Sichtbarkeit setzen.
- *
- * Der Slug bleibt bewusst unangetastet: er steht in jeder gespeicherten
- * URL, in Lesezeichen und in verschickten Links. Ein Space ohne
- * Umbenennen war aber genauso falsch — `rg "space.update"` fand vorher
- * keinen einzigen Treffer.
- */
-export async function updateSpaceAction(form: FormData) {
-  const { space, user } = await authorizeAction(form, "manageSpace");
-  const name = str(form, "name");
-  if (name.length < 2) return;
-
-  const visibility = str(form, "visibility");
-  const joinRole = str(form, "joinRole");
-
-  await prisma.space.update({
-    where: { id: space.id },
-    data: {
-      name,
-      description: strOrNull(form, "description"),
-      visibility: (VISIBILITIES as readonly string[]).includes(visibility)
-        ? (visibility as "PRIVATE" | "OPEN")
-        : space.visibility,
-      joinRole: (JOIN_ROLES as readonly string[]).includes(joinRole)
-        ? (joinRole as "MEMBER" | "VIEWER")
-        : space.joinRole,
-    },
-  });
-  await audit({
-    action: "space.updated",
-    actorId: user.id,
-    spaceId: space.id,
-    metadata: { name, visibility, joinRole },
-  });
-  revalidatePath(`/s/${space.slug}`, "layout");
-  revalidatePath("/spaces");
-}
-
-/**
- * Space verlassen.
- *
- * Über die Mitgliederverwaltung geht das absichtlich nicht (dort wäre
- * es ein Versehen); hier ist es eine bewusste eigene Entscheidung. Der
- * letzte Eigentümer bleibt trotzdem, sonst stünde der Space ohne
- * Verwaltung da.
- */
-export async function leaveSpaceAction(form: FormData) {
-  const { space, user, role } = await authorizeAction(form, "read");
-  // Nur aktive Konten zaehlen — ein gesperrtes OWNER-Konto kann den
-  // Space nicht mehr verwalten und darf den letzten aktiven Eigentuemer
-  // deshalb nicht freigeben.
-  const ownerCount = await prisma.spaceMember.count({
-    where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
-  });
-  if (role === "OWNER" && ownerCount <= 1) return;
-
-  await prisma.spaceMember.deleteMany({
-    where: { spaceId: space.id, userId: user.id },
-  });
-  await audit({
-    action: "space.left",
-    actorId: user.id,
-    spaceId: space.id,
-    metadata: { role },
-  });
-  // Offene Editor-Sitzungen trennen: die Rechte werden nur beim
-  // Verbinden geprueft, sonst schreibt man nach dem Austritt weiter.
-  await revokeCollabAccess(user.id, space.id);
-  revalidatePath("/spaces");
-  redirect("/spaces");
 }
 
 /** Einem offenen Space beitreten. */

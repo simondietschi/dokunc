@@ -5,6 +5,7 @@ import { getCurrentUser } from "@/lib/current-user";
 import { isSameOrigin } from "@/lib/origin";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { can } from "@/lib/permissions";
+import { effectiveRole } from "@/lib/space-access";
 import { log } from "@/lib/log";
 import { extractZip, newZipBudget, ZIP_MAX_FILE } from "@/lib/import/zip";
 import { runImport } from "@/lib/import/run";
@@ -43,11 +44,16 @@ export async function POST(
   }
 
   const { id: spaceId } = await params;
-  const member = await prisma.spaceMember.findUnique({
-    where: { userId_spaceId: { userId: user.id, spaceId } },
-    select: { role: true, space: { select: { slug: true } } },
-  });
-  if (!member || !can(member.role, "managePages")) {
+  // Wirksame Rolle: eigene Mitgliedschaft ODER Gruppe. Wer ueber eine
+  // Gruppe verwaltet, darf auch importieren.
+  const [role, space] = await Promise.all([
+    effectiveRole(user.id, spaceId),
+    prisma.space.findUnique({
+      where: { id: spaceId },
+      select: { slug: true },
+    }),
+  ]);
+  if (!space || !can(role, "managePages")) {
     return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
   }
 
@@ -139,7 +145,7 @@ export async function POST(
     }
 
     const result = await runImport({ spaceId, userId: user.id, parentId, files });
-    revalidatePath(`/s/${member.space.slug}`, "layout");
+    revalidatePath(`/s/${space.slug}`, "layout");
     log.info(
       { spaceId, userId: user.id, pages: result.pages, format: result.format },
       "Import abgeschlossen",

@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma, type Prisma, type SpaceRole } from "@dokunc/db";
 import { refreshAccessRoots, visiblePageWhere } from "./page-access";
+import { insertAt, positionUpdates } from "./page-move";
 
 /**
  * Bindung von Objekt-IDs an das, was die handelnde Person tatsächlich
@@ -168,55 +169,138 @@ export async function isDescendantOf(
   return rows.length > 0;
 }
 
+export type MoveResult = { ok: true } | { ok: false; error: string };
+
 /**
  * Hängt eine Seite an einen neuen Platz im Baum und schreibt die
  * Reihenfolge der betroffenen Geschwister neu.
  *
- * Rückgabe: false, wenn der Zug nicht zulässig ist (fremder Space,
- * fremdes Ziel oder ein Zyklus).
+ * Alle inhaltlichen Regeln stehen hier und nicht in der Server Action:
+ * die Action darf nur Rolle und Formular aufloesen. Sonst gaebe es die
+ * Regeln zweimal — einmal getestet, einmal im Einsatz.
+ *
+ * `index` ist die Zielposition in der Geschwisterliste ohne die
+ * verschobene Seite; ohne Angabe kommt sie ans Ende.
  */
 export async function movePageInSpace(
   scope: PageScope,
   pageId: string,
   parentId: string | null,
-  index: number,
-): Promise<boolean> {
-  const page = await findLivePage(scope, pageId);
-  if (!page) return false;
-
-  if (parentId) {
-    const parent = await findLivePage(scope, parentId);
-    if (!parent) return false;
-    if (await isDescendantOf(scope.spaceId, pageId, parentId)) return false;
+  index?: number,
+): Promise<MoveResult> {
+  if (index !== undefined && !Number.isInteger(index)) {
+    return { ok: false, error: "Ungültige Zielposition" };
   }
+  const where = scopeWhere(scope);
 
-  const siblings = await prisma.page.findMany({
-    where: {
+  const result = await prisma.$transaction(async (tx): Promise<MoveResult> => {
+    // Nur sichtbare Seiten dieses Space, nicht im Papierkorb, keine Vorlage.
+    const page = await tx.page.findFirst({
+      where: { id: pageId, ...where, deletedAt: null, isTemplate: false },
+      select: { id: true, parentId: true },
+    });
+    if (!page) return { ok: false, error: "Seite nicht gefunden" };
+
+    if (parentId !== null) {
+      if (parentId === page.id) {
+        return {
+          ok: false,
+          error: "Eine Seite kann nicht unter sich selbst verschoben werden",
+        };
+      }
+      const parent = await tx.page.findFirst({
+        where: { id: parentId, ...where, deletedAt: null, isTemplate: false },
+        select: { id: true },
+      });
+      if (!parent) return { ok: false, error: "Zielseite nicht gefunden" };
+
+      // Zyklus-Check: die Zielseite darf kein Nachfahre der Seite sein.
+      const cyclic = await tx.$queryRaw<{ id: string }[]>`
+        WITH RECURSIVE sub AS (
+          SELECT id FROM "Page" WHERE id = ${page.id} AND "spaceId" = ${scope.spaceId}
+          UNION ALL
+          SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
+          WHERE p."spaceId" = ${scope.spaceId}
+        )
+        SELECT id FROM sub WHERE id = ${parentId} LIMIT 1
+      `;
+      if (cyclic.length > 0) {
+        return {
+          ok: false,
+          error:
+            "Eine Seite kann nicht unter eine ihrer eigenen Unterseiten verschoben werden",
+        };
+      }
+    }
+
+    const siblingWhere = {
       spaceId: scope.spaceId,
-      parentId,
       deletedAt: null,
-      NOT: { id: pageId },
-    },
-    orderBy: [{ position: "asc" }, { title: "asc" }],
-    select: { id: true },
+      isTemplate: false,
+      NOT: { id: page.id },
+    };
+    const orderBy = [{ position: "asc" as const }, { title: "asc" as const }];
+
+    // Geschwister am Ziel (ohne die Seite selbst) kompakt nummerieren,
+    // die Seite an der gewuenschten Stelle einreihen.
+    const targetSiblings = await tx.page.findMany({
+      where: { ...siblingWhere, parentId },
+      orderBy,
+      select: { id: true, position: true },
+    });
+    const current = new Map(targetSiblings.map((s) => [s.id, s.position]));
+    const ordered = insertAt(
+      targetSiblings.map((s) => s.id),
+      page.id,
+      index,
+    );
+    const updates = positionUpdates(ordered, current);
+
+    // Die eigene Position der Seite immer setzen (Elternwechsel).
+    const own = updates.find((u) => u.id === page.id);
+    await tx.page.updateMany({
+      where: { id: page.id, spaceId: scope.spaceId },
+      data: {
+        parentId,
+        position: own?.position ?? ordered.indexOf(page.id),
+      },
+    });
+    // Rohes SQL fuer die Geschwister: `updateMany` wuerde ueber Prismas
+    // @updatedAt auch deren Zeitstempel anfassen — unbeteiligte Seiten
+    // stuenden dann als "zuletzt geaendert" im Dashboard.
+    for (const u of updates) {
+      if (u.id === page.id) continue;
+      await tx.$executeRaw`
+        UPDATE "Page" SET position = ${u.position}
+        WHERE id = ${u.id} AND "spaceId" = ${scope.spaceId}
+      `;
+    }
+
+    // Alte Geschwister ebenfalls kompakt nummerieren (Luecke schliessen).
+    if (page.parentId !== parentId) {
+      const oldSiblings = await tx.page.findMany({
+        where: { ...siblingWhere, parentId: page.parentId },
+        orderBy,
+        select: { id: true, position: true },
+      });
+      const oldUpdates = positionUpdates(
+        oldSiblings.map((s) => s.id),
+        new Map(oldSiblings.map((s) => [s.id, s.position])),
+      );
+      for (const u of oldUpdates) {
+        await tx.$executeRaw`
+          UPDATE "Page" SET position = ${u.position}
+          WHERE id = ${u.id} AND "spaceId" = ${scope.spaceId}
+        `;
+      }
+    }
+
+    return { ok: true };
   });
 
-  const target = Math.max(0, Math.min(index, siblings.length));
-  const ordered = [
-    ...siblings.slice(0, target).map((p) => p.id),
-    pageId,
-    ...siblings.slice(target).map((p) => p.id),
-  ];
-
-  await prisma.$transaction([
-    prisma.page.update({ where: { id: pageId }, data: { parentId } }),
-    ...ordered.map((id, position) =>
-      prisma.page.update({ where: { id }, data: { position } }),
-    ),
-  ]);
-  // Der Zug kann den Ast unter eine geschützte Seite gehängt oder aus
-  // ihr herausgeholt haben; die materialisierte Wurzel muss beides
-  // sofort nachvollziehen.
-  await refreshAccessRoots(pageId);
-  return true;
+  // Der Zug kann den Ast unter eine geschuetzte Seite gehaengt oder aus
+  // ihr herausgeholt haben; ohne das Nachziehen bliebe der Unterbaum mit
+  // der alten Zugriffswurzel stehen — sichtbar fuer die Falschen.
+  if (result.ok) await refreshAccessRoots(pageId);
+  return result;
 }

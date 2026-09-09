@@ -248,17 +248,17 @@ describe("Seiten im Baum verschieben", () => {
 
   it("verweigert einen Zug unter die eigene Unterseite", async () => {
     // Würde den ganzen Ast vom Baum abschneiden.
-    expect(
-      await movePageInSpace(homeScope, homePageId, homeChildId, 0),
-    ).toBe(false);
+    const moved = await movePageInSpace(homeScope, homePageId, homeChildId, 0);
+    expect(moved.ok).toBe(false);
   });
 
   it("verweigert einen Zug in einen fremden Space", async () => {
+    // Weder die fremde Seite bewegen noch unter die fremde haengen.
     expect(
-      await movePageInSpace(homeScope, foreignPageId, homePageId, 0),
+      (await movePageInSpace(homeScope, foreignPageId, homePageId, 0)).ok,
     ).toBe(false);
     expect(
-      await movePageInSpace(homeScope, homePageId, foreignPageId, 0),
+      (await movePageInSpace(homeScope, homePageId, foreignPageId, 0)).ok,
     ).toBe(false);
   });
 
@@ -268,7 +268,7 @@ describe("Seiten im Baum verschieben", () => {
     });
     try {
       // Unterseite auf die oberste Ebene, an den Anfang.
-      expect(await movePageInSpace(homeScope, homeChildId, null, 0)).toBe(
+      expect((await movePageInSpace(homeScope, homeChildId, null, 0)).ok).toBe(
         true,
       );
       const roots = await prisma.page.findMany({
@@ -283,7 +283,7 @@ describe("Seiten im Baum verschieben", () => {
 
       // Und wieder zurück unter die Ausgangsseite.
       expect(
-        await movePageInSpace(homeScope, homeChildId, homePageId, 0),
+        (await movePageInSpace(homeScope, homeChildId, homePageId, 0)).ok,
       ).toBe(true);
       const child = await prisma.page.findUnique({
         where: { id: homeChildId },

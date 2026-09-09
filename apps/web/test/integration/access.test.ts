@@ -248,6 +248,48 @@ describe("Sichtbarkeit in Abfragen", () => {
   });
 });
 
+/**
+ * Der flache Seitenbaum hinter /api/spaces/[id]/pages. Die Route hat
+ * ihren Zugang lange allein an SpaceMember gehaengt und ohne
+ * Sichtbarkeit geliefert: Gruppenmitglieder bekamen 403, und wer
+ * hineinkam, sah die Titel geschuetzter Seiten. Beides steht hier fest.
+ */
+describe("Seitenbaum für Auswahl-Dialoge", () => {
+  async function treeFor(userId: string) {
+    const role = await effectiveRole(userId, spaceId);
+    if (!role) return null;
+    const pages = await prisma.page.findMany({
+      where: {
+        spaceId,
+        deletedAt: null,
+        isTemplate: false,
+        ...visiblePageWhere(userId, role),
+      },
+      select: { id: true },
+    });
+    return pages.map((p) => p.id);
+  }
+
+  it("liefert ihn auch, wenn der Zugang nur über eine Gruppe kommt", async () => {
+    const ids = await treeFor(viaGroup);
+    expect(ids).not.toBeNull();
+    expect(ids).toContain(openPageId);
+  });
+
+  it("lässt geschützte Seiten weg, statt ihre Titel zu zeigen", async () => {
+    const ids = await treeFor(viaGroup);
+    expect(ids).not.toContain(secretPageId);
+    expect(ids).not.toContain(secretChildId);
+  });
+
+  it("zeigt der Verwaltung den ganzen Baum", async () => {
+    const ids = await treeFor(manager);
+    expect(ids).toEqual(
+      expect.arrayContaining([openPageId, secretPageId, secretChildId]),
+    );
+  });
+});
+
 describe("Umhängen im Baum", () => {
   it("nimmt den Schutz beim Verschieben mit und wieder weg", async () => {
     const page = await prisma.page.create({
@@ -259,13 +301,13 @@ describe("Umhängen im Baum", () => {
       expect(await canSeePage(page.id, viaGroup, "VIEWER")).toBe(true);
 
       // Unter die geschützte Seite: ab jetzt geschützt.
-      expect(await movePageInSpace(scope, page.id, secretPageId, 0)).toBe(
+      expect((await movePageInSpace(scope, page.id, secretPageId, 0)).ok).toBe(
         true,
       );
       expect(await canSeePage(page.id, viaGroup, "VIEWER")).toBe(false);
 
       // Wieder heraus: der Schutz endet mit dem Umhängen.
-      expect(await movePageInSpace(scope, page.id, null, 0)).toBe(true);
+      expect((await movePageInSpace(scope, page.id, null, 0)).ok).toBe(true);
       expect(await canSeePage(page.id, viaGroup, "VIEWER")).toBe(true);
     } finally {
       await prisma.page.delete({ where: { id: page.id } });

@@ -1,7 +1,7 @@
 "use client";
 
 import { BubbleMenu } from "@tiptap/react/menus";
-import type { Editor } from "@tiptap/react";
+import { useEditorState, type Editor } from "@tiptap/react";
 import {
   Bold,
   Italic,
@@ -29,6 +29,22 @@ export function SelectionMenu({
   onPrompt: (request: PromptRequest) => void;
 }) {
   const c = () => editor.chain().focus();
+  // Wie in der Leiste: TipTap 3 rendert nicht mehr bei jeder Transaktion
+  // neu. Ohne useEditorState bliebe die Hervorhebung der Knoepfe auf dem
+  // Stand, den die Auswahl beim Aufklappen hatte.
+  const active = useEditorState({
+    editor,
+    selector: ({ editor: e }) => ({
+      bold: e.isActive("bold"),
+      italic: e.isActive("italic"),
+      underline: e.isActive("underline"),
+      strike: e.isActive("strike"),
+      code: e.isActive("code"),
+      highlight: e.isActive("highlight"),
+      link: e.isActive("link"),
+      comment: e.isActive("commentMark"),
+    }),
+  });
 
   return (
     <BubbleMenu
@@ -47,49 +63,49 @@ export function SelectionMenu({
       <EditorButton
         label="Fett"
         on={() => c().toggleBold().run()}
-        active={editor.isActive("bold")}
+        active={active.bold}
       >
         <Bold className="h-4 w-4" />
       </EditorButton>
       <EditorButton
         label="Kursiv"
         on={() => c().toggleItalic().run()}
-        active={editor.isActive("italic")}
+        active={active.italic}
       >
         <Italic className="h-4 w-4" />
       </EditorButton>
       <EditorButton
         label="Unterstrichen"
         on={() => c().toggleUnderline().run()}
-        active={editor.isActive("underline")}
+        active={active.underline}
       >
         <UnderlineIcon className="h-4 w-4" />
       </EditorButton>
       <EditorButton
         label="Durchgestrichen"
         on={() => c().toggleStrike().run()}
-        active={editor.isActive("strike")}
+        active={active.strike}
       >
         <Strikethrough className="h-4 w-4" />
       </EditorButton>
       <EditorButton
         label="Code"
         on={() => c().toggleCode().run()}
-        active={editor.isActive("code")}
+        active={active.code}
       >
         <Code className="h-4 w-4" />
       </EditorButton>
       <EditorButton
         label="Markieren"
         on={() => c().toggleHighlight({ color: "#fde68a" }).run()}
-        active={editor.isActive("highlight")}
+        active={active.highlight}
       >
         <Highlighter className="h-4 w-4" />
       </EditorButton>
       <EditorButton
-        label={editor.isActive("link") ? "Link entfernen" : "Link"}
+        label={active.link ? "Link entfernen" : "Link"}
         on={() => {
-          if (editor.isActive("link")) {
+          if (active.link) {
             c().unsetLink().run();
             return;
           }
@@ -101,7 +117,7 @@ export function SelectionMenu({
             onSubmit: (href) => c().setLink({ href }).run(),
           });
         }}
-        active={editor.isActive("link")}
+        active={active.link}
       >
         <Link2 className="h-4 w-4" />
       </EditorButton>
@@ -109,7 +125,7 @@ export function SelectionMenu({
       <EditorButton
         label="Auswahl kommentieren"
         on={() => startCommentThread(editor)}
-        active={editor.isActive("commentMark")}
+        active={active.comment}
       >
         <MessageSquarePlus className="h-4 w-4" />
       </EditorButton>
