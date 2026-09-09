@@ -37,6 +37,17 @@ export function useCaretSync({
     if (!editor.isEditable) return;
     if (focusIsElsewhere(editor.view.dom as HTMLElement)) return;
 
+    // Sofort abgleichen und nicht erst im naechsten Frame: zwischen dem
+    // Einfuegen und dem Frame liegt bereits der erste Tastendruck, und
+    // der landet dann ausserhalb des neuen Blocks. Seit der Vereinigung
+    // haengen an jeder Transaktion zusaetzlich Auswahlmenue, Blockgriff,
+    // Gliederung, Inhaltsverzeichnis und Wortzahl — der Frame kommt
+    // entsprechend spaeter, und aus einem knappen Rennen wurde ein
+    // verlorenes.
+    editor.view.focus();
+
+    // Der Frame bleibt als zweiter Anlauf, falls das contentDOM erst
+    // nach diesem Commit haengt.
     const raf = requestAnimationFrame(() => {
       if (editor.isDestroyed || !editor.isEditable) return;
       if (focusIsElsewhere(editor.view.dom as HTMLElement)) return;

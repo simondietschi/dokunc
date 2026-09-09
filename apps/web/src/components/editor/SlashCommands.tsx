@@ -58,8 +58,13 @@ export type SlashOptions = {
 };
 
 function defs(opts: SlashOptions): Def[] {
+  // Nur deleteRange kennt die Stelle des Slash-Befehls; der Block-Befehl
+  // danach (setHeading, setCallout, toggleBulletList ...) arbeitet auf
+  // state.selection. Steht die nach dem Loeschen woanders — etwa im
+  // Absatz davor, wenn der leere Absatz mit verschwindet — greift er am
+  // falschen Block. Deshalb ausdruecklich festnageln.
   const chain = (editor: Editor, range: Range) =>
-    editor.chain().focus().deleteRange(range);
+    editor.chain().focus().deleteRange(range).setTextSelection(range.from);
   return [
     { title: "Text", subtitle: "Normaler Absatz", icon: Type, keywords: "text absatz paragraph", run: (e, r) => chain(e, r).setParagraph().run() },
     { title: "Überschrift 1", subtitle: "Große Überschrift", icon: Heading1, keywords: "h1 titel überschrift heading", run: (e, r) => chain(e, r).setHeading({ level: 1 }).run() },
