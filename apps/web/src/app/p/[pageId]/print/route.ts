@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
+import { readablePageRole } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
 import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
 
@@ -32,11 +33,9 @@ export async function GET(
   });
   if (!page) return new NextResponse("Nicht gefunden", { status: 404 });
 
-  const member = await prisma.spaceMember.findUnique({
-    where: { userId_spaceId: { userId: user.id, spaceId: page.spaceId } },
-    select: { id: true },
-  });
-  if (!member) return new NextResponse("Kein Zugriff", { status: 403 });
+  if (!(await readablePageRole(user.id, pageId, page.spaceId))) {
+    return new NextResponse("Kein Zugriff", { status: 403 });
+  }
 
   const html = pageToPrintHtml({
     title: page.title,

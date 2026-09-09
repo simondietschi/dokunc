@@ -1,5 +1,11 @@
 import "server-only";
-import { prisma } from "@dokunc/db";
+import { Prisma, prisma } from "@dokunc/db";
+import { accessibleSpaces } from "./space-access";
+import {
+  seesEverything,
+  visiblePagesAcrossSpaces,
+  visiblePageSql,
+} from "./page-access";
 import { log } from "./log";
 import { vectorToBytes, bytesToVector, cosineSimilarity } from "./vector";
 
@@ -70,7 +76,7 @@ async function retrieveSemantic(
     where: {
       page: {
         deletedAt: null,
-        space: { members: { some: { userId } } },
+        ...visiblePagesAcrossSpaces(userId, await accessibleSpaces(userId)),
       },
     },
     select: {
@@ -122,6 +128,16 @@ async function retrieveFts(
   userId: string,
   question: string,
 ): Promise<RetrievedChunk[]> {
+  // Dieselbe Regel wie in der Suche: Zugang über Mitgliedschaft oder
+  // Gruppe, geschützte Seiten nur mit Freigabe. Die KI darf nichts
+  // zitieren, was die fragende Person nicht selbst öffnen könnte.
+  const spaces = await accessibleSpaces(userId);
+  const spaceIds = spaces.map((s) => s.spaceId);
+  if (spaceIds.length === 0) return [];
+  const openSpaceIds = spaces
+    .filter((s) => seesEverything(s.role))
+    .map((s) => s.spaceId);
+
   const rows = await prisma.$queryRaw<
     { pageId: string; title: string; text: string; rank: number }[]
   >`
@@ -130,9 +146,11 @@ async function retrieveFts(
               plainto_tsquery('simple', ${question})) AS rank
     FROM "PageChunk" c
     JOIN "Page" p ON p.id = c."pageId"
-    JOIN "SpaceMember" m ON m."spaceId" = p."spaceId"
-    WHERE m."userId" = ${userId}
+    WHERE p."spaceId" IN (${
+      spaceIds.length ? Prisma.join(spaceIds) : Prisma.sql`NULL`
+    })
       AND p."deletedAt" IS NULL
+      AND ${visiblePageSql(userId, openSpaceIds)}
       AND to_tsvector('simple', c.text) @@ plainto_tsquery('simple', ${question})
     ORDER BY rank DESC
     LIMIT ${TOP_K}

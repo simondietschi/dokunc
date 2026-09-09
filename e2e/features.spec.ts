@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { clearRateLimits } from "./limits";
 
 /**
  * E2E für die "next level"-Features: Wiki-Links + Backlinks,
@@ -10,6 +11,10 @@ const EMAIL = "e2e@dokunc.dev";
 const PASS = "superSicher123!";
 
 test.describe.configure({ mode: "serial" });
+
+// Der Lauf meldet sich pro Test neu an und liefe sonst in die
+// IP-Bremse (30 Anmeldungen je fünf Minuten).
+test.beforeEach(clearRateLimits);
 
 async function login(page: Page) {
   await page.goto("/login");
@@ -531,8 +536,11 @@ test("Seite folgen und E-Mail-Einstellungen", async ({ page }) => {
     .locator("form", { hasText: "E-Mail-Benachrichtigungen" })
     .getByRole("button", { name: "Speichern" })
     .click();
+  // Grosszuegig: die Rueckmeldung kommt erst, wenn die Server-Action
+  // samt Revalidierung der Kontoseite durch ist, und die traegt unter
+  // voller Suite-Last eine lange Geraeteliste mit.
   await expect(page.getByText("Einstellungen gespeichert.")).toBeVisible({
-    timeout: 15_000,
+    timeout: 30_000,
   });
   await page.reload();
   await expect(
@@ -570,7 +578,10 @@ test("Freigabelink: lesen ohne Konto", async ({ page, context }) => {
   await page.click('button[title="Seite teilen"]');
   await page.getByRole("button", { name: "Link erzeugen" }).click();
   const field = page.getByLabel("Freigabelink");
-  await expect(field).toBeVisible({ timeout: 20_000 });
+  // Grosszuegig: der Link erscheint erst, wenn die Server-Action durch
+  // ist, und die braucht unter voller Suite-Last deutlich laenger als
+  // im Einzelversuch.
+  await expect(field).toBeVisible({ timeout: 40_000 });
   const url = await field.inputValue();
   expect(url).toContain("/share/");
 

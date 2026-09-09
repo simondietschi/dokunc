@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
+import { accessibleSpaceWhere } from "@/lib/space-access";
 import { Logo } from "@/components/ui/Logo";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -30,7 +31,7 @@ export default async function SpacesPage() {
   const user = await requireUser();
   const [spaces, unreadCount, discoverable] = await Promise.all([
     prisma.space.findMany({
-      where: { members: { some: { userId: user.id } } },
+      where: accessibleSpaceWhere(user.id),
       orderBy: { createdAt: "asc" },
       include: {
         _count: { select: { pages: true, members: true } },
@@ -45,7 +46,9 @@ export default async function SpacesPage() {
     prisma.space.findMany({
       where: {
         visibility: "OPEN",
-        members: { none: { userId: user.id } },
+        // Wer über eine Gruppe schon drin ist, braucht keinen
+        // Beitrittsvorschlag.
+        NOT: accessibleSpaceWhere(user.id),
       },
       orderBy: { name: "asc" },
       take: 24,

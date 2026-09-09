@@ -5,6 +5,7 @@ import { ArrowLeft, RotateCcw, Clock, GitCompare } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
+import { visiblePageWhere } from "@/lib/page-access";
 import { contentToHtml } from "@/lib/page-html";
 import { Avatar } from "@/components/ui/Avatar";
 import { restoreVersionAction } from "../../../actions";
@@ -27,10 +28,15 @@ export default async function HistoryPage({
 }) {
   const { slug, pageId } = await params;
   const { v, against, limit } = await searchParams;
-  const { space, role } = await loadSpace(slug);
+  const { space, role, user } = await loadSpace(slug);
 
   const page = await prisma.page.findFirst({
-    where: { id: pageId, spaceId: space.id, deletedAt: null },
+    where: {
+      id: pageId,
+      spaceId: space.id,
+      deletedAt: null,
+      ...visiblePageWhere(user.id, role),
+    },
     select: { id: true, title: true, content: true, textContent: true },
   });
   if (!page) notFound();

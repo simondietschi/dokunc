@@ -1,4 +1,8 @@
-import type { SpaceRole } from "@dokunc/db";
+import {
+  isAtLeast,
+  strongestSpaceRole,
+  type SpaceRole,
+} from "@dokunc/db";
 
 export type Action =
   | "read"
@@ -46,4 +50,31 @@ const MATRIX: Record<SpaceRole, Record<Action, boolean>> = {
 export function can(role: SpaceRole | null | undefined, action: Action) {
   if (!role) return false;
   return MATRIX[role][action];
+}
+
+/**
+ * Rangfolge der Rollen.
+ *
+ * Gebraucht, seit eine Person ihre Rolle aus mehreren Quellen bekommen
+ * kann: aus der eigenen Mitgliedschaft und aus jeder Gruppe, die dem
+ * Space zugeordnet ist. Es gilt die stärkste — eine Gruppe soll nie
+ * wegnehmen, was jemand schon hat.
+ *
+ * Die Regel selbst liegt in `@dokunc/db`, weil der Collab-Server
+ * dieselbe Antwort geben muss; hier steht nur der Zugang dazu.
+ */
+export const strongestRole = strongestSpaceRole;
+export const atLeast = isAtLeast;
+
+/**
+ * Rollen, die einer Gruppe zugewiesen werden dürfen.
+ *
+ * Ohne OWNER: Eigentümerschaft bleibt persönlich. Sonst hinge die
+ * Regel „der letzte Eigentümer bleibt" an einer Gruppenmitgliedschaft,
+ * die jemand anderes jederzeit leeren kann.
+ */
+export const GROUP_ROLES = ["ADMIN", "MEMBER", "VIEWER"] as const;
+
+export function isGroupRole(value: unknown): value is SpaceRole {
+  return (GROUP_ROLES as readonly string[]).includes(String(value));
 }

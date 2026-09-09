@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
+import { effectiveRole } from "@/lib/space-access";
+import { canSeePage } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
 import { isSameOrigin } from "@/lib/origin";
 import { rateLimit } from "@/lib/rate-limit";
@@ -52,11 +54,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Seite nicht gefunden" }, { status: 404 });
   }
 
-  const member = await prisma.spaceMember.findUnique({
-    where: { userId_spaceId: { userId: user.id, spaceId: page.spaceId } },
-    select: { id: true },
-  });
-  if (!member) {
+  // Rolle aus Mitgliedschaft und Gruppen; geschützte Seiten zusätzlich
+  // gegen die Freigabeliste. Ohne den zweiten Schritt bekäme jedes
+  // Space-Mitglied ein Ticket für eine Seite, die es nicht sehen darf.
+  const role = await effectiveRole(user.id, page.spaceId);
+  if (!role || !(await canSeePage(page.id, user.id, role))) {
     return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
   }
 

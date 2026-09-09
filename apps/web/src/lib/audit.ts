@@ -26,6 +26,17 @@ export type AuditAction =
   | "member.invite_accepted"
   | "member.role_changed"
   | "member.removed"
+  | "group.created"
+  | "group.updated"
+  | "group.deleted"
+  | "group.member_added"
+  | "group.member_removed"
+  | "space.group_added"
+  | "space.group_role_changed"
+  | "space.group_removed"
+  | "page.restricted"
+  | "page.unrestricted"
+  | "page.access_changed"
   | "space.created"
   | "space.updated"
   | "space.joined"
@@ -98,6 +109,17 @@ export const AUDIT_LABELS: Record<AuditAction, string> = {
   "member.invite_accepted": "Einladung angenommen",
   "member.role_changed": "Rolle geändert",
   "member.removed": "Mitglied entfernt",
+  "group.created": "Gruppe angelegt",
+  "group.updated": "Gruppe geändert",
+  "group.deleted": "Gruppe gelöscht",
+  "group.member_added": "Person zur Gruppe",
+  "group.member_removed": "Person aus Gruppe",
+  "space.group_added": "Gruppe zum Space",
+  "space.group_role_changed": "Gruppenrolle geändert",
+  "space.group_removed": "Gruppe aus Space",
+  "page.restricted": "Seite geschützt",
+  "page.unrestricted": "Schutz aufgehoben",
+  "page.access_changed": "Seitenzugriff geändert",
   "space.created": "Space angelegt",
   "space.updated": "Space geändert",
   "space.joined": "Space beigetreten",

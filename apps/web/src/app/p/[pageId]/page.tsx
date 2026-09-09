@@ -1,5 +1,6 @@
 import { notFound, redirect } from "next/navigation";
 import { prisma } from "@dokunc/db";
+import { readablePageRole } from "@/lib/page-access";
 import { requireUser } from "@/lib/current-user";
 
 /**
@@ -20,13 +21,9 @@ export default async function PageRedirect({
   });
   if (!page) notFound();
 
-  const member = await prisma.spaceMember.findUnique({
-    where: {
-      userId_spaceId: { userId: user.id, spaceId: page.space.id },
-    },
-    select: { id: true },
-  });
-  if (!member) redirect("/spaces");
+  if (!(await readablePageRole(user.id, page.id, page.space.id))) {
+    redirect("/spaces");
+  }
 
   redirect(`/s/${page.space.slug}/p/${page.id}`);
 }

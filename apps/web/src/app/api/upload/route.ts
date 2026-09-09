@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
+import { effectiveRole } from "@/lib/space-access";
 import { getCurrentUser } from "@/lib/current-user";
 import { can } from "@/lib/permissions";
 import { isSameOrigin } from "@/lib/origin";
@@ -50,11 +51,8 @@ export async function POST(req: Request) {
   if (typeof spaceId !== "string" || !spaceId) {
     return NextResponse.json({ error: "spaceId fehlt" }, { status: 400 });
   }
-  const member = await prisma.spaceMember.findUnique({
-    where: { userId_spaceId: { userId: user.id, spaceId } },
-    select: { role: true },
-  });
-  if (!member || !can(member.role, "write")) {
+  const role = await effectiveRole(user.id, spaceId);
+  if (!can(role, "write")) {
     return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
   }
 

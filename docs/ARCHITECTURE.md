@@ -58,10 +58,19 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 - **TotpRecoveryCode** — userId, SHA-256-Hash, usedAt; ein Code pro Notfall.
 - **Space** — id, name, slug, description.
 - **SpaceMember** — userId, spaceId, role (`OWNER|ADMIN|MEMBER|VIEWER`).
+- **Group / GroupMember / SpaceGroup** — benannte Personengruppe,
+  instanzweit verwaltet, pro Space mit eigener Rolle (ohne OWNER).
+- **PageGrant** — Zugriffseintrag einer geschützten Seite: entweder eine
+  Person oder eine Gruppe.
 - **Page** — id, spaceId, parentId (Baum), title, content (TipTap-JSON),
   textContent (für Suche/History), `searchVector` (tsvector), position, timestamps.
 - **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit.
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
+
+Die **wirksame Rolle** einer Person in einem Space ist die stärkste aus
+eigener Mitgliedschaft und allen Gruppen, die dem Space zugeordnet sind
+(`@dokunc/db/access`, `lib/space-access.ts`). Eine Gruppe gibt also
+Rechte, nimmt aber keine.
 
 Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 
@@ -75,6 +84,26 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 Kommentieren hängt nicht am Schreibrecht: jede Rolle darf kommentieren.
 Anmerkungen an einer einzelnen Textstelle brauchen es trotzdem, weil die
 Markierung im Dokument selbst liegt.
+
+**Geschützte Seiten.** Eine Seite lässt sich schützen; der Schutz gilt für
+den ganzen Unterbaum. Sichtbar ist sie dann nur für die eingetragenen
+Personen und Gruppen sowie für die Space-Verwaltung (ADMIN/OWNER), die
+sonst einen Teil ihres eigenen Bereichs nicht mehr verwalten könnte.
+
+Die teure Frage wäre „gibt es über mir eine geschützte Seite". Sie ist
+deshalb materialisiert: `Page.accessRootId` zeigt auf die nächste
+geschützte Seite Richtung Wurzel (auf sich selbst, wenn die Seite selbst
+geschützt ist) und ist null, solange nichts im Weg steht. Angelegt und
+nachgeführt wird das von `refreshAccessRoots` — beim Anlegen unter einem
+Elternteil, beim Umhängen und bei jeder Änderung am Schutz, jeweils als
+eine rekursive SQL-Anweisung über den ganzen Ast.
+
+Die Regel selbst steht an genau einer Stelle und wird überall
+hineingereicht: als Prisma-Bedingung (`visiblePageWhere`,
+`visiblePagesAcrossSpaces`), als SQL-Baustein für die beiden
+Volltextabfragen (`visiblePageSql`), als Einzelprüfung (`canSeePage`,
+auch im Collab-Server) und als Filter für Benachrichtigungen
+(`filterByPageAccess`).
 
 ## 5. Realtime-Fluss
 
@@ -184,6 +213,11 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
       Wiederherstellungscodes als Hash; zwischen Passwort und Code steht
       ein eigenes Cookie mit eigener Audience (`dokunc-2fa`, fünf
       Minuten) statt einer halbfertigen Sitzung
+- [x] Gruppen und Seitenberechtigungen: instanzweit verwaltete Gruppen,
+      pro Space mit eigener Rolle (ohne OWNER); geschützte Seiten mit
+      vererbtem Schutz über `Page.accessRootId`, Freigaben an Personen
+      und Gruppen; dieselbe Regel in Baum, Suche, Vorschlägen, Export,
+      Druck, RAG, Benachrichtigungen, Freigabelinks und im Collab-Server
 - [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 

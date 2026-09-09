@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { clearRateLimits } from "./limits";
 import { TOTP_STEP_SECONDS, totpAt } from "../apps/web/src/lib/totp";
 
 /**
@@ -15,6 +16,10 @@ const EMAIL = "e2e@dokunc.dev";
 const PASS = "superSicher123!";
 
 test.describe.configure({ mode: "serial" });
+
+// Der Lauf meldet sich pro Test neu an und liefe sonst in die
+// IP-Bremse (30 Anmeldungen je fünf Minuten).
+test.beforeEach(clearRateLimits);
 
 /** Zuletzt verbrauchter Zeitschritt — die App nimmt keinen zweimal. */
 let lastStep = -1;

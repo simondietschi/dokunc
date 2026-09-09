@@ -7,6 +7,7 @@ import { can } from "@/lib/permissions";
 import { str } from "@/lib/form";
 import { sendCommentEmail } from "@/lib/mail";
 import { publishNotification } from "@/lib/notify-bus";
+import { filterByPageAccess, visiblePageWhere } from "@/lib/page-access";
 
 /** Client-generierte Thread-IDs (crypto.randomUUID) validieren. */
 function isValidThreadId(id: string): boolean {
@@ -14,7 +15,8 @@ function isValidThreadId(id: string): boolean {
 }
 
 export async function createThreadAction(form: FormData) {
-  const { space, user } = await authorizeAction(form, "comment");
+  const access = await authorizeAction(form, "comment");
+  const { space, user } = access;
   const pageId = str(form, "pageId");
   const threadId = str(form, "threadId");
   const body = str(form, "body");
@@ -22,7 +24,12 @@ export async function createThreadAction(form: FormData) {
   if (!body || !isValidThreadId(threadId)) return;
 
   const page = await prisma.page.findFirst({
-    where: { id: pageId, spaceId: space.id, deletedAt: null },
+    where: {
+      id: pageId,
+      spaceId: space.id,
+      deletedAt: null,
+      ...visiblePageWhere(user.id, access.role),
+    },
     select: { id: true },
   });
   if (!page) return;
@@ -114,19 +121,30 @@ async function deliverCommentNotifications(opts: {
   body: string;
   isReply: boolean;
 }): Promise<void> {
-  const members = await prisma.spaceMember.findMany({
-    where: { spaceId: opts.spaceId, userId: { in: opts.recipients } },
-    select: {
-      user: {
-        select: { id: true, email: true, emailOnComment: true, isActive: true },
-      },
+  const members = await prisma.user.findMany({
+    // Zugang über eigene Mitgliedschaft oder eine Gruppe — und für eine
+    // geschützte Seite zusätzlich die Freigabe. Sonst erführe jemand
+    // über die Glocke von einem Kommentar auf einer Seite, die er nicht
+    // öffnen kann.
+    where: {
+      id: { in: opts.recipients },
+      OR: [
+        { memberships: { some: { spaceId: opts.spaceId } } },
+        {
+          groupMemberships: {
+            some: { group: { spaces: { some: { spaceId: opts.spaceId } } } },
+          },
+        },
+      ],
     },
+    select: { id: true, email: true, emailOnComment: true, isActive: true },
   });
-  if (members.length === 0) return;
+  const allowed = await filterByPageAccess(opts.pageId, members);
+  if (allowed.length === 0) return;
 
   await prisma.notification.createMany({
-    data: members.map((m) => ({
-      userId: m.user.id,
+    data: allowed.map((m) => ({
+      userId: m.id,
       actorId: opts.actorId,
       type: (opts.isReply ? "COMMENT_REPLY" : "COMMENT") as
         | "COMMENT"
@@ -138,11 +156,9 @@ async function deliverCommentNotifications(opts: {
   });
 
   // Glocke sofort aktualisieren, nicht erst beim nächsten Aufruf.
-  await publishNotification(members.map((m) => m.user.id));
+  await publishNotification(allowed.map((m) => m.id));
 
-  const wantMail = members.filter(
-    (m) => m.user.isActive && m.user.emailOnComment,
-  );
+  const wantMail = allowed.filter((m) => m.isActive && m.emailOnComment);
   if (wantMail.length === 0) return;
 
   const [actor, page] = await Promise.all([
@@ -159,7 +175,7 @@ async function deliverCommentNotifications(opts: {
   await Promise.all(
     wantMail.map((m) =>
       sendCommentEmail({
-        to: m.user.email,
+        to: m.email,
         actorName: actor?.name ?? "Jemand",
         pageTitle: page?.title || "Ohne Titel",
         pageId: opts.pageId,
@@ -171,7 +187,8 @@ async function deliverCommentNotifications(opts: {
 }
 
 export async function replyAction(form: FormData) {
-  const { space, user } = await authorizeAction(form, "comment");
+  const access = await authorizeAction(form, "comment");
+  const { space, user } = access;
   const threadId = str(form, "threadId");
   const body = str(form, "body");
   if (!body) return;
@@ -180,7 +197,7 @@ export async function replyAction(form: FormData) {
     where: {
       id: threadId,
       parentId: null,
-      page: { spaceId: space.id },
+      page: { spaceId: space.id, ...visiblePageWhere(user.id, access.role) },
     },
     include: {
       replies: { select: { authorId: true } },
@@ -229,7 +246,11 @@ export async function resolveThreadAction(form: FormData) {
   const { space, user, role } = await authorizeAction(form, "comment");
   const threadId = str(form, "threadId");
   const thread = await prisma.comment.findFirst({
-    where: { id: threadId, parentId: null, page: { spaceId: space.id } },
+    where: {
+      id: threadId,
+      parentId: null,
+      page: { spaceId: space.id, ...visiblePageWhere(user.id, role) },
+    },
     select: { id: true, pageId: true, resolvedAt: true, authorId: true },
   });
   if (!thread) return;
@@ -250,7 +271,10 @@ export async function deleteCommentAction(form: FormData) {
   const { space, user, role } = await authorizeAction(form, "comment");
   const commentId = str(form, "commentId");
   const comment = await prisma.comment.findFirst({
-    where: { id: commentId, page: { spaceId: space.id } },
+    where: {
+      id: commentId,
+      page: { spaceId: space.id, ...visiblePageWhere(user.id, role) },
+    },
     select: { id: true, pageId: true, authorId: true },
   });
   if (!comment) return;
@@ -270,7 +294,8 @@ export async function deleteCommentAction(form: FormData) {
  * fremde Worte umschreiben.
  */
 export async function editCommentAction(form: FormData) {
-  const { space, user } = await authorizeAction(form, "comment");
+  const access = await authorizeAction(form, "comment");
+  const { space, user } = access;
   const body = str(form, "body");
   if (!body) return;
 
@@ -278,7 +303,7 @@ export async function editCommentAction(form: FormData) {
     where: {
       id: str(form, "commentId"),
       authorId: user.id,
-      page: { spaceId: space.id },
+      page: { spaceId: space.id, ...visiblePageWhere(user.id, access.role) },
     },
     select: { id: true, pageId: true },
   });
@@ -293,10 +318,16 @@ export async function editCommentAction(form: FormData) {
 
 /** Einer Seite folgen oder nicht mehr folgen. */
 export async function toggleSubscriptionAction(form: FormData) {
-  const { space, user } = await authorizeAction(form, "read");
+  const access = await authorizeAction(form, "read");
+  const { space, user } = access;
   const pageId = str(form, "pageId");
   const page = await prisma.page.findFirst({
-    where: { id: pageId, spaceId: space.id, deletedAt: null },
+    where: {
+      id: pageId,
+      spaceId: space.id,
+      deletedAt: null,
+      ...visiblePageWhere(user.id, access.role),
+    },
     select: { id: true },
   });
   if (!page) return;

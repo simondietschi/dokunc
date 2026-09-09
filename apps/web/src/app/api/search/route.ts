@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { Prisma, prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
 import { HL_START, HL_STOP, likeEscape } from "@/lib/palette";
+import { accessibleSpaces } from "@/lib/space-access";
+import {
+  seesEverything,
+  visiblePagesAcrossSpaces,
+  visiblePageSql,
+} from "@/lib/page-access";
 
 export type SearchPage = {
   id: string;
@@ -31,11 +37,13 @@ export async function GET(req: Request) {
   const q =
     new URL(req.url).searchParams.get("q")?.trim().slice(0, 100) ?? "";
 
-  const memberships = await prisma.spaceMember.findMany({
-    where: { userId: user.id },
-    select: { spaceId: true },
-  });
-  const spaceIds = memberships.map((m) => m.spaceId);
+  const spaces = await accessibleSpaces(user.id);
+  const spaceIds = spaces.map((s) => s.spaceId);
+  // In Spaces mit Verwaltungsrolle ist alles sichtbar; überall sonst
+  // müssen geschützte Seiten ausdrücklich freigegeben sein.
+  const openSpaceIds = spaces
+    .filter((s) => seesEverything(s.role))
+    .map((s) => s.spaceId);
 
   const body: SearchResponse = {
     q,
@@ -57,7 +65,10 @@ export async function GET(req: Request) {
 
   if (!q) {
     const recent = await prisma.page.findMany({
-      where: { spaceId: { in: spaceIds }, deletedAt: null },
+      where: {
+        deletedAt: null,
+        ...visiblePagesAcrossSpaces(user.id, spaces),
+      },
       orderBy: { updatedAt: "desc" },
       take: 8,
       select: {
@@ -94,6 +105,8 @@ export async function GET(req: Request) {
     JOIN "Space" s ON s.id = p."spaceId"
     WHERE p."spaceId" IN (${Prisma.join(spaceIds)})
       AND p."deletedAt" IS NULL
+      -- Geschuetzte Seiten nur dort, wo sie freigegeben sind.
+      AND ${visiblePageSql(user.id, openSpaceIds)}
       AND (
         p.title ILIKE ${like}
         OR to_tsvector('simple',

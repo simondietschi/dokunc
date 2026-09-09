@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { Clock, Trash2, X } from "lucide-react";
+import { Clock, Trash2, Users, X } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
-import { can } from "@/lib/permissions";
+import { can, GROUP_ROLES } from "@/lib/permissions";
 import {
   assignableRoles,
   canChangeRole,
@@ -13,7 +13,12 @@ import { Avatar } from "@/components/ui/Avatar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { InviteForm } from "./InviteForm";
 import { RoleSelect } from "./RoleSelect";
-import { revokeInvitationAction, removeMemberAction } from "./actions";
+import { AddSpaceGroupForm, GroupRoleSelect } from "./GroupRoleSelect";
+import {
+  removeMemberAction,
+  removeSpaceGroupAction,
+  revokeInvitationAction,
+} from "./actions";
 
 export const metadata: Metadata = {
   title: "Mitglieder",
@@ -29,7 +34,7 @@ export default async function MembersPage({
   const { space, role, user } = await loadSpace(slug);
   if (!can(role, "manageSpace")) redirect(`/s/${slug}`);
 
-  const [members, invitations] = await Promise.all([
+  const [members, invitations, spaceGroups, allGroups] = await Promise.all([
     prisma.spaceMember.findMany({
       where: { spaceId: space.id },
       include: { user: { select: { name: true, email: true } } },
@@ -39,10 +44,32 @@ export default async function MembersPage({
       where: { spaceId: space.id, acceptedAt: null },
       orderBy: { createdAt: "desc" },
     }),
+    prisma.spaceGroup.findMany({
+      where: { spaceId: space.id },
+      orderBy: { group: { name: "asc" } },
+      select: {
+        id: true,
+        role: true,
+        group: {
+          select: {
+            id: true,
+            name: true,
+            description: true,
+            _count: { select: { members: true } },
+          },
+        },
+      },
+    }),
+    prisma.group.findMany({
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
   ]);
 
   const ownerCount = members.filter((m) => m.role === "OWNER").length;
   const roles = assignableRoles(role);
+  const assignedGroupIds = new Set(spaceGroups.map((g) => g.group.id));
+  const availableGroups = allGroups.filter((g) => !assignedGroupIds.has(g.id));
 
   return (
     <div className="mx-auto max-w-2xl px-8 py-14 animate-[rise_0.4s_ease]">
@@ -131,6 +158,67 @@ export default async function MembersPage({
           );
         })}
       </ul>
+
+      <h2 className="mt-10 text-sm font-semibold text-muted">
+        Gruppen ({spaceGroups.length})
+      </h2>
+      <p className="mt-1 text-[12.5px] text-faint">
+        Eine Gruppe gibt allen ihren Mitgliedern diese Rolle. Wer schon
+        eine stärkere Rolle hat, behält sie.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {spaceGroups.map((sg) => (
+          <li
+            key={sg.id}
+            className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface p-3.5 shadow-soft"
+          >
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-full bg-subtle text-muted">
+                <Users className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">
+                  {sg.group.name}
+                </p>
+                <p className="truncate text-xs text-faint">
+                  {sg.group._count.members}{" "}
+                  {sg.group._count.members === 1 ? "Person" : "Personen"}
+                  {sg.group.description ? ` · ${sg.group.description}` : ""}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <GroupRoleSelect
+                slug={slug}
+                spaceGroupId={sg.id}
+                role={sg.role}
+                roles={GROUP_ROLES}
+              />
+              <form action={removeSpaceGroupAction}>
+                <input type="hidden" name="slug" value={slug} />
+                <input type="hidden" name="spaceGroupId" value={sg.id} />
+                <ConfirmButton
+                  message={`Gruppe „${sg.group.name}" aus diesem Space entfernen? Wer nur über sie Zugang hatte, verliert ihn.`}
+                  title="Gruppe entfernen"
+                  className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </ConfirmButton>
+              </form>
+            </div>
+          </li>
+        ))}
+        {spaceGroups.length === 0 && (
+          <li className="text-[12.5px] text-faint">
+            Noch keine Gruppe in diesem Space.
+          </li>
+        )}
+      </ul>
+      <AddSpaceGroupForm
+        slug={slug}
+        groups={availableGroups}
+        roles={GROUP_ROLES}
+      />
 
       {invitations.length > 0 && (
         <>

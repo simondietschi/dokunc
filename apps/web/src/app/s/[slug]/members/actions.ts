@@ -22,6 +22,7 @@ import {
   canRemoveMember,
   isSpaceRole,
 } from "@/lib/role-policy";
+import { isGroupRole } from "@/lib/permissions";
 
 export type FormState = { error?: string; success?: string } | undefined;
 
@@ -258,3 +259,76 @@ export async function acceptInvitationAction(form: FormData) {
   redirect(`/s/${invitation.space.slug}`);
 }
 
+
+/**
+ * Gruppe in den Space aufnehmen.
+ *
+ * OWNER ist hier nicht wählbar: Eigentümerschaft bleibt persönlich,
+ * sonst hinge die Regel „der letzte Eigentümer bleibt" an einer
+ * Gruppenliste, die jemand anderes leeren kann.
+ */
+export async function addSpaceGroupAction(form: FormData) {
+  const { space, user } = await authorizeAction(form, "manageSpace");
+  const groupId = str(form, "groupId");
+  const role = str(form, "role");
+  if (!isGroupRole(role)) return;
+
+  const group = await prisma.group.findUnique({
+    where: { id: groupId },
+    select: { id: true, name: true },
+  });
+  if (!group) return;
+
+  await prisma.spaceGroup.upsert({
+    where: { spaceId_groupId: { spaceId: space.id, groupId: group.id } },
+    create: { spaceId: space.id, groupId: group.id, role },
+    update: { role },
+  });
+  await audit({
+    action: "space.group_added",
+    actorId: user.id,
+    spaceId: space.id,
+    targetId: group.id,
+    metadata: { name: group.name, role },
+  });
+  revalidatePath(`/s/${space.slug}/members`);
+}
+
+export async function updateSpaceGroupRoleAction(form: FormData) {
+  const { space, user } = await authorizeAction(form, "manageSpace");
+  const role = str(form, "role");
+  if (!isGroupRole(role)) return;
+
+  const { count } = await prisma.spaceGroup.updateMany({
+    // spaceId in der Bedingung: die ID kommt aus dem Formular.
+    where: { id: str(form, "spaceGroupId"), spaceId: space.id },
+    data: { role },
+  });
+  if (count > 0) {
+    await audit({
+      action: "space.group_role_changed",
+      actorId: user.id,
+      spaceId: space.id,
+      targetId: str(form, "spaceGroupId"),
+      metadata: { role },
+    });
+  }
+  revalidatePath(`/s/${space.slug}/members`);
+}
+
+export async function removeSpaceGroupAction(form: FormData) {
+  const { space, user } = await authorizeAction(form, "manageSpace");
+  const spaceGroupId = str(form, "spaceGroupId");
+  const { count } = await prisma.spaceGroup.deleteMany({
+    where: { id: spaceGroupId, spaceId: space.id },
+  });
+  if (count > 0) {
+    await audit({
+      action: "space.group_removed",
+      actorId: user.id,
+      spaceId: space.id,
+      targetId: spaceGroupId,
+    });
+  }
+  revalidatePath(`/s/${space.slug}/members`);
+}

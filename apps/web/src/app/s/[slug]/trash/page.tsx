@@ -4,6 +4,7 @@ import { Trash2, RotateCcw } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
+import { visiblePageWhere } from "@/lib/page-access";
 import { Button } from "@/components/ui/Button";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { restorePageAction, purgePageAction } from "../actions";
@@ -19,11 +20,15 @@ export default async function TrashPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { space, role } = await loadSpace(slug);
+  const { space, role, user } = await loadSpace(slug);
   if (!can(role, "managePages")) redirect(`/s/${slug}`);
 
   const pages = await prisma.page.findMany({
-    where: { spaceId: space.id, NOT: { deletedAt: null } },
+    where: {
+      spaceId: space.id,
+      NOT: { deletedAt: null },
+      ...visiblePageWhere(user.id, role),
+    },
     orderBy: { deletedAt: "desc" },
     select: { id: true, title: true, deletedAt: true },
   });

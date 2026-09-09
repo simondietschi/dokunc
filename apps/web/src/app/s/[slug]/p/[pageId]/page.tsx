@@ -4,6 +4,11 @@ import { notFound } from "next/navigation";
 import { Link2 } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
+import { visiblePageWhere } from "@/lib/page-access";
+import type {
+  AccessCandidate,
+  GrantRow,
+} from "./AccessDialog";
 import { can } from "@/lib/permissions";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
@@ -33,7 +38,14 @@ export default async function PageView({
   const { space, role, user } = await loadSpace(slug);
 
   const page = await prisma.page.findFirst({
-    where: { id: pageId, spaceId: space.id, deletedAt: null },
+    where: {
+      id: pageId,
+      spaceId: space.id,
+      deletedAt: null,
+      // Ohne Freigabe gibt es die Seite hier nicht — 404 statt 403,
+      // sonst verriete die Fehlermeldung ihre Existenz.
+      ...visiblePageWhere(user.id, role),
+    },
     select: {
       id: true,
       title: true,
@@ -41,6 +53,8 @@ export default async function PageView({
       icon: true,
       coverUrl: true,
       isTemplate: true,
+      isRestricted: true,
+      accessRootId: true,
     },
   });
   if (!page) notFound();
@@ -58,10 +72,19 @@ export default async function PageView({
   const collabUrl =
     process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:3001";
 
+  // Zugriffsangaben nur für die Seitenverwaltung: sonst wäre es ein
+  // Verzeichnis aller Konten des Space für jede Person.
+  const access = can(role, "managePages")
+    ? await loadPageAccess(space.id, page)
+    : EMPTY_ACCESS;
+
   const [backlinks, comments, lastVersion, subscription, favorite, shares] =
     await Promise.all([
     prisma.pageLink.findMany({
-      where: { targetPageId: page.id, source: { deletedAt: null } },
+      where: {
+        targetPageId: page.id,
+        source: { deletedAt: null, ...visiblePageWhere(user.id, role) },
+      },
       select: { source: { select: { id: true, title: true } } },
       take: 50,
     }),
@@ -132,6 +155,7 @@ export default async function PageView({
           expiresAt: s.expiresAt?.toISOString() ?? null,
           includeChildren: s.includeChildren,
         }))}
+        access={access}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">
@@ -188,4 +212,138 @@ export default async function PageView({
       </div>
     </div>
   );
+}
+
+type PageAccess = {
+  isRestricted: boolean;
+  inheritedFrom: string | null;
+  grants: GrantRow[];
+  people: AccessCandidate[];
+  groups: AccessCandidate[];
+};
+
+const EMPTY_ACCESS: PageAccess = {
+  isRestricted: false,
+  inheritedFrom: null,
+  grants: [],
+  people: [],
+  groups: [],
+};
+
+/**
+ * Schutzstatus, Freigabeliste und die noch wählbaren Personen und
+ * Gruppen.
+ *
+ * Die Liste der Wählbaren ist bewusst auf den Space begrenzt: eine
+ * Freigabe soll keinen Zugang schaffen, den es sonst nicht gäbe — genau
+ * das prüft `addPageGrantAction` noch einmal.
+ */
+async function loadPageAccess(
+  spaceId: string,
+  page: { id: string; isRestricted: boolean; accessRootId: string | null },
+): Promise<PageAccess> {
+  const inherited =
+    page.accessRootId && page.accessRootId !== page.id
+      ? await prisma.page.findUnique({
+          where: { id: page.accessRootId },
+          select: { title: true },
+        })
+      : null;
+
+  const [grants, members, memberGroups, spaceGroups] = await Promise.all([
+    prisma.pageGrant.findMany({
+      where: { pageId: page.accessRootId ?? page.id },
+      select: {
+        id: true,
+        user: { select: { id: true, name: true, email: true } },
+        group: {
+          select: {
+            id: true,
+            name: true,
+            _count: { select: { members: true } },
+          },
+        },
+      },
+    }),
+    prisma.spaceMember.findMany({
+      where: { spaceId },
+      select: { user: { select: { id: true, name: true, email: true } } },
+    }),
+    prisma.spaceGroup.findMany({
+      where: { spaceId },
+      select: {
+        group: {
+          select: {
+            members: {
+              select: { user: { select: { id: true, name: true, email: true } } },
+            },
+          },
+        },
+      },
+    }),
+    prisma.spaceGroup.findMany({
+      where: { spaceId },
+      select: { group: { select: { id: true, name: true } } },
+    }),
+  ]);
+
+  const grantRows: GrantRow[] = grants.map((g) =>
+    g.group
+      ? {
+          id: g.id,
+          kind: "group" as const,
+          label: g.group.name,
+          detail: `${g.group._count.members} ${
+            g.group._count.members === 1 ? "Person" : "Personen"
+          }`,
+        }
+      : {
+          id: g.id,
+          kind: "user" as const,
+          label: g.user?.name ?? "Unbekannt",
+          detail: g.user?.email ?? null,
+        },
+  );
+
+  const grantedUserIds = new Set(
+    grants.map((g) => g.user?.id).filter(Boolean),
+  );
+  const grantedGroupIds = new Set(
+    grants.map((g) => g.group?.id).filter(Boolean),
+  );
+
+  const candidates = new Map<string, AccessCandidate>();
+  for (const m of members) {
+    if (!grantedUserIds.has(m.user.id)) {
+      candidates.set(m.user.id, {
+        id: m.user.id,
+        label: m.user.name,
+        detail: m.user.email,
+      });
+    }
+  }
+  for (const sg of memberGroups) {
+    for (const m of sg.group.members) {
+      if (!grantedUserIds.has(m.user.id)) {
+        candidates.set(m.user.id, {
+          id: m.user.id,
+          label: m.user.name,
+          detail: m.user.email,
+        });
+      }
+    }
+  }
+
+  return {
+    isRestricted: page.isRestricted,
+    inheritedFrom: inherited?.title || (inherited ? "Ohne Titel" : null),
+    grants: grantRows,
+    people: [...candidates.values()].sort((a, b) =>
+      a.label.localeCompare(b.label),
+    ),
+    groups: spaceGroups
+      .filter((sg) => !grantedGroupIds.has(sg.group.id))
+      .map((sg) => ({ id: sg.group.id, label: sg.group.name, detail: "" }))
+      .sort((a, b) => a.label.localeCompare(b.label)),
+  };
 }

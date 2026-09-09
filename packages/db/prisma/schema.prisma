@@ -53,6 +53,8 @@ model User {
   favorites     PageFavorite[]
   visits        PageVisit[]
   recoveryCodes TotpRecoveryCode[]
+  groupMemberships GroupMember[]
+  pageGrants    PageGrant[]
 }
 
 /// Angemeldetes Geraet. Das JWT im Cookie traegt die Session-ID; damit
@@ -109,6 +111,7 @@ model Space {
   updatedAt   DateTime        @updatedAt
 
   members SpaceMember[]
+  groups  SpaceGroup[]
   pages   Page[]
   invitations SpaceInvitation[]
   uploads Upload[]
@@ -128,6 +131,67 @@ model SpaceMember {
   @@index([spaceId])
 }
 
+/// Benannte Personengruppe, instanzweit verwaltet (Admin-Bereich).
+/// Eine Gruppe kann einem Space mit einer Rolle zugeordnet werden und
+/// auf einer geschuetzten Seite Zugriff erhalten.
+model Group {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members GroupMember[]
+  spaces  SpaceGroup[]
+  grants  PageGrant[]
+}
+
+model GroupMember {
+  id      String @id @default(cuid())
+  groupId String
+  userId  String
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, userId])
+  @@index([userId])
+}
+
+/// Gruppe im Space. Die wirksame Rolle einer Person ist die staerkste
+/// aus eigener Mitgliedschaft und allen Gruppen (siehe lib/space-access).
+/// OWNER wird hier bewusst nicht vergeben: Eigentuemerschaft bleibt
+/// persoenlich, sonst haengt der letzte Eigentuemer an einer Gruppenliste.
+model SpaceGroup {
+  id      String    @id @default(cuid())
+  spaceId String
+  groupId String
+  role    SpaceRole @default(MEMBER)
+
+  space Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([spaceId, groupId])
+  @@index([groupId])
+}
+
+/// Zugriffseintrag einer geschuetzten Seite: entweder eine Person oder
+/// eine Gruppe. Genau eines der beiden Felder ist gesetzt.
+model PageGrant {
+  id      String  @id @default(cuid())
+  pageId  String
+  userId  String?
+  groupId String?
+
+  page  Page   @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  user  User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  group Group? @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, userId])
+  @@unique([pageId, groupId])
+  @@index([pageId])
+}
+
 model Page {
   id          String   @id @default(cuid())
   spaceId     String
@@ -144,6 +208,13 @@ model Page {
   /// Flacher Text für Suche & History
   textContent String   @default("")
   position    Int      @default(0)
+  /// Geschuetzt: nur Eingetragene (plus Space-Verwaltung) sehen sie.
+  /// Der Schutz vererbt sich auf alle Unterseiten.
+  isRestricted Boolean @default(false)
+  /// Naechste geschuetzte Seite auf dem Weg zur Wurzel, sich selbst
+  /// eingeschlossen; null = offen. Materialisiert, weil sonst jede
+  /// Sichtbarkeitspruefung den Baum hochlaufen muesste.
+  accessRootId String?
   /// Soft-Delete: gesetzt = im Papierkorb (nicht hart gelöscht).
   deletedAt   DateTime?
   createdAt   DateTime @default(now())
@@ -152,6 +223,9 @@ model Page {
   space    Space          @relation(fields: [spaceId], references: [id], onDelete: Cascade)
   parent   Page?          @relation("PageTree", fields: [parentId], references: [id], onDelete: Cascade)
   children Page[]         @relation("PageTree")
+  accessRoot     Page?     @relation("PageAccessRoot", fields: [accessRootId], references: [id], onDelete: SetNull)
+  accessChildren Page[]    @relation("PageAccessRoot")
+  grants         PageGrant[]
   versions PageVersion[]
   collab   CollabDocument?
   outgoingLinks PageLink[] @relation("LinkSource")
@@ -166,6 +240,7 @@ model Page {
   @@index([spaceId])
   @@index([parentId])
   @@index([spaceId, isTemplate])
+  @@index([accessRootId])
 }
 
 /// Wiki-Link zwischen zwei Seiten ([[Seite]]) — Basis für Backlinks.

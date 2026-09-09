@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
+import { effectiveRole } from "@/lib/space-access";
+import { visiblePageWhere } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
 
 export const runtime = "nodejs";
@@ -20,11 +22,8 @@ export async function GET(
   }
   const { id: spaceId } = await params;
 
-  const member = await prisma.spaceMember.findUnique({
-    where: { userId_spaceId: { userId: user.id, spaceId } },
-    select: { id: true },
-  });
-  if (!member) {
+  const role = await effectiveRole(user.id, spaceId);
+  if (!role) {
     return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
   }
 
@@ -52,6 +51,9 @@ export async function GET(
     where: {
       spaceId,
       deletedAt: null,
+      // Ein Vorschlag ist schon eine Auskunft: geschützte Seiten
+      // dürfen hier nicht einmal mit dem Titel auftauchen.
+      ...visiblePageWhere(user.id, role),
       ...(q ? { title: { contains: q, mode: "insensitive" } } : {}),
     },
     select: { id: true, title: true },

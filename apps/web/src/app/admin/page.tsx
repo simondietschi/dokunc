@@ -8,6 +8,7 @@ import {
   Shield,
   ShieldOff,
   UserCheck,
+  Users,
   UserX,
 } from "lucide-react";
 import { prisma } from "@dokunc/db";
@@ -62,6 +63,13 @@ export default async function AdminPage() {
         <h1 className="text-2xl font-semibold tracking-tight">
           Administration
         </h1>
+        <Link
+          href="/admin/groups"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] text-ink transition-colors hover:border-line-strong"
+        >
+          <Users className="h-4 w-4 text-muted" />
+          Gruppen
+        </Link>
         <Link
           href="/admin/audit"
           className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] text-ink transition-colors hover:border-line-strong"

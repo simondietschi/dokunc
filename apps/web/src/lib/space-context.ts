@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { prisma, type Space, type SpaceRole } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { can, type Action } from "@/lib/permissions";
+import { roleFromLoadedSpace } from "@/lib/space-access";
 import { str } from "@/lib/form";
 
 type Access = {
@@ -13,7 +14,9 @@ type Access = {
 
 /**
  * Gemeinsame Auflösung: angemeldeter User + Space + dessen Rolle.
- * Space und Mitgliedschaft werden in EINER Query geladen.
+ *
+ * Space, eigene Mitgliedschaft und die Rollen aus den Gruppen dieser
+ * Person kommen in EINER Query; die stärkste davon gilt.
  */
 async function resolve(slug: string) {
   const user = await requireUser();
@@ -24,9 +27,13 @@ async function resolve(slug: string) {
         where: { userId: user.id },
         select: { role: true },
       },
+      groups: {
+        where: { group: { members: { some: { userId: user.id } } } },
+        select: { role: true },
+      },
     },
   });
-  const role = space?.members[0]?.role ?? null;
+  const role = space ? roleFromLoadedSpace(space) : null;
   return { user, space, role };
 }
 

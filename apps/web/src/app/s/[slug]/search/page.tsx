@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { FileText, SearchX } from "lucide-react";
 import { prisma } from "@dokunc/db";
+import { seesEverything, visiblePageSql } from "@/lib/page-access";
 import { loadSpace } from "@/lib/space-context";
 import { HL_START, HL_STOP, splitHighlights } from "@/lib/palette";
 
@@ -21,7 +22,7 @@ export default async function SearchPage({
 }) {
   const { slug } = await params;
   const { q, p } = await searchParams;
-  const { space } = await loadSpace(slug);
+  const { space, role, user } = await loadSpace(slug);
   const query = (q ?? "").trim();
   const pageSize = 20;
   const pageNum = Math.max(1, Number(p ?? "1") || 1);
@@ -30,17 +31,20 @@ export default async function SearchPage({
   let results: Row[] = [];
   if (query) {
     results = await prisma.$queryRaw<Row[]>`
-      SELECT id, title,
-        ts_headline('simple', "textContent",
+      SELECT p.id, p.title,
+        ts_headline('simple', p."textContent",
           plainto_tsquery('simple', ${query}),
           ${`StartSel=${HL_START},StopSel=${HL_STOP},MaxFragments=1,MaxWords=24,MinWords=6`}) AS snippet
-      FROM "Page"
-      WHERE "spaceId" = ${space.id}
-        AND "deletedAt" IS NULL
-        AND to_tsvector('simple', coalesce(title,'') || ' ' || coalesce("textContent",''))
+      FROM "Page" p
+      WHERE p."spaceId" = ${space.id}
+        AND p."deletedAt" IS NULL
+        AND ${visiblePageSql(user.id, seesEverything(role) ? [space.id] : [])}
+        AND to_tsvector('simple',
+              coalesce(p.title,'') || ' ' || coalesce(p."textContent",''))
             @@ plainto_tsquery('simple', ${query})
       ORDER BY ts_rank(
-        to_tsvector('simple', coalesce(title,'') || ' ' || coalesce("textContent",'')),
+        to_tsvector('simple',
+          coalesce(p.title,'') || ' ' || coalesce(p."textContent",'')),
         plainto_tsquery('simple', ${query})
       ) DESC
       LIMIT ${pageSize} OFFSET ${offset}

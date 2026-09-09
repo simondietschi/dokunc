@@ -3,6 +3,8 @@ import Link from "next/link";
 import { ArrowLeft, AtSign, MessageSquare, Bell } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
+import { accessibleSpaces } from "@/lib/space-access";
+import { visiblePagesAcrossSpaces } from "@/lib/page-access";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
@@ -22,7 +24,7 @@ const TYPE_TEXT: Record<string, string> = {
 export default async function NotificationsPage() {
   const user = await requireUser();
 
-  const notifications = await prisma.notification.findMany({
+  const all = await prisma.notification.findMany({
     where: { userId: user.id },
     orderBy: { createdAt: "desc" },
     take: 50,
@@ -30,19 +32,25 @@ export default async function NotificationsPage() {
   });
 
   const pageIds = [
-    ...new Set(
-      notifications
-        .map((n) => n.pageId)
-        .filter((id): id is string => !!id),
-    ),
+    ...new Set(all.map((n) => n.pageId).filter((id): id is string => !!id)),
   ];
+  // Nur Seiten, die diese Person heute noch sehen darf: eine alte
+  // Benachrichtigung soll nach einem Rechteentzug oder einem
+  // nachträglichen Schutz nicht den Titel verraten.
   const pages = pageIds.length
     ? await prisma.page.findMany({
-        where: { id: { in: pageIds } },
+        where: {
+          id: { in: pageIds },
+          deletedAt: null,
+          ...visiblePagesAcrossSpaces(user.id, await accessibleSpaces(user.id)),
+        },
         select: { id: true, title: true },
       })
     : [];
   const titleById = new Map(pages.map((p) => [p.id, p.title]));
+  const notifications = all.filter(
+    (n) => !n.pageId || titleById.has(n.pageId),
+  );
 
   const unread = notifications.filter((n) => !n.readAt).length;
 

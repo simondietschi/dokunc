@@ -3,6 +3,7 @@ import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { buildTree } from "@/lib/page-tree";
 import { can } from "@/lib/permissions";
+import { visiblePageWhere } from "@/lib/page-access";
 import { Sidebar } from "@/components/space/Sidebar";
 import { NotificationStream } from "@/components/NotificationStream";
 
@@ -33,10 +34,16 @@ export default async function SpaceLayout({
   const { slug } = await params;
   const { space, role, user } = await loadSpace(slug);
 
+  // Geschützte Seiten fehlen im Baum, in den Vorlagen und in den
+  // Listen, wenn sie nicht freigegeben sind. Der Baumbau kommt damit
+  // zurecht: der Schutz vererbt sich nach unten, es kann also keine
+  // sichtbare Seite unter einer verborgenen geben.
+  const visible = visiblePageWhere(user.id, role);
+
   const [pages, unreadCount, templates, favorites, recent] =
     await Promise.all([
     prisma.page.findMany({
-      where: { spaceId: space.id, deletedAt: null },
+      where: { spaceId: space.id, deletedAt: null, ...visible },
       select: {
         id: true,
         title: true,
@@ -49,19 +56,30 @@ export default async function SpaceLayout({
       where: { userId: user.id, readAt: null },
     }),
     prisma.page.findMany({
-      where: { spaceId: space.id, isTemplate: true, deletedAt: null },
+      where: {
+        spaceId: space.id,
+        isTemplate: true,
+        deletedAt: null,
+        ...visible,
+      },
       select: { id: true, title: true, icon: true },
       orderBy: { title: "asc" },
       take: 30,
     }),
     prisma.pageFavorite.findMany({
-      where: { userId: user.id, page: { spaceId: space.id, deletedAt: null } },
+      where: {
+        userId: user.id,
+        page: { spaceId: space.id, deletedAt: null, ...visible },
+      },
       orderBy: { createdAt: "desc" },
       take: 12,
       select: { page: { select: { id: true, title: true, icon: true } } },
     }),
     prisma.pageVisit.findMany({
-      where: { userId: user.id, page: { spaceId: space.id, deletedAt: null } },
+      where: {
+        userId: user.id,
+        page: { spaceId: space.id, deletedAt: null, ...visible },
+      },
       orderBy: { visitedAt: "desc" },
       take: 6,
       select: { page: { select: { id: true, title: true, icon: true } } },

@@ -9,6 +9,10 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 
 - Auth & Benutzer (Invite-only-Registrierung, erste Person = Admin)
 - Spaces mit Rollen/Berechtigungen (OWNER/ADMIN/MEMBER/VIEWER)
+- **Gruppen**: Personengruppen im Admin-Bereich, pro Space mit eigener
+  Rolle; es gilt immer die stärkste Rolle
+- **Geschützte Seiten**: eine Seite (samt Unterseiten) nur für
+  ausgewählte Personen und Gruppen sichtbar
 - Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen
   mit voller Bedienung, Aufgabenlisten, Bilder mit Alternativtext,
   Breite und Bildunterschrift, Dateianhänge, Code-Blöcke mit
@@ -108,9 +112,10 @@ pnpm test:e2e         # Playwright-E2E: kompletter Editor-Pfad inkl.
 
 Die Integrationstests prüfen, was in Abfragebedingungen steckt statt im
 Code: dass eine Seiten- oder Versions-ID aus einem Formular niemals einen
-fremden Space trifft, und dass ein TOTP-Zeitschritt wie ein
-Wiederherstellungscode genau einmal gilt — auch bei gleichzeitigen
-Versuchen. Sie brauchen eine erreichbare Datenbank aus `.env` und legen
+fremden Space trifft, dass ein TOTP-Zeitschritt wie ein
+Wiederherstellungscode genau einmal gilt (auch bei gleichzeitigen
+Versuchen), und dass eine geschützte Seite genau denen sichtbar ist, die
+sie sehen dürfen — direkt, über eine Gruppe oder als Space-Verwaltung. Sie brauchen eine erreichbare Datenbank aus `.env` und legen
 ihre eigenen Datensätze an (und wieder ab); sie leeren nichts.
 
 Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
@@ -125,7 +130,16 @@ Kurz, was die App bewusst tut:
 - **Sitzung** im httpOnly-Cookie; der Collab-WebSocket bekommt stattdessen
   ein kurzlebiges, an eine Seite gebundenes Ticket.
 - **Space-Bindung** aller Schreibzugriffe: IDs aus Formularen werden gegen
-  den Space geprüft, in dem die Person tatsächlich Rechte hat.
+  den Space geprüft, in dem die Person tatsächlich Rechte hat — und gegen
+  das, was sie dort sehen darf.
+- **Geschützte Seiten** wirken überall gleich: Baum, Suche, Vorschläge,
+  Export, Druck, KI-Antworten, Benachrichtigungen und die
+  Editor-Verbindung fragen dieselbe Regel. Ein Freigabelink auf eine
+  geschützte Seite entsteht gar nicht erst und ein bestehender endet,
+  sobald der Schutz gesetzt wird.
+- **Gruppen** geben Rollen, nehmen aber keine: die wirksame Rolle ist
+  die stärkste aus eigener Mitgliedschaft und allen Gruppen. OWNER
+  vergibt keine Gruppe — Eigentümerschaft bleibt persönlich.
 - **Rollen**: die eigene Rolle lässt sich nicht ändern, OWNER vergibt nur
   ein OWNER, der letzte OWNER bleibt bestehen.
 - **Registrierung** ausschliesslich mit gültigem Einladungstoken; die
@@ -149,7 +163,7 @@ Kurz, was die App bewusst tut:
 ```
 apps/web      Next.js (UI, Auth, API, Editor)
 apps/collab   Hocuspocus WebSocket-Server (Yjs-Persistenz)
-packages/db   Prisma-Schema + generierter Client (geteilt)
+packages/db   Prisma-Schema + Client + geteilte Zugriffsregeln
 packages/editor  Geteilte TipTap-Extensions
 packages/mailer  Geteilter E-Mail-Versand (Web + Collab)
 e2e/          Playwright-E2E-Tests

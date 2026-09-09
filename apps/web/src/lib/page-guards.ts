@@ -1,45 +1,64 @@
 import "server-only";
-import { prisma } from "@dokunc/db";
+import { prisma, type Prisma, type SpaceRole } from "@dokunc/db";
+import { refreshAccessRoots, visiblePageWhere } from "./page-access";
 
 /**
- * Bindung von Objekt-IDs an den autorisierten Space.
+ * Bindung von Objekt-IDs an das, was die handelnde Person tatsächlich
+ * anfassen darf.
  *
  * `authorizeAction` prüft nur, ob die Person im Space aus dem Feld
  * `slug` etwas darf. Seiten- und Versions-IDs kommen aber aus demselben
- * Formular, also aus Nutzerhand. Ohne zusätzliche Bindung an genau
- * diesen Space liesse sich mit einem Slug, in dem man schreiben darf,
- * eine ID aus einem fremden Space treffen. Diese Funktionen sind diese
- * Bindung — und der Ort, an dem sie sich testen lässt.
+ * Formular, also aus Nutzerhand. Ohne zusätzliche Bindung liesse sich
+ * mit einem Slug, in dem man schreiben darf, eine ID aus einem fremden
+ * Space treffen — oder eine geschützte Seite desselben Space, die man
+ * gar nicht sehen darf. Diese Funktionen sind diese Bindung, und der
+ * Ort, an dem sie sich testen lässt.
+ *
+ * Deshalb nehmen sie den ganzen Kontext und nicht bloss eine spaceId:
+ * so lässt sich keine der beiden Hälften versehentlich weglassen.
  */
+export type PageScope = {
+  spaceId: string;
+  userId: string;
+  role: SpaceRole;
+};
 
-/** Seite im Space, nicht im Papierkorb. */
-export async function findLivePage(spaceId: string, pageId: string) {
+/** Space-Bindung und Sichtbarkeit in einer Bedingung. */
+function scopeWhere(scope: PageScope): Prisma.PageWhereInput {
+  return {
+    spaceId: scope.spaceId,
+    ...visiblePageWhere(scope.userId, scope.role),
+  };
+}
+
+/** Seite im Space, sichtbar, nicht im Papierkorb. */
+export async function findLivePage(scope: PageScope, pageId: string) {
   if (!pageId) return null;
   return prisma.page.findFirst({
-    where: { id: pageId, spaceId, deletedAt: null },
+    where: { id: pageId, ...scopeWhere(scope), deletedAt: null },
     select: { id: true, title: true },
   });
 }
 
-/** Seite im Space, die im Papierkorb liegt. */
-export async function findTrashedPage(spaceId: string, pageId: string) {
+/** Seite im Space, sichtbar, die im Papierkorb liegt. */
+export async function findTrashedPage(scope: PageScope, pageId: string) {
   if (!pageId) return null;
   return prisma.page.findFirst({
-    where: { id: pageId, spaceId, NOT: { deletedAt: null } },
+    where: { id: pageId, ...scopeWhere(scope), NOT: { deletedAt: null } },
     select: { id: true, title: true },
   });
 }
 
-/** Version, deren Seite in diesem Space liegt und nicht gelöscht ist. */
+/** Version einer Seite, die diese Person in diesem Space sehen darf. */
 export async function findRestorableVersion(
-  spaceId: string,
+  scope: PageScope,
   versionId: string,
 ) {
   if (!versionId) return null;
   return prisma.pageVersion.findFirst({
     where: {
       id: versionId,
-      page: { spaceId, deletedAt: null },
+      page: { ...scopeWhere(scope), deletedAt: null },
     },
     select: {
       id: true,
@@ -59,11 +78,11 @@ export async function findRestorableVersion(
  * anderen Space hängt und die im Baum nirgends auftauchen.
  */
 export async function resolveParentId(
-  spaceId: string,
+  scope: PageScope,
   parentId: string | null,
 ): Promise<string | null> {
   if (!parentId) return null;
-  const parent = await findLivePage(spaceId, parentId);
+  const parent = await findLivePage(scope, parentId);
   if (!parent) throw new Error("Elternseite gehört nicht zu diesem Space");
   return parent.id;
 }
@@ -73,13 +92,13 @@ export async function resolveParentId(
  * Rückgabe: false, wenn keine passende Seite getroffen wurde.
  */
 export async function renamePageInSpace(
-  spaceId: string,
+  scope: PageScope,
   pageId: string,
   title: string,
 ): Promise<boolean> {
   if (!pageId) return false;
   const { count } = await prisma.page.updateMany({
-    where: { id: pageId, spaceId, deletedAt: null },
+    where: { id: pageId, ...scopeWhere(scope), deletedAt: null },
     data: { title: title || "Untitled" },
   });
   return count > 0;
@@ -157,22 +176,27 @@ export async function isDescendantOf(
  * fremdes Ziel oder ein Zyklus).
  */
 export async function movePageInSpace(
-  spaceId: string,
+  scope: PageScope,
   pageId: string,
   parentId: string | null,
   index: number,
 ): Promise<boolean> {
-  const page = await findLivePage(spaceId, pageId);
+  const page = await findLivePage(scope, pageId);
   if (!page) return false;
 
   if (parentId) {
-    const parent = await findLivePage(spaceId, parentId);
+    const parent = await findLivePage(scope, parentId);
     if (!parent) return false;
-    if (await isDescendantOf(spaceId, pageId, parentId)) return false;
+    if (await isDescendantOf(scope.spaceId, pageId, parentId)) return false;
   }
 
   const siblings = await prisma.page.findMany({
-    where: { spaceId, parentId, deletedAt: null, NOT: { id: pageId } },
+    where: {
+      spaceId: scope.spaceId,
+      parentId,
+      deletedAt: null,
+      NOT: { id: pageId },
+    },
     orderBy: [{ position: "asc" }, { title: "asc" }],
     select: { id: true },
   });
@@ -190,5 +214,9 @@ export async function movePageInSpace(
       prisma.page.update({ where: { id }, data: { position } }),
     ),
   ]);
+  // Der Zug kann den Ast unter eine geschützte Seite gehängt oder aus
+  // ihr herausgeholt haben; die materialisierte Wurzel muss beides
+  // sofort nachvollziehen.
+  await refreshAccessRoots(pageId);
   return true;
 }

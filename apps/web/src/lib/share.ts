@@ -21,8 +21,8 @@ export type ShareTarget = {
  * Löst einen Freigabelink auf.
  *
  * Gültig ist er nur, wenn er nicht zurückgezogen und nicht abgelaufen
- * ist, die Seite noch existiert und das Token zum gespeicherten Hash
- * passt. Ohne diese Auflösung gäbe es keinen Lesezugriff ohne Konto —
+ * ist, die Seite noch existiert und nicht geschützt ist, und das Token
+ * zum gespeicherten Hash passt. Ohne diese Auflösung gäbe es keinen Lesezugriff ohne Konto —
  * mit ihr genau einen, und nur auf die freigegebene Seite.
  */
 export async function resolveShare(
@@ -71,6 +71,10 @@ export async function resolveShare(
       id: wanted,
       spaceId: share.page.spaceId,
       deletedAt: null,
+      // Wird eine Seite nachträglich geschützt, endet damit auch jeder
+      // offene Freigabelink darauf. Der Schutz ist die stärkere
+      // Aussage — sonst hinge das Ergebnis daran, was zuerst passierte.
+      accessRootId: null,
     },
     select: {
       id: true,

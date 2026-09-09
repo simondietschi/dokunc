@@ -36,6 +36,11 @@ import { BlockHandle } from "@/components/editor/BlockHandle";
 import { Outline } from "@/components/editor/Outline";
 import { PageCover, PageIcon } from "@/components/editor/PageChrome";
 import { ShareDialog, type ShareRow } from "./ShareDialog";
+import {
+  AccessDialog,
+  type AccessCandidate,
+  type GrantRow,
+} from "./AccessDialog";
 import { ToggleView } from "@/components/editor/ToggleView";
 import { WordCount } from "@/components/editor/WordCount";
 import { CalloutView } from "@/components/editor/CalloutView";
@@ -273,6 +278,7 @@ export function CollaborativeEditor({
   isSubscribed,
   isFavorite,
   shares,
+  access,
 }: {
   slug: string;
   spaceId: string;
@@ -295,6 +301,14 @@ export function CollaborativeEditor({
   isSubscribed: boolean;
   isFavorite: boolean;
   shares: ShareRow[];
+  /** Schutzstatus und Freigabeliste dieser Seite. */
+  access: {
+    isRestricted: boolean;
+    inheritedFrom: string | null;
+    grants: GrantRow[];
+    people: AccessCandidate[];
+    groups: AccessCandidate[];
+  };
 }) {
   const ydoc = useMemo(() => new Y.Doc(), [pageId]);
   const [status, setStatus] = useState<
@@ -799,7 +813,18 @@ export function CollaborativeEditor({
             </Link>
             <ExportMenu pageId={pageId} pdfEnabled={pdfEnabled} />
             {canManage && (
-              <ShareDialog slug={slug} pageId={pageId} shares={shares} />
+              <>
+                <ShareDialog slug={slug} pageId={pageId} shares={shares} />
+                <AccessDialog
+                  slug={slug}
+                  pageId={pageId}
+                  isRestricted={access.isRestricted}
+                  inheritedFrom={access.inheritedFrom}
+                  grants={access.grants}
+                  people={access.people}
+                  groups={access.groups}
+                />
+              </>
             )}
             <form action={toggleFavoriteAction}>
               <input type="hidden" name="slug" value={slug} />

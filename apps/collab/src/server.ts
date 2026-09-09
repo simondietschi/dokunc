@@ -7,7 +7,13 @@ import { Redis } from "ioredis";
 import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
 import pino from "pino";
 import * as Y from "yjs";
-import { prisma } from "@dokunc/db";
+import {
+  canSeePage,
+  effectiveSpaceRole,
+  prisma,
+  strongestSpaceRole,
+  type SpaceRole,
+} from "@dokunc/db";
 import { mentionMail, send } from "@dokunc/mailer";
 import {
   richExtensions,
@@ -161,13 +167,16 @@ async function authorize(token: string | undefined, pageId: string) {
   });
   if (!page || page.deletedAt) throw new Error("Seite nicht gefunden");
 
-  const member = await prisma.spaceMember.findUnique({
-    where: { userId_spaceId: { userId, spaceId: page.spaceId } },
-    select: { role: true },
-  });
-  if (!member) throw new Error("Kein Zugriff auf diesen Space");
+  // Rolle aus eigener Mitgliedschaft und Gruppen, danach die
+  // Sichtbarkeit der Seite selbst: eine geschützte Seite öffnet auch
+  // ein Space-Mitglied nur mit Freigabe.
+  const role = await effectiveSpaceRole(userId, page.spaceId);
+  if (!role) throw new Error("Kein Zugriff auf diesen Space");
+  if (!(await canSeePage(pageId, userId, role))) {
+    throw new Error("Kein Zugriff auf diese Seite");
+  }
 
-  const readOnly = member.role === "VIEWER";
+  const readOnly = role === "VIEWER";
   return { userId, tokenVersion, sessionId, readOnly };
 }
 
@@ -324,7 +333,8 @@ async function syncWikiLinks(
 
 /**
  * Erzeugt MENTION-Benachrichtigungen für Nutzer, die im Vergleich zum
- * vorherigen Stand NEU erwähnt wurden (und Mitglied des Space sind).
+ * vorherigen Stand NEU erwähnt wurden — und die den Space betreten und
+ * diese Seite auch öffnen dürfen.
  */
 async function notifyNewMentions(
   pageId: string,
@@ -339,20 +349,37 @@ async function notifyNewMentions(
   );
   if (added.length === 0) return;
 
-  const members = await prisma.spaceMember.findMany({
-    where: { spaceId, userId: { in: added } },
-    select: {
-      user: {
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          isActive: true,
-          emailOnMention: true,
+  const withAccess = await prisma.user.findMany({
+    where: {
+      id: { in: added },
+      OR: [
+        { memberships: { some: { spaceId } } },
+        {
+          groupMemberships: {
+            some: { group: { spaces: { some: { spaceId } } } },
+          },
         },
-      },
+      ],
+    },
+    select: {
+      id: true,
+      email: true,
+      name: true,
+      isActive: true,
+      emailOnMention: true,
     },
   });
+  // Eine Erwähnung auf einer geschützten Seite darf niemanden erreichen,
+  // der die Seite nicht öffnen kann — der Auszug stünde sonst in der
+  // Mail.
+  const reachable: typeof withAccess = [];
+  for (const candidate of withAccess) {
+    const role = await effectiveSpaceRole(candidate.id, spaceId);
+    if (role && (await canSeePage(pageId, candidate.id, role))) {
+      reachable.push(candidate);
+    }
+  }
+  const members = reachable.map((user) => ({ user }));
 
   const notified: typeof members = [];
   for (const member of members) {
@@ -592,13 +619,34 @@ async function enforceRevocations(): Promise<void> {
   });
   const sessionById = new Map(sessions.map((s) => [s.id, s]));
 
-  const members = await prisma.spaceMember.findMany({
-    where: { userId: { in: [...userIds] } },
-    select: { userId: true, spaceId: true, role: true },
-  });
-  const roleByKey = new Map(
-    members.map((m) => [`${m.userId}:${m.spaceId}`, m.role]),
-  );
+  // Rollen inklusive Gruppen: sonst flöge jemand aus der Sitzung, der
+  // nur über eine Gruppe im Space ist.
+  const [members, groupRoles] = await Promise.all([
+    prisma.spaceMember.findMany({
+      where: { userId: { in: [...userIds] } },
+      select: { userId: true, spaceId: true, role: true },
+    }),
+    prisma.spaceGroup.findMany({
+      where: { group: { members: { some: { userId: { in: [...userIds] } } } } },
+      select: {
+        spaceId: true,
+        role: true,
+        group: { select: { members: { select: { userId: true } } } },
+      },
+    }),
+  ]);
+  const roleByKey = new Map<string, SpaceRole>();
+  const note = (userId: string, spaceId: string, role: SpaceRole) => {
+    const key = `${userId}:${spaceId}`;
+    const best = strongestSpaceRole([roleByKey.get(key), role]);
+    if (best) roleByKey.set(key, best);
+  };
+  for (const m of members) note(m.userId, m.spaceId, m.role);
+  for (const g of groupRoles) {
+    for (const m of g.group.members) {
+      if (userIds.has(m.userId)) note(m.userId, g.spaceId, g.role);
+    }
+  }
 
   for (const [pageId, doc] of open) {
     const page = pageById.get(pageId);

@@ -10,6 +10,7 @@ import {
   resolveParentId,
   restorePageTree,
   trashPageTree,
+  type PageScope,
 } from "@/lib/page-guards";
 import { findReadableUpload } from "@/lib/upload-access";
 
@@ -24,6 +25,9 @@ import { findReadableUpload } from "@/lib/upload-access";
 const TAG = `authz-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
 let insider: { id: string };
+/** Kontext, wie ihn eine Server-Action an die Guards weiterreicht. */
+let homeScope: PageScope;
+let outsideScope: PageScope;
 let outsiderSpaceId: string;
 let homeSpaceId: string;
 let homePageId: string;
@@ -101,6 +105,13 @@ beforeAll(async () => {
       },
     ],
   });
+
+  homeScope = { spaceId: homeSpaceId, userId: insider.id, role: "MEMBER" };
+  outsideScope = {
+    spaceId: outsiderSpaceId,
+    userId: insider.id,
+    role: "MEMBER",
+  };
 });
 
 afterAll(async () => {
@@ -112,16 +123,16 @@ afterAll(async () => {
 
 describe("Seitenzugriff über Space-Grenzen", () => {
   it("findet die eigene Seite", async () => {
-    expect(await findLivePage(homeSpaceId, homePageId)).not.toBeNull();
+    expect(await findLivePage(homeScope, homePageId)).not.toBeNull();
   });
 
   it("findet eine fremde Seite nicht", async () => {
-    expect(await findLivePage(homeSpaceId, foreignPageId)).toBeNull();
+    expect(await findLivePage(homeScope, foreignPageId)).toBeNull();
   });
 
   it("benennt eine fremde Seite nicht um", async () => {
     const renamed = await renamePageInSpace(
-      homeSpaceId,
+      homeScope,
       foreignPageId,
       "gekapert",
     );
@@ -135,7 +146,7 @@ describe("Seitenzugriff über Space-Grenzen", () => {
   });
 
   it("benennt die eigene Seite um", async () => {
-    expect(await renamePageInSpace(homeSpaceId, homePageId, "Neu")).toBe(true);
+    expect(await renamePageInSpace(homeScope, homePageId, "Neu")).toBe(true);
     const page = await prisma.page.findUnique({
       where: { id: homePageId },
       select: { title: true },
@@ -160,8 +171,8 @@ describe("Seitenzugriff über Space-Grenzen", () => {
     });
     expect(trashed.every((p) => p.deletedAt !== null)).toBe(true);
 
-    expect(await findTrashedPage(homeSpaceId, homePageId)).not.toBeNull();
-    expect(await findTrashedPage(outsiderSpaceId, homePageId)).toBeNull();
+    expect(await findTrashedPage(homeScope, homePageId)).not.toBeNull();
+    expect(await findTrashedPage(outsideScope, homePageId)).toBeNull();
 
     await restorePageTree(homeSpaceId, homePageId);
     const restored = await prisma.page.findMany({
@@ -174,29 +185,29 @@ describe("Seitenzugriff über Space-Grenzen", () => {
 
 describe("Versionswiederherstellung über Space-Grenzen", () => {
   it("findet die eigene Version", async () => {
-    const v = await findRestorableVersion(homeSpaceId, homeVersionId);
+    const v = await findRestorableVersion(homeScope, homeVersionId);
     expect(v?.pageId).toBe(homePageId);
   });
 
   it("findet eine fremde Version nicht", async () => {
     expect(
-      await findRestorableVersion(homeSpaceId, foreignVersionId),
+      await findRestorableVersion(homeScope, foreignVersionId),
     ).toBeNull();
   });
 });
 
 describe("Elternseite beim Anlegen", () => {
   it("erlaubt eine Elternseite aus demselben Space", async () => {
-    expect(await resolveParentId(homeSpaceId, homePageId)).toBe(homePageId);
+    expect(await resolveParentId(homeScope, homePageId)).toBe(homePageId);
   });
 
   it("lässt keine Elternseite ohne Angabe entstehen", async () => {
-    expect(await resolveParentId(homeSpaceId, null)).toBeNull();
+    expect(await resolveParentId(homeScope, null)).toBeNull();
   });
 
   it("weist eine fremde Elternseite ab", async () => {
     await expect(
-      resolveParentId(homeSpaceId, foreignPageId),
+      resolveParentId(homeScope, foreignPageId),
     ).rejects.toThrow();
   });
 });
@@ -236,16 +247,16 @@ describe("Seiten im Baum verschieben", () => {
   it("verweigert einen Zug unter die eigene Unterseite", async () => {
     // Würde den ganzen Ast vom Baum abschneiden.
     expect(
-      await movePageInSpace(homeSpaceId, homePageId, homeChildId, 0),
+      await movePageInSpace(homeScope, homePageId, homeChildId, 0),
     ).toBe(false);
   });
 
   it("verweigert einen Zug in einen fremden Space", async () => {
     expect(
-      await movePageInSpace(homeSpaceId, foreignPageId, homePageId, 0),
+      await movePageInSpace(homeScope, foreignPageId, homePageId, 0),
     ).toBe(false);
     expect(
-      await movePageInSpace(homeSpaceId, homePageId, foreignPageId, 0),
+      await movePageInSpace(homeScope, homePageId, foreignPageId, 0),
     ).toBe(false);
   });
 
@@ -255,7 +266,7 @@ describe("Seiten im Baum verschieben", () => {
     });
     try {
       // Unterseite auf die oberste Ebene, an den Anfang.
-      expect(await movePageInSpace(homeSpaceId, homeChildId, null, 0)).toBe(
+      expect(await movePageInSpace(homeScope, homeChildId, null, 0)).toBe(
         true,
       );
       const roots = await prisma.page.findMany({
@@ -270,7 +281,7 @@ describe("Seiten im Baum verschieben", () => {
 
       // Und wieder zurück unter die Ausgangsseite.
       expect(
-        await movePageInSpace(homeSpaceId, homeChildId, homePageId, 0),
+        await movePageInSpace(homeScope, homeChildId, homePageId, 0),
       ).toBe(true);
       const child = await prisma.page.findUnique({
         where: { id: homeChildId },
