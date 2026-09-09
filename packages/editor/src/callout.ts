@@ -46,7 +46,10 @@ export const Callout = Node.create({
         const para = $from.parent;
         const callout = $from.node(-1);
         if (callout.type.name !== this.name) return false;
-        if (para.type.name !== "paragraph" || para.content.size > 0) {
+        // Jeder leere Textblock zaehlt, nicht nur der Absatz: steht am
+        // Ende eine leere Ueberschrift, war der Callout sonst eine
+        // Sackgasse — Enter kam nicht mehr heraus.
+        if (!para.isTextblock || para.content.size > 0) {
           return false;
         }
         if ($from.index(-1) !== callout.childCount - 1 || callout.childCount < 2) {
@@ -74,8 +77,24 @@ export const Callout = Node.create({
     return {
       setCallout:
         (type: CalloutType = "info") =>
-        ({ commands }) =>
-          commands.wrapIn(this.name, { type }),
+        ({ chain, tr }) => {
+          // tr, nicht state: in der Kette des Slash-Menues wurde die
+          // Eingabe "/info" vorher per deleteRange entfernt. state zeigt
+          // noch den Stand davor, der Block waere also nie leer.
+          const { $from, empty } = tr.selection;
+          // Der Block, in dem gerade "/info" stand, kann eine leere
+          // Ueberschrift sein. Als erstes Kind des Callouts brauchte es
+          // hier aber Fliesstext; eine Ueberschrift zu wrappen bleibt
+          // erlaubt, solange sie Inhalt hat.
+          const emptyHeadline =
+            empty &&
+            $from.parent.isTextblock &&
+            $from.parent.content.size === 0 &&
+            $from.parent.type.name !== "paragraph";
+          const c = chain();
+          if (emptyHeadline) c.setNode("paragraph");
+          return c.wrapIn(this.name, { type }).run();
+        },
     };
   },
 });
