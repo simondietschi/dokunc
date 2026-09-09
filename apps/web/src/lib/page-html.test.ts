@@ -85,6 +85,30 @@ describe("pageToPrintHtml()", () => {
   });
 });
 
+describe("Eingebettete Videos", () => {
+  it("stellt dem iframe seine Quelle als Link zur Seite", () => {
+    // Im Druck und im PDF rendert kein iframe. Ohne diesen Link wäre
+    // das Video dort spurlos verschwunden.
+    const html = contentToHtml(
+      doc([
+        {
+          type: "youtube",
+          attrs: { src: "https://www.youtube-nocookie.com/watch?v=abc" },
+        },
+      ]),
+    );
+    expect(html).toContain("<iframe");
+    expect(html).toContain('class="dk-embed-url"');
+    expect(html).toContain("youtube-nocookie.com");
+  });
+
+  it("blendet den Link am Bildschirm aus und im Druck ein", () => {
+    const out = pageToPrintHtml({ title: "T", contentHtml: "" });
+    expect(out).toContain(".dk-embed-url { display: none;");
+    expect(out).toContain(".dk-embed-url { display: block;");
+  });
+});
+
 describe("escapeHtml()", () => {
   it("escaped alle Sonderzeichen", () => {
     expect(escapeHtml(`<a href="x">&'`)).toBe(

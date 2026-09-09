@@ -14,12 +14,16 @@ import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { richExtensions } from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
+import type { EditorView } from "@tiptap/pm/view";
+import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
 import * as Y from "yjs";
 import { History, Trash2, FileText, AtSign } from "lucide-react";
 import { ExportMenu } from "@/components/editor/ExportMenu";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { CalloutView } from "@/components/editor/CalloutView";
+import { CodeBlockView } from "@/components/editor/CodeBlockView";
+import { ImageView } from "@/components/editor/ImageView";
 import { MermaidView } from "@/components/editor/MermaidView";
 import { WikiLinkView } from "@/components/editor/WikiLinkView";
 import { MentionView } from "@/components/editor/MentionView";
@@ -34,9 +38,96 @@ import { SelectionMenu } from "@/components/editor/SelectionMenu";
 import { PromptDialog } from "@/components/ui/PromptDialog";
 import { useToast } from "@/components/ui/Toast";
 import { caretColorFor } from "@/lib/caret-color";
+import { looksLikeMarkdown, markdownToHtml } from "@/lib/markdown-paste";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/cn";
 import { renamePageAction, deletePageAction } from "../../actions";
+
+/** Bildtypen, die der Server annimmt (siehe lib/uploads). */
+const IMAGE_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+
+/** Lädt ein Bild hoch und gibt seine URL zurück. Wirft bei Ablehnung. */
+async function uploadImage(file: File, spaceId: string): Promise<string> {
+  const body = new FormData();
+  body.set("file", file);
+  // Der Space entscheidet, wer die Datei später sehen darf.
+  body.set("spaceId", spaceId);
+  const res = await fetch("/api/upload", { method: "POST", body });
+  if (!res.ok) throw new Error(`Upload abgelehnt (${res.status})`);
+  const { url } = (await res.json()) as { url: string };
+  return url;
+}
+
+/** Bilddateien aus Zwischenablage oder Drag-Nutzlast. */
+function imageFilesFrom(data: DataTransfer | null): File[] {
+  if (!data) return [];
+  return Array.from(data.files).filter((f) => IMAGE_TYPES.includes(f.type));
+}
+
+/**
+ * Lädt Dateien hoch und setzt sie an die gegebene Stelle.
+ * Die Position wird beim Einfügen frisch begrenzt: zwischen Auswahl und
+ * fertigem Upload kann sich das Dokument verändert haben.
+ */
+async function insertUploadedImages(
+  view: EditorView,
+  files: File[],
+  at: number,
+  spaceId: string,
+  onError: () => void,
+): Promise<void> {
+  for (const file of files) {
+    try {
+      const src = await uploadImage(file, spaceId);
+      const type = view.state.schema.nodes.image;
+      if (!type) continue;
+      const pos = Math.min(at, view.state.doc.content.size);
+      view.dispatch(view.state.tr.insert(pos, type.create({ src })));
+    } catch {
+      onError();
+    }
+  }
+}
+
+/**
+ * Setzt HTML an der aktuellen Auswahl ein.
+ *
+ * Geparst wird in einem inerten Dokument (`DOMParser`), nicht über
+ * `innerHTML`: dort würden Bilder tatsächlich geladen und ein
+ * `onerror` liefe los. Anschliessend filtert das ProseMirror-Schema
+ * alles heraus, was der Editor nicht kennt.
+ */
+function insertHtmlAtSelection(view: EditorView, html: string): void {
+  const parsed = new window.DOMParser().parseFromString(html, "text/html");
+  const slice = PMDOMParser.fromSchema(view.state.schema).parseSlice(
+    parsed.body,
+    { preserveWhitespace: false },
+  );
+  view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
+}
+
+/** Markdown-Datei wählen und als echte Blöcke einfügen. */
+function pickAndImportMarkdown(
+  editor: Editor,
+  range: Range | undefined,
+  onError: () => void,
+) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".md,.markdown,text/markdown,text/plain";
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (range) editor.chain().focus().deleteRange(range).run();
+    if (!file) return;
+    try {
+      const text = await file.text();
+      insertHtmlAtSelection(editor.view, markdownToHtml(text));
+    } catch {
+      onError();
+    }
+  };
+  input.click();
+}
 
 /** Datei wählen, hochladen, als Bild einfügen. */
 function pickAndUploadImage(
@@ -56,14 +147,8 @@ function pickAndUploadImage(
       chain.run();
       return;
     }
-    const body = new FormData();
-    body.set("file", file);
-    // Der Space entscheidet, wer die Datei später sehen darf.
-    body.set("spaceId", spaceId);
     try {
-      const res = await fetch("/api/upload", { method: "POST", body });
-      if (!res.ok) throw new Error();
-      const { url } = (await res.json()) as { url: string };
+      const url = await uploadImage(file, spaceId);
       chain.setImage({ src: url }).run();
     } catch {
       chain.run();
@@ -143,6 +228,14 @@ export function CollaborativeEditor({
     setPrompt(request);
   }, []);
 
+  const onUploadError = useCallback(() => {
+    toast({
+      title: "Upload fehlgeschlagen",
+      description: "Erlaubt sind PNG, JPG, GIF und WebP bis 10 MB.",
+      variant: "error",
+    });
+  }, [toast]);
+
   /**
    * Titel speichern. Der Merker wird erst NACH erfolgreicher Action
    * gesetzt: vorher markierte ein fehlgeschlagener oder verworfener
@@ -204,18 +297,18 @@ export function CollaborativeEditor({
   const slash = useMemo(
     () =>
       createSlashCommands({
-        onImage: (e, r) =>
-          pickAndUploadImage(e, r, spaceId, () =>
+        onImage: (e, r) => pickAndUploadImage(e, r, spaceId, onUploadError),
+        onMarkdownImport: (e, r) =>
+          pickAndImportMarkdown(e, r, () =>
             toast({
-              title: "Upload fehlgeschlagen",
-              description:
-                "Erlaubt sind PNG, JPG, GIF und WebP bis 10 MB.",
+              title: "Import fehlgeschlagen",
+              description: "Die Datei liess sich nicht lesen.",
               variant: "error",
             }),
           ),
         onPrompt: openPrompt,
       }),
-    [openPrompt, spaceId, toast],
+    [onUploadError, openPrompt, spaceId, toast],
   );
 
   const wikiLinkSuggest = useMemo(
@@ -252,6 +345,8 @@ export function CollaborativeEditor({
     extensions: [
       ...richExtensions({
         callout: () => ReactNodeViewRenderer(CalloutView),
+        codeBlock: () => ReactNodeViewRenderer(CodeBlockView),
+        image: () => ReactNodeViewRenderer(ImageView),
         mermaid: () => ReactNodeViewRenderer(MermaidView),
         wikiLink: () => ReactNodeViewRenderer(WikiLinkView),
         mention: () => ReactNodeViewRenderer(MentionView),
@@ -288,6 +383,49 @@ export function CollaborativeEditor({
           new CustomEvent("dokunc:focus-comment-thread", { detail: { id } }),
         );
         return false;
+      },
+      handlePaste(view, event) {
+        if (!editable) return false;
+
+        // Bild aus der Zwischenablage (Screenshot) direkt hochladen.
+        const files = imageFilesFrom(event.clipboardData);
+        if (files.length > 0) {
+          event.preventDefault();
+          void insertUploadedImages(
+            view,
+            files,
+            view.state.selection.from,
+            spaceId,
+            onUploadError,
+          );
+          return true;
+        }
+
+        // Markdown als echte Blöcke einfügen. Nur wenn die
+        // Zwischenablage kein HTML mitbringt: dann kommt der Inhalt aus
+        // einer formatierten Quelle und ProseMirror kann ihn selbst.
+        const html = event.clipboardData?.getData("text/html");
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        if (!html && looksLikeMarkdown(text)) {
+          event.preventDefault();
+          insertHtmlAtSelection(view, markdownToHtml(text));
+          return true;
+        }
+        return false;
+      },
+      // Bild aus dem Dateimanager an die Stelle ziehen, auf die man zeigt.
+      handleDrop(view, event, _slice, moved) {
+        // `moved` heisst: der Block wird innerhalb des Dokuments
+        // verschoben — das darf ProseMirror selbst erledigen.
+        if (moved || !editable) return false;
+        const files = imageFilesFrom(event.dataTransfer);
+        if (files.length === 0) return false;
+        event.preventDefault();
+        const at =
+          view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos ??
+          view.state.selection.from;
+        void insertUploadedImages(view, files, at, spaceId, onUploadError);
+        return true;
       },
     },
   });

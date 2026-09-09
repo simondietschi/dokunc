@@ -1,6 +1,5 @@
 import StarterKit from "@tiptap/starter-kit";
 import Highlight from "@tiptap/extension-highlight";
-import Image from "@tiptap/extension-image";
 import TextAlign from "@tiptap/extension-text-align";
 import Youtube from "@tiptap/extension-youtube";
 import { Table } from "@tiptap/extension-table";
@@ -10,6 +9,8 @@ import { TableCell } from "@tiptap/extension-table-cell";
 import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { Callout } from "./callout";
+import { codeBlockExtension } from "./code-block";
+import { RichImage } from "./image";
 import { Mermaid } from "./mermaid";
 import { WikiLink } from "./wiki-link";
 import { Mention } from "./mention";
@@ -26,6 +27,8 @@ export const COLLAB_FIELD = "default";
  */
 export type NodeViewFactories = {
   callout?: () => unknown;
+  codeBlock?: () => unknown;
+  image?: () => unknown;
   mermaid?: () => unknown;
   wikiLink?: () => unknown;
   mention?: () => unknown;
@@ -40,6 +43,8 @@ export type NodeViewFactories = {
  *
  * `undoRedo` ist aus, weil Yjs den Undo-Stack bei Kollaboration führt.
  * Link/Underline sind bereits Teil von StarterKit v3.
+ * `codeBlock` ist aus, weil die Variante mit Syntax-Highlighting
+ * denselben Node-Namen belegt.
  */
 export function richExtensions(views: NodeViewFactories = {}) {
   const callout = views.callout
@@ -60,13 +65,18 @@ export function richExtensions(views: NodeViewFactories = {}) {
   const drawio = views.drawio
     ? Drawio.extend({ addNodeView: views.drawio as never })
     : Drawio;
+  const image = views.image
+    ? RichImage.extend({ addNodeView: views.image as never })
+    : RichImage;
   return [
     StarterKit.configure({
       undoRedo: false,
+      codeBlock: false,
       link: { openOnClick: false, autolink: true },
     }),
+    codeBlockExtension(views.codeBlock),
     Highlight.configure({ multicolor: true }),
-    Image.configure({ inline: false }),
+    image.configure({ inline: false }),
     TextAlign.configure({ types: ["heading", "paragraph"] }),
     Youtube.configure({ controls: true, nocookie: true, width: 640, height: 360 }),
     Table.configure({ resizable: true }),
@@ -132,4 +142,7 @@ export { Mention } from "./mention";
 export { CommentMark } from "./comment-mark";
 export { chunkText } from "./text";
 export { Excalidraw, toBase64 } from "./excalidraw";
+export { lowlight, CODE_LANGUAGES, codeBlockExtension } from "./code-block";
+export { RichImage, IMAGE_WIDTHS } from "./image";
+export type { ImageWidth } from "./image";
 export { Drawio } from "./drawio";

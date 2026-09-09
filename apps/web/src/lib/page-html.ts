@@ -4,11 +4,26 @@ import { richExtensions } from "@dokunc/editor";
 
 const extensions = richExtensions();
 
+/**
+ * Hängt hinter jedes eingebettete iframe seine Quelle als sichtbaren
+ * Link. Im Druck und im PDF rendert kein iframe; ohne diesen Zusatz
+ * verschwand ein eingebettetes Video dort spurlos.
+ */
+function annotateEmbeds(html: string): string {
+  return html.replace(
+    /<iframe\b[^>]*\bsrc="([^"]+)"[^>]*>\s*<\/iframe>/g,
+    (match, src: string) =>
+      `${match}<a class="dk-embed-url" href="${src}">${src}</a>`,
+  );
+}
+
 /** ProseMirror-JSON -> HTML über das geteilte Editor-Schema. */
 export function contentToHtml(content: unknown): string {
   if (!content || typeof content !== "object") return "";
   try {
-    return generateHTML(content as Record<string, unknown>, extensions);
+    return annotateEmbeds(
+      generateHTML(content as Record<string, unknown>, extensions),
+    );
   } catch {
     return "";
   }
@@ -76,8 +91,20 @@ export function pageToPrintHtml(opts: {
   .dk-diagram-img { display: block; margin: 0 auto; max-width: 100%; }
   pre[data-mermaid] { background: #f8fafc; }
   hr { border: none; border-top: 1px solid #d1d5db; margin: 1.2em 0; }
-  iframe { display: none; }
-  @media print { body { padding: 0; } }
+  /* Eingebettete Videos: am Bildschirm spielbar, im Druck als Link. */
+  iframe { width: 100%; aspect-ratio: 16 / 9; border: 1px solid #e5e7eb; border-radius: 8px; }
+  .dk-embed-url { display: none; font-size: 9pt; word-break: break-all; }
+  figure.dk-figure { margin: 1em 0; text-align: center; page-break-inside: avoid; }
+  figure.dk-figure figcaption { font-size: 9pt; color: #6b7280; margin-top: 6px; }
+  figure.dk-figure[data-width="small"] img { max-width: 40%; }
+  figure.dk-figure[data-width="medium"] img { max-width: 70%; }
+  img[data-width="small"] { max-width: 40%; }
+  img[data-width="medium"] { max-width: 70%; }
+  @media print {
+    body { padding: 0; }
+    iframe { display: none; }
+    .dk-embed-url { display: block; color: #4f46e5; }
+  }
 </style>
 </head>
 <body>

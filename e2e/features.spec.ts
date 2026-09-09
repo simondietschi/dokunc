@@ -313,3 +313,42 @@ test("Collab-Ticket nur für eigene Seiten", async ({ page, baseURL }) => {
   });
   expect(anonymous.status()).toBe(401);
 });
+
+test("Code-Block hebt hervor, Tabelle laesst sich bearbeiten", async ({
+  page,
+}) => {
+  await login(page);
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**/p/**");
+  await waitForLive(page);
+
+  const editor = page.locator(".ProseMirror");
+  await editor.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+
+  // Code-Block per Slash-Menue, dann Sprache waehlen.
+  await page.keyboard.type("/code");
+  await page.locator(".shadow-pop button", { hasText: "Codeblock" }).click();
+  await page.keyboard.type("const x = 1;");
+  const codeBlock = page.locator(".dk-code-wrap").last();
+  await expect(codeBlock).toBeVisible({ timeout: 8000 });
+  await codeBlock.locator("select").selectOption("javascript");
+  // lowlight faerbt erst nach der Sprachwahl.
+  await expect(codeBlock.locator(".hljs-keyword").first()).toBeVisible({
+    timeout: 8000,
+  });
+
+  // Tabelle einfuegen und eine Zeile ergaenzen.
+  await editor.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.click('button[title="Tabelle einfügen"]');
+  const rows = page.locator(".ProseMirror table tr");
+  await expect(rows).toHaveCount(3, { timeout: 8000 });
+
+  await page.click('button[title="Tabelle bearbeiten"]');
+  await page.getByRole("menuitem", { name: "Zeile darunter" }).click();
+  await expect(rows).toHaveCount(4, { timeout: 8000 });
+});

@@ -25,6 +25,7 @@ import {
   Shapes,
   Network,
   MonitorPlay as YoutubeIcon,
+  FileDown,
 } from "lucide-react";
 import { SlashMenu, type SlashMenuHandle, type SlashItem } from "./SlashMenu";
 
@@ -48,6 +49,7 @@ export type PromptRequest = {
 
 export type SlashOptions = {
   onImage: (editor: Editor, range: Range) => void;
+  onMarkdownImport: (editor: Editor, range: Range) => void;
   onPrompt: (request: PromptRequest) => void;
 };
 
@@ -64,6 +66,7 @@ function defs(opts: SlashOptions): Def[] {
     { title: "Nummerierte Liste", subtitle: "Geordnete Liste", icon: ListOrdered, keywords: "ordered nummer ol liste", run: (e, r) => chain(e, r).toggleOrderedList().run() },
     { title: "Zitat", subtitle: "Zitatblock", icon: Quote, keywords: "quote zitat blockquote", run: (e, r) => chain(e, r).toggleBlockquote().run() },
     { title: "Codeblock", subtitle: "Formatierter Code", icon: Code2, keywords: "code pre block", run: (e, r) => chain(e, r).toggleCodeBlock().run() },
+    { title: "Markdown importieren", subtitle: "Datei als Blöcke einfügen", icon: FileDown, keywords: "markdown md import datei", run: opts.onMarkdownImport },
     { title: "Trennlinie", subtitle: "Horizontaler Strich", icon: Minus, keywords: "hr divider trennlinie linie", run: (e, r) => chain(e, r).setHorizontalRule().run() },
     { title: "Tabelle", subtitle: "3×3 mit Kopfzeile", icon: TableIcon, keywords: "table tabelle grid", run: (e, r) => chain(e, r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
     { title: "Bild", subtitle: "Datei hochladen", icon: ImageIcon, keywords: "image bild foto upload", run: (e, r) => opts.onImage(e, r) },

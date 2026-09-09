@@ -19,7 +19,6 @@ import {
   Minus,
   Highlighter,
   Link2,
-  Table as TableIcon,
   MessageSquarePlus,
   Undo2,
   Redo2,
@@ -31,6 +30,7 @@ import {
   EditorSeparator,
 } from "@/components/editor/EditorButton";
 import { startCommentThread } from "@/components/editor/comment-thread";
+import { TableTools } from "@/components/editor/TableMenu";
 import type { PromptRequest } from "@/components/editor/SlashCommands";
 
 const HIGHLIGHTS: { label: string; color: string }[] = [
@@ -211,9 +211,7 @@ export function EditorToolbar({
         <Code2 className="h-4 w-4" />
       </EditorButton>
       <EditorSeparator />
-      <EditorButton label="Tabelle einfügen" on={() => c().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}>
-        <TableIcon className="h-4 w-4" />
-      </EditorButton>
+      <TableTools editor={editor} />
       <EditorButton label="Trennlinie" on={() => c().setHorizontalRule().run()}>
         <Minus className="h-4 w-4" />
       </EditorButton>
