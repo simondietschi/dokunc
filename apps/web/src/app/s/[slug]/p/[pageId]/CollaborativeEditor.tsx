@@ -24,7 +24,6 @@ import {
   History,
   FileText,
   AtSign,
-  LayoutTemplate,
   Bell,
   BellOff,
 } from "lucide-react";
@@ -43,7 +42,7 @@ import {
 } from "./AccessDialog";
 import { ToggleView } from "@/components/editor/ToggleView";
 import { WordCount } from "@/components/editor/WordCount";
-import { PageActions, MenuItem } from "@/components/space/PageActions";
+import { PageActions } from "@/components/space/PageActions";
 import { Breadcrumbs, type Crumb } from "@/components/space/Breadcrumbs";
 import {
   MovePageDialog,
@@ -81,7 +80,6 @@ import {
   renamePageAction,
   setPageCoverAction,
   setPageIconAction,
-  toggleTemplateAction,
 } from "../../actions";
 
 /**
@@ -831,18 +829,6 @@ export function CollaborativeEditor({
                     isTemplate={isTemplate}
                     hasChildren={hasChildren}
                   />
-                  <form action={toggleTemplateAction}>
-                    <input type="hidden" name="slug" value={slug} />
-                    <input type="hidden" name="pageId" value={pageId} />
-                    <MenuItem
-                      type="submit"
-                      icon={<LayoutTemplate className="h-4 w-4" />}
-                    >
-                      {isTemplate
-                        ? "Vorlagen-Markierung entfernen"
-                        : "Als Vorlage markieren"}
-                    </MenuItem>
-                  </form>
                 </>
               )}
             </PageActions>

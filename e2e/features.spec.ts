@@ -390,7 +390,13 @@ test("Code-Block hebt hervor, Tabelle laesst sich bearbeiten", async ({
   await expect(rows).toHaveCount(4, { timeout: 8000 });
 });
 
-test("Seitensymbol, Anhang und Vorlage", async ({ page }) => {
+/**
+ * Nur noch das Seitensymbol. Der frueher hier gepruefte Schalter "Als
+ * Vorlage markieren" ist entfallen: eine Vorlage ist ein eigenes Objekt,
+ * das ueber "Als Vorlage speichern" entsteht, und nicht eine Seite, die
+ * ihre Rolle wechselt. Diesen Weg deckt stage1-templates.spec.ts ab.
+ */
+test("Seitensymbol setzen", async ({ page }) => {
   await login(page);
   await page.goto("/spaces");
   await page.locator('a[href^="/s/"]').first().click();
@@ -404,22 +410,6 @@ test("Seitensymbol, Anhang und Vorlage", async ({ page }) => {
   await expect(
     page.getByRole("button", { name: "Symbol ändern" }),
   ).toContainText("⚠️", { timeout: 8000 });
-
-  // Als Vorlage markieren -> die Auswahl beim Anlegen taucht auf.
-  // Nach dem Neuladen geprueft, damit der Test nicht an der Laufzeit
-  // der Layout-Revalidierung haengt.
-  await page.click('button[title="Als Vorlage markieren"]');
-  await page.reload();
-  await expect(
-    page.getByRole("button", { name: "Aus Vorlage anlegen" }),
-  ).toBeVisible({ timeout: 15_000 });
-
-  // Wieder zuruecknehmen, damit spaetere Laeufe sauber starten.
-  await page.click('button[title="Vorlagen-Markierung entfernen"]');
-  await page.reload();
-  await expect(
-    page.getByRole("button", { name: "Aus Vorlage anlegen" }),
-  ).toBeHidden({ timeout: 15_000 });
 });
 
 test("Angemeldete Geraete: einzelne Sitzung beenden", async ({ page }) => {

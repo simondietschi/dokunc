@@ -1,5 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-import { resetLoginRateLimit } from "./helpers";
+import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E für Seitenvorlagen und Duplizieren: Seite anlegen, duplizieren,
@@ -135,9 +135,7 @@ test("Seite duplizieren, als Vorlage speichern, Seite aus Vorlage", async ({
   const copyId = pageIdFromUrl(page);
   const copyTitle = `${title} (Kopie)`;
   await expect(page.locator('input[name="title"]')).toHaveValue(copyTitle);
-  await expect(
-    page.locator("aside").getByText(copyTitle, { exact: true }),
-  ).toBeVisible();
+  await expect(pageTree(page).getByText(copyTitle, { exact: true })).toBeVisible();
   await waitForLive(page);
   await expect(page.locator(".ProseMirror")).toContainText(marker, {
     timeout: 15_000,
@@ -158,9 +156,7 @@ test("Seite duplizieren, als Vorlage speichern, Seite aus Vorlage", async ({
   ).toBeVisible();
   await expect(page.locator('input[name="title"]')).toHaveValue(copyTitle);
   // Vorlagen erscheinen nicht im Seitenbaum (nur die zwei echten Seiten).
-  await expect(
-    page.locator("aside").getByText(copyTitle, { exact: true }),
-  ).toHaveCount(1);
+  await expect(pageTree(page).getByText(copyTitle, { exact: true })).toHaveCount(1);
 
   await page.goto(`/s/${slug}/templates`);
   const main = page.locator("main");

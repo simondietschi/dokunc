@@ -72,7 +72,7 @@ function defs(opts: SlashOptions): Def[] {
     { title: "Zitat", subtitle: "Zitatblock", icon: Quote, keywords: "quote zitat blockquote", run: (e, r) => chain(e, r).toggleBlockquote().run() },
     { title: "Codeblock", subtitle: "Formatierter Code", icon: Code2, keywords: "code pre block", run: (e, r) => chain(e, r).toggleCodeBlock().run() },
     { title: "Markdown importieren", subtitle: "Datei als Blöcke einfügen", icon: FileDown, keywords: "markdown md import datei", run: opts.onMarkdownImport },
-    { title: "Datei anhängen", subtitle: "Beliebige Datei bis 25 MB", icon: Paperclip, keywords: "datei file anhang attachment upload pdf dokument", run: opts.onAttachment },
+    { title: "Datei", subtitle: "Anhang hochladen", icon: Paperclip, keywords: "datei file anhang attachment upload pdf dokument", run: opts.onAttachment },
     { title: "Trennlinie", subtitle: "Horizontaler Strich", icon: Minus, keywords: "hr divider trennlinie linie", run: (e, r) => chain(e, r).setHorizontalRule().run() },
     { title: "Tabelle", subtitle: "3×3 mit Kopfzeile", icon: TableIcon, keywords: "table tabelle grid", run: (e, r) => chain(e, r).insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run() },
     { title: "Bild", subtitle: "Datei hochladen", icon: ImageIcon, keywords: "image bild foto upload", run: (e, r) => opts.onImage(e, r) },

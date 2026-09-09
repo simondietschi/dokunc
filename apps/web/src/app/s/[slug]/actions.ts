@@ -127,27 +127,6 @@ export async function setPageCoverAction(form: FormData) {
   revalidatePath(`/s/${space.slug}/p/${str(form, "pageId")}`);
 }
 
-/** Seite als Vorlage markieren oder die Markierung entfernen. */
-export async function toggleTemplateAction(form: FormData) {
-  const access = await authorizeAction(form, "managePages");
-  const { space } = access;
-  const page = await prisma.page.findFirst({
-    where: {
-      id: str(form, "pageId"),
-      ...visiblePageWhere(access.user.id, access.role),
-      spaceId: space.id,
-      deletedAt: null,
-    },
-    select: { id: true, isTemplate: true },
-  });
-  if (!page) throw new Error("Seite gehört nicht zu diesem Space");
-  await prisma.page.update({
-    where: { id: page.id },
-    data: { isTemplate: !page.isTemplate },
-  });
-  revalidatePath(`/s/${space.slug}`, "layout");
-}
-
 export async function renamePageAction(form: FormData) {
   const access = await authorizeAction(form, "write");
   const { space } = access;
