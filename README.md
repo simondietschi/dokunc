@@ -8,6 +8,8 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 ## Features
 
 - Auth & Benutzer (Invite-only-Registrierung, erste Person = Admin)
+- **Single Sign-on** über OIDC (Authorization Code mit PKCE), optional
+  zuschaltbar; die Anmeldung mit Passwort bleibt immer bestehen
 - Spaces mit Rollen/Berechtigungen (OWNER/ADMIN/MEMBER/VIEWER)
 - **Gruppen**: Personengruppen im Admin-Bereich, pro Space mit eigener
   Rolle; es gilt immer die stärkste Rolle
@@ -151,12 +153,31 @@ Kurz, was die App bewusst tut:
 - **Rate-Limits** pro Konto und pro IP. Die IP stammt aus
   `X-Forwarded-For`, ausgewertet gemäss `TRUSTED_PROXY_HOPS` — hinter dem
   mitgelieferten Caddy setzt der Proxy den Header selbst.
+- **Single Sign-on** mit PKCE, `state` und `nonce`; das ID-Token wird
+  gegen die JWKS des Anbieters, den Aussteller und den Empfänger
+  geprüft. Verknüpft wird über den Subject-Claim; eine E-Mail-Adresse
+  übernimmt ein bestehendes Konto nur, wenn der Anbieter sie als
+  bestätigt meldet, und nie bei einem Konto mit Verwaltungsrechten
+  (`OIDC_AUTO_LINK_BY_EMAIL=false` schaltet die Verknüpfung ganz ab).
+  Neue Konten entstehen nur mit `OIDC_ALLOW_SIGNUP=true` — sonst bleibt
+  es bei Einladungen. Der zweite Faktor gilt auch bei SSO.
+- **Token-Trennung**: Sitzung, Collab-Ticket, Zwei-Faktor-Zwischenschritt
+  und SSO-Fluss tragen dieselbe Signatur, aber je eine eigene Audience,
+  die beim Prüfen verlangt wird. Ein abgegriffenes Collab-Ticket ist
+  damit keine Sitzung.
 - **Zwei-Faktor-Anmeldung** nach RFC 6238, pro Konto zuschaltbar. Das
   Geheimnis liegt mit AES-256-GCM verschlüsselt in der Datenbank (Schlüssel
   aus `APP_SECRET`), Wiederherstellungscodes nur als SHA-256-Hash und jeder
   genau einmal gültig. Zwischen Passwort und Code steht ein eigenes,
   fünf Minuten gültiges Cookie — kein Sitzungscookie.
 - **Audit-Log** für Anmeldungen, Rollenwechsel, Einladungen und Löschungen.
+
+Bekannte Grenze: Hochgeladene Dateien hängen am Space, nicht an einer
+Seite (`Upload.spaceId`). Ein Bild oder Anhang aus einer geschützten
+Seite bleibt deshalb für jedes Space-Mitglied abrufbar, das die exakte
+URL kennt — die Dateinamen sind zufällig, aber sie stehen in Exporten
+und in Proxy-Logs. Wer das ausschliessen muss, sollte geschützte Seiten
+vorerst ohne Anhänge führen.
 
 ## Projektstruktur
 

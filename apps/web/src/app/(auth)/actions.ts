@@ -43,6 +43,14 @@ const LOGIN_ATTEMPTS = 8;
 const LOGIN_WINDOW_SEC = 900;
 
 /**
+ * Vergleichswert für Anmeldungen ohne Konto — ein bcrypt-Hash mit
+ * demselben Aufwand wie ein echter. Der Klartext dazu ist niemandem
+ * bekannt und wird nirgends gebraucht.
+ */
+const DUMMY_HASH =
+  "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+
+/**
  * Bremse pro IP. Bewusst grosszügiger als die pro Konto: hinter einer
  * Firmen-NAT teilen sich viele Menschen eine Adresse, und die präzise
  * Bremse ist inzwischen die pro Konto. Diese hier fängt nur das breite
@@ -182,10 +190,18 @@ export async function loginAction(
   }
 
   const user = await prisma.user.findUnique({ where: { email } });
-  if (
-    !user ||
-    !(await bcrypt.compare(parsed.data.password, user.passwordHash))
-  ) {
+  /**
+   * Auch ohne Konto wird gehasht.
+   *
+   * Sonst kostet ein Fehlversuch gegen eine bekannte Adresse den vollen
+   * bcrypt-Aufwand und gegen eine unbekannte fast nichts — der
+   * Unterschied ist messbar und verrät, welche Konten es gibt. Die
+   * Fehlermeldung ist längst generisch; die Laufzeit muss es auch sein.
+   */
+  const passwordOk = user
+    ? await bcrypt.compare(parsed.data.password, user.passwordHash)
+    : await bcrypt.compare(parsed.data.password, DUMMY_HASH).then(() => false);
+  if (!user || !passwordOk) {
     await audit({
       action: "auth.login_failed",
       actorId: user?.id ?? null,

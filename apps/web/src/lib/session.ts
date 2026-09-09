@@ -18,6 +18,19 @@ function secret(): Uint8Array {
 const COOKIE = "dokunc_session";
 const EXPIRES = process.env.JWT_EXPIRES_IN ?? "7d";
 
+/**
+ * Eigene Audience für das Sitzungs-Token.
+ *
+ * Vier Token dieser App sind mit demselben APP_SECRET signiert: die
+ * Sitzung, das Collab-Ticket, der Zwischenschritt der
+ * Zwei-Faktor-Anmeldung und der SSO-Fluss. Ohne Prüfung der Audience
+ * liesse sich jedes davon als Sitzungscookie einsetzen — ein
+ * abgegriffenes Collab-Ticket, das per Konstruktion im Browser-JS
+ * liegt, wäre damit eine Vollsitzung geworden. Genau das soll das
+ * Ticket verhindern.
+ */
+const AUDIENCE = "dokunc-session";
+
 /** Laufzeit in Sekunden — dieselbe Quelle für JWT und Cookie. */
 export function sessionMaxAgeSeconds(): number {
   return parseDurationSeconds(EXPIRES, 60 * 60 * 24 * 7);
@@ -55,6 +68,7 @@ export async function createSession(
   const token = await new SignJWT({ tv: tokenVersion, sid: session.id })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
+    .setAudience(AUDIENCE)
     .setIssuedAt()
     .setExpirationTime(EXPIRES)
     .sign(secret());
@@ -92,12 +106,19 @@ export async function getSessionClaims(): Promise<SessionClaims | null> {
   const token = store.get(COOKIE)?.value;
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, secret());
-    if (!payload.sub) return null;
+    const { payload } = await jwtVerify(token, secret(), {
+      audience: AUDIENCE,
+    });
+    // Ohne Sitzungs-ID ist es kein Sitzungs-Token. Die Prüfung steht
+    // hier und nicht erst in `getCurrentUser`, damit `getUserId` nicht
+    // schwächer prüft als der Rest.
+    if (!payload.sub || typeof payload.sid !== "string" || !payload.sid) {
+      return null;
+    }
     return {
       sub: payload.sub,
       tv: Number(payload.tv ?? 0),
-      sid: String(payload.sid ?? ""),
+      sid: payload.sid,
     };
   } catch {
     return null;

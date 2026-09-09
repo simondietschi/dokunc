@@ -32,18 +32,28 @@ export async function GET(
   const q = (url.searchParams.get("q") ?? "").trim();
 
   if (kind === "members") {
-    const members = await prisma.spaceMember.findMany({
+    // Zugang direkt oder über eine Gruppe. Der Collab-Server behandelt
+    // Gruppenmitglieder als erwähnbar; tauchten sie hier nicht auf,
+    // widersprächen sich die beiden Hälften.
+    const people = await prisma.user.findMany({
       where: {
-        spaceId,
-        user: q
-          ? { name: { contains: q, mode: "insensitive" }, isActive: true }
-          : { isActive: true },
+        isActive: true,
+        ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
+        OR: [
+          { memberships: { some: { spaceId } } },
+          {
+            groupMemberships: {
+              some: { group: { spaces: { some: { spaceId } } } },
+            },
+          },
+        ],
       },
-      select: { user: { select: { id: true, name: true } } },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
       take: 8,
     });
     return NextResponse.json({
-      items: members.map((m) => ({ id: m.user.id, label: m.user.name })),
+      items: people.map((p) => ({ id: p.id, label: p.name })),
     });
   }
 

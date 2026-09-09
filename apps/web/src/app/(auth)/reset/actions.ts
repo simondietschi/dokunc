@@ -18,6 +18,16 @@ export type ResetState = { error?: string; sent?: boolean } | undefined;
 
 const RESET_TTL_MS = 60 * 60 * 1000;
 
+/**
+ * Bremse pro Adresse, zusätzlich zur Bremse pro IP.
+ *
+ * Ohne sie liesse sich ein Postfach aus einem kleinen Adresspool mit
+ * Reset-Mails fluten, und jede Anfrage erzeugte einen weiteren
+ * gleichzeitig gültigen Link.
+ */
+const RESET_ACCOUNT_ATTEMPTS = 3;
+const RESET_ACCOUNT_WINDOW_SEC = 3600;
+
 export async function requestResetAction(
   _prev: ResetState,
   form: FormData,
@@ -31,8 +41,22 @@ export async function requestResetAction(
   }
 
   const user = await prisma.user.findUnique({ where: { email } });
-  // Existenz nie preisgeben — immer generische Bestätigung.
-  if (user) {
+  // Existenz nie preisgeben — immer generische Bestätigung. Die Bremse
+  // pro Konto läuft deshalb innerhalb dieses Zweigs.
+  if (
+    user &&
+    (await rateLimit(
+      `reset:account:${email}`,
+      RESET_ACCOUNT_ATTEMPTS,
+      RESET_ACCOUNT_WINDOW_SEC,
+    ))
+  ) {
+    // Ein neuer Link entwertet den vorherigen: sonst sammelten sich
+    // gleichzeitig gültige Zugänge zu demselben Konto an.
+    await prisma.passwordResetToken.updateMany({
+      where: { userId: user.id, usedAt: null },
+      data: { usedAt: new Date() },
+    });
     const { token, tokenHash } = generateInviteToken();
     const reset = await prisma.passwordResetToken.create({
       data: {
@@ -73,7 +97,17 @@ export async function performResetAction(
     reset.expiresAt.getTime() < Date.now() ||
     !verifyToken(token, reset.tokenHash)
   ) {
+    // Auch der Fehlschlag hinterlässt eine Spur: sonst bliebe ein
+    // Durchprobieren völlig unsichtbar.
+    await audit({
+      action: "auth.login_failed",
+      actorId: reset?.userId ?? null,
+      metadata: { reason: "bad_reset_token" },
+    });
     return { error: "Link ungültig oder abgelaufen." };
+  }
+  if (!(await rateLimit(await clientKey("reset-redeem"), 10, 900))) {
+    return { error: "Zu viele Versuche. Bitte später erneut." };
   }
 
   await prisma.$transaction([
@@ -92,6 +126,13 @@ export async function performResetAction(
     prisma.passwordResetToken.updateMany({
       where: { userId: reset.userId, usedAt: null },
       data: { usedAt: new Date() },
+    }),
+    // Die erhöhte Token-Version entwertet alle Anmeldungen ohnehin;
+    // damit die Geräteliste im Konto nicht weiter aktive Sitzungen
+    // zeigt, werden sie auch dort als beendet vermerkt.
+    prisma.session.updateMany({
+      where: { userId: reset.userId, revokedAt: null },
+      data: { revokedAt: new Date() },
     }),
   ]);
   await audit({ action: "auth.password_reset", actorId: reset.userId });

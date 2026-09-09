@@ -39,6 +39,16 @@ services:
       NODE_ENV: production
       # Genau ein eigener Proxy (Caddy) steht davor.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      # Anzeigename der Instanz (Aussteller im Authenticator)
+      APP_NAME: ${APP_NAME:-dokunc}
+      # Single Sign-on (OIDC) — optional, ohne OIDC_ISSUER abgeschaltet
+      OIDC_ISSUER: ${OIDC_ISSUER:-}
+      OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-}
+      OIDC_SCOPES: ${OIDC_SCOPES:-openid email profile}
+      OIDC_BUTTON_LABEL: ${OIDC_BUTTON_LABEL:-Single Sign-on}
+      OIDC_ALLOW_SIGNUP: ${OIDC_ALLOW_SIGNUP:-false}
+      OIDC_AUTO_LINK_BY_EMAIL: ${OIDC_AUTO_LINK_BY_EMAIL:-true}
       # E-Mail (Einladungen) — optional, ohne SMTP_HOST nur Log-Fallback
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}

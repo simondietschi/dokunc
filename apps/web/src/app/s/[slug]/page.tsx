@@ -3,6 +3,7 @@ import { FileText, Plus, Slash, Link2, AtSign } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
+import { visiblePageWhere } from "@/lib/page-access";
 import { Button } from "@/components/ui/Button";
 import { createPageAction } from "./actions";
 
@@ -25,10 +26,17 @@ export default async function SpaceIndex({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { space, role } = await loadSpace(slug);
+  const { space, role, user } = await loadSpace(slug);
 
+  // Die erste SICHTBARE Wurzelseite: ist die erste geschützt, landete
+  // man sonst auf einer 404 und der Space wirkte kaputt.
   const first = await prisma.page.findFirst({
-    where: { spaceId: space.id, parentId: null, deletedAt: null },
+    where: {
+      spaceId: space.id,
+      parentId: null,
+      deletedAt: null,
+      ...visiblePageWhere(user.id, role),
+    },
     orderBy: { position: "asc" },
     select: { id: true },
   });

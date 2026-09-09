@@ -15,6 +15,7 @@ export type AuditAction =
   | "auth.password_changed"
   | "auth.password_reset"
   | "auth.sessions_revoked"
+  | "auth.sso_linked"
   | "auth.totp_enabled"
   | "auth.totp_disabled"
   | "auth.recovery_codes_renewed"
@@ -98,6 +99,7 @@ export const AUDIT_LABELS: Record<AuditAction, string> = {
   "auth.password_changed": "Passwort geändert",
   "auth.password_reset": "Passwort zurückgesetzt",
   "auth.sessions_revoked": "Überall abgemeldet",
+  "auth.sso_linked": "Konto mit SSO verknüpft",
   "auth.totp_enabled": "Zwei-Faktor aktiviert",
   "auth.totp_disabled": "Zwei-Faktor deaktiviert",
   "auth.recovery_codes_renewed": "Wiederherstellungscodes erneuert",

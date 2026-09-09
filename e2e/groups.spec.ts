@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { clearRateLimits } from "./limits";
+import { reloadUntil } from "./wait";
 
 /**
  * E2E für Gruppen und geschützte Seiten.
@@ -29,28 +30,6 @@ async function login(page: Page) {
   await page.fill('input[name="password"]', PASS);
   await page.click('button[type="submit"]');
   await page.waitForURL("**/spaces");
-}
-
-/**
- * Lädt neu, bis die Bedingung zutrifft.
- *
- * Server-Actions brauchen unter voller Suite-Last spürbar länger als
- * ein einzelnes `reload()` abwartet; geprüft wird ohnehin die
- * Persistenz und nicht die Aktualisierung der laufenden Ansicht.
- */
-async function reloadUntil(
-  page: Page,
-  check: () => Promise<number>,
-): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        await page.reload();
-        return check();
-      },
-      { timeout: 45_000 },
-    )
-    .toBeGreaterThan(0);
 }
 
 async function openFirstSpace(page: Page): Promise<string> {
@@ -125,10 +104,10 @@ test("Gruppe in einen Space aufnehmen", async ({ page }) => {
   // Anlauf startet sonst mit dem Ergebnis des ersten.
   for (const role of ["VIEWER", "MEMBER"] as const) {
     await row().getByLabel("Rolle der Gruppe").selectOption(role);
-    await reloadUntil(page, async () =>
-      (await row().getByLabel("Rolle der Gruppe").inputValue()) === role
-        ? 1
-        : 0,
+    await reloadUntil(
+      page,
+      async () =>
+        (await row().getByLabel("Rolle der Gruppe").inputValue()) === role,
     );
   }
 });

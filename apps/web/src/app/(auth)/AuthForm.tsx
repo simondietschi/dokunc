@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useActionState, useState } from "react";
-import { ArrowRight, Loader2, Eye, EyeOff } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, KeyRound, Loader2 } from "lucide-react";
 import { loginAction, registerAction, type ActionState } from "./actions";
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Input";
@@ -42,12 +42,43 @@ function PasswordField({
   );
 }
 
+/** Fehlgeschlagene SSO-Anmeldungen, in Klartext übersetzt. */
+const SSO_ERRORS: Record<string, string> = {
+  disabled: "Single Sign-on ist auf dieser Instanz nicht eingerichtet.",
+  throttled: "Zu viele Anläufe. Bitte kurz warten.",
+  expired: "Der Anmeldevorgang ist abgelaufen. Bitte neu beginnen.",
+  denied: "Der Anbieter hat die Anmeldung abgelehnt.",
+  state: "Der Anmeldevorgang passt nicht zusammen. Bitte neu beginnen.",
+  error: "Die Anmeldung über den Anbieter hat nicht geklappt.",
+  no_email: "Der Anbieter hat keine E-Mail-Adresse mitgeschickt.",
+  unverified:
+    "Der Anbieter meldet die E-Mail-Adresse als unbestätigt. " +
+    "Eine unbestätigte Adresse kann kein Konto übernehmen.",
+  linked_elsewhere:
+    "Zu dieser E-Mail gehört bereits ein anderes SSO-Konto.",
+  no_link:
+    "Diese Instanz verknüpft bestehende Konten nicht automatisch über " +
+    "die E-Mail-Adresse. Bitte die Administration um die Verknüpfung.",
+  admin_link:
+    "Ein Konto mit Verwaltungsrechten wird nicht automatisch verknüpft. " +
+    "Bitte die Administration ansprechen.",
+  inactive: "Dieses Konto ist deaktiviert.",
+  no_account:
+    "Für diese Person gibt es hier kein Konto. Diese Instanz legt " +
+    "keine Konten über SSO an — bitte um eine Einladung bitten.",
+};
+
 export function AuthForm({
   mode,
   next,
+  sso,
+  ssoError,
 }: {
   mode: "login" | "register";
   next?: string;
+  /** Beschriftung der SSO-Schaltfläche, null = nicht eingerichtet. */
+  sso?: string | null;
+  ssoError?: string;
 }) {
   const action = mode === "login" ? loginAction : registerAction;
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
@@ -75,6 +106,37 @@ export function AuthForm({
             : "Nur per Einladung — das erste Konto wird Admin."}
         </p>
       </div>
+
+      {/* Die Meldung steht ausserhalb der Schaltfläche: schlägt die
+          Anmeldung fehl, weil gar kein Anbieter eingerichtet ist, gibt
+          es keine Schaltfläche — die Erklärung braucht es trotzdem. */}
+      {isLogin && ssoError && SSO_ERRORS[ssoError] && (
+        <p
+          style={stagger(1)}
+          className="dk-shake mt-6 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger"
+        >
+          {SSO_ERRORS[ssoError]}
+        </p>
+      )}
+
+      {sso && isLogin && (
+        <div className="mt-6" style={stagger(1)}>
+          <a
+            href={`/api/auth/oidc/start${
+              next ? `?next=${encodeURIComponent(next)}` : ""
+            }`}
+            className="group inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-5 text-[15px] font-medium text-ink transition-colors hover:bg-subtle"
+          >
+            <KeyRound className="h-4 w-4 text-muted" />
+            Weiter mit {sso}
+          </a>
+          <div className="mt-5 flex items-center gap-3 text-[12.5px] text-faint">
+            <span className="h-px flex-1 bg-line" />
+            oder mit E-Mail
+            <span className="h-px flex-1 bg-line" />
+          </div>
+        </div>
+      )}
 
       <form action={formAction} className="mt-8 space-y-4">
         {next && <input type="hidden" name="next" value={next} />}

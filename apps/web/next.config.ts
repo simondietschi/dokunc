@@ -51,7 +51,12 @@ const nextConfig: NextConfig = {
   experimental: {
     serverActions: {
       bodySizeLimit: "5mb",
-      allowedOrigins: ["localhost", ...appUrlHost()],
+      // "localhost" nur in der Entwicklung: in Produktion duerfte
+      // sonst eine lokal laufende Seite Server Actions gegen die
+      // Instanz absetzen.
+      allowedOrigins: isProd
+        ? appUrlHost()
+        : ["localhost", ...appUrlHost()],
     },
   },
   async headers() {

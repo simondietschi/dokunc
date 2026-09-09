@@ -17,16 +17,35 @@ import { CommentsPanel } from "./comments/CommentsPanel";
 export async function generateMetadata({
   params,
 }: {
-  params: Promise<{ pageId: string }>;
+  params: Promise<{ slug: string; pageId: string }>;
 }): Promise<Metadata> {
-  const { pageId } = await params;
-  // Bewusst ohne Space-Prüfung: nur der Titel, und die Seite selbst
-  // autorisiert unmittelbar danach.
-  const page = await prisma.page.findFirst({
-    where: { id: pageId, deletedAt: null },
-    select: { title: true },
-  });
-  return { title: page?.title || "Ohne Titel" };
+  const { slug, pageId } = await params;
+
+  /**
+   * Auch der Titel im Browser-Tab ist eine Auskunft.
+   *
+   * Next löst die Metadaten unabhängig davon auf, ob die Seite selbst
+   * später `notFound()` wirft — ein Titel, der hier ungeprüft entsteht,
+   * bleibt im Dokument stehen. Deshalb dieselbe Hürde wie unten, und
+   * bei Fehlschlag ein fester Fallback statt eines sprechenden.
+   */
+  try {
+    const { space, role, user } = await loadSpace(slug);
+    const page = await prisma.page.findFirst({
+      where: {
+        id: pageId,
+        spaceId: space.id,
+        deletedAt: null,
+        ...visiblePageWhere(user.id, role),
+      },
+      select: { title: true },
+    });
+    return { title: page?.title || "Seite" };
+  } catch {
+    // loadSpace leitet um oder wirft; für die Metadaten genügt der
+    // neutrale Titel.
+    return { title: "Seite" };
+  }
 }
 
 export default async function PageView({

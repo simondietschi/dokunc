@@ -10,6 +10,7 @@ import * as Y from "yjs";
 import {
   canSeePage,
   effectiveSpaceRole,
+  isAtLeast,
   prisma,
   strongestSpaceRole,
   type SpaceRole,
@@ -587,9 +588,44 @@ async function enforceRevocations(): Promise<void> {
 
   const pages = await prisma.page.findMany({
     where: { id: { in: open.map(([pageId]) => pageId) } },
-    select: { id: true, spaceId: true, deletedAt: true },
+    select: { id: true, spaceId: true, deletedAt: true, accessRootId: true },
   });
   const pageById = new Map(pages.map((p) => [p.id, p]));
+
+  /**
+   * Freigaben der geschützten Seiten, die gerade offen sind.
+   *
+   * Wird eine Seite geschützt oder eine Freigabe entzogen, während
+   * jemand darin schreibt, muss diese Runde die Verbindung schliessen.
+   * Die Räumung über den Kontrollkanal greift sofort, diese Prüfung ist
+   * das Netz darunter — und die einzige, die einen entzogenen Eintrag
+   * bemerkt, ohne dass jemand etwas ausgelöst hat.
+   */
+  const roots = [
+    ...new Set(
+      pages.map((p) => p.accessRootId).filter((id): id is string => !!id),
+    ),
+  ];
+  const grantedByRoot = new Map<string, Set<string>>();
+  if (roots.length > 0) {
+    const grants = await prisma.pageGrant.findMany({
+      where: { pageId: { in: roots } },
+      select: {
+        pageId: true,
+        userId: true,
+        group: { select: { members: { select: { userId: true } } } },
+      },
+    });
+    for (const grant of grants) {
+      let allowed = grantedByRoot.get(grant.pageId);
+      if (!allowed) {
+        allowed = new Set<string>();
+        grantedByRoot.set(grant.pageId, allowed);
+      }
+      if (grant.userId) allowed.add(grant.userId);
+      for (const m of grant.group?.members ?? []) allowed.add(m.userId);
+    }
+  }
 
   const userIds = new Set<string>();
   for (const [, doc] of open) {
@@ -675,6 +711,13 @@ async function enforceRevocations(): Promise<void> {
         !user.isActive ||
         user.tokenVersion !== ctx.tokenVersion ||
         !role ||
+        // Geschützte Seite ohne Freigabe: die Space-Verwaltung sieht
+        // weiterhin alles, alle anderen brauchen einen Eintrag.
+        (!!page?.accessRootId &&
+          !isAtLeast(role, "ADMIN") &&
+          !grantedByRoot
+            .get(page.accessRootId)
+            ?.has(ctx.userId as string)) ||
         // Herabstufung auf VIEWER: die Verbindung darf nicht mehr
         // schreiben, also muss sie neu aufgebaut werden.
         (role === "VIEWER") !== connection.readOnly;

@@ -39,7 +39,7 @@ export function TotpForm() {
             required
             autoComplete="one-time-code"
             inputMode={recovery ? "text" : "numeric"}
-            placeholder={recovery ? "abcde-fghij" : "123456"}
+            placeholder={recovery ? "0123456789-abcdef0123" : "123456"}
             aria-label={recovery ? "Wiederherstellungscode" : "Einmalcode"}
             className={
               recovery

@@ -54,7 +54,8 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 ## 4. Datenmodell
 
 - **User** — id, email, name, passwordHash, createdAt; optional
-  `totpSecret` (AES-256-GCM-versiegelt) und `totpEnabledAt`.
+  `totpSecret` (AES-256-GCM-versiegelt) und `totpEnabledAt`; optional
+  `oidcSubject`/`oidcIssuer` für die Verknüpfung mit einem SSO-Anbieter.
 - **TotpRecoveryCode** — userId, SHA-256-Hash, usedAt; ein Code pro Notfall.
 - **Space** — id, name, slug, description.
 - **SpaceMember** — userId, spaceId, role (`OWNER|ADMIN|MEMBER|VIEWER`).
@@ -97,6 +98,12 @@ geschützt ist) und ist null, solange nichts im Weg steht. Angelegt und
 nachgeführt wird das von `refreshAccessRoots` — beim Anlegen unter einem
 Elternteil, beim Umhängen und bei jeder Änderung am Schutz, jeweils als
 eine rekursive SQL-Anweisung über den ganzen Ast.
+
+Nicht abgedeckt: hochgeladene Dateien tragen nur einen Space-Bezug
+(`Upload.spaceId`), keinen Seitenbezug. Die Auslieferung über
+`/api/files` kann die Sichtbarkeit einer Seite deshalb nicht prüfen. Das
+zu schliessen hiesse, `Upload.pageId` einzuführen und beim Hochladen
+mitzugeben — bewusst offen gelassen und im README als Grenze benannt.
 
 Die Regel selbst steht an genau einer Stelle und wird überall
 hineingereicht: als Prisma-Bedingung (`visiblePageWhere`,
@@ -218,7 +225,14 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
       vererbtem Schutz über `Page.accessRootId`, Freigaben an Personen
       und Gruppen; dieselbe Regel in Baum, Suche, Vorschlägen, Export,
       Druck, RAG, Benachrichtigungen, Freigabelinks und im Collab-Server
-- [ ] Ausbaustufen: S3, SSO, vollständige i18n, Prompt→Dialog-UI,
+- [x] Single Sign-on über OIDC: Authorization Code mit PKCE, `state`
+      und `nonce` in einem eigenen kurzlebigen Cookie
+      (Audience `dokunc-oidc`, zehn Minuten, genau einmal gültig);
+      ID-Token gegen JWKS, Aussteller und Empfänger geprüft; Bindung an
+      den Subject-Claim, E-Mail-Verknüpfung nur bei `email_verified`;
+      Kontoanlage nur mit `OIDC_ALLOW_SIGNUP`; der zweite Faktor gilt
+      auch hier, damit er nicht an der Sicherheit des Anbieters hängt
+- [ ] Ausbaustufen: S3, vollständige i18n, Prompt→Dialog-UI,
       pgvector ab ~10k Seiten
 
 ## 7. Setup

@@ -419,6 +419,9 @@ export async function togglePageRestrictionAction(form: FormData) {
     });
   }
   await setPageRestricted(page.id, next, user.id);
+  // Offene Editor-Sitzungen räumen: sonst schriebe und läse jemand
+  // weiter, dem die Seite gerade entzogen wurde.
+  if (next) await evictCollabDocument(page.id);
   await audit({
     action: next ? "page.restricted" : "page.unrestricted",
     actorId: user.id,
@@ -436,6 +439,15 @@ export async function addPageGrantAction(form: FormData) {
   const { space, user } = access;
   const page = await findLivePage(scopeOf(access), str(form, "pageId"));
   if (!page) return;
+
+  // Freigaben gehören auf die geschützte Seite selbst. Auf einer
+  // offenen oder geerbten Seite wären sie unsichtbar wirkungslos — und
+  // würden still wirksam, sobald jemand sie später schützt.
+  const root = await prisma.page.findFirst({
+    where: { id: page.id, isRestricted: true },
+    select: { id: true },
+  });
+  if (!root) return;
 
   const userId = strOrNull(form, "grantUserId");
   const groupId = strOrNull(form, "grantGroupId");
@@ -485,6 +497,8 @@ export async function removePageGrantAction(form: FormData) {
     where: { id: str(form, "grantId"), pageId: page.id },
   });
   if (count > 0) {
+    // Wie beim Schutz selbst: der Entzug muss sofort wirken.
+    await evictCollabDocument(page.id);
     await audit({
       action: "page.access_changed",
       actorId: user.id,

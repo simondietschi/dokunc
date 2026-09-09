@@ -126,13 +126,16 @@ describe("Einrichtung", () => {
     const codes = generateRecoveryCodes(8);
     expect(codes).toHaveLength(8);
     expect(new Set(codes).size).toBe(8);
-    for (const code of codes) expect(code).toMatch(/^[0-9a-f]{5}-[0-9a-f]{5}$/);
+    for (const code of codes) {
+      expect(code).toMatch(/^[0-9a-f]{10}-[0-9a-f]{10}$/);
+    }
   });
 
   it("verzeiht beim Abtippen Gross-, Leer- und Trennzeichen", () => {
     const [code] = generateRecoveryCodes(1);
     const canonical = normalizeRecoveryCode(code);
-    expect(canonical).toMatch(/^[0-9a-f]{10}$/);
+    // Zehn Byte als Hex, ohne Trennzeichen.
+    expect(canonical).toMatch(/^[0-9a-f]{20}$/);
     // Genau diese Varianten entstehen beim Abschreiben vom Zettel.
     expect(normalizeRecoveryCode(code.toUpperCase())).toBe(canonical);
     expect(normalizeRecoveryCode(code.replace("-", " "))).toBe(canonical);

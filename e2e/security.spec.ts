@@ -96,7 +96,9 @@ test("Zwei-Faktor einrichten liefert Geheimnis und Wiederherstellungscodes", asy
     await page.locator("#zwei-faktor ul li").allInnerTexts()
   ).map((t) => t.trim());
   expect(recoveryCodes).toHaveLength(10);
-  for (const c of recoveryCodes) expect(c).toMatch(/^[0-9a-f]{5}-[0-9a-f]{5}$/);
+  for (const c of recoveryCodes) {
+    expect(c).toMatch(/^[0-9a-f]{10}-[0-9a-f]{10}$/);
+  }
 
   // Nach dem Neuladen ist der Faktor aktiv und die Codes sind weg.
   await page.reload();
@@ -180,4 +182,25 @@ test("Zwei-Faktor lässt sich mit dem Passwort abschalten", async ({ page }) => 
   await page.waitForURL("**/login");
   await submitLogin(page);
   await page.waitForURL("**/spaces");
+});
+
+test("ohne eingerichteten Anbieter gibt es kein Single Sign-on", async ({
+  page,
+}) => {
+  // Der Testlauf hat keinen OIDC-Anbieter konfiguriert. Dann darf die
+  // Anmeldeseite nichts anbieten, was ins Leere führt — und der
+  // Einstieg muss sauber zurückweisen statt zu stolpern.
+  await page.goto("/login");
+  await expect(page.getByRole("link", { name: /Weiter mit/ })).toHaveCount(0);
+
+  await page.goto("/api/auth/oidc/start");
+  await page.waitForURL("**/login?sso=disabled");
+  await expect(
+    page.getByText("Single Sign-on ist auf dieser Instanz nicht eingerichtet."),
+  ).toBeVisible();
+
+  // Auch der Rücksprung ohne begonnenen Vorgang landet nicht in der App.
+  await page.goto("/api/auth/oidc/callback?code=erfunden&state=erfunden");
+  await page.waitForURL("**/login?sso=**");
+  await expect(page).not.toHaveURL(/\/spaces/);
 });

@@ -30,6 +30,11 @@ model User {
   /// E-Mail bei Erwaehnungen und Kommentaren (jeweils abschaltbar).
   emailOnMention Boolean @default(true)
   emailOnComment Boolean @default(true)
+  /// Verknuepfung mit einem OIDC-Anbieter. Gebunden wird an den
+  /// Subject-Claim und nicht an die E-Mail: Adressen koennen im
+  /// Verzeichnis neu vergeben werden, das Subject nicht.
+  oidcSubject  String?
+  oidcIssuer   String?
   /// TOTP-Geheimnis, verschluesselt (siehe lib/secret-box).
   totpSecret     String?
   /// Gesetzt, sobald die Einrichtung mit einem gueltigen Code bestaetigt wurde.
@@ -55,6 +60,11 @@ model User {
   recoveryCodes TotpRecoveryCode[]
   groupMemberships GroupMember[]
   pageGrants    PageGrant[]
+
+  /// Das Subject ist nur beim jeweiligen Aussteller eindeutig. Wechselt
+  /// eine Instanz den Anbieter, koennte eine gleich benannte Kennung
+  /// beim neuen Anbieter sonst ein altes Konto uebernehmen.
+  @@unique([oidcIssuer, oidcSubject])
 }
 
 /// Angemeldetes Geraet. Das JWT im Cookie traegt die Session-ID; damit

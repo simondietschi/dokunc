@@ -150,10 +150,17 @@ export function groupSecret(secret: string): string {
   return secret.replace(/(.{4})/g, "$1 ").trim();
 }
 
-/** Wiederherstellungscodes: Klartext für die Anzeige, Hashes für die DB. */
+/**
+ * Wiederherstellungscodes: Klartext für die Anzeige, Hashes für die DB.
+ *
+ * Zehn Byte, also achtzig Bit. Der Code ersetzt den zweiten Faktor
+ * vollständig — er darf nicht schwächer sein als das, wofür er
+ * einspringt, auch wenn die Bremse ein Durchprobieren ohnehin
+ * aussichtslos macht.
+ */
 export function generateRecoveryCodes(count = 10): string[] {
   return Array.from({ length: count }, () =>
-    randomBytes(5).toString("hex").replace(/(.{5})/, "$1-"),
+    randomBytes(10).toString("hex").replace(/(.{10})/, "$1-"),
   );
 }
 

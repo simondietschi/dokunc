@@ -1,5 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 import { clearRateLimits } from "./limits";
+import { reloadUntil } from "./wait";
 
 /**
  * E2E für die "next level"-Features: Wiki-Links + Backlinks,
@@ -452,9 +453,7 @@ test("Seitenkommentar ohne Textstelle", async ({ page }) => {
   await page
     .getByRole("button", { name: "Kommentieren", exact: true })
     .click();
-  await expect(page.getByText("Gilt das noch?")).toBeVisible({
-    timeout: 30_000,
-  });
+  await reloadUntil(page, () => page.getByText("Gilt das noch?").count());
 });
 
 test("Versionsverlauf vergleicht und zeigt eine Vorschau", async ({
@@ -536,16 +535,15 @@ test("Seite folgen und E-Mail-Einstellungen", async ({ page }) => {
     .locator("form", { hasText: "E-Mail-Benachrichtigungen" })
     .getByRole("button", { name: "Speichern" })
     .click();
-  // Grosszuegig: die Rueckmeldung kommt erst, wenn die Server-Action
-  // samt Revalidierung der Kontoseite durch ist, und die traegt unter
-  // voller Suite-Last eine lange Geraeteliste mit.
-  await expect(page.getByText("Einstellungen gespeichert.")).toBeVisible({
-    timeout: 30_000,
-  });
-  await page.reload();
-  await expect(
-    page.getByLabel("Wenn mich jemand mit @ erwähnt"),
-  ).not.toBeChecked();
+  // Gegen die Persistenz geprueft und nicht gegen die Rueckmeldung: die
+  // kommt erst, wenn die Server-Action samt Revalidierung der Kontoseite
+  // durch ist, und die traegt unter voller Suite-Last eine lange
+  // Geraeteliste mit.
+  await reloadUntil(page, async () =>
+    (await page.getByLabel("Wenn mich jemand mit @ erwähnt").isChecked())
+      ? 0
+      : 1,
+  );
 });
 
 test("Favorit setzen erscheint in der Seitenleiste", async ({ page }) => {

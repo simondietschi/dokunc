@@ -17,6 +17,18 @@ function client(): Redis | null {
 const mem = new Map<string, { n: number; reset: number }>();
 
 /**
+ * Der Fallback-Speicher räumt sich nicht von selbst: ohne diesen Schnitt
+ * wüchse die Karte mit jeder je gesehenen Adresse weiter.
+ */
+const MEM_MAX_ENTRIES = 10_000;
+function sweepMem(now: number): void {
+  if (mem.size < MEM_MAX_ENTRIES) return;
+  for (const [key, entry] of mem) {
+    if (entry.reset < now) mem.delete(key);
+  }
+}
+
+/**
  * Fixed-Window-Limiter. Gibt true zurück, wenn die Aktion erlaubt ist.
  * Bei Redis-Ausfall greift ein In-Memory-Fallback (fail-open nur,
  * wenn beides nicht verfügbar ist).
@@ -30,14 +42,28 @@ export async function rateLimit(
   if (r) {
     try {
       const k = `dokunc:rl:${key}`;
-      const n = await r.incr(k);
-      if (n === 1) await r.expire(k, windowSec);
+      /**
+       * Zähler und Ablauf in einem Rutsch, und der Ablauf bei JEDEM
+       * Aufruf.
+       *
+       * Vorher wurde `expire` nur beim ersten Zugriff gesetzt. Brach die
+       * Verbindung genau dazwischen ab, blieb der Schlüssel ohne Ablauf
+       * liegen — und weil `resetLimit` nur nach einer erfolgreichen
+       * Anmeldung läuft, wäre das Konto dauerhaft ausgesperrt gewesen.
+       * `NX` verlängert ein laufendes Fenster nicht.
+       */
+      const [[, n]] = (await r
+        .multi()
+        .incr(k)
+        .expire(k, windowSec, "NX")
+        .exec()) as [[Error | null, number], [Error | null, number]];
       return n <= limit;
     } catch {
       /* fällt auf Memory zurück */
     }
   }
   const now = Date.now();
+  sweepMem(now);
   const entry = mem.get(key);
   if (!entry || entry.reset < now) {
     mem.set(key, { n: 1, reset: now + windowSec * 1000 });
