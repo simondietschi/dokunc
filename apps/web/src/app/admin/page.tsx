@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, Shield, ShieldOff, UserCheck, UserX } from "lucide-react";
+import {
+  ArrowLeft,
+  ScrollText,
+  Shield,
+  ShieldOff,
+  UserCheck,
+  UserX,
+} from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { requireAdmin } from "@/lib/current-user";
 import { Avatar } from "@/components/ui/Avatar";
@@ -46,9 +53,18 @@ export default async function AdminPage() {
         <ArrowLeft className="h-4 w-4" />
         Zurück
       </Link>
-      <h1 className="mt-3 text-2xl font-semibold tracking-tight">
-        Administration
-      </h1>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Administration
+        </h1>
+        <Link
+          href="/admin/audit"
+          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] text-ink transition-colors hover:border-line-strong"
+        >
+          <ScrollText className="h-4 w-4 text-muted" />
+          Audit-Log
+        </Link>
+      </div>
 
       <h2 className="mt-8 text-sm font-semibold text-muted">
         Nutzer ({users.length})

@@ -5,6 +5,7 @@ import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { slugify } from "@/lib/slug";
 import { str } from "@/lib/form";
+import { audit } from "@/lib/audit";
 
 export async function createSpaceAction(formData: FormData) {
   const user = await requireUser();
@@ -39,6 +40,12 @@ export async function createSpaceAction(formData: FormData) {
         },
       },
     },
+  });
+  await audit({
+    action: "space.created",
+    actorId: user.id,
+    spaceId: space.id,
+    metadata: { name, slug: space.slug },
   });
   redirect(`/s/${space.slug}`);
 }

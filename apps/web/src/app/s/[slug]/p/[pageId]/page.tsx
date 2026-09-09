@@ -5,7 +5,6 @@ import { Link2 } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
-import { getRawToken } from "@/lib/session";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
 
@@ -39,7 +38,6 @@ export default async function PageView({
   });
   if (!page) notFound();
 
-  const token = (await getRawToken()) ?? "";
   const collabUrl =
     process.env.NEXT_PUBLIC_COLLAB_URL ?? "ws://localhost:3001";
 
@@ -77,7 +75,6 @@ export default async function PageView({
         spaceId={space.id}
         pageId={page.id}
         title={page.title}
-        token={token}
         collabUrl={collabUrl}
         editable={can(role, "write")}
         canManage={can(role, "managePages")}

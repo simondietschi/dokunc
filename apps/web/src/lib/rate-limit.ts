@@ -1,6 +1,6 @@
 import "server-only";
-import { headers } from "next/headers";
 import { Redis } from "ioredis";
+import { clientIp } from "./client-ip";
 
 let redis: Redis | null | undefined;
 function client(): Redis | null {
@@ -47,12 +47,30 @@ export async function rateLimit(
   return entry.n <= limit;
 }
 
-/** Stabiler Schlüssel aus Client-IP (für anonyme Endpunkte). */
+/**
+ * Setzt einen Zähler zurück (z. B. nach erfolgreicher Anmeldung).
+ * Fehler beim Zurücksetzen sind unkritisch: der Schlüssel läuft ohnehin ab.
+ */
+export async function resetLimit(key: string): Promise<void> {
+  const r = client();
+  if (r) {
+    try {
+      await r.del(`dokunc:rl:${key}`);
+    } catch {
+      /* Fenster läuft von selbst ab */
+    }
+  }
+  mem.delete(key);
+}
+
+/**
+ * Stabiler Schlüssel aus der Client-IP (für anonyme Endpunkte).
+ *
+ * Ist keine vertrauenswürdige IP ableitbar (kein Proxy konfiguriert
+ * oder Header fehlt), fallen alle Anfragen in einen gemeinsamen
+ * Topf. Das begrenzt bewusst konservativ statt auf einen fälschbaren
+ * Header zu vertrauen; siehe TRUSTED_PROXY_HOPS in .env.example.
+ */
 export async function clientKey(prefix: string): Promise<string> {
-  const h = await headers();
-  const ip =
-    h.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    h.get("x-real-ip") ||
-    "unknown";
-  return `${prefix}:${ip}`;
+  return `${prefix}:${(await clientIp()) ?? "unknown"}`;
 }

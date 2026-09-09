@@ -85,7 +85,6 @@ export function MermaidView({ node, updateAttributes, editor }: NodeViewProps) {
       ) : (
         <div
           className="dk-mermaid-render"
-          // eslint-disable-next-line react/no-danger
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       )}

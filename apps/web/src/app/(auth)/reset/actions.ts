@@ -12,6 +12,7 @@ import {
 import { buildResetUrl, sendPasswordResetEmail } from "@/lib/mail";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
+import { audit } from "@/lib/audit";
 
 export type ResetState = { error?: string; sent?: boolean } | undefined;
 
@@ -93,5 +94,6 @@ export async function performResetAction(
       data: { usedAt: new Date() },
     }),
   ]);
+  await audit({ action: "auth.password_reset", actorId: reset.userId });
   redirect("/login");
 }

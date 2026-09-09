@@ -3,18 +3,26 @@
 import { useRef } from "react";
 import { changeRoleAction } from "./actions";
 
-const ROLES = ["OWNER", "ADMIN", "MEMBER", "VIEWER"] as const;
-
+/**
+ * Die angebotenen Rollen kommen von der Seite, nicht aus einer festen
+ * Liste: sie stammen aus derselben Regel, die die Server Action
+ * durchsetzt (lib/role-policy). Was hier fehlt, wird auch serverseitig
+ * abgelehnt — die Auswahl kann also gar nicht erst ins Leere laufen.
+ */
 export function RoleSelect({
   slug,
   memberId,
   role,
+  roles,
   disabled,
+  disabledReason,
 }: {
   slug: string;
   memberId: string;
   role: string;
+  roles: readonly string[];
   disabled?: boolean;
+  disabledReason?: string;
 }) {
   const ref = useRef<HTMLFormElement>(null);
 
@@ -26,10 +34,14 @@ export function RoleSelect({
         name="role"
         defaultValue={role}
         disabled={disabled}
+        title={disabled ? disabledReason : undefined}
+        aria-label="Rolle"
         onChange={() => ref.current?.requestSubmit()}
         className="h-8 rounded-md border border-line bg-surface px-2 text-[13px] text-ink disabled:opacity-50 focus-visible:border-accent focus-visible:outline-none"
       >
-        {ROLES.map((r) => (
+        {/* Die aktuelle Rolle muss wählbar bleiben, auch wenn sie
+            (etwa OWNER) nicht vergeben werden darf. */}
+        {(roles.includes(role) ? roles : [role, ...roles]).map((r) => (
           <option key={r} value={r}>
             {r}
           </option>

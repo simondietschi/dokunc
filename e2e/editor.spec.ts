@@ -151,7 +151,26 @@ test("Registrierung ohne Einladung ist gesperrt (Invite-only)", async ({
   // Exakter Fehlertext der Server-Action (der Seiten-Untertitel enthält
   // ebenfalls "Nur per Einladung" — ein Regex-Match wäre mehrdeutig).
   await expect(
-    page.getByText("Registrierung ist nur per Einladung möglich", {
+    page.getByText("nur über einen gültigen Einladungslink", {
+      exact: false,
+    }),
+  ).toBeVisible();
+});
+
+test("Registrierung mit erfundenem Einladungslink bleibt gesperrt", async ({
+  page,
+}) => {
+  // Die Kenntnis einer eingeladenen Adresse darf nicht genügen: ohne
+  // gültiges Token bleibt die Registrierung zu, sonst liesse sich ein
+  // fremdes Konto vorwegnehmen.
+  const next = encodeURIComponent("/invite/erfunden?token=erfunden");
+  await page.goto(`/register?next=${next}`);
+  await page.fill('input[name="name"]', "Dritter Nutzer");
+  await page.fill('input[name="email"]', "dritter@dokunc.dev");
+  await page.fill('input[name="password"]', "nochSicherer123!");
+  await page.click('button[type="submit"]');
+  await expect(
+    page.getByText("nur über einen gültigen Einladungslink", {
       exact: false,
     }),
   ).toBeVisible();

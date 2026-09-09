@@ -52,7 +52,6 @@ export function Sidebar({
   const [open, setOpen] = useState(false);
 
   // Bei Navigation auf Mobile schließen.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => setOpen(false), [pathname]);
 
   return (

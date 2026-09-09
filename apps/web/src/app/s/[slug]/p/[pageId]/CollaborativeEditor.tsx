@@ -42,6 +42,7 @@ import { renamePageAction, deletePageAction } from "../../actions";
 function pickAndUploadImage(
   editor: Editor,
   range: Range | undefined,
+  spaceId: string,
   onError: () => void,
 ) {
   const input = document.createElement("input");
@@ -57,6 +58,8 @@ function pickAndUploadImage(
     }
     const body = new FormData();
     body.set("file", file);
+    // Der Space entscheidet, wer die Datei später sehen darf.
+    body.set("spaceId", spaceId);
     try {
       const res = await fetch("/api/upload", { method: "POST", body });
       if (!res.ok) throw new Error();
@@ -70,6 +73,28 @@ function pickAndUploadImage(
   input.click();
 }
 
+/**
+ * Signal des Collab-Servers, dass der Stand dieser Seite ersetzt wurde
+ * (Wiederherstellung einer Version). Gegenstück: apps/collab/src/server.ts.
+ */
+const COLLAB_RELOAD_SIGNAL = "dokunc:reload";
+
+/**
+ * Holt eine kurzlebige Eintrittskarte für den Collab-Server.
+ * Wirft bei Ablehnung — der Provider behandelt das als
+ * fehlgeschlagene Authentifizierung und versucht es später erneut.
+ */
+async function fetchCollabTicket(pageId: string): Promise<string> {
+  const res = await fetch("/api/collab/ticket", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pageId }),
+  });
+  if (!res.ok) throw new Error(`Ticket abgelehnt (${res.status})`);
+  const { ticket } = (await res.json()) as { ticket: string };
+  return ticket;
+}
+
 type Peer = { name: string; color: string };
 
 export function CollaborativeEditor({
@@ -77,7 +102,6 @@ export function CollaborativeEditor({
   spaceId,
   pageId,
   title,
-  token,
   collabUrl,
   editable,
   canManage,
@@ -92,7 +116,6 @@ export function CollaborativeEditor({
   spaceId: string;
   pageId: string;
   title: string;
-  token: string;
   collabUrl: string;
   editable: boolean;
   canManage: boolean;
@@ -155,7 +178,10 @@ export function CollaborativeEditor({
         url: collabUrl,
         name: pageId,
         document: ydoc,
-        token,
+        // Vor JEDEM Verbindungsversuch ein frisches Ticket holen. Die
+        // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
+        // HTML gelangt nichts Wiederverwendbares.
+        token: () => fetchCollabTicket(pageId),
         // "Live" erst nach erfolgreicher Server-Authentifizierung —
         // Socket-Open allein heißt noch nicht, dass wir schreiben dürfen.
         onAuthenticated: () => setStatus("connected"),
@@ -163,8 +189,14 @@ export function CollaborativeEditor({
         onStatus: ({ status }) => {
           if (status !== "connected") setStatus("connecting");
         },
+        onStateless: ({ payload }) => {
+          // Neu laden ist hier die ehrliche Antwort: ein blosser
+          // Reconnect würde den alten Yjs-Stand aus diesem Tab wieder
+          // einmischen und die Wiederherstellung zunichtemachen.
+          if (payload === COLLAB_RELOAD_SIGNAL) window.location.reload();
+        },
       }),
-    [collabUrl, pageId, token, ydoc],
+    [collabUrl, pageId, ydoc],
   );
 
   const color = useMemo(() => caretColorFor(userId), [userId]);
@@ -173,7 +205,7 @@ export function CollaborativeEditor({
     () =>
       createSlashCommands({
         onImage: (e, r) =>
-          pickAndUploadImage(e, r, () =>
+          pickAndUploadImage(e, r, spaceId, () =>
             toast({
               title: "Upload fehlgeschlagen",
               description:
@@ -183,7 +215,7 @@ export function CollaborativeEditor({
           ),
         onPrompt: openPrompt,
       }),
-    [openPrompt, toast],
+    [openPrompt, spaceId, toast],
   );
 
   const wikiLinkSuggest = useMemo(

@@ -9,7 +9,6 @@ import { requireUser } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import {
   generateInviteToken,
-  hashToken,
   inviteExpiry,
   isInvitableRole,
   normalizeEmail,
@@ -17,6 +16,12 @@ import {
 } from "@/lib/invitations";
 import { buildInviteUrl, sendInvitationEmail } from "@/lib/mail";
 import { rateLimit } from "@/lib/rate-limit";
+import { audit } from "@/lib/audit";
+import {
+  canChangeRole,
+  canRemoveMember,
+  isSpaceRole,
+} from "@/lib/role-policy";
 
 export type FormState = { error?: string; success?: string } | undefined;
 
@@ -93,60 +98,106 @@ export async function inviteMemberAction(
     };
   }
 
+  await audit({
+    action: "member.invited",
+    actorId: user.id,
+    spaceId: space.id,
+    targetId: invitation.id,
+    metadata: { email, role },
+  });
   revalidatePath(`/s/${space.slug}/members`);
   return { success: `Einladung an ${email} gesendet.` };
 }
 
 export async function revokeInvitationAction(form: FormData) {
-  const { space } = await authorizeAction(form, "manageSpace");
+  const { space, user } = await authorizeAction(form, "manageSpace");
+  const invitationId = str(form, "invitationId");
   // scoped: nur Einladungen dieses Space
-  await prisma.spaceInvitation.deleteMany({
-    where: { id: str(form, "invitationId"), spaceId: space.id },
+  const { count } = await prisma.spaceInvitation.deleteMany({
+    where: { id: invitationId, spaceId: space.id },
   });
+  if (count > 0) {
+    await audit({
+      action: "member.invite_revoked",
+      actorId: user.id,
+      spaceId: space.id,
+      targetId: invitationId,
+    });
+  }
   revalidatePath(`/s/${space.slug}/members`);
 }
 
 export async function changeRoleAction(form: FormData) {
-  const { space } = await authorizeAction(form, "manageSpace");
-  const memberId = str(form, "memberId");
-  const role = str(form, "role") as SpaceRole;
-  if (!["OWNER", "ADMIN", "MEMBER", "VIEWER"].includes(role)) return;
+  const { space, user, role: actorRole } = await authorizeAction(
+    form,
+    "manageSpace",
+  );
+  const nextRole = str(form, "role");
+  if (!isSpaceRole(nextRole)) return;
 
   const member = await prisma.spaceMember.findFirst({
-    where: { id: memberId, spaceId: space.id },
+    where: { id: str(form, "memberId"), spaceId: space.id },
+    select: { id: true, role: true, userId: true },
   });
   if (!member) return;
 
-  // Letzten OWNER nicht entmachten.
-  if (member.role === "OWNER" && role !== "OWNER") {
-    const owners = await prisma.spaceMember.count({
-      where: { spaceId: space.id, role: "OWNER" },
-    });
-    if (owners <= 1) return;
-  }
+  const ownerCount = await prisma.spaceMember.count({
+    where: { spaceId: space.id, role: "OWNER" },
+  });
+  const verdict = canChangeRole({
+    actorRole,
+    isSelf: member.userId === user.id,
+    currentRole: member.role,
+    nextRole,
+    ownerCount,
+  });
+  if (!verdict.allowed) return;
+  if (member.role === nextRole) return;
 
   await prisma.spaceMember.update({
     where: { id: member.id },
-    data: { role },
+    data: { role: nextRole },
+  });
+  await audit({
+    action: "member.role_changed",
+    actorId: user.id,
+    spaceId: space.id,
+    targetId: member.userId,
+    metadata: { from: member.role, to: nextRole },
   });
   revalidatePath(`/s/${space.slug}/members`);
 }
 
 export async function removeMemberAction(form: FormData) {
-  const { space } = await authorizeAction(form, "manageSpace");
+  const { space, user, role: actorRole } = await authorizeAction(
+    form,
+    "manageSpace",
+  );
   const member = await prisma.spaceMember.findFirst({
     where: { id: str(form, "memberId"), spaceId: space.id },
+    select: { id: true, role: true, userId: true },
   });
   if (!member) return;
 
-  if (member.role === "OWNER") {
-    const owners = await prisma.spaceMember.count({
-      where: { spaceId: space.id, role: "OWNER" },
-    });
-    if (owners <= 1) return; // letzten OWNER nicht entfernen
-  }
+  const ownerCount = await prisma.spaceMember.count({
+    where: { spaceId: space.id, role: "OWNER" },
+  });
+  const verdict = canRemoveMember({
+    actorRole,
+    isSelf: member.userId === user.id,
+    targetRole: member.role,
+    ownerCount,
+  });
+  if (!verdict.allowed) return;
 
   await prisma.spaceMember.delete({ where: { id: member.id } });
+  await audit({
+    action: "member.removed",
+    actorId: user.id,
+    spaceId: space.id,
+    targetId: member.userId,
+    metadata: { role: member.role },
+  });
   revalidatePath(`/s/${space.slug}/members`);
 }
 
@@ -196,6 +247,13 @@ export async function acceptInvitationAction(form: FormData) {
       data: { acceptedAt: new Date() },
     }),
   ]);
+  await audit({
+    action: "member.invite_accepted",
+    actorId: user.id,
+    spaceId: invitation.spaceId,
+    targetId: invitation.id,
+    metadata: { role: invitation.role },
+  });
 
   redirect(`/s/${invitation.space.slug}`);
 }

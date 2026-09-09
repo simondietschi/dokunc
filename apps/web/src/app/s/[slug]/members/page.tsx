@@ -4,6 +4,11 @@ import { Clock, Trash2, X } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
+import {
+  assignableRoles,
+  canChangeRole,
+  canRemoveMember,
+} from "@/lib/role-policy";
 import { Avatar } from "@/components/ui/Avatar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { InviteForm } from "./InviteForm";
@@ -21,7 +26,7 @@ export default async function MembersPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { space, role } = await loadSpace(slug);
+  const { space, role, user } = await loadSpace(slug);
   if (!can(role, "manageSpace")) redirect(`/s/${slug}`);
 
   const [members, invitations] = await Promise.all([
@@ -35,6 +40,9 @@ export default async function MembersPage({
       orderBy: { createdAt: "desc" },
     }),
   ]);
+
+  const ownerCount = members.filter((m) => m.role === "OWNER").length;
+  const roles = assignableRoles(role);
 
   return (
     <div className="mx-auto max-w-2xl px-8 py-14 animate-[rise_0.4s_ease]">
@@ -53,7 +61,24 @@ export default async function MembersPage({
         Mitglieder ({members.length})
       </h2>
       <ul className="mt-3 space-y-2">
-        {members.map((m) => (
+        {members.map((m) => {
+          const isSelf = m.userId === user.id;
+          const roleVerdict = canChangeRole({
+            actorRole: role,
+            isSelf,
+            currentRole: m.role,
+            // Nur die Frage "darf diese Zeile überhaupt angefasst
+            // werden" — die konkrete Zielrolle prüft die Action.
+            nextRole: m.role === "VIEWER" ? "MEMBER" : "VIEWER",
+            ownerCount,
+          });
+          const removeVerdict = canRemoveMember({
+            actorRole: role,
+            isSelf,
+            targetRole: m.role,
+            ownerCount,
+          });
+          return (
           <li
             key={m.id}
             className="flex items-center justify-between gap-4 rounded-xl border border-line bg-surface p-3.5 shadow-soft"
@@ -74,21 +99,37 @@ export default async function MembersPage({
                 slug={slug}
                 memberId={m.id}
                 role={m.role}
+                roles={roles}
+                disabled={!roleVerdict.allowed}
+                disabledReason={
+                  roleVerdict.allowed ? undefined : roleVerdict.reason
+                }
               />
-              <form action={removeMemberAction}>
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="memberId" value={m.id} />
-                <ConfirmButton
-                  message={`„${m.user.name}" aus diesem Space entfernen?`}
-                  title="Entfernen"
-                  className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
+              {removeVerdict.allowed ? (
+                <form action={removeMemberAction}>
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="memberId" value={m.id} />
+                  <ConfirmButton
+                    message={`„${m.user.name}" aus diesem Space entfernen?`}
+                    title="Entfernen"
+                    className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </ConfirmButton>
+                </form>
+              ) : (
+                <span
+                  title={removeVerdict.reason}
+                  className="grid h-8 w-8 place-items-center text-line-strong"
+                  aria-hidden
                 >
                   <Trash2 className="h-4 w-4" />
-                </ConfirmButton>
-              </form>
+                </span>
+              )}
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
 
       {invitations.length > 0 && (

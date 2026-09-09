@@ -57,9 +57,3 @@ export async function getSessionClaims(): Promise<SessionClaims | null> {
 export async function getUserId(): Promise<string | null> {
   return (await getSessionClaims())?.sub ?? null;
 }
-
-/** Roh-Token für den Collab-WebSocket (Client-seitig benötigt). */
-export async function getRawToken(): Promise<string | null> {
-  const store = await cookies();
-  return store.get(COOKIE)?.value ?? null;
-}

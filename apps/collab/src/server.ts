@@ -39,8 +39,52 @@ function resolveAppSecret(): string {
 const SECRET = new TextEncoder().encode(resolveAppSecret());
 const extensions = richExtensions();
 
+/**
+ * Audience der Collab-Tickets. Gegenstück: apps/web/src/lib/collab-ticket.ts.
+ * Session-Cookies tragen diese Audience NICHT — ein erbeutetes
+ * Sitzungstoken taugt hier also nicht als Eintrittskarte, und ein
+ * Ticket nicht als Sitzung.
+ */
+const COLLAB_AUDIENCE = "dokunc-collab";
+
+/**
+ * Steuerkanal. Gegenstück: apps/web/src/lib/collab-control.ts
+ * (dort stehen dieselben beiden Konstanten).
+ */
+const COLLAB_CONTROL_CHANNEL = "dokunc:collab:control";
+
+/**
+ * Signal an offene Clients: wirf dein Dokument weg und lade neu.
+ * Gegenstück: apps/web/.../CollaborativeEditor.tsx.
+ */
+const COLLAB_RELOAD_SIGNAL = "dokunc:reload";
+
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
 const VERSION_INTERVAL_MS = 2 * 60 * 1000;
+
+/**
+ * Wie lange eine Seite nach einer Wiederherstellung gesperrt bleibt.
+ * In dieser Zeit wird ihr Zustand weder gespeichert noch werden neue
+ * Verbindungen angenommen, damit die Web-App den neuen Inhalt in Ruhe
+ * schreiben kann. Danach laden die Clients von selbst wieder.
+ */
+const RELOAD_LOCK_MS = 5000;
+
+/**
+ * Seiten, deren Dokument gerade neu aus der Datenbank aufgebaut wird
+ * (Wert = Ablaufzeitpunkt der Sperre). Ohne diese Sperre schreibt eine
+ * noch offene Sitzung den alten Stand direkt wieder zurück — genau so
+ * ging "Version wiederherstellen" bisher lautlos verloren.
+ */
+const reloading = new Map<string, number>();
+
+function isReloading(pageId: string): boolean {
+  const until = reloading.get(pageId);
+  if (until === undefined) return false;
+  if (until > Date.now()) return true;
+  reloading.delete(pageId);
+  return false;
+}
 
 const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: 2,
@@ -70,8 +114,13 @@ async function shouldSnapshot(pageId: string): Promise<boolean> {
 }
 
 async function authorize(token: string | undefined, pageId: string) {
-  if (!token) throw new Error("Kein Token");
-  const { payload } = await jwtVerify(token, SECRET);
+  if (!token) throw new Error("Kein Ticket");
+  const { payload } = await jwtVerify(token, SECRET, {
+    audience: COLLAB_AUDIENCE,
+  });
+  // Ein Ticket gilt für genau eine Seite. Damit nützt ein abgefangenes
+  // Ticket höchstens für das Dokument, für das es ausgestellt wurde.
+  if (payload.pid !== pageId) throw new Error("Ticket gilt anderer Seite");
   const userId = String(payload.sub);
   const tokenVersion = Number(payload.tv ?? 0);
 
@@ -115,6 +164,9 @@ const server = new Server({
   port: PORT,
   extensions: [haExtension],
   async onAuthenticate(data) {
+    if (isReloading(data.documentName)) {
+      throw new Error("Seite wird gerade wiederhergestellt");
+    }
     const { userId, readOnly } = await authorize(
       data.token,
       data.documentName,
@@ -152,6 +204,10 @@ const server = new Server({
 
   async onStoreDocument(data) {
     const pageId = data.documentName;
+    if (isReloading(pageId)) {
+      log.info({ pageId }, "Speichern übersprungen: Seite wird neu geladen");
+      return;
+    }
     const state = Buffer.from(Y.encodeStateAsUpdate(data.document));
 
     const json = TiptapTransformer.fromYdoc(data.document, COLLAB_FIELD);
@@ -314,6 +370,77 @@ function extractText(node: unknown): string {
   return "";
 }
 
+/**
+ * Wirft ein Dokument aus dem Speicher und sperrt die Seite kurz.
+ * Der reguläre Weg (`unloadDocument`) läuft zuerst, damit Extensions
+ * ihre Aufräum-Hooks bekommen; bleibt das Dokument dabei hängen (etwa
+ * weil noch ein Speichervorgang aussteht, der wegen der Sperre ohnehin
+ * nichts mehr schreibt), wird es hart entfernt.
+ */
+async function evictDocument(pageId: string): Promise<void> {
+  reloading.set(pageId, Date.now() + RELOAD_LOCK_MS);
+  const hocuspocus = server.hocuspocus;
+  const doc = hocuspocus.documents.get(pageId);
+
+  /**
+   * Offene Clients müssen ihr Yjs-Dokument wegwerfen. Sie nur zu
+   * trennen genügt nicht: beim Reconnect führt Yjs ihren alten Stand
+   * mit dem frisch geladenen zusammen und macht die Wiederherstellung
+   * damit rückgängig — ein CRDT kennt kein "verwirf das".
+   */
+  doc?.broadcastStateless(COLLAB_RELOAD_SIGNAL);
+  // Dem Signal einen Moment geben, bevor die Sockets zugehen.
+  await new Promise((r) => setTimeout(r, 100));
+
+  hocuspocus.closeConnections(pageId);
+  if (!doc) return;
+
+  // Den geschlossenen Verbindungen kurz Zeit geben, sich abzumelden.
+  await new Promise((r) => setTimeout(r, 150));
+  await hocuspocus.unloadDocument(doc).catch(() => {});
+
+  if (hocuspocus.documents.get(pageId) === doc) {
+    hocuspocus.documents.delete(pageId);
+    try {
+      doc.destroy();
+    } catch {
+      /* bereits abgebaut */
+    }
+  }
+}
+
+/** Steuerkanal der Web-App abonnieren (Räumung nach Wiederherstellung). */
+function subscribeControlChannel(): void {
+  const control = redis.duplicate();
+  control.on("error", (e: Error) =>
+    log.warn({ err: e.message }, "redis control"),
+  );
+  control.on("message", (channel: string, raw: string) => {
+    if (channel !== COLLAB_CONTROL_CHANNEL) return;
+    void (async () => {
+      try {
+        const msg = JSON.parse(raw) as {
+          op?: string;
+          pageId?: string;
+          ack?: string;
+        };
+        if (msg.op !== "evict" || !msg.pageId) return;
+        await evictDocument(msg.pageId);
+        log.info({ pageId: msg.pageId }, "Dokument geräumt");
+        if (msg.ack) await redis.publish(msg.ack, "ok");
+      } catch (e) {
+        log.warn({ err: String(e) }, "Steuerbefehl fehlgeschlagen");
+      }
+    })();
+  });
+  control
+    .subscribe(COLLAB_CONTROL_CHANNEL)
+    .catch((e: Error) =>
+      log.warn({ err: e.message }, "Steuerkanal nicht abonniert"),
+    );
+}
+
 server.listen().then(() => {
+  subscribeControlChannel();
   log.info({ port: PORT }, "Hocuspocus läuft");
 });

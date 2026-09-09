@@ -73,12 +73,24 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
 ## 5. Realtime-Fluss
 
 1. Client öffnet Seite → TipTap mit `Collaboration`-Extension + Yjs-Doc.
-2. `HocuspocusProvider` verbindet via WebSocket zu `apps/collab` (`/?token=…`).
-3. Collab-Server authentifiziert das JWT, prüft Schreibrecht (`onAuthenticate`).
+2. Vor jedem Verbindungsversuch holt der Client ein **Collab-Ticket** von
+   `POST /api/collab/ticket`: ein JWT mit eigener Audience (`dokunc-collab`),
+   gebunden an genau diese Seite, gültig zwei Minuten. Die Sitzung selbst
+   bleibt im httpOnly-Cookie und wird nie an den Client ausgeliefert.
+3. `HocuspocusProvider` verbindet via WebSocket zu `apps/collab` und schickt
+   das Ticket. `onAuthenticate` prüft Signatur, Audience, Seitenbindung,
+   Token-Version (Session-Revocation) und Schreibrecht.
 4. `onLoadDocument` lädt Yjs-State aus `CollabDocument` (oder seeded aus `Page.content`).
 5. Edits werden als Yjs-Updates zwischen Clients gemerged (CRDT, konfliktfrei).
 6. `onStoreDocument` (debounced) schreibt Yjs-State + extrahierten Text/JSON
    zurück in `Page` und erzeugt periodisch `PageVersion`-Snapshots.
+
+**Wiederherstellen einer Version** muss an diesem Zwischenspeicher vorbei:
+Die Web-App schickt über Redis (`dokunc:collab:control`) eine Räumung, der
+Collab-Server wirft das Dokument aus dem Speicher, nimmt für fünf Sekunden
+keine Verbindungen an und speichert in dieser Zeit nicht. Erst danach
+schreibt die Web-App den alten Stand zurück. Ohne diesen Schritt hätte die
+noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
 
 ## 6. Roadmap / Status
 
@@ -119,6 +131,14 @@ Berechtigungsregeln (vereinfachtes CASL-Äquivalent in `lib/permissions.ts`):
       (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) über
       Claude API (claude-opus-4-8, adaptive thinking, Prompt-Caching);
       graceful deaktiviert ohne ANTHROPIC_API_KEY
+- [x] Sicherheitsfundament: alle Space-gebundenen Schreibzugriffe über
+      geprüfte Guards (`lib/page-guards`, DB-gestützte Autorisierungstests),
+      Collab-Ticket statt Sitzungs-JWT im Client, autorisierte
+      Datei-Auslieferung (`Upload` mit Space-Bezug), Registrierung nur mit
+      echtem Einladungstoken, Anmelde-Bremse pro Konto, X-Forwarded-For nur
+      mit konfigurierter Proxy-Hop-Zahl, Rollenregeln ohne
+      Selbstbeförderung (`lib/role-policy`), Audit-Log mit Admin-Ansicht,
+      ESLint als CI-Gate
 - [x] Diagramme: Excalidraw-Zeichnungen (Vollbild-Editor, SVG-Preview
       nur als data-URI-img — kein Inline-SVG/XSS) und draw.io via
       embed.diagrams.net (postMessage-Protokoll, CSP frame-src);

@@ -29,6 +29,9 @@ jobs:
       - name: Generate Prisma client
         run: pnpm --filter @dokunc/db generate
 
+      - name: Lint
+        run: pnpm lint
+
       - name: Unit tests
         run: pnpm --filter @dokunc/web test
 
@@ -91,6 +94,11 @@ jobs:
 
       - name: Run migrations
         run: pnpm --filter @dokunc/db migrate:deploy
+
+      # Autorisierungstests gegen die echte Datenbank: die Regeln
+      # stecken in den Abfragen, ein Mock würde sie nur nachbauen.
+      - name: Authorization integration tests
+        run: pnpm test:integration
 
       - name: Build web
         run: pnpm --filter @dokunc/web build

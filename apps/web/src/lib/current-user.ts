@@ -30,6 +30,8 @@ export async function getCurrentUser() {
     email: user.email,
     name: user.name,
     isAdmin: user.isAdmin,
+    // Für kurzlebige Tickets (Collab), die dieselbe Widerrufbarkeit erben.
+    tokenVersion: user.tokenVersion,
   };
 }
 

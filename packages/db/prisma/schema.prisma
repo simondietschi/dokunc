@@ -36,6 +36,8 @@ model User {
   comments      Comment[]
   notifications Notification[] @relation("NotificationUser")
   actedNotifications Notification[] @relation("NotificationActor")
+  uploads       Upload[]
+  auditEvents   AuditLog[]     @relation("AuditActor")
 }
 
 /// Tokenbasierter Passwort-Reset (nur SHA-256-Hash gespeichert).
@@ -63,6 +65,8 @@ model Space {
   members SpaceMember[]
   pages   Page[]
   invitations SpaceInvitation[]
+  uploads Upload[]
+  auditEvents AuditLog[]
 }
 
 model SpaceMember {
@@ -225,4 +229,48 @@ model CollabDocument {
   updatedAt DateTime @updatedAt
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+}
+
+/// Hochgeladene Datei. Der Space-Bezug ist die Grundlage der
+/// Zugriffskontrolle in /api/files/[name]: ohne ihn waere jedes
+/// hochgeladene Bild fuer jede angemeldete Person lesbar.
+model Upload {
+  id          String   @id @default(cuid())
+  /// Zufaelliger Dateiname auf der Platte, zugleich das URL-Segment.
+  filename    String   @unique
+  spaceId     String
+  uploaderId  String?
+  contentType String
+  size        Int
+  createdAt   DateTime @default(now())
+
+  space    Space @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  uploader User? @relation(fields: [uploaderId], references: [id], onDelete: SetNull)
+
+  @@index([spaceId])
+  @@index([uploaderId])
+}
+
+/// Sicherheitsrelevante Ereignisse. Bewusst nur anhaengend: es gibt
+/// keine Aktion in der App, die Eintraege aendert oder loescht.
+model AuditLog {
+  id        String   @id @default(cuid())
+  /// Handelnde Person. Null, wenn unbekannt (fehlgeschlagene Anmeldung).
+  actorId   String?
+  /// Stabiler Ereignisschluessel, z. B. "member.role_changed".
+  action    String
+  spaceId   String?
+  /// Kennung des betroffenen Objekts (Seite, Nutzer, Einladung).
+  targetId  String?
+  /// Zusatzkontext (alte und neue Rolle, Titel, Grund).
+  metadata  Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  actor User?  @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  space Space? @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
+  @@index([spaceId, createdAt])
+  @@index([actorId, createdAt])
 }

@@ -8,6 +8,7 @@ import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { createSession, destroySession } from "@/lib/session";
 import { str } from "@/lib/form";
+import { audit } from "@/lib/audit";
 
 export type AccountState = { error?: string; success?: string } | undefined;
 
@@ -59,6 +60,7 @@ export async function changePasswordAction(
   });
   // Aktuelles Gerät frisch einloggen (neue Token-Version).
   await createSession(updated.id, updated.tokenVersion);
+  await audit({ action: "auth.password_changed", actorId: updated.id });
   return { success: "Passwort geändert. Andere Sitzungen wurden beendet." };
 }
 
@@ -68,6 +70,7 @@ export async function logoutEverywhereAction() {
     where: { id: user.id },
     data: { tokenVersion: { increment: 1 } },
   });
+  await audit({ action: "auth.sessions_revoked", actorId: user.id });
   await destroySession();
   redirect("/login");
 }

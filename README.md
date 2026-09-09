@@ -20,6 +20,8 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
 - Postgres-Volltextsuche, Versionsverlauf, Papierkorb
+- **Audit-Log** über sicherheitsrelevante Ereignisse (Anmeldungen,
+  Rollenwechsel, Einladungen, Löschungen) mit Ansicht unter `/admin/audit`
 - Export: Markdown, HTML und **PDF** (Gotenberg im Docker-Setup
   enthalten; ohne Gotenberg über die Druckansicht des Browsers)
 
@@ -72,15 +74,41 @@ pnpm dev                 # web :3000 + collab :3001
 ## Tests
 
 ```bash
-pnpm test        # Unit-Tests (Vitest)
-pnpm test:e2e    # Playwright-E2E: kompletter Editor-Pfad inkl.
-                 # Realtime-Sync (leert die DB! Nur gegen Dev-DB laufen lassen)
+pnpm lint             # ESLint über das ganze Monorepo
+pnpm test             # Unit-Tests (Vitest)
+pnpm test:integration # Autorisierungstests gegen die echte Datenbank
+pnpm test:e2e         # Playwright-E2E: kompletter Editor-Pfad inkl.
+                      # Realtime-Sync (leert die DB! Nur gegen Dev-DB laufen lassen)
 ```
+
+Die Integrationstests prüfen, dass eine Seiten- oder Versions-ID aus einem
+Formular niemals einen fremden Space trifft. Sie brauchen eine erreichbare
+Datenbank aus `.env` und legen ihre eigenen Datensätze an (und wieder ab);
+sie leeren nichts.
 
 Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
 Server) und erwartet Postgres + Redis aus `.env`. In Umgebungen mit
 vorinstalliertem Chromium: `PW_EXECUTABLE_PATH=/pfad/zu/chromium` setzen.
 CI führt beide Suiten automatisch aus (`.github/workflows/ci.yml`).
+
+## Sicherheit
+
+Kurz, was die App bewusst tut:
+
+- **Sitzung** im httpOnly-Cookie; der Collab-WebSocket bekommt stattdessen
+  ein kurzlebiges, an eine Seite gebundenes Ticket.
+- **Space-Bindung** aller Schreibzugriffe: IDs aus Formularen werden gegen
+  den Space geprüft, in dem die Person tatsächlich Rechte hat.
+- **Rollen**: die eigene Rolle lässt sich nicht ändern, OWNER vergibt nur
+  ein OWNER, der letzte OWNER bleibt bestehen.
+- **Registrierung** ausschliesslich mit gültigem Einladungstoken; die
+  blosse Kenntnis einer eingeladenen Adresse genügt nicht.
+- **Uploads** gehören einem Space und werden nur an dessen Mitglieder
+  ausgeliefert.
+- **Rate-Limits** pro Konto und pro IP. Die IP stammt aus
+  `X-Forwarded-For`, ausgewertet gemäss `TRUSTED_PROXY_HOPS` — hinter dem
+  mitgelieferten Caddy setzt der Proxy den Header selbst.
+- **Audit-Log** für Anmeldungen, Rollenwechsel, Einladungen und Löschungen.
 
 ## Projektstruktur
 

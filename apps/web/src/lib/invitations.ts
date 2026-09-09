@@ -55,3 +55,27 @@ export function isInvitableRole(v: unknown): v is InvitableRole {
 export function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
+
+/**
+ * Zieht Einladungs-ID und Token aus dem Weiterleitungsziel des
+ * Registrierungsformulars ("/invite/<id>?token=<token>").
+ *
+ * Damit hängt die Registrierung am Besitz des Links statt an der blossen
+ * Kenntnis einer eingeladenen E-Mail-Adresse. Rein und damit testbar.
+ */
+export function parseInviteFromNext(
+  next: unknown,
+): { invitationId: string; token: string } | null {
+  if (typeof next !== "string" || !next.startsWith("/invite/")) return null;
+  let url: URL;
+  try {
+    // Basis nur, um relative Pfade parsen zu können; sie wird nie benutzt.
+    url = new URL(next, "http://internal.invalid");
+  } catch {
+    return null;
+  }
+  const match = url.pathname.match(/^\/invite\/([A-Za-z0-9_-]+)$/);
+  const token = url.searchParams.get("token");
+  if (!match || !token) return null;
+  return { invitationId: match[1], token };
+}

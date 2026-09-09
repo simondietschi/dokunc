@@ -7,6 +7,7 @@ import {
   isInvitableRole,
   normalizeEmail,
   inviteExpiry,
+  parseInviteFromNext,
   INVITE_TTL_MS,
 } from "./invitations";
 
@@ -59,5 +60,40 @@ describe("role + email helpers", () => {
 
   it("normalizeEmail trimmt und kleinschreibt", () => {
     expect(normalizeEmail("  Alex@Team.DE ")).toBe("alex@team.de");
+  });
+});
+
+describe("parseInviteFromNext", () => {
+  it("liest ID und Token aus einem Einladungsziel", () => {
+    expect(parseInviteFromNext("/invite/abc123?token=xyz")).toEqual({
+      invitationId: "abc123",
+      token: "xyz",
+    });
+  });
+
+  it("gibt null zurück, wenn das Token fehlt", () => {
+    expect(parseInviteFromNext("/invite/abc123")).toBeNull();
+  });
+
+  it("greift nur bei Einladungszielen", () => {
+    expect(parseInviteFromNext("/spaces?token=xyz")).toBeNull();
+    expect(parseInviteFromNext("/s/team/p/1")).toBeNull();
+  });
+
+  it("weist absolute und fremde Ziele ab", () => {
+    // Sonst liesse sich die Registrierung an einem fremden Host
+    // vorbei aufziehen.
+    expect(parseInviteFromNext("https://evil.example/invite/a?token=x")).toBeNull();
+    expect(parseInviteFromNext("//evil.example/invite/a?token=x")).toBeNull();
+  });
+
+  it("weist Pfade unterhalb von /invite ab", () => {
+    expect(parseInviteFromNext("/invite/a/b?token=x")).toBeNull();
+  });
+
+  it("verkraftet Unsinn", () => {
+    expect(parseInviteFromNext(null)).toBeNull();
+    expect(parseInviteFromNext(42)).toBeNull();
+    expect(parseInviteFromNext("")).toBeNull();
   });
 });

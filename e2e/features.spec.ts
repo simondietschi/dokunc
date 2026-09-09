@@ -254,3 +254,62 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
     page.getByPlaceholder("Suchen oder springen…"),
   ).toBeHidden();
 });
+
+test("Datei-Auslieferung verlangt Anmeldung", async ({ page }) => {
+  // Erfundener, gültig geformter Dateiname: die Route darf schon vor
+  // dem Blick auf die Platte nichts über ihn preisgeben.
+  const name = "0123456789abcdef0123456789abcdef.png";
+
+  await page.context().clearCookies();
+  const anonymous = await page.request.get(`/api/files/${name}`);
+  expect(anonymous.status()).toBe(401);
+
+  await login(page);
+  // Angemeldet, aber ohne zugehörigen Datensatz: 404, nicht 403 —
+  // sonst verriete die Antwort, dass es die Datei gibt.
+  const authenticated = await page.request.get(`/api/files/${name}`);
+  expect(authenticated.status()).toBe(404);
+});
+
+test("Collab-Ticket nur für eigene Seiten", async ({ page, baseURL }) => {
+  await login(page);
+  // Der Browser schickt bei POST einen Origin-Header; Playwrights
+  // request-Objekt nicht. Die Route prüft ihn (CSRF), also setzen wir
+  // ihn hier ausdrücklich — und prüfen unten, dass er auch zählt.
+  const same = { origin: baseURL! };
+
+  await page.goto("/spaces");
+  await page.locator('a[href^="/s/"]').first().click();
+  await page.waitForURL("**/s/**/p/**");
+  const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
+
+  // Für eine eigene Seite kommt ein kurzlebiges Ticket zurück.
+  const ok = await page.request.post("/api/collab/ticket", {
+    headers: same,
+    data: { pageId },
+  });
+  expect(ok.status()).toBe(200);
+  const body = (await ok.json()) as { ticket: string; expiresIn: number };
+  expect(body.ticket.split(".")).toHaveLength(3);
+  expect(body.expiresIn).toBeLessThanOrEqual(300);
+
+  const unknown = await page.request.post("/api/collab/ticket", {
+    headers: same,
+    data: { pageId: "gibtesnicht" },
+  });
+  expect(unknown.status()).toBe(404);
+
+  // Fremde Herkunft: die Route gibt gar nichts heraus (CSRF-Schutz).
+  const foreign = await page.request.post("/api/collab/ticket", {
+    headers: { origin: "https://boese.example" },
+    data: { pageId },
+  });
+  expect(foreign.status()).toBe(403);
+
+  await page.context().clearCookies();
+  const anonymous = await page.request.post("/api/collab/ticket", {
+    headers: same,
+    data: { pageId },
+  });
+  expect(anonymous.status()).toBe(401);
+});

@@ -6,10 +6,17 @@
 {$SITE_ADDRESS:localhost} {
 	encode zstd gzip
 
+	# X-Forwarded-For wird ueberschrieben statt angehaengt: Caddy wuerde
+	# sonst einen vom Client mitgeschickten Wert stehen lassen, und die
+	# App liest daraus die IP fuer ihre Rate-Limits. Nach dem Setzen
+	# steht dort genau ein Eintrag, und der stammt von Caddy.
+	# Passend dazu in der App: TRUSTED_PROXY_HOPS=1.
+
 	# Collab-WebSocket: /collab -> interner Hocuspocus-Port 3001
 	handle_path /collab* {
 		reverse_proxy app:3001 {
 			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
 		}
 	}
 
@@ -17,6 +24,7 @@
 	handle {
 		reverse_proxy app:3000 {
 			header_up Host {host}
+			header_up X-Forwarded-For {remote_host}
 		}
 	}
 
