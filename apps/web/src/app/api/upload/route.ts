@@ -10,6 +10,7 @@ import { can } from "@/lib/permissions";
 import { effectiveRole } from "@/lib/space-access";
 import { canSeePage } from "@/lib/page-access";
 import { audit } from "@/lib/audit";
+import { declaredBodySize } from "@/lib/body-size";
 import { log } from "@/lib/log";
 import {
   UPLOAD_DIR,
@@ -65,12 +66,25 @@ export async function POST(req: Request) {
   // in den Speicher, bevor irgendein Limit greift — eine 5-GB-Anfrage
   // haette den Prozess sonst schon erledigt, ehe die Groessenpruefung
   // weiter unten ueberhaupt drankommt.
+  //
+  // Ohne glaubwuerdige Laengenangabe wird gar nicht erst gepuffert: eine
+  // Anfrage mit chunked Transfer-Encoding hat keine Content-Length, und
+  // genau darueber liess sich die Pruefung vorher umgehen.
   const maxBody = uploadLimitBytes("FILE");
-  const declared = Number(req.headers.get("content-length") ?? 0);
-  if (Number.isFinite(declared) && declared > maxBody + 64 * 1024) {
+  const declared = declaredBodySize(
+    req.headers.get("content-length"),
+    maxBody + 64 * 1024,
+  );
+  if (declared.kind === "zu-gross") {
     return NextResponse.json(
       { error: `Datei zu gross (max. ${uploadLimitMb("FILE")} MB)` },
       { status: 413 },
+    );
+  }
+  if (declared.kind === "unbekannt") {
+    return NextResponse.json(
+      { error: "Länge der Anfrage fehlt (Content-Length erforderlich)" },
+      { status: 411 },
     );
   }
 

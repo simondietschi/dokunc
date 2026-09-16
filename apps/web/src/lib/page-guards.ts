@@ -1,6 +1,11 @@
 import "server-only";
 import { prisma, type Prisma, type SpaceRole } from "@dokunc/db";
-import { refreshAccessRoots, visiblePageWhere } from "./page-access";
+import {
+  refreshAccessRoots,
+  seesEverything,
+  visiblePageSql,
+  visiblePageWhere,
+} from "./page-access";
 import { insertAt, positionUpdates } from "./page-move";
 
 /**
@@ -106,15 +111,57 @@ export async function renamePageInSpace(
 }
 
 /**
+ * Enthält der Unterbaum eine Seite, die diese Person nicht sehen darf?
+ *
+ * `findLivePage` bindet nur die oberste Seite an Space und
+ * Sichtbarkeit; der Lauf durch den Unterbaum kennt danach nur noch die
+ * Space-Grenze. Wer die offene Elternseite sehen darf, legte damit auch
+ * geschützte Unterseiten in den Papierkorb und löschte sie im zweiten
+ * Schritt endgültig, samt Versionen und Kommentaren — Seiten, die ihm
+ * nie angezeigt wurden. Wer etwas nicht sehen darf, darf es auch nicht
+ * zerstören: die Aufrufer brechen bei `true` ab.
+ *
+ * Bewusst der ganze Unterbaum und nicht nur das Sichtbare: ein Lauf,
+ * der an der geschützten Seite anhält, liesse sie mit einem gelöschten
+ * Elternteil zurück und damit in einem Zustand, den der Seitenbaum
+ * nicht mehr darstellt.
+ */
+export async function subtreeHasHiddenPages(
+  scope: PageScope,
+  pageId: string,
+): Promise<boolean> {
+  if (!pageId) return false;
+  // Die Verwaltung sieht ohnehin jede Seite des Space.
+  if (seesEverything(scope.role)) return false;
+  const rows = await prisma.$queryRaw<{ n: number }[]>`
+    WITH RECURSIVE sub AS (
+      SELECT id FROM "Page"
+      WHERE id = ${pageId} AND "spaceId" = ${scope.spaceId}
+      UNION ALL
+      SELECT c.id FROM "Page" c JOIN sub ON c."parentId" = sub.id
+      WHERE c."spaceId" = ${scope.spaceId}
+    )
+    SELECT count(*)::int AS n FROM "Page" p
+    WHERE p.id IN (SELECT id FROM sub)
+      AND NOT ${visiblePageSql(scope.userId, [])}
+  `;
+  return (rows[0]?.n ?? 0) > 0;
+}
+
+/**
  * Legt Seite und Unterbaum in den Papierkorb (Soft-Delete).
  * Die rekursive CTE bleibt in jedem Schritt im Space, damit ein
  * untergeschobener Elternbezug den Lauf nicht über die Grenze trägt.
+ *
+ * Der Aufrufer muss vorher `subtreeHasHiddenPages` fragen: hier unten
+ * ist die handelnde Person nicht mehr bekannt.
  */
 export async function trashPageTree(
   spaceId: string,
   pageId: string,
+  tx: Pick<typeof prisma, "$executeRaw"> = prisma,
 ): Promise<void> {
-  await prisma.$executeRaw`
+  await tx.$executeRaw`
     WITH RECURSIVE sub AS (
       SELECT id FROM "Page" WHERE id = ${pageId} AND "spaceId" = ${spaceId}
       UNION ALL
@@ -126,12 +173,17 @@ export async function trashPageTree(
   `;
 }
 
-/** Holt Seite und gelöschten Unterbaum aus dem Papierkorb zurück. */
+/**
+ * Holt Seite und gelöschten Unterbaum aus dem Papierkorb zurück.
+ * Optional im Client einer laufenden Transaktion: das Wiederherstellen
+ * besteht aus mehreren Schritten, die gemeinsam gelten müssen.
+ */
 export async function restorePageTree(
   spaceId: string,
   pageId: string,
+  tx: Pick<typeof prisma, "$executeRaw"> = prisma,
 ): Promise<void> {
-  await prisma.$executeRaw`
+  await tx.$executeRaw`
     WITH RECURSIVE sub AS (
       SELECT id FROM "Page" WHERE id = ${pageId} AND "spaceId" = ${spaceId}
       UNION ALL

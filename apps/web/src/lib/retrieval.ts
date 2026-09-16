@@ -16,7 +16,15 @@ export type RetrievedChunk = {
   score: number;
 };
 
-const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL ?? "voyage-3.5-lite";
+/**
+ * Wie bei AI_MODEL: docker-compose.yml setzt EMBEDDING_MODEL auf den
+ * leeren String, `??` würde ihn durchlassen und die Anfrage an Voyage
+ * ginge mit `model: ""` hinaus. Der Fehler landete nur im Log, und die
+ * semantische Suche fiele still auf Volltext zurück.
+ */
+export const DEFAULT_EMBEDDING_MODEL = "voyage-3.5-lite";
+const EMBEDDING_MODEL =
+  process.env.EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL;
 const TOP_K = 8;
 
 /** Embeddings via Voyage AI (optional — ohne Key greift FTS-Fallback). */

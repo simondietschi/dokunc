@@ -12,7 +12,7 @@ minimumReleaseAge: 0
 # Versionen z. B. aus Hocuspocus würden sonst prosemirror-model doppeln
 # -> "multiple versions of prosemirror-model" zur Laufzeit).
 overrides:
-  "@tiptap/*": "3.28.0"
+  "@tiptap/*": "3.31.3"
 
 # Erlaubte Postinstall-Build-Skripte (pnpm 11).
 allowBuilds:

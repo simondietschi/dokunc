@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str } from "@/lib/form";
+import { visiblePageWhere } from "@/lib/page-access";
 
 type ToggleFavoriteResult = { isFavorite: boolean };
 
@@ -12,20 +13,22 @@ type ToggleFavoriteResult = { isFavorite: boolean };
  * Darf jedes Mitglied (auch VIEWER): Favoriten sind persoenlich und
  * aendern nichts am Inhalt des Space.
  *
- * Die pageId kommt aus dem Formular und wird gegen den Space geprueft —
- * sonst liessen sich Seiten fremder Spaces (deren Titel dann in der
- * Sidebar auftauchen) als Favorit anlegen.
+ * Die pageId kommt aus dem Formular und wird gegen Space UND
+ * Sichtbarkeit geprueft. Der Space allein genuegte nicht: sonst legt
+ * jemand eine geschuetzte Seite als Favorit an, die er nicht oeffnen
+ * darf, und ihr Titel steht danach in der Palette.
  */
 export async function toggleFavoriteAction(
   form: FormData,
 ): Promise<ToggleFavoriteResult> {
-  const { user, space } = await authorizeAction(form, "read");
+  const { user, space, role } = await authorizeAction(form, "read");
   const pageId = str(form, "pageId");
 
   const page = await prisma.page.findFirst({
     where: {
       id: pageId,
       spaceId: space.id,
+      ...visiblePageWhere(user.id, role),
       deletedAt: null,
       isTemplate: false,
     },

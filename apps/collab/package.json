@@ -15,7 +15,7 @@
     "@hocuspocus/extension-redis": "4.4.0",
     "@hocuspocus/server": "4.4.0",
     "@hocuspocus/transformer": "4.4.0",
-    "@tiptap/core": "3.28.0",
+    "@tiptap/core": "3.31.3",
     "dotenv": "17.4.2",
     "ioredis": "5.11.1",
     "jose": "6.2.3",

@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@dokunc/db";
 import { log } from "@/lib/log";
+import { refreshAccessRoots } from "@/lib/page-access";
 import { detectFormat } from "./detect";
 import { buildImportTree, flattenTree, indexAliasKey } from "./tree";
 import { markdownToDoc } from "./markdown";
@@ -125,6 +126,19 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
         }
       };
       await createLevel(roots, opts.parentId, start);
+      // Liegt das Ziel unter einer geschützten Seite, erben die neuen
+      // Seiten deren Schutz. Ohne dieses Nachziehen steht jede
+      // importierte Seite mit accessRootId null da, und genau das wertet
+      // jede Prüfung (canSeePage, visiblePageWhere, visiblePageSql) als
+      // offen: der ganze Import wäre für den ganzen Space lesbar.
+      // Im selben Zug wie das Anlegen, sonst steht der Baum schon in der
+      // Datenbank, wenn das Nachziehen scheitert.
+      if (opts.parentId) {
+        for (const node of roots) {
+          const page = created.get(node);
+          if (page) await refreshAccessRoots(page.id, tx);
+        }
+      }
     },
     { timeout: 120_000, maxWait: 10_000 },
   );

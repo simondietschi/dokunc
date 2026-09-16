@@ -187,6 +187,37 @@ describe("Eingebettete Videos", () => {
     expect(out).toContain(".dk-embed-url { display: none;");
     expect(out).toContain(".dk-embed-url { display: block;");
   });
+
+  it("macht aus einem rohen < in der Quelle kein Markup", () => {
+    // In einem Attributwert ist `<` erlaubt und steht dort roh. Wird die
+    // Quelle daraus zurückgelesen und als Elementtext ausgegeben, wäre
+    // sie ohne erneutes Kodieren echtes Markup — auf der geteilten Seite
+    // und in der Druckansicht.
+    const html = contentToHtml(
+      doc([
+        {
+          type: "youtube",
+          attrs: {
+            src: "https://www.youtube.com/embed/a<img/src=x/onerror=alert(1)>",
+          },
+        },
+      ]),
+    );
+    const link = html.match(/<a class="dk-embed-url".*?<\/a>/s)?.[0] ?? "";
+    expect(link).not.toBe("");
+    // Im Link selbst darf kein einziges rohes Spitzklammerpaar stehen:
+    // weder im href noch im Text. Im src des iframes bleibt das Zeichen
+    // stehen, dort ist es laut HTML-Parsing Teil des Attributwerts.
+    expect(link).toContain("&lt;img/src=x");
+    expect(link.replace(/^<a [^>]*>|<\/a>$/g, "")).not.toContain("<");
+  });
+
+  it("verlinkt nur http und https", () => {
+    const html = contentToHtml(
+      doc([{ type: "youtube", attrs: { src: "javascript:alert(1)" } }]),
+    );
+    expect(html).not.toContain('class="dk-embed-url"');
+  });
 });
 
 describe("escapeHtml()", () => {

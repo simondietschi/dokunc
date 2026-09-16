@@ -7,6 +7,8 @@ import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { can } from "@/lib/permissions";
 import { effectiveRole } from "@/lib/space-access";
 import { log } from "@/lib/log";
+import { declaredBodySize } from "@/lib/body-size";
+import { visiblePageWhere } from "@/lib/page-access";
 import { extractZip, newZipBudget, ZIP_MAX_FILE } from "@/lib/import/zip";
 import { runImport } from "@/lib/import/run";
 import { ImportError, type ImportFile } from "@/lib/import/types";
@@ -64,12 +66,23 @@ export async function POST(
     );
   }
 
+  // Dieselbe Vorpruefung wie in /api/upload und aus demselben Grund:
+  // req.formData() weiter unten puffert den ganzen Koerper.
   const maxBytes = importMaxBytes();
-  const declared = Number(req.headers.get("content-length") ?? 0);
-  if (declared > maxBytes + 64 * 1024) {
+  const declared = declaredBodySize(
+    req.headers.get("content-length"),
+    maxBytes + 64 * 1024,
+  );
+  if (declared.kind === "zu-gross") {
     return NextResponse.json(
       { error: `Upload zu gross (max. ${importMaxMb()} MB).` },
       { status: 413 },
+    );
+  }
+  if (declared.kind === "unbekannt") {
+    return NextResponse.json(
+      { error: "Länge der Anfrage fehlt (Content-Length erforderlich)" },
+      { status: 411 },
     );
   }
 
@@ -92,12 +105,21 @@ export async function POST(
     );
   }
 
-  // Zielelternseite: muss zu DIESEM Space gehoeren (ID kommt vom Client).
+  // Zielelternseite: muss zu DIESEM Space gehoeren UND fuer die
+  // handelnde Person sichtbar sein (die ID kommt vom Client). Ohne den
+  // zweiten Teil haengt jemand mit managePages Seiten unter eine
+  // geschuetzte Seite, die er selbst nicht oeffnen darf.
   const requestedParent = String(form.get("parentId") ?? "").trim();
   let parentId: string | null = null;
   if (requestedParent) {
     const parent = await prisma.page.findFirst({
-      where: { id: requestedParent, spaceId, deletedAt: null, isTemplate: false },
+      where: {
+        id: requestedParent,
+        spaceId,
+        ...visiblePageWhere(user.id, role),
+        deletedAt: null,
+        isTemplate: false,
+      },
       select: { id: true },
     });
     if (!parent) {

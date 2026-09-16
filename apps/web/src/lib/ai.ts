@@ -2,7 +2,16 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { RetrievedChunk } from "./retrieval";
 
-const MODEL = process.env.AI_MODEL ?? "claude-opus-4-8";
+/**
+ * Vorgabemodell. Bewusst `||` und nicht `??`: docker-compose.yml reicht
+ * AI_MODEL als `${AI_MODEL:-}` durch, die Variable ist im ausgelieferten
+ * Setup also GESETZT und LEER. `??` greift nur bei undefined und null,
+ * der Modellname wäre damit der leere String und jede Anfrage an die API
+ * scheiterte mit einer Fehlermeldung, die die Ursache nicht nennt.
+ * Dieselbe Regel wie in lib/uploads.ts bei UPLOAD_DIR.
+ */
+export const DEFAULT_AI_MODEL = "claude-opus-4-8";
+const MODEL = process.env.AI_MODEL?.trim() || DEFAULT_AI_MODEL;
 
 export function aiAvailable(): boolean {
   return !!process.env.ANTHROPIC_API_KEY;

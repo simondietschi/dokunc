@@ -15,6 +15,7 @@ import {
   renamePageInSpace,
   resolveParentId,
   restorePageTree,
+  subtreeHasHiddenPages,
   trashPageTree,
   type PageScope,
 } from "@/lib/page-guards";
@@ -68,19 +69,28 @@ export async function createPageAction(form: FormData) {
     _max: { position: true },
   });
 
-  const page = await prisma.page.create({
-    data: {
-      spaceId: space.id,
-      parentId,
-      title: template?.title ?? "Untitled",
-      icon: template?.icon ?? null,
-      content: template?.content ?? undefined,
-      textContent: template?.textContent ?? "",
-      position: (last._max.position ?? -1) + 1,
-    },
+  // Anlegen und Nachziehen der Zugriffswurzel in EINEM Zug. Getrennt
+  // ausgeführt bleibt bei einem Abbruch dazwischen eine Seite unter
+  // einer geschützten Elternseite mit accessRootId null stehen, und
+  // genau das wertet visiblePageWhere als offen: sie wäre dauerhaft für
+  // den ganzen Space lesbar, ohne dass es jemandem auffiele.
+  const page = await prisma.$transaction(async (tx) => {
+    const created = await tx.page.create({
+      data: {
+        spaceId: space.id,
+        parentId,
+        title: template?.title ?? "Untitled",
+        icon: template?.icon ?? null,
+        content: template?.content ?? undefined,
+        textContent: template?.textContent ?? "",
+        position: (last._max.position ?? -1) + 1,
+      },
+      select: { id: true },
+    });
+    // Unter einer geschützten Seite ist auch die neue geschützt.
+    if (parentId) await refreshAccessRoots(created.id, tx);
+    return created;
   });
-  // Unter einer geschützten Seite ist auch die neue geschützt.
-  if (parentId) await refreshAccessRoots(page.id);
   revalidatePath(`/s/${space.slug}`, "layout");
   redirect(`/s/${space.slug}/p/${page.id}`);
 }
@@ -149,6 +159,16 @@ export async function deletePageAction(form: FormData) {
   const page = await findLivePage(scopeOf(access), pageId);
   if (!page) redirect(`/s/${space.slug}`);
 
+  // Der Unterbaum wird mitgelöscht. Steckt darin eine Seite, die diese
+  // Person gar nicht sehen darf, bricht der Zug ab: wer etwas nicht
+  // sehen darf, darf es auch nicht zerstören.
+  if (await subtreeHasHiddenPages(scopeOf(access), page.id)) {
+    throw new Error(
+      "Unterhalb dieser Seite liegt eine geschützte Seite, auf die du " +
+        "keinen Zugriff hast. Lass sie von der Space-Verwaltung löschen.",
+    );
+  }
+
   // Soft-Delete: Seite + gesamter Unterbaum in den Papierkorb (kein
   // harter, unwiderruflicher Verlust).
   await trashPageTree(space.id, page.id);
@@ -172,30 +192,37 @@ export async function restorePageAction(form: FormData) {
     revalidatePath(`/s/${space.slug}/trash`);
     return;
   }
-  // Seite + (gelöschten) Unterbaum wiederherstellen.
-  await restorePageTree(space.id, page.id);
-  // Liegt die Elternseite noch im Papierkorb, haengt die Seite an die
-  // oberste Ebene: sonst haengt sie an einem unsichtbaren Elternteil —
-  // im Baum taucht sie zwar als Wurzel auf (elternlose Knoten werden
-  // befoerdert), ihre position gehoert aber zu den alten Geschwistern,
-  // sodass Sortierung und Verschieben durcheinandergeraten.
-  await prisma.$executeRaw`
-    WITH base AS (
-      SELECT coalesce(max(position), -1) AS pos FROM "Page"
-      WHERE "spaceId" = ${space.id} AND "parentId" IS NULL
-        AND "deletedAt" IS NULL AND id <> ${page.id}
-    )
-    UPDATE "Page" p SET "parentId" = NULL, position = (SELECT pos FROM base) + 1
-    WHERE p.id = ${page.id} AND p."spaceId" = ${space.id}
-      AND p."parentId" IS NOT NULL
-      AND EXISTS (
-        SELECT 1 FROM "Page" parent
-        WHERE parent.id = p."parentId" AND parent."deletedAt" IS NOT NULL
+  // Alle drei Schritte in EINEM Zug. Getrennt ausgeführt bleibt nach
+  // einem Abbruch eine Seite sichtbar im Baum stehen, aber unter einem
+  // noch gelöschten Elternteil und mit einer position aus der alten
+  // Geschwisterliste — und im schlimmsten Fall mit der Zugriffswurzel
+  // von vorher, also offen für die Falschen.
+  await prisma.$transaction(async (tx) => {
+    // Seite + (gelöschten) Unterbaum wiederherstellen.
+    await restorePageTree(space.id, page.id, tx);
+    // Liegt die Elternseite noch im Papierkorb, haengt die Seite an die
+    // oberste Ebene: sonst haengt sie an einem unsichtbaren Elternteil —
+    // im Baum taucht sie zwar als Wurzel auf (elternlose Knoten werden
+    // befoerdert), ihre position gehoert aber zu den alten Geschwistern,
+    // sodass Sortierung und Verschieben durcheinandergeraten.
+    await tx.$executeRaw`
+      WITH base AS (
+        SELECT coalesce(max(position), -1) AS pos FROM "Page"
+        WHERE "spaceId" = ${space.id} AND "parentId" IS NULL
+          AND "deletedAt" IS NULL AND id <> ${page.id}
       )
-  `;
-  // Der Ast kann dabei unter einer geschuetzten Seite hervorgeholt
-  // worden sein; die materialisierte Zugriffswurzel muss das nachziehen.
-  await refreshAccessRoots(page.id);
+      UPDATE "Page" p SET "parentId" = NULL, position = (SELECT pos FROM base) + 1
+      WHERE p.id = ${page.id} AND p."spaceId" = ${space.id}
+        AND p."parentId" IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM "Page" parent
+          WHERE parent.id = p."parentId" AND parent."deletedAt" IS NOT NULL
+        )
+    `;
+    // Der Ast kann dabei unter einer geschuetzten Seite hervorgeholt
+    // worden sein; die materialisierte Zugriffswurzel muss das nachziehen.
+    await refreshAccessRoots(page.id, tx);
+  });
   await audit({
     action: "page.restored",
     actorId: user.id,
@@ -215,6 +242,15 @@ export async function purgePageAction(form: FormData) {
   if (!page) {
     revalidatePath(`/s/${space.slug}/trash`);
     return;
+  }
+
+  // Dasselbe wie beim Loeschen, nur unwiderruflich: ein geschuetzter
+  // Ast, den diese Person nicht sehen darf, faellt hier nicht mit.
+  if (await subtreeHasHiddenPages(scopeOf(access), page.id)) {
+    throw new Error(
+      "Unterhalb dieser Seite liegt eine geschützte Seite, auf die du " +
+        "keinen Zugriff hast. Lass sie von der Space-Verwaltung löschen.",
+    );
   }
 
   // Endgueltig loeschen heisst: der geloeschte Unterbaum verschwindet —
