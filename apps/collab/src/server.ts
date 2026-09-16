@@ -9,8 +9,8 @@ import pino from "pino";
 import * as Y from "yjs";
 import {
   canSeePage,
+  canSeePageWithGrant,
   effectiveSpaceRole,
-  isAtLeast,
   prisma,
   strongestSpaceRole,
   type SpaceRole,
@@ -97,7 +97,14 @@ async function shouldSnapshot(pageId: string): Promise<boolean> {
       "NX",
     );
     return res === "OK";
-  } catch {
+  } catch (e) {
+    // Ohne diese Meldung bliebe unbemerkt, dass die Drosselung gerade
+    // aus ist: statt eines Eintrags alle zwei Minuten schriebe dann
+    // jeder einzelne Speicherlauf eine volle PageVersion-Zeile.
+    log.warn(
+      { err: e, pageId },
+      "Snapshot-Drossel nicht erreichbar, History ungedrosselt",
+    );
     return true;
   }
 }
@@ -158,12 +165,22 @@ async function authorize(token: string | undefined, pageId: string) {
 
 // HA: mehrere Collab-Instanzen koordinieren Yjs-Dokumente + Awareness
 // über Redis Pub/Sub (eine Instanz "ownt" ein Dokument, andere proxen).
-const redisUrl = new URL(
-  process.env.REDIS_URL ?? "redis://localhost:6379",
-);
+//
+// Die Extension dupliziert den bestehenden Client, statt REDIS_URL ein
+// zweites Mal auszuwerten. Würden hier nur Host und Port übergeben,
+// fielen Benutzer, Passwort, Datenbanknummer und TLS aus derselben
+// Variable weg: bei `redis://:geheim@host` wiese Redis die Anmeldung ab,
+// bei `rediss://` verschwände still die Verschlüsselung — und die
+// Koordination der Instanzen liefe nicht, während alle übrigen
+// Redis-Zugriffe desselben Prozesses funktionieren.
+//
+// Der Cast überbrückt nur, dass die Extension eine eigene, ältere
+// ioredis-Typfassung mitbringt — zur Laufzeit ist es dieselbe Klasse.
+type HaRedisInstance = NonNullable<
+  ConstructorParameters<typeof HocuspocusRedis>[0]["redis"]
+>;
 const haExtension = new HocuspocusRedis({
-  host: redisUrl.hostname,
-  port: Number(redisUrl.port || 6379),
+  redis: redis as unknown as HaRedisInstance,
 });
 
 const server = new Server({
@@ -253,9 +270,15 @@ const server = new Server({
       }),
     ]);
 
+    // Die drei Folgeschritte dürfen den Speicherlauf nicht kippen, also
+    // wird ihr Fehler nur gemeldet. Dann muss die Meldung aber tragen:
+    // ohne pageId und editorId liesse sich nachträglich nicht sagen,
+    // welcher Seite die Suche fehlt oder wer keine Benachrichtigung
+    // bekommen hat, und `String(e)` warf den Stack weg — der Logger
+    // serialisiert einen Error unter `err` samt Stack selbst.
     if (before) {
       await syncWikiLinks(pageId, before.spaceId, json).catch((e) =>
-        log.warn({ err: String(e) }, "wikiLink sync fehlgeschlagen"),
+        log.warn({ err: e, pageId, editorId }, "wikiLink sync fehlgeschlagen"),
       );
       await notifyNewMentions(
         pageId,
@@ -264,10 +287,10 @@ const server = new Server({
         json,
         editorId,
       ).catch((e) =>
-        log.warn({ err: String(e) }, "mention notify fehlgeschlagen"),
+        log.warn({ err: e, pageId, editorId }, "mention notify fehlgeschlagen"),
       );
       await indexChunks(pageId, textContent).catch((e) =>
-        log.warn({ err: String(e) }, "chunk indexing fehlgeschlagen"),
+        log.warn({ err: e, pageId, editorId }, "chunk indexing fehlgeschlagen"),
       );
     }
 
@@ -371,15 +394,27 @@ async function notifyNewMentions(
 
   const notified: string[] = [];
   for (const userId of reachable) {
-    const exists = await prisma.notification.findFirst({
-      where: { userId, pageId, type: "MENTION", readAt: null },
-      select: { id: true },
-    });
-    if (!exists) {
-      await prisma.notification.create({
-        data: { userId, actorId, type: "MENTION", pageId },
+    // Jede Person einzeln absichern: der Vergleichsstand dieses Diffs
+    // ist beim Speichern bereits überschrieben worden, ein späterer Lauf
+    // fände dieselbe Erwähnung also nicht mehr als neu. Bräche die
+    // Schleife bei der dritten von fünf Personen ab, bekämen die
+    // übrigen dauerhaft weder Glocke noch Mail.
+    try {
+      const exists = await prisma.notification.findFirst({
+        where: { userId, pageId, type: "MENTION", readAt: null },
+        select: { id: true },
       });
-      notified.push(userId);
+      if (!exists) {
+        await prisma.notification.create({
+          data: { userId, actorId, type: "MENTION", pageId },
+        });
+        notified.push(userId);
+      }
+    } catch (e) {
+      log.warn(
+        { err: e, pageId, userId },
+        "Erwähnung konnte nicht angelegt werden",
+      );
     }
   }
 
@@ -462,11 +497,32 @@ function extractText(node: unknown): string {
  * Inhalt gleich wieder wegräumen.
  */
 async function resetDocument(pageId: string): Promise<boolean> {
-  const page = await prisma.page.findUnique({
-    where: { id: pageId },
-    select: { content: true, deletedAt: true },
-  });
+  const [page, gespeichert] = await Promise.all([
+    prisma.page.findUnique({
+      where: { id: pageId },
+      select: { content: true, deletedAt: true },
+    }),
+    prisma.collabDocument.findUnique({
+      where: { pageId },
+      select: { pageId: true },
+    }),
+  ]);
   if (!page || page.deletedAt || !page.content) return false;
+
+  // Die Web-App löscht die CollabDocument-Zeile in derselben
+  // Transaktion, in der sie `Page.content` wiederherstellt. Ist hier
+  // wieder eine da, lag zwischen dieser Transaktion und dieser Nachricht
+  // ein Speicherlauf — und der hat `Page.content` mit dem alten
+  // Speicherstand überschrieben. Ein Reset darauf setzte das Dokument
+  // auf genau den Stand zurück, der die Wiederherstellung verdrängt hat;
+  // ohne diese Meldung bliebe das vollständig unsichtbar.
+  if (gespeichert) {
+    log.warn(
+      { pageId },
+      "Wiederherstellung nicht übernommen: Dokument wurde zwischenzeitlich gespeichert",
+    );
+    return false;
+  }
 
   const seeded = TiptapTransformer.toYdoc(
     page.content,
@@ -724,6 +780,18 @@ async function enforceRevocations(): Promise<void> {
           ? roleByKey.get(`${ctx.userId}:${page.spaceId}`)
           : undefined;
 
+      // Geschützte Seite ohne Freigabe: die Entscheidung trifft dieselbe
+      // Regel wie `canSeePage`, nur mit den oben gebündelt geladenen
+      // Freigaben statt zwei Abfragen je Verbindung.
+      const sichtbar = canSeePageWithGrant(
+        role,
+        page?.accessRootId,
+        !!(
+          page?.accessRootId &&
+          grantedByRoot.get(page.accessRootId)?.has(ctx.userId as string)
+        ),
+      );
+
       const revoked =
         !page ||
         page.deletedAt !== null ||
@@ -734,13 +802,7 @@ async function enforceRevocations(): Promise<void> {
         !user.isActive ||
         user.tokenVersion !== ctx.tokenVersion ||
         !role ||
-        // Geschützte Seite ohne Freigabe: die Space-Verwaltung sieht
-        // weiterhin alles, alle anderen brauchen einen Eintrag.
-        (!!page?.accessRootId &&
-          !isAtLeast(role, "ADMIN") &&
-          !grantedByRoot
-            .get(page.accessRootId)
-            ?.has(ctx.userId as string)) ||
+        !sichtbar ||
         // Herabstufung auf VIEWER: die Verbindung darf nicht mehr
         // schreiben, also muss sie neu aufgebaut werden.
         (role === "VIEWER") !== connection.readOnly;
@@ -763,11 +825,23 @@ async function enforceRevocations(): Promise<void> {
 function startDocResetListener(): void {
   const subscriber = redis.duplicate();
   subscriber.on("error", (e: Error) => log.warn({ err: e.message }, "redis-sub"));
-  subscriber
-    .subscribe(DOC_RESET_CHANNEL, ACCESS_REVOKED_CHANNEL, PAGE_ACCESS_CHANNEL)
-    .catch((e: unknown) => {
-      log.warn({ err: String(e) }, "Redis-Kanäle nicht abonniert");
-    });
+  // Scheiterte das Abonnieren einmal, liefe der Prozess dauerhaft taub
+  // weiter: keine Wiederherstellung erreichte mehr ein offenes Dokument,
+  // und der seitenweise Zugriffsentzug bliebe bis zur nächsten
+  // Minutenrunde liegen. Deshalb nach jedem Verbindungsaufbau erneut
+  // abonnieren — "ready" kommt auch nach einem Wiederaufbau, und ein
+  // zweites SUBSCRIBE auf denselben Kanal ist folgenlos.
+  const subscribe = () => {
+    subscriber
+      .subscribe(DOC_RESET_CHANNEL, ACCESS_REVOKED_CHANNEL, PAGE_ACCESS_CHANNEL)
+      .catch((e: unknown) => {
+        log.warn({ err: e }, "Redis-Kanäle nicht abonniert");
+      });
+  };
+  subscriber.on("ready", subscribe);
+  // Der Client verbindet sich erst beim ersten Befehl (lazyConnect),
+  // "ready" käme ohne diesen Aufruf also nie.
+  subscribe();
   subscriber.on("message", async (channel: string, raw: string) => {
     try {
       if (channel === PAGE_ACCESS_CHANNEL) {

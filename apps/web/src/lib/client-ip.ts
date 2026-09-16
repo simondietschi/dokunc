@@ -4,13 +4,22 @@ import { headers } from "next/headers";
 /**
  * Anzahl eigener Reverse-Proxys vor der App. 0 = die App haengt direkt
  * am Netz, dann ist X-Forwarded-For komplett unglaubwuerdig.
- * Das mitgelieferte Compose-Setup hat genau einen Proxy (Caddy).
+ * Das mitgelieferte Compose-Setup hat genau einen Proxy (Caddy) und
+ * setzt die Variable auch (siehe .env.example, docker-compose.yml).
+ *
+ * Fehlt sie oder steht Unsinn darin, wird 0 angenommen und nicht 1:
+ * ein angenommener Proxy, den es gar nicht gibt, macht den vom Client
+ * frei geschriebenen Header zur Client-IP. Ein Angreifer bekaeme dann
+ * mit einem zufaelligen X-Forwarded-For pro Anfrage einen frischen
+ * Bremszaehler, und derselbe erfundene Wert landete im Protokoll.
+ * Mit 0 fallen alle Anfragen in einen gemeinsamen Topf — das bremst
+ * zu streng statt gar nicht.
  */
 export function trustedProxyHops(
   raw: string | undefined = process.env.TRUSTED_PROXY_HOPS,
 ): number {
   const n = Number(raw);
-  return Number.isInteger(n) && n >= 0 ? n : 1;
+  return Number.isInteger(n) && n >= 0 ? n : 0;
 }
 
 /**

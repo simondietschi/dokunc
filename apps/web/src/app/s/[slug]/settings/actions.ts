@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { prisma } from "@dokunc/db";
+import { prisma, Prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str } from "@/lib/form";
 import { spaceSettingsSchema } from "@/lib/space-settings";
@@ -84,6 +84,12 @@ export async function deleteSpaceAction(
 }
 
 /**
+ * Bricht die Austritts-Transaktion ab, ohne als 500 nach aussen zu gehen:
+ * der Aufrufer macht daraus eine Meldung im Formular.
+ */
+class LastOwnerError extends Error {}
+
+/**
  * Eigene Mitgliedschaft beenden (alle Rollen). Der letzte OWNER kann
  * den Space nicht verlassen — sonst bliebe er ohne Verwaltung zurueck.
  */
@@ -92,22 +98,50 @@ export async function leaveSpaceAction(
   form: FormData,
 ): Promise<SettingsState> {
   const { space, role, user } = await authorizeAction(form, "read");
-  if (role === "OWNER") {
-    // Nur Owner mit aktivem Konto zaehlen — ein gesperrtes Konto kann
-    // den Space nicht verwalten.
-    const owners = await prisma.spaceMember.count({
-      where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
-    });
-    if (owners <= 1) {
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        if (role === "OWNER") {
+          // Nur Owner mit aktivem Konto zaehlen — ein gesperrtes Konto kann
+          // den Space nicht verwalten.
+          const owners = await tx.spaceMember.count({
+            where: {
+              spaceId: space.id,
+              role: "OWNER",
+              user: { isActive: true },
+            },
+          });
+          if (owners <= 1) throw new LastOwnerError();
+        }
+        await tx.spaceMember.deleteMany({
+          where: { spaceId: space.id, userId: user.id },
+        });
+      },
+      // Serializable: sonst zaehlen zwei gleichzeitig austretende Owner
+      // beide zwei, beide loeschen, und der Space bleibt ohne Eigentuemer
+      // zurueck — genau der Zustand, den die Pruefung verhindern soll.
+      { isolationLevel: "Serializable" },
+    );
+  } catch (e) {
+    if (e instanceof LastOwnerError) {
       return {
         error:
           "Du bist der letzte Owner. Ernenne zuerst eine andere Person zum Owner oder lösche den Space.",
       };
     }
+    // Serialisierungskonflikt (P2034): eine parallele Aenderung am selben
+    // Space hat gewonnen. Ein neuer Versuch sieht den aktuellen Stand.
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === "P2034"
+    ) {
+      return {
+        error:
+          "Der Space wurde gleichzeitig geändert. Bitte noch einmal versuchen.",
+      };
+    }
+    throw e;
   }
-  await prisma.spaceMember.deleteMany({
-    where: { spaceId: space.id, userId: user.id },
-  });
   await revokeCollabAccess(user.id, space.id);
   revalidatePath("/spaces");
   redirect("/spaces");

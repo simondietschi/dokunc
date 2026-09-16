@@ -39,15 +39,19 @@ export async function POST(req: Request) {
     );
   }
 
-  let body: { action?: unknown; text?: unknown };
+  let body: { action?: unknown; text?: unknown } | null;
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Ungültiger Body" }, { status: 400 });
   }
 
-  const text = typeof body.text === "string" ? body.text.trim() : "";
-  if (!isAssistAction(body.action) || !text) {
+  // Das JSON-Literal `null` parst fehlerfrei, der catch oben greift also
+  // nicht. Ohne das Fragezeichen wuerfe der Zugriff einen TypeError, den
+  // niemand faengt, und die Route antwortete mit 500 statt mit der hier
+  // vorgesehenen 400.
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  if (!isAssistAction(body?.action) || !text) {
     return NextResponse.json(
       { error: "action und text sind erforderlich" },
       { status: 400 },

@@ -35,7 +35,15 @@ export default async function SharedPage({
 
   const children = share.includeChildren
     ? await prisma.page.findMany({
-        where: { parentId: share.page.id, deletedAt: null },
+        where: {
+          parentId: share.page.id,
+          deletedAt: null,
+          // Dieselbe Bedingung, die resolveShare beim Öffnen erzwingt:
+          // ohne sie stünden Titel und Icon einer nachträglich
+          // geschützten Unterseite hier für jeden mit dem Link, auch
+          // ohne Konto — der Inhalt bliebe gesperrt, der Titel nicht.
+          accessRootId: null,
+        },
         orderBy: [{ position: "asc" }, { title: "asc" }],
         select: { id: true, title: true, icon: true },
         take: 100,

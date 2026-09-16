@@ -27,6 +27,55 @@ const EMBEDDING_MODEL =
   process.env.EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL;
 const TOP_K = 8;
 
+/**
+ * Antwort des Embedding-Dienstes in die Reihenfolge der gesendeten Texte
+ * bringen.
+ *
+ * Die Aufrufer ordnen die Vektoren rein ueber die Position dem jeweiligen
+ * Chunk zu. Kaeme die Antwort kuerzer zurueck, landete `undefined` in
+ * vectorToBytes und die ganze Frage braeche mit einem TypeError ab; kaeme
+ * sie umsortiert, stuende das falsche Embedding dauerhaft in
+ * PageChunk.embedding und die semantische Suche lieferte stillschweigend
+ * falsche Treffer. Deshalb: `index` auswerten, wo der Dienst ihn mitgibt,
+ * und bei allem, was nicht genau passt, lieber gar kein Embedding
+ * (`null`) als ein falsch zugeordnetes — der Aufrufer faellt dann auf die
+ * Volltextsuche zurueck.
+ */
+export function parseEmbeddings(
+  payload: unknown,
+  count: number,
+): number[][] | null {
+  const items = (payload as { data?: unknown } | null)?.data;
+  if (!Array.isArray(items) || items.length !== count) {
+    log.warn(
+      { erwartet: count, erhalten: Array.isArray(items) ? items.length : null },
+      "voyage embeddings: unerwartete Antwortlaenge",
+    );
+    return null;
+  }
+  const out: number[][] = new Array(count);
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i] as { index?: unknown; embedding?: unknown } | null;
+    // Ohne `index` gilt die Reihenfolge der Anfrage.
+    const at = typeof item?.index === "number" ? item.index : i;
+    const v = item?.embedding;
+    if (
+      !Number.isInteger(at) ||
+      at < 0 ||
+      at >= count ||
+      out[at] !== undefined ||
+      !Array.isArray(v) ||
+      v.length === 0 ||
+      v.some((n) => typeof n !== "number" || !Number.isFinite(n))
+    ) {
+      log.warn({ index: at }, "voyage embeddings: unerwarteter Eintrag");
+      return null;
+    }
+    out[at] = v as number[];
+  }
+  return out;
+}
+
 /** Embeddings via Voyage AI (optional — ohne Key greift FTS-Fallback). */
 async function embed(texts: string[]): Promise<number[][] | null> {
   const key = process.env.VOYAGE_API_KEY;
@@ -44,10 +93,7 @@ async function embed(texts: string[]): Promise<number[][] | null> {
       log.warn({ status: res.status }, "voyage embeddings fehlgeschlagen");
       return null;
     }
-    const data = (await res.json()) as {
-      data: { embedding: number[] }[];
-    };
-    return data.data.map((d) => d.embedding);
+    return parseEmbeddings(await res.json(), texts.length);
   } catch (e) {
     log.warn({ err: String(e) }, "voyage nicht erreichbar");
     return null;

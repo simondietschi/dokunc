@@ -57,17 +57,19 @@ describe("normalizeIp", () => {
 });
 
 describe("trustedProxyHops", () => {
-  it("nimmt 1 an, wenn nichts konfiguriert ist", () => {
-    expect(trustedProxyHops(undefined)).toBe(1);
+  it("traut ohne Konfiguration keinem Proxy", () => {
+    // Fehlt die Variable, koennte die App direkt am Netz haengen; dann
+    // waere der Header frei gefaelscht.
+    expect(trustedProxyHops(undefined)).toBe(0);
   });
 
   it("erlaubt ausdrückliches Misstrauen mit 0", () => {
     expect(trustedProxyHops("0")).toBe(0);
   });
 
-  it("fällt bei Unsinn auf den Standard zurück", () => {
-    expect(trustedProxyHops("viele")).toBe(1);
-    expect(trustedProxyHops("-2")).toBe(1);
-    expect(trustedProxyHops("1.5")).toBe(1);
+  it("fällt bei Unsinn auf den sicheren Standard zurück", () => {
+    expect(trustedProxyHops("viele")).toBe(0);
+    expect(trustedProxyHops("-2")).toBe(0);
+    expect(trustedProxyHops("1.5")).toBe(0);
   });
 });

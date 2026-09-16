@@ -18,6 +18,7 @@ import {
 import { buildInviteUrl, sendInvitationEmail } from "@/lib/mail";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
+import { log } from "@/lib/log";
 import {
   canChangeRole,
   canRemoveMember,
@@ -65,6 +66,22 @@ export async function inviteMemberAction(
     return { error: "Diese Person ist bereits Mitglied." };
   }
 
+  // Bei einer schon offenen Einladung ueberschreibt der upsert unten den
+  // tokenHash und entwertet damit sofort den Link aus der ersten Mail.
+  // Deshalb den bisherigen Stand merken: scheitert der Versand, haette die
+  // eingeladene Person sonst gar keinen gueltigen Link mehr — der alte tot,
+  // der neue nie zugestellt.
+  const previous = await prisma.spaceInvitation.findUnique({
+    where: { spaceId_email: { spaceId: space.id, email } },
+    select: {
+      role: true,
+      tokenHash: true,
+      invitedById: true,
+      expiresAt: true,
+      acceptedAt: true,
+    },
+  });
+
   const { token, tokenHash } = generateInviteToken();
   const invitation = await prisma.spaceInvitation.upsert({
     where: { spaceId_email: { spaceId: space.id, email } },
@@ -93,7 +110,24 @@ export async function inviteMemberAction(
       role,
       inviteUrl: buildInviteUrl(invitation.id, token),
     });
-  } catch {
+  } catch (e) {
+    // Ohne diesen Eintrag bliebe der Grund (Verbindung abgelehnt, Auth,
+    // Empfaenger zurueckgewiesen) nirgends stehen — die Meldung unten
+    // sagt "SMTP pruefen", ohne zu sagen, was zu pruefen waere.
+    log.error(
+      { err: String(e), spaceId: space.id, invitationId: invitation.id },
+      "Einladungsmail konnte nicht gesendet werden",
+    );
+    if (previous) {
+      await prisma.spaceInvitation.update({
+        where: { id: invitation.id },
+        data: previous,
+      });
+      return {
+        error:
+          "E-Mail-Versand fehlgeschlagen. SMTP prüfen — die bisherige Einladung bleibt gültig.",
+      };
+    }
     return {
       error:
         "Einladung gespeichert, aber E-Mail-Versand fehlgeschlagen. SMTP prüfen.",
@@ -304,14 +338,40 @@ export async function addSpaceGroupAction(form: FormData) {
   revalidatePath(`/s/${space.slug}/members`);
 }
 
+/**
+ * Offene Editor-Sitzungen aller Mitglieder einer Gruppe trennen.
+ *
+ * Wie bei der direkten Mitgliedschaft: das Schreibrecht wird nur beim
+ * Verbinden geprueft. Ohne diesen Schritt schreibt weiter, wem das Recht
+ * ueber die Gruppe gerade herabgestuft oder entzogen wurde — bis zur
+ * naechsten wiederkehrenden Pruefung des Collab-Servers, also bis zu
+ * einer Minute lang.
+ */
+async function revokeGroupCollabAccess(groupId: string, spaceId: string) {
+  const members = await prisma.groupMember.findMany({
+    where: { groupId },
+    select: { userId: true },
+  });
+  for (const m of members) {
+    await revokeCollabAccess(m.userId, spaceId);
+  }
+}
+
 export async function updateSpaceGroupRoleAction(form: FormData) {
   const { space, user } = await authorizeAction(form, "manageSpace");
   const role = str(form, "role");
   if (!isGroupRole(role)) return;
 
-  const { count } = await prisma.spaceGroup.updateMany({
+  const spaceGroupId = str(form, "spaceGroupId");
+  const spaceGroup = await prisma.spaceGroup.findFirst({
     // spaceId in der Bedingung: die ID kommt aus dem Formular.
-    where: { id: str(form, "spaceGroupId"), spaceId: space.id },
+    where: { id: spaceGroupId, spaceId: space.id },
+    select: { groupId: true },
+  });
+  if (!spaceGroup) return;
+
+  const { count } = await prisma.spaceGroup.updateMany({
+    where: { id: spaceGroupId, spaceId: space.id },
     data: { role },
   });
   if (count > 0) {
@@ -319,9 +379,10 @@ export async function updateSpaceGroupRoleAction(form: FormData) {
       action: "space.group_role_changed",
       actorId: user.id,
       spaceId: space.id,
-      targetId: str(form, "spaceGroupId"),
+      targetId: spaceGroupId,
       metadata: { role },
     });
+    await revokeGroupCollabAccess(spaceGroup.groupId, space.id);
   }
   revalidatePath(`/s/${space.slug}/members`);
 }
@@ -329,6 +390,12 @@ export async function updateSpaceGroupRoleAction(form: FormData) {
 export async function removeSpaceGroupAction(form: FormData) {
   const { space, user } = await authorizeAction(form, "manageSpace");
   const spaceGroupId = str(form, "spaceGroupId");
+  // Vor dem Loeschen lesen: danach ist nicht mehr feststellbar, wessen
+  // offene Sitzungen zu trennen sind.
+  const spaceGroup = await prisma.spaceGroup.findFirst({
+    where: { id: spaceGroupId, spaceId: space.id },
+    select: { groupId: true },
+  });
   const { count } = await prisma.spaceGroup.deleteMany({
     where: { id: spaceGroupId, spaceId: space.id },
   });
@@ -339,6 +406,9 @@ export async function removeSpaceGroupAction(form: FormData) {
       spaceId: space.id,
       targetId: spaceGroupId,
     });
+    if (spaceGroup) {
+      await revokeGroupCollabAccess(spaceGroup.groupId, space.id);
+    }
   }
   revalidatePath(`/s/${space.slug}/members`);
 }

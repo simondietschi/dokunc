@@ -9,6 +9,7 @@ import { audit } from "@/lib/audit";
 import { generateInviteToken } from "@/lib/invitations";
 import { requestDocumentReset, revokePageAccess } from "@/lib/collab-sync";
 import {
+  detachLiveChildren,
   findLivePage,
   findRestorableVersion,
   findTrashedPage,
@@ -25,6 +26,9 @@ import {
   visiblePageWhere,
 } from "@/lib/page-access";
 import { effectiveRole } from "@/lib/space-access";
+import { atLeast } from "@/lib/permissions";
+import { isValidIcon } from "@/lib/space-settings";
+import { appUrl } from "@dokunc/mail";
 
 /**
  * Der Kontext, den die Guards brauchen: Space, Person und Rolle. Als
@@ -100,6 +104,15 @@ export async function setPageIconAction(form: FormData) {
   const access = await authorizeAction(form, "write");
   const { space } = access;
   const icon = str(form, "icon");
+  // Dieselbe Prüfung wie beim Space-Icon. Die kuratierte Auswahl steht
+  // nur im Client; ein selbst gebautes Formular legte sonst beliebigen
+  // Text vor den Seitentitel — auch Steuer- und Richtungszeichen wie
+  // U+202E, die `str()` nicht wegtrimmt und die der Seitenbaum
+  // unverändert ausgibt. Ein Kappen nach Code-Einheiten reicht dafür
+  // nicht und zerschnitte obendrein Emoji-Sequenzen in der Mitte.
+  if (icon && !isValidIcon(icon)) {
+    throw new Error("Symbol muss ein einzelnes Emoji sein");
+  }
   const { count } = await prisma.page.updateMany({
     where: {
       id: str(form, "pageId"),
@@ -107,9 +120,7 @@ export async function setPageIconAction(form: FormData) {
       spaceId: space.id,
       deletedAt: null,
     },
-    // Ein Emoji ist selten länger als ein paar Codepoints; die Grenze
-    // hält versehentlich eingefügte Textblöcke aus dem Feld.
-    data: { icon: icon.slice(0, 16) || null },
+    data: { icon: icon || null },
   });
   if (count === 0) throw new Error("Seite gehört nicht zu diesem Space");
   revalidatePath(`/s/${space.slug}`, "layout");
@@ -198,27 +209,9 @@ export async function restorePageAction(form: FormData) {
   // Geschwisterliste — und im schlimmsten Fall mit der Zugriffswurzel
   // von vorher, also offen für die Falschen.
   await prisma.$transaction(async (tx) => {
-    // Seite + (gelöschten) Unterbaum wiederherstellen.
+    // Seite + (geloeschten) Unterbaum wiederherstellen und, falls die
+    // Elternseite noch im Papierkorb liegt, an die oberste Ebene haengen.
     await restorePageTree(space.id, page.id, tx);
-    // Liegt die Elternseite noch im Papierkorb, haengt die Seite an die
-    // oberste Ebene: sonst haengt sie an einem unsichtbaren Elternteil —
-    // im Baum taucht sie zwar als Wurzel auf (elternlose Knoten werden
-    // befoerdert), ihre position gehoert aber zu den alten Geschwistern,
-    // sodass Sortierung und Verschieben durcheinandergeraten.
-    await tx.$executeRaw`
-      WITH base AS (
-        SELECT coalesce(max(position), -1) AS pos FROM "Page"
-        WHERE "spaceId" = ${space.id} AND "parentId" IS NULL
-          AND "deletedAt" IS NULL AND id <> ${page.id}
-      )
-      UPDATE "Page" p SET "parentId" = NULL, position = (SELECT pos FROM base) + 1
-      WHERE p.id = ${page.id} AND p."spaceId" = ${space.id}
-        AND p."parentId" IS NOT NULL
-        AND EXISTS (
-          SELECT 1 FROM "Page" parent
-          WHERE parent.id = p."parentId" AND parent."deletedAt" IS NOT NULL
-        )
-    `;
     // Der Ast kann dabei unter einer geschuetzten Seite hervorgeholt
     // worden sein; die materialisierte Zugriffswurzel muss das nachziehen.
     await refreshAccessRoots(page.id, tx);
@@ -254,38 +247,12 @@ export async function purgePageAction(form: FormData) {
   }
 
   // Endgueltig loeschen heisst: der geloeschte Unterbaum verschwindet —
-  // aber NUR er. Page.parentId kaskadiert (ON DELETE CASCADE), und eine
-  // wiederhergestellte Unterseite unter einem noch geloeschten Elternteil
-  // ist ein voellig normaler Zustand (restorePageAction stellt nur nach
-  // unten wieder her). Ohne das Abhaengen unten wuerde sie hier still
-  // mitgeloescht — samt Versionen, Kommentaren und eigenem Unterbaum.
+  // aber NUR er. Lebende Unterseiten unter einem noch geloeschten
+  // Elternteil sind ein voellig normaler Zustand (restorePageAction
+  // stellt nur nach unten wieder her); ohne das Abhaengen naehme die
+  // Kaskade sie mit.
   const detached = await prisma.$transaction(async (tx) => {
-    // Lebende Kinder irgendwo im geloeschten Unterbaum an die oberste
-    // Ebene haengen (hinter die bestehenden Wurzelseiten).
-    const orphans = await tx.$queryRaw<{ id: string }[]>`
-      WITH RECURSIVE sub AS (
-        SELECT id FROM "Page"
-        WHERE id = ${page.id} AND "spaceId" = ${space.id}
-          AND "deletedAt" IS NOT NULL
-        UNION ALL
-        SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
-        WHERE p."spaceId" = ${space.id} AND p."deletedAt" IS NOT NULL
-      ), base AS (
-        SELECT coalesce(max(position), -1) AS pos FROM "Page"
-        WHERE "spaceId" = ${space.id} AND "parentId" IS NULL
-          AND "deletedAt" IS NULL
-      ), orphan AS (
-        SELECT p.id, row_number() OVER (ORDER BY p.position, p.title) AS n
-        FROM "Page" p
-        WHERE p."spaceId" = ${space.id} AND p."deletedAt" IS NULL
-          AND p."parentId" IN (SELECT id FROM sub)
-      )
-      UPDATE "Page" SET "parentId" = NULL,
-        position = (SELECT pos FROM base) + orphan.n
-      FROM orphan WHERE "Page".id = orphan.id
-      RETURNING "Page".id
-    `;
-
+    const orphans = await detachLiveChildren(space.id, page.id, tx);
     // Jetzt trifft die Kaskade nur noch geloeschte Seiten.
     await tx.page.deleteMany({
       where: { id: page.id, spaceId: space.id, NOT: { deletedAt: null } },
@@ -412,7 +379,11 @@ export async function createShareAction(
   });
   revalidatePath(`/s/${space.slug}/p/${page.id}`);
 
-  const base = (process.env.APP_URL ?? "").replace(/\/$/, "");
+  // Dieselbe Basisadresse wie Einladungs- und Reset-Mails. Direkt aus
+  // process.env.APP_URL gebaut begänne der Link ohne gesetzte Variable
+  // mit "/share/" und wäre in einer E-Mail oder Chatnachricht wertlos —
+  // ShareDialog legt ihn unverändert in die Zwischenablage.
+  const base = appUrl();
   return {
     url: `${base}/share/${share.id}?token=${encodeURIComponent(token)}`,
   };
@@ -465,6 +436,19 @@ export async function togglePageRestrictionAction(form: FormData) {
     select: { isRestricted: true },
   });
   const next = !current?.isRestricted;
+
+  // Aufheben ist der Space-Verwaltung vorbehalten. `managePages` hat
+  // auch MEMBER, die Standardrolle beim Beitritt zu einem offenen
+  // Space; wer dort auf einer geschützten Seite freigegeben ist, käme
+  // sonst an findLivePage vorbei und kippte den Schutz, den ein OWNER
+  // gesetzt hat — setPageRestricted löscht dabei alle Freigaben und
+  // refreshAccessRoots öffnet den ganzen Unterbaum für den Space.
+  // Schützen bleibt offen: das nimmt nur weg und ist umkehrbar.
+  if (!next && !atLeast(access.role, "ADMIN")) {
+    throw new Error(
+      "Den Schutz dieser Seite kann nur die Space-Verwaltung aufheben.",
+    );
+  }
 
   // Ein offener Freigabelink und ein Schutz widersprechen sich; der
   // Schutz ist die ausdrücklichere Aussage und zieht die Links ein.
@@ -549,6 +533,15 @@ export async function removePageGrantAction(form: FormData) {
   const { space, user } = access;
   const page = await findLivePage(scopeOf(access), str(form, "pageId"));
   if (!page) return;
+
+  // Wie beim Aufheben des Schutzes: eine fremde Freigabe zu entziehen
+  // gehört der Space-Verwaltung und nicht jedem MEMBER, der über
+  // `managePages` auf der geschützten Seite steht.
+  if (!atLeast(access.role, "ADMIN")) {
+    throw new Error(
+      "Freigaben dieser Seite kann nur die Space-Verwaltung entfernen.",
+    );
+  }
 
   const { count } = await prisma.pageGrant.deleteMany({
     // pageId in der Bedingung: die Grant-ID kommt aus dem Formular.

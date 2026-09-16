@@ -39,9 +39,14 @@ export async function GET(
   });
   if (!attachment) return new NextResponse("Not found", { status: 404 });
 
-  // Anhänge älterer Uploads haben keinen Seitenbezug; für sie bleibt es
-  // beim Space der Freigabe.
-  if (attachment.pageId && attachment.pageId !== share.page.id) {
+  // Anhänge älterer Uploads haben keinen Seitenbezug. Ohne ihn lässt
+  // sich nicht sagen, ob die Freigabe die Datei deckt — sie beim Space
+  // der Freigabe zu belassen, machte einen einzigen Link zum Schlüssel
+  // für alle seitenlosen Dateien des ganzen Space, auch ohne Konto.
+  // Über /api/files bleiben sie mit Konto weiterhin erreichbar.
+  if (!attachment.pageId) return new NextResponse("Not found", { status: 404 });
+
+  if (attachment.pageId !== share.page.id) {
     const owner = await resolveShare(id, token, attachment.pageId);
     if (!owner) return new NextResponse("Not found", { status: 404 });
   }

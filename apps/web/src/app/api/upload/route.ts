@@ -189,9 +189,25 @@ export async function POST(req: Request) {
   const name = sanitizeFilename(file.name);
   const storedName = `${randomBytes(16).toString("hex")}.${ext}`;
 
-  await mkdir(UPLOAD_DIR, { recursive: true });
   const fullPath = path.join(UPLOAD_DIR, storedName);
-  await writeFile(fullPath, bytes);
+  try {
+    await mkdir(UPLOAD_DIR, { recursive: true });
+    await writeFile(fullPath, bytes);
+  } catch (e) {
+    // Ohne diesen Zweig verliesse ein Schreibfehler (Verzeichnis nicht
+    // beschreibbar, Platte voll) die Route unbehandelt: kein Eintrag im
+    // Log und keine JSON-Antwort, an der sich der Client festhalten
+    // koennte. Derselbe Vorfall waere je nach Ursache sichtbar oder
+    // gar nicht — deshalb hier dieselbe Meldung wie im Datenbankzweig.
+    log.error(
+      { err: String(e), spaceId },
+      "Datei konnte nicht abgelegt werden",
+    );
+    return NextResponse.json(
+      { error: "Upload fehlgeschlagen" },
+      { status: 500 },
+    );
+  }
 
   try {
     // Erst nach dem Schreiben registrieren: ein Datensatz ohne Datei

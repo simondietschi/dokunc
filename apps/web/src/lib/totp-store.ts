@@ -75,13 +75,19 @@ export async function issueRecoveryCodes(
   count = RECOVERY_CODE_COUNT,
 ): Promise<string[]> {
   const codes = generateRecoveryCodes(count);
-  await prisma.totpRecoveryCode.deleteMany({ where: { userId } });
-  await prisma.totpRecoveryCode.createMany({
-    data: codes.map((code) => ({
-      userId,
-      codeHash: hashToken(normalizeRecoveryCode(code)),
-    })),
-    skipDuplicates: true,
-  });
+  // Löschen und Neuanlegen gehören in EINE Transaktion. Bricht der
+  // Ablauf dazwischen ab (Datenbankfehler, Verbindungsverlust), hätte
+  // das Konto sonst den zweiten Faktor aktiv und keinen einzigen
+  // Wiederherstellungscode mehr — und damit keinen Weg zurück.
+  await prisma.$transaction([
+    prisma.totpRecoveryCode.deleteMany({ where: { userId } }),
+    prisma.totpRecoveryCode.createMany({
+      data: codes.map((code) => ({
+        userId,
+        codeHash: hashToken(normalizeRecoveryCode(code)),
+      })),
+      skipDuplicates: true,
+    }),
+  ]);
   return codes;
 }

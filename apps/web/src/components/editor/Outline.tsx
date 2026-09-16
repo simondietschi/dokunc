@@ -3,37 +3,30 @@
 import { useEffect, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { headingSlug } from "@dokunc/editor";
-
-type Entry = { level: number; text: string; id: string; key: string };
+import { collectHeadings, type TocHeading } from "@/lib/toc";
 
 /**
- * Gliederung der Seite.
+ * Gliederung der Seite: fester Streifen rechts, erst ab 1400px sichtbar
+ * (siehe .dk-outline in globals.css).
  *
- * Die Anker stammen aus derselben Funktion, die auch die Überschriften
- * rendert — ein Eintrag hier trifft also immer sein Ziel im Dokument
- * und im HTML-Export.
+ * Die Überschriften kommen aus `collectHeadings` — derselben Funktion,
+ * aus der auch das aufklappbare Inhaltsverzeichnis liest. Vorher sammelte
+ * diese Ansicht selbst, mit eigener Ebenengrenze und eigener Behandlung
+ * leerer Zeilen: auf breiten Schirmen standen dann zwei verschieden lange
+ * Listen derselben Seite nebeneinander.
+ *
+ * Gesprungen wird weiter über den Anker: die IDs stammen aus derselben
+ * Funktion, die auch die Überschriften rendert, ein Eintrag hier trifft
+ * also sein Ziel im Dokument und im HTML-Export.
  */
 export function Outline({ editor }: { editor: Editor | null }) {
-  const [entries, setEntries] = useState<Entry[]>([]);
+  const [entries, setEntries] = useState<TocHeading[]>([]);
 
   useEffect(() => {
     if (!editor) return;
     const read = () => {
-      const list: Entry[] = [];
-      editor.state.doc.descendants((node, pos) => {
-        if (node.type.name !== "heading") return;
-        const text = node.textContent.trim();
-        if (!text) return;
-        list.push({
-          level: Number(node.attrs.level ?? 1),
-          text,
-          id: headingSlug(text),
-          // Gleich benannte Überschriften teilen sich den Anker, aber
-          // nicht den React-Key.
-          key: `${pos}`,
-        });
-      });
-      setEntries(list);
+      if (editor.isDestroyed) return;
+      setEntries(collectHeadings(editor.state.doc));
     };
     read();
     editor.on("update", read);
@@ -49,15 +42,20 @@ export function Outline({ editor }: { editor: Editor | null }) {
       <p className="dk-outline-title">Auf dieser Seite</p>
       <ul>
         {entries.map((e) => (
-          <li key={e.key} style={{ paddingLeft: `${(e.level - 1) * 0.7}rem` }}>
+          <li
+            // Gleich benannte Überschriften teilen sich den Anker, aber
+            // nicht den React-Key.
+            key={e.pos}
+            style={{ paddingLeft: `${(e.level - 1) * 0.7}rem` }}
+          >
             <a
-              href={`#${e.id}`}
+              href={`#${headingSlug(e.text)}`}
               onClick={(ev) => {
                 // Ohne das eigene Scrollen springt der Browser hart und
                 // die Adresszeile füllt sich mit Ankern.
                 ev.preventDefault();
                 document
-                  .getElementById(e.id)
+                  .getElementById(headingSlug(e.text))
                   ?.scrollIntoView({ behavior: "smooth", block: "start" });
               }}
             >

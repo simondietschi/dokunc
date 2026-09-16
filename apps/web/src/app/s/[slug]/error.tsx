@@ -23,9 +23,21 @@ export default function SpaceError({
       <h2 className="mt-5 text-lg font-semibold tracking-tight">
         Das hat nicht geklappt
       </h2>
+      {/* Bewusst nicht error.message: im Produktivbau ersetzt Next die
+          Meldung eines Serverfehlers durch einen englischen Rahmenwerks-
+          satz, im Client stuende dort die rohe JavaScript-Meldung. Beides
+          sagt der lesenden Person nichts. Der echte Fehler steht im
+          Effekt oben in der Browserkonsole und im Serverlog. */}
       <p className="mt-1.5 max-w-sm text-sm text-muted">
-        {error.message || "Unerwarteter Fehler. Bitte versuche es erneut."}
+        Unerwarteter Fehler. Bitte versuche es erneut.
       </p>
+      {/* Ohne die Kennung laesst sich der Fall im Serverlog nicht
+          wiederfinden, wenn jemand ihn meldet. */}
+      {error.digest && (
+        <p className="mt-2 font-mono text-xs text-faint">
+          Kennung: {error.digest}
+        </p>
+      )}
       <Button variant="secondary" className="mt-6" onClick={reset}>
         Erneut versuchen
       </Button>

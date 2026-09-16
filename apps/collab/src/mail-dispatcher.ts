@@ -56,8 +56,36 @@ const LOCK_TTL_MS = 10 * 60 * 1000;
 /** Lua: Lock nur löschen, wenn er noch uns gehört (Token-Vergleich). */
 const RELEASE_SCRIPT =
   'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) end return 0';
+/** Lua: Lock nur verlängern, wenn er noch uns gehört (Token-Vergleich). */
+const RENEW_SCRIPT =
+  'if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) end return 0';
+/**
+ * Abstand der Lock-Verlängerung. Ein Lauf hat keine Zeitschranke: bis zu
+ * MAX_ROUNDS Runden à BATCH_LIMIT Kandidaten, pro Empfänger SEND_ATTEMPTS
+ * Versuche mit je 30 s Socket-Timeout. Einige hängende SMTP-Server
+ * sprengen damit LOCK_TTL_MS. Ohne Verlängerung verfällt der Lock mitten
+ * im Lauf, eine zweite Instanz lädt dieselben noch nicht gebuchten Zeilen
+ * und versendet parallel dieselben Mails.
+ */
+const LOCK_RENEW_MS = Math.floor(LOCK_TTL_MS / 3);
 /** Marker-Lebensdauer: deutlich länger als ein Tag, aber endlich. */
 const DIGEST_MARKER_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
+/**
+ * Dauerhafte Ablehnung? Ein SMTP-Antwortcode 5xx (unbekannter Empfänger,
+ * abgelehnte Adresse) fällt beim nächsten Versuch genauso aus. Ohne diese
+ * Unterscheidung wiederholt jeder Lauf dieselbe aussichtslose Zustellung,
+ * bei 30 s Intervall bis GIVE_UP_AFTER_MS tausende Male. 4xx und
+ * Verbindungsfehler bleiben vorübergehend und werden weiter versucht.
+ */
+function isPermanentSmtpError(e: unknown): boolean {
+  const code = (e as { responseCode?: unknown } | null | undefined)
+    ?.responseCode;
+  return typeof code === "number" && code >= 500 && code < 600;
+}
+
+/** Ergebnis eines Zustellversuchs für einen Empfänger-Batch. */
+type Delivery = "sent" | "retry" | "permanent";
 
 function intervalMs(): number {
   const s = Number(process.env.MAIL_DISPATCH_INTERVAL_S ?? 30);
@@ -95,6 +123,25 @@ export function startMailDispatcher(opts: {
     }
   }
 
+  async function renewLock(token: string): Promise<void> {
+    try {
+      const ok = await redis.eval(
+        RENEW_SCRIPT,
+        1,
+        LOCK_KEY,
+        token,
+        String(LOCK_TTL_MS),
+      );
+      // 0 heisst: der Lock gehört uns nicht mehr. Dann läuft bereits eine
+      // zweite Instanz auf denselben Zeilen — das gehört ins Log.
+      if (ok !== 1) {
+        log.warn("Lock während des Laufs verloren, Überlappung möglich");
+      }
+    } catch (e) {
+      log.warn({ err: String(e) }, "Lock konnte nicht verlängert werden");
+    }
+  }
+
   async function releaseLock(token: string): Promise<void> {
     try {
       await redis.eval(RELEASE_SCRIPT, 1, LOCK_KEY, token);
@@ -121,11 +168,26 @@ export function startMailDispatcher(opts: {
     }
   }
 
-  async function markEmailed(ids: string[], at: Date): Promise<void> {
-    if (ids.length === 0) return;
-    await prisma.notification.updateMany({
+  /** Liefert, wie viele Zeilen wirklich von uns markiert wurden. */
+  async function markEmailed(ids: string[], at: Date): Promise<number> {
+    if (ids.length === 0) return 0;
+    const res = await prisma.notification.updateMany({
       where: { id: { in: ids }, emailedAt: null },
       data: { emailedAt: at },
+    });
+    return res.count;
+  }
+
+  /**
+   * Nimmt die Vorab-Buchung aus markEmailed zurück, damit ein späterer
+   * Lauf den Versand erneut versucht. Die Bedingung auf genau unseren
+   * Zeitstempel verhindert, dass dabei ein fremder Beleg gelöscht wird.
+   */
+  async function unmarkEmailed(ids: string[], at: Date): Promise<void> {
+    if (ids.length === 0) return;
+    await prisma.notification.updateMany({
+      where: { id: { in: ids }, emailedAt: at },
+      data: { emailedAt: null },
     });
   }
 
@@ -318,7 +380,7 @@ export function startMailDispatcher(opts: {
     return { candidates, orphanIds, full };
   }
 
-  async function deliver(batch: DispatchBatch, now: Date): Promise<boolean> {
+  async function deliver(batch: DispatchBatch, now: Date): Promise<Delivery> {
     const mail =
       batch.mode === "DAILY"
         ? digestMail({
@@ -332,20 +394,35 @@ export function startMailDispatcher(opts: {
     for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
       try {
         await sendMail({ to: batch.email, ...mail });
-        return true;
+        return "sent";
       } catch (e) {
         lastError = e;
+        const permanent = isPermanentSmtpError(e);
         log.warn(
-          { userId: batch.userId, attempt, err: String(e) },
+          { userId: batch.userId, attempt, permanent, err: String(e) },
           "Mail-Versand fehlgeschlagen",
         );
+        // Eine dauerhafte Ablehnung wiederholt sich unverändert; weitere
+        // Versuche kosten nur Laufzeit unter dem Lock.
+        if (permanent) break;
       }
+    }
+    if (isPermanentSmtpError(lastError)) {
+      log.error(
+        {
+          userId: batch.userId,
+          count: batch.notificationIds.length,
+          err: String(lastError),
+        },
+        "Mail dauerhaft abgelehnt, kein weiterer Versuch (Einträge bleiben in der App)",
+      );
+      return "permanent";
     }
     log.error(
       { userId: batch.userId, count: batch.notificationIds.length, err: String(lastError) },
       "Mail nach mehreren Versuchen nicht zugestellt, Einträge bleiben offen",
     );
-    return false;
+    return "retry";
   }
 
   /**
@@ -381,13 +458,32 @@ export function startMailDispatcher(opts: {
     let sent = 0;
     let failed = 0;
     for (const batch of plan.send) {
-      if (await deliver(batch, now)) {
-        await markEmailed(batch.notificationIds, now);
+      // Beleg VOR dem Versand: markEmailed bucht die Zeilen für diesen
+      // Lauf. Wird erst danach markiert, bleibt bei einem Absturz zwischen
+      // Versand und Beleg (oder bei einem gescheiterten updateMany) die
+      // Zeile auf emailedAt = null stehen und dieselbe Mail geht in jedem
+      // weiteren Lauf erneut raus. Lieber eine Mail verlieren als sie
+      // stündlich wiederholen.
+      if ((await markEmailed(batch.notificationIds, now)) === 0) continue;
+      const result = await deliver(batch, now);
+      if (result === "sent") {
         sent++;
-      } else {
-        failed++;
-        outcome.failed += 1;
+        continue;
       }
+      failed++;
+      if (result === "retry") {
+        // Vorübergehende Störung: Buchung zurücknehmen, ein späterer Lauf
+        // versucht es erneut (bis GIVE_UP_AFTER_MS).
+        await unmarkEmailed(batch.notificationIds, now);
+        // Nur ein gescheiterter Digest darf den Tagesmarker zurückhalten.
+        // Zählte hier auch eine unzustellbare Sofortmail mit, bliebe der
+        // Marker den ganzen Tag ungesetzt, digestDue lieferte in jedem
+        // Lauf true und jede neue DAILY-Zeile ginge sofort als eigene
+        // „Tageszusammenfassung“ raus.
+        if (batch.mode === "DAILY") outcome.failed += 1;
+      }
+      // Bei "permanent" bleibt die Buchung bestehen: die Adresse nimmt die
+      // Mail nicht an, die Benachrichtigung bleibt in der App sichtbar.
     }
     if (sent || failed) {
       log.info(
@@ -421,12 +517,21 @@ export function startMailDispatcher(opts: {
     running = true;
     const token = randomUUID();
     let locked = false;
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
     try {
       locked = await acquireLock(token);
-      if (locked) await runOnce();
+      if (locked) {
+        // Solange der Lauf dauert, den Lock am Leben halten (siehe
+        // LOCK_RENEW_MS). unref, damit der Timer den Prozess beim
+        // Herunterfahren nicht offen hält.
+        heartbeat = setInterval(() => void renewLock(token), LOCK_RENEW_MS);
+        heartbeat.unref?.();
+        await runOnce();
+      }
     } catch (e) {
       log.error({ err: String(e) }, "Mail-Dispatcher-Lauf fehlgeschlagen");
     } finally {
+      if (heartbeat) clearInterval(heartbeat);
       if (locked) await releaseLock(token);
       running = false;
     }

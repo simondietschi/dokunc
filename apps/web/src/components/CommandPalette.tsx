@@ -60,6 +60,8 @@ export function CommandPalette() {
     [],
   );
   const [loading, setLoading] = useState(false);
+  // Ein Fehler der Suche darf nicht wie ein leeres Ergebnis aussehen.
+  const [failed, setFailed] = useState<null | "server" | "auth">(null);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
   const slug = spaceSlugFromPath(pathname);
@@ -104,15 +106,16 @@ export function CommandPalette() {
     };
   }, [disabled]);
 
-  // Beim Öffnen zurücksetzen; Hintergrund nicht scrollen.
+  // Beim Öffnen zurücksetzen. Die Scroll-Sperre liegt allein im Effekt
+  // oben: hier stand sie ein zweites Mal und schrieb beim Aufräumen den
+  // Leerstring — wer die Palette über einem bereits gesperrten
+  // Hintergrund öffnete (etwa aus einem Dialog), konnte danach wieder
+  // scrollen.
   useEffect(() => {
     if (!open) return;
     setQuery("");
     setActive(0);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = "";
-    };
+    setFailed(null);
   }, [open]);
 
   // Favoriten einmal pro Öffnen laden — Sprungziele bei leerer Eingabe.
@@ -145,18 +148,32 @@ export function CommandPalette() {
             { signal: controller.signal },
           );
           if (res.status === 401) {
-            // Sitzung abgelaufen — Palette hat nichts anzuzeigen.
-            setOpen(false);
+            // Sitzung abgelaufen. Die Palette schloss sich hier frueher
+            // kommentarlos: der Tastendruck wirkte folgenlos und niemand
+            // erfuhr, dass eine neue Anmeldung noetig ist.
+            setFailed("auth");
+            setLoading(false);
             return;
           }
-          if (res.ok) setData(await res.json());
+          if (res.ok) {
+            setData(await res.json());
+            setFailed(null);
+          } else {
+            // Ohne diesen Zweig bliebe `data` stehen und die Liste
+            // meldete "Nichts gefunden": ein 500 der Suche waere von
+            // einem leeren Ergebnis nicht zu unterscheiden.
+            setFailed("server");
+          }
           setLoading(false);
         } catch {
           // Ein Abbruch ist normal (jede Eingabe loest die vorige ab) —
           // dann laeuft gleich der naechste Lauf. Bei einem echten
           // Netzfehler muss der Spinner aber aufhoeren, sonst dreht er
           // sich fuer immer und verdeckt den Leer-Zustand.
-          if (!controller.signal.aborted) setLoading(false);
+          if (!controller.signal.aborted) {
+            setFailed("server");
+            setLoading(false);
+          }
         }
       },
       query ? 160 : 0,
@@ -386,6 +403,27 @@ export function CommandPalette() {
           aria-label="Ergebnisse"
           className="max-h-[46vh] overflow-y-auto p-2"
         >
+          {/* Steht vor den Treffern, nicht anstelle des Leer-Zustands:
+              die Aktionen unten bleiben auch bei gestoerter Suche
+              bedienbar. */}
+          {failed && (
+            <li className="mx-1 mt-1 rounded-lg border border-line bg-subtle px-3 py-2 text-[12.5px] text-danger">
+              {failed === "auth" ? (
+                <>
+                  Deine Sitzung ist abgelaufen.{" "}
+                  <button
+                    type="button"
+                    onClick={() => go("/login")}
+                    className="font-medium underline underline-offset-2"
+                  >
+                    Neu anmelden
+                  </button>
+                </>
+              ) : (
+                "Die Suche ist gerade nicht erreichbar. Die Liste kann unvollständig sein."
+              )}
+            </li>
+          )}
           {items.map((item, i) => {
             const header =
               item.group !== lastGroup ? (
@@ -456,7 +494,7 @@ export function CommandPalette() {
               </li>
             );
           })}
-          {items.length === 0 && !loading && (
+          {items.length === 0 && !loading && !failed && (
             <li className="px-3 py-10 text-center text-sm text-muted">
               Nichts gefunden für{" "}
               <span className="font-medium text-ink">„{query}“</span>

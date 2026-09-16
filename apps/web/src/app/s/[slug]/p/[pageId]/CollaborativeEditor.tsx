@@ -99,7 +99,20 @@ async function uploadCoverImage(
   body.set("pageId", pageId);
   body.set("kind", "image");
   const res = await fetch("/api/upload", { method: "POST", body });
-  if (!res.ok) throw new Error(`Upload abgelehnt (${res.status})`);
+  if (!res.ok) {
+    // Die Route begruendet die Ablehnung (zu gross — mit der tatsaechlich
+    // geltenden Grenze —, falscher Typ, kein Schreibrecht, zu viele
+    // Uploads). Bliebe nur der Statuscode uebrig, koennte der Aufrufer
+    // der Person nur pauschal raten, woran es lag.
+    let message = "Upload fehlgeschlagen.";
+    try {
+      const data = (await res.json()) as { error?: string };
+      if (data.error) message = data.error;
+    } catch {
+      /* keine JSON-Antwort */
+    }
+    throw new Error(message);
+  }
   const { url } = (await res.json()) as { url: string };
   return url;
 }
@@ -260,7 +273,7 @@ export function CollaborativeEditor({
   // wer da schon tippt, schreibt in ein Dokument, dessen Inhalt gleich
   // erst eintrifft, und der Text landet an der falschen Stelle.
   const [status, setStatus] = useState<
-    "connecting" | "connected" | "offline"
+    "connecting" | "connected" | "offline" | "unauthorized"
   >("connecting");
   const [peers, setPeers] = useState<Peer[]>([]);
   const [titleValue, setTitleValue] = useState(title);
@@ -280,13 +293,23 @@ export function CollaborativeEditor({
   const [iconValue, setIconValue] = useState(icon);
   const [coverValue, setCoverValue] = useState(coverUrl);
 
-  const onUploadError = useCallback(() => {
-    toast({
-      title: "Upload fehlgeschlagen",
-      description: "Erlaubt sind PNG, JPG, GIF und WebP bis 10 MB.",
-      variant: "error",
-    });
-  }, [toast]);
+  const onUploadError = useCallback(
+    (reason?: unknown) => {
+      toast({
+        title: "Upload fehlgeschlagen",
+        // Bevorzugt die Servermeldung: sie nennt den Grund und die
+        // tatsaechlich geltende Grenze. Die fest verdrahteten 10 MB
+        // logen, sobald MAX_UPLOAD_MB kleiner gesetzt ist — die Person
+        // versuchte es dann vergeblich erneut.
+        description:
+          reason instanceof Error && reason.message
+            ? reason.message
+            : "Erlaubt sind PNG, JPG, GIF und WebP.",
+        variant: "error",
+      });
+    },
+    [toast],
+  );
 
   /** Sidebar sofort nachziehen; der Server liefert den Titel spaeter
    * ueber revalidatePath ohnehin nach. */
@@ -383,8 +406,8 @@ export function CollaborativeEditor({
       if (!file) return;
       try {
         void saveCover(await uploadCoverImage(file, spaceId, pageId));
-      } catch {
-        onUploadError();
+      } catch (e) {
+        onUploadError(e);
       }
     };
     input.click();
@@ -437,11 +460,19 @@ export function CollaborativeEditor({
       // Erst der abgeschlossene Erst-Sync macht das Dokument bedienbar
       // (onAuthenticated allein kommt vor den Inhalten).
       onSynced: () => setStatus("connected"),
-      onAuthenticationFailed: () => setStatus("offline"),
+      // Abgelehnte Authentifizierung ist kein Netzproblem: als "offline"
+      // versprach die Anzeige, die Aenderungen wuerden spaeter uebertragen,
+      // waehrend der Server die Verbindung dauerhaft verweigert.
+      onAuthenticationFailed: () => setStatus("unauthorized"),
+      // Nach der Ablehnung meldet der Provider noch ein Trennen; ohne den
+      // Vorrang von "unauthorized" stuende dort gleich wieder "Verbinde…".
       onStatus: ({ status }) => {
-        if (status !== "connected") setStatus("connecting");
+        if (status !== "connected") {
+          setStatus((s) => (s === "unauthorized" ? s : "connecting"));
+        }
       },
-      onDisconnect: () => setStatus("connecting"),
+      onDisconnect: () =>
+        setStatus((s) => (s === "unauthorized" ? s : "connecting")),
     });
     setConn({ ydoc, provider });
     return () => {
@@ -717,24 +748,35 @@ export function CollaborativeEditor({
 
   // Ohne Netz ist "Verbinde…" irreführend; das Gerät versucht es gar
   // nicht erst. Der lokale Puffer trägt in dieser Zeit weiter.
+  // "unauthorized" bleibt stehen, auch wenn das Gerät offline ist: der
+  // Grund ist der ernstere und der einzige, gegen den die Person selbst
+  // etwas tun kann.
   const effectiveStatus =
-    status === "connected" ? "connected" : online ? status : "offline";
+    status === "connected" || status === "unauthorized"
+      ? status
+      : online
+        ? status
+        : "offline";
   const dot =
     effectiveStatus === "connected"
       ? "bg-emerald-500"
-      : effectiveStatus === "offline"
-        ? "bg-danger"
-        : "bg-amber-500";
+      : effectiveStatus === "connecting"
+        ? "bg-amber-500"
+        : "bg-danger";
   const statusText =
     effectiveStatus === "connected"
       ? "Live"
-      : effectiveStatus === "offline"
-        ? "Offline"
-        : "Verbinde…";
+      : effectiveStatus === "unauthorized"
+        ? "Kein Zugriff"
+        : effectiveStatus === "offline"
+          ? "Offline"
+          : "Verbinde…";
   const statusTitle =
-    effectiveStatus === "offline"
-      ? "Ohne Verbindung. Änderungen werden auf diesem Gerät gesichert und später übertragen."
-      : undefined;
+    effectiveStatus === "unauthorized"
+      ? "Der Server hat die Verbindung abgelehnt (Sitzung abgelaufen oder Zugriff entzogen). Bitte neu anmelden und die Seite neu laden — Änderungen werden nicht mehr übertragen."
+      : effectiveStatus === "offline"
+        ? "Ohne Verbindung. Änderungen werden auf diesem Gerät gesichert und später übertragen."
+        : undefined;
 
   return (
     <div>

@@ -54,6 +54,23 @@ describe("collectHeadings()", () => {
     const doc = fakeDoc([[{ ...heading(1, "x"), attrs: { level: "abc" } }, 0]]);
     expect(collectHeadings(doc)).toEqual([]);
   });
+
+  it("ueberspringt leere Ueberschriften", () => {
+    // Beide Ansichten lesen aus dieser Funktion. Eine Ueberschrift ohne
+    // Text waere dort ein unbeschrifteter Eintrag, der nirgendwohin
+    // fuehrt — und frueher sammelte nur eine der beiden sie weg, was auf
+    // breiten Schirmen zwei verschieden lange Listen ergab.
+    const doc = fakeDoc([
+      [heading(1, "Einleitung"), 0],
+      [heading(2, "   "), 10],
+      [heading(2, ""), 20],
+      [heading(3, "Schluss"), 30],
+    ]);
+    expect(collectHeadings(doc)).toEqual([
+      { pos: 0, level: 1, text: "Einleitung" },
+      { pos: 30, level: 3, text: "Schluss" },
+    ]);
+  });
 });
 
 describe("activeHeadingIndex()", () => {

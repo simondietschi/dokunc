@@ -27,14 +27,27 @@ export type HeadingDocLike = {
 
 const TOC_MAX_LEVEL = 3;
 
-/** Alle Ueberschriften (Ebene 1 bis 3) in Dokumentreihenfolge. */
+/**
+ * Alle Ueberschriften (Ebene 1 bis 3) in Dokumentreihenfolge.
+ *
+ * Die EINE Stelle, an der die Ueberschriften einer Seite eingesammelt
+ * werden: davon haengen beide Ansichten ab, der feste Streifen rechts
+ * (components/editor/Outline) und das aufklappbare Verzeichnis
+ * (components/editor/TableOfContents). Sammelte jede fuer sich, zeigten
+ * sie nebeneinander zwei verschieden lange Listen derselben Seite.
+ *
+ * Leere Ueberschriften fallen raus: eine Zeile ohne Text ist in beiden
+ * Ansichten ein unbeschrifteter Eintrag, der nirgendwohin fuehrt.
+ */
 export function collectHeadings(doc: HeadingDocLike): TocHeading[] {
   const out: TocHeading[] = [];
   doc.descendants((node, pos) => {
     if (node.type.name !== "heading") return;
     const level = Number(node.attrs.level);
     if (!Number.isFinite(level) || level < 1 || level > TOC_MAX_LEVEL) return;
-    out.push({ pos, level, text: node.textContent.trim() });
+    const text = node.textContent.trim();
+    if (!text) return;
+    out.push({ pos, level, text });
   });
   return out;
 }

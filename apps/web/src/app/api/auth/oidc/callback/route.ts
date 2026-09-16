@@ -57,10 +57,22 @@ export async function GET(req: Request) {
     return back("error");
   }
 
+  /**
+   * Die Uebernahme eines bestehenden Kontos ueber die E-Mail-Adresse ist
+   * die folgenreichste Einstellung im Anmeldepfad, darum zaehlt hier nur
+   * ein ausdrueckliches Ja. Als Negativliste (alles ausser "false" ist
+   * an) haetten "0", "no" oder "FALSE" die Uebernahme still weiterlaufen
+   * lassen, obwohl der Betreiber sie abschalten wollte. Nicht gesetzt
+   * bleibt "an" — so ist es in README und .env.example dokumentiert.
+   */
+  const autoLink = process.env.OIDC_AUTO_LINK_BY_EMAIL?.trim().toLowerCase();
+  const autoLinkByEmail =
+    !autoLink || ["true", "1", "yes", "on"].includes(autoLink);
+
   const outcome = await resolveOidcUser(claims, {
     allowSignup: config.allowSignup,
     issuer: config.issuer,
-    autoLinkByEmail: process.env.OIDC_AUTO_LINK_BY_EMAIL !== "false",
+    autoLinkByEmail,
   });
   if ("reason" in outcome) {
     await audit({

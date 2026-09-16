@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { canDeleteUser } from "@/lib/account-deletion";
 import { orphanedSpacesFor } from "@/app/account/actions";
 import { deleteSpaceWithUploads } from "@/lib/file-access";
+import { log } from "@/lib/log";
 
 export async function toggleUserActiveAction(form: FormData) {
   const me = await requireAdmin();
@@ -151,7 +152,16 @@ export async function deleteUserAction(form: FormData) {
     isLastActiveAdmin: target.isAdmin && activeAdmins <= 1,
     orphanedSpaces: await orphanedSpacesFor(target.id),
   });
-  if (!verdict.allowed) return;
+  if (!verdict.allowed) {
+    // Die Begruendung wuerde hier sonst verschwinden: die Action gibt
+    // nichts zurueck, die Admin-Seite kuendigt "endgueltig löschen" an,
+    // und danach passiert wortlos nichts.
+    log.warn(
+      { userId: target.id, reason: verdict.reason, actorId: me.id },
+      "Konto-Löschung durch Admin abgelehnt",
+    );
+    return;
+  }
 
   // Vor dem Löschen protokollieren: die Beziehung wird dabei genullt.
   await audit({

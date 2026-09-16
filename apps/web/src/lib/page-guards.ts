@@ -94,6 +94,13 @@ export async function resolveParentId(
 }
 
 /**
+ * Obergrenze für einen Seitentitel — dieselbe wie beim Import
+ * (`lib/import/run.ts`), damit ein importierter und ein getippter Titel
+ * nicht unterschiedlich weit reichen.
+ */
+export const PAGE_TITLE_MAX = 200;
+
+/**
  * Benennt eine Seite um, sofern sie in diesem Space liegt.
  * Rückgabe: false, wenn keine passende Seite getroffen wurde.
  */
@@ -105,7 +112,12 @@ export async function renamePageInSpace(
   if (!pageId) return false;
   const { count } = await prisma.page.updateMany({
     where: { id: pageId, ...scopeWhere(scope), deletedAt: null },
-    data: { title: title || "Untitled" },
+    // Nach oben gekappt, nicht nur nach unten aufgefangen: `Page.title`
+    // ist ein unbegrenztes Textfeld und das Titelfeld im Editor kennt
+    // kein maxLength. Ohne das Kappen landete ein Titel bis zur Grösse
+    // des Action-Limits im Seitenbaum, in den Breadcrumbs und in jeder
+    // Seitenliste — überall dort, wo er ungekürzt gerendert wird.
+    data: { title: title.slice(0, PAGE_TITLE_MAX) || "Untitled" },
   });
   return count > 0;
 }
@@ -174,9 +186,19 @@ export async function trashPageTree(
 }
 
 /**
- * Holt Seite und gelöschten Unterbaum aus dem Papierkorb zurück.
- * Optional im Client einer laufenden Transaktion: das Wiederherstellen
- * besteht aus mehreren Schritten, die gemeinsam gelten müssen.
+ * Holt Seite und gelöschten Unterbaum aus dem Papierkorb zurück und
+ * hängt die Seite an die oberste Ebene, falls ihr Elternteil noch im
+ * Papierkorb liegt.
+ *
+ * Beides gehört zusammen und deshalb hierher und nicht in die Server
+ * Action: eine Seite unter einem noch gelöschten Elternteil taucht im
+ * Baum zwar als Wurzel auf (elternlose Knoten werden befördert), ihre
+ * `position` gehört aber zu den alten Geschwistern, sodass Sortierung
+ * und Verschieben durcheinandergeraten. Wer nur den ersten Schritt
+ * aufriefe, bekäme genau diesen halben Zustand.
+ *
+ * Optional im Client einer laufenden Transaktion: die Schritte müssen
+ * gemeinsam gelten.
  */
 export async function restorePageTree(
   spaceId: string,
@@ -192,6 +214,65 @@ export async function restorePageTree(
     )
     UPDATE "Page" SET "deletedAt" = NULL
     WHERE id IN (SELECT id FROM sub) AND "deletedAt" IS NOT NULL
+  `;
+  await tx.$executeRaw`
+    WITH base AS (
+      SELECT coalesce(max(position), -1) AS pos FROM "Page"
+      WHERE "spaceId" = ${spaceId} AND "parentId" IS NULL
+        AND "deletedAt" IS NULL AND id <> ${pageId}
+    )
+    UPDATE "Page" p SET "parentId" = NULL, position = (SELECT pos FROM base) + 1
+    WHERE p.id = ${pageId} AND p."spaceId" = ${spaceId}
+      AND p."parentId" IS NOT NULL
+      AND EXISTS (
+        SELECT 1 FROM "Page" parent
+        WHERE parent.id = p."parentId" AND parent."deletedAt" IS NOT NULL
+      )
+  `;
+}
+
+/**
+ * Hängt alle lebenden Kinder irgendwo im gelöschten Unterbaum von
+ * `pageId` an die oberste Ebene (hinter die bestehenden Wurzelseiten)
+ * und gibt sie zurück.
+ *
+ * Vor dem endgültigen Löschen nötig: `Page.parentId` kaskadiert (ON
+ * DELETE CASCADE), und eine wiederhergestellte Unterseite unter einem
+ * noch gelöschten Elternteil ist ein völlig normaler Zustand. Ohne das
+ * Abhängen würde sie still mitgelöscht — samt Versionen, Kommentaren
+ * und eigenem Unterbaum.
+ *
+ * Der Aufrufer muss für die zurückgegebenen Äste `refreshAccessRoots`
+ * nachziehen: sie haben ihre Zugriffswurzel im gelöschten Unterbaum
+ * verloren.
+ */
+export async function detachLiveChildren(
+  spaceId: string,
+  pageId: string,
+  tx: Pick<typeof prisma, "$queryRaw"> = prisma,
+): Promise<{ id: string }[]> {
+  return tx.$queryRaw<{ id: string }[]>`
+    WITH RECURSIVE sub AS (
+      SELECT id FROM "Page"
+      WHERE id = ${pageId} AND "spaceId" = ${spaceId}
+        AND "deletedAt" IS NOT NULL
+      UNION ALL
+      SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
+      WHERE p."spaceId" = ${spaceId} AND p."deletedAt" IS NOT NULL
+    ), base AS (
+      SELECT coalesce(max(position), -1) AS pos FROM "Page"
+      WHERE "spaceId" = ${spaceId} AND "parentId" IS NULL
+        AND "deletedAt" IS NULL
+    ), orphan AS (
+      SELECT p.id, row_number() OVER (ORDER BY p.position, p.title) AS n
+      FROM "Page" p
+      WHERE p."spaceId" = ${spaceId} AND p."deletedAt" IS NULL
+        AND p."parentId" IN (SELECT id FROM sub)
+    )
+    UPDATE "Page" SET "parentId" = NULL,
+      position = (SELECT pos FROM base) + orphan.n
+    FROM orphan WHERE "Page".id = orphan.id
+    RETURNING "Page".id
   `;
 }
 

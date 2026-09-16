@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { readablePageRole } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
+import { rateLimit } from "@/lib/rate-limit";
 import { toMarkdown } from "@/lib/markdown";
 import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
 import { htmlToPdf, gotenbergUrl } from "@/lib/pdf";
@@ -40,6 +41,20 @@ export async function GET(
 
   if (!(await readablePageRole(user.id, id, page.spaceId))) {
     return new NextResponse("Kein Zugriff", { status: 403 });
+  }
+
+  // Nur der PDF-Zweig braucht eine Bremse: er beschäftigt den gemeinsam
+  // genutzten Gotenberg mit einem eigenen Chromium je Anfrage. Ohne sie
+  // lastet eine einzelne Person den Dienst dauerhaft aus, und der Export
+  // fällt für alle anderen in den 501-Zweig. Markdown und HTML entstehen
+  // im eigenen Prozess und bleiben ungebremst.
+  if (
+    format === "pdf" &&
+    !(await rateLimit(`export-pdf:${user.id}`, 10, 600))
+  ) {
+    return new NextResponse("Zu viele PDF-Exporte. Bitte kurz warten.", {
+      status: 429,
+    });
   }
 
   const safe =

@@ -150,6 +150,15 @@ export async function revokeSessionAction(form: FormData) {
  * Gemeinsame Grundlage für Konto-Löschung im Konto und im Admin-Bereich.
  */
 export async function orphanedSpacesFor(userId: string): Promise<string[]> {
+  // "use server" macht jeden Export dieser Datei zu einem aufrufbaren
+  // Endpunkt, auch diesen Helfer ohne Formular. Ohne die Schranke könnte
+  // darüber zu jeder beliebigen userId abgefragt werden, welche Spaces ihr
+  // allein gehören — Space-Namen inklusive.
+  const me = await requireUser();
+  if (me.id !== userId && !me.isAdmin) {
+    throw new Error("Nicht berechtigt.");
+  }
+
   const owned = await prisma.spaceMember.findMany({
     where: { userId, role: "OWNER" },
     select: { spaceId: true, space: { select: { name: true } } },

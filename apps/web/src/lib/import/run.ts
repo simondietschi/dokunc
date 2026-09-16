@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@dokunc/db";
 import { log } from "@/lib/log";
 import { refreshAccessRoots } from "@/lib/page-access";
+import { uploadLimitMb } from "@/lib/uploads";
 import { detectFormat } from "./detect";
 import { buildImportTree, flattenTree, indexAliasKey } from "./tree";
 import { markdownToDoc } from "./markdown";
@@ -140,7 +141,13 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
         }
       }
     },
-    { timeout: 120_000, maxWait: 10_000 },
+    // Nur die halbe Zeit, die die Route hat (maxDuration 120 s): dauert
+    // das Anlegen bis an die 120 s, committet diese Transaktion genau
+    // dann, wenn die Funktion abgeschnitten wird — im Space blieben bis
+    // zu 2000 leere Seiten stehen, ohne dass Schritt 3 je zum Zug kaeme.
+    // Laeuft sie stattdessen ab, rollt Postgres alles zurueck und die
+    // Person bekommt einen Fehler ohne Ruecklass.
+    { timeout: 60_000, maxWait: 10_000 },
   );
 
   // --- Schritt 3: Inhalte ---------------------------------------------
@@ -163,7 +170,12 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
   }
   const filesByPath = new Map(files.map((f) => [f.path, f]));
 
-  const imageCache = new Map<string, string | null>();
+  // Gemerkt wird das laufende Speichern, nicht erst dessen Ergebnis:
+  // rewriteLinks arbeitet Geschwisterknoten mit Promise.all ab, zwei
+  // Bildknoten derselben Quelle liefen sonst beide durch das Fenster
+  // zwischen Pruefung und Eintrag — die Datei laege zweimal im
+  // Upload-Verzeichnis, mit zwei Attachment-Zeilen und zu hohem Zaehler.
+  const imageCache = new Map<string, Promise<string | null>>();
   let attachments = 0;
 
   async function saveImage(bytes: Uint8Array, name: string, pageId: string) {
@@ -179,7 +191,10 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
     if (!stored.ok) {
       warn(
         stored.reason === "size"
-          ? `Bild "${name}" ist grösser als 10 MB und wurde übersprungen.`
+          ? // Dieselbe Zahl nennen, die storeImportedImage auch prueft:
+            // die Grenze faellt mit MAX_UPLOAD_MB, ein fester Text "10 MB"
+            // waere bei kleinerer Betriebsgrenze schlicht falsch.
+            `Bild "${name}" ist grösser als ${uploadLimitMb("IMAGE")} MB und wurde übersprungen.`
           : `"${name}" ist kein unterstütztes Bild (PNG, JPG, GIF, WebP).`,
       );
       return null;
@@ -199,6 +214,12 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
     return `/api/files/${stored.file.storedName}`;
   }
 
+  // Seiten, deren Inhalt nicht ankommt, zaehlen nicht als importiert.
+  // Sonst meldet das Formular gruen "N Seiten importiert", obwohl im
+  // Extremfall nur leere Huellen entstanden sind und der Grund im
+  // zugeklappten Hinweis-Block steht.
+  let failed = 0;
+
   for (const node of nodes) {
     if (!node.file || !node.kind) continue;
     const page = created.get(node)!;
@@ -215,6 +236,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
     } catch (e) {
       log.warn({ err: String(e), path: fromPath }, "Import: Konvertierung fehlgeschlagen");
       warn(`"${fromPath}" konnte nicht konvertiert werden; die Seite bleibt leer.`);
+      failed += 1;
       continue;
     }
 
@@ -244,11 +266,14 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
       }
       const target = resolveRelative(fromPath, src);
       if (!target) return null;
-      if (imageCache.has(target)) return imageCache.get(target)!;
+      const cached = imageCache.get(target);
+      if (cached) return cached;
       const file = filesByPath.get(target);
-      const url = file ? await saveImage(file.data, basename(target), page.id) : null;
-      imageCache.set(target, url);
-      return url;
+      const pending = file
+        ? saveImage(file.data, basename(target), page.id)
+        : Promise.resolve(null);
+      imageCache.set(target, pending);
+      return pending;
     };
 
     try {
@@ -274,12 +299,13 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
     } catch (e) {
       log.warn({ err: String(e), path: fromPath }, "Import: Speichern fehlgeschlagen");
       warn(`"${fromPath}" konnte nicht gespeichert werden; die Seite bleibt leer.`);
+      failed += 1;
     }
   }
 
   return {
     format,
-    pages: count,
+    pages: count - failed,
     attachments,
     warnings: warnings.toArray(),
     roots: roots.map((r) => {

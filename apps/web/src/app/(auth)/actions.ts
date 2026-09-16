@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@dokunc/db";
@@ -12,14 +13,10 @@ import {
   parseInviteFromNext,
   verifyToken,
 } from "@/lib/invitations";
-import {
-  rateLimit,
-  resetLimit,
-  isRateLimited,
-  penalize,
-  clientKey,
-} from "@/lib/rate-limit";
+import { rateLimit, resetLimit, clientKey } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
+import { log } from "@/lib/log";
+import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import {
   startPending2fa,
   clearPending2fa,
@@ -32,7 +29,9 @@ import { claimTotpStep, consumeRecoveryCode } from "@/lib/totp-store";
 const registerSchema = z.object({
   name: z.string().min(2, "Name zu kurz"),
   email: z.string().email("Ungültige E-Mail"),
-  password: z.string().min(8, "Passwort min. 8 Zeichen"),
+  password: z
+    .string()
+    .min(PASSWORD_MIN_LENGTH, `Passwort min. ${PASSWORD_MIN_LENGTH} Zeichen`),
 });
 
 const loginSchema = z.object({
@@ -48,9 +47,9 @@ export type ActionState = { error?: string } | undefined;
  *
  * Bewusst ein ablaufendes Fenster und keine harte Sperre: eine echte
  * Sperre liesse sich missbrauchen, um fremde Konten gezielt
- * auszusperren. Gezählt werden NUR Fehlversuche, ein erfolgreicher
- * Login räumt den Zähler sofort. Ein Zähler, der jede Anfrage frisst,
- * sperrte sonst aus, wer sich an mehreren Geräten anmeldet.
+ * auszusperren. Gezählt wird jeder Versuch, aber ein erfolgreicher
+ * Login räumt den Zähler sofort: sonst sperrte sich aus, wer sich an
+ * mehreren Geräten anmeldet.
  */
 const LOGIN_ATTEMPTS = 8;
 const LOGIN_WINDOW_SEC = 900;
@@ -59,9 +58,17 @@ const LOGIN_WINDOW_SEC = 900;
  * Vergleichswert für Anmeldungen ohne Konto — ein bcrypt-Hash mit
  * demselben Aufwand wie ein echter. Der Klartext dazu ist niemandem
  * bekannt und wird nirgends gebraucht.
+ *
+ * Beim Start erzeugt statt fest eingetragen: ein eingetragener Hash
+ * trägt den Kostenfaktor in sich ($2a$10$...). Wer BCRYPT_COST anhebt,
+ * hätte ihn übersehen, und der Vergleich für unbekannte Adressen liefe
+ * wieder messbar schneller als der für bekannte — genau der
+ * Unterschied, den dieser Wert verdecken soll.
  */
-const DUMMY_HASH =
-  "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+const DUMMY_HASH = bcrypt.hashSync(
+  randomBytes(32).toString("hex"),
+  BCRYPT_COST,
+);
 
 /**
  * Bremse pro IP. Bewusst grosszügiger als die pro Konto: hinter einer
@@ -162,7 +169,7 @@ export async function registerAction(
     data: {
       name,
       email,
-      passwordHash: await bcrypt.hash(password, 10),
+      passwordHash: await bcrypt.hash(password, BCRYPT_COST),
       isAdmin: decision.isAdmin,
     },
   });
@@ -199,9 +206,17 @@ export async function loginAction(
 
   const email = normalizeEmail(parsed.data.email);
   const accountKey = `login:account:${email}`;
-  // Nur prüfen, nicht zählen: gezählt wird erst der Fehlversuch weiter
-  // unten (siehe LOGIN_ATTEMPTS).
-  if (await isRateLimited(accountKey, LOGIN_ATTEMPTS)) {
+  /**
+   * Zählen und Prüfen in einem Schritt, VOR dem bcrypt-Vergleich.
+   *
+   * Vorher wurde hier nur gelesen und erst nach dem Vergleich gezählt.
+   * Dazwischen liegt ein bewusst langsamer Schritt, also lasen
+   * gleichzeitig eintreffende Versuche alle denselben Stand und kamen
+   * alle durch: die Bremse begrenzte nur die Zahl der Schübe, pro Schub
+   * waren so viele Versuche möglich, wie die IP-Bremse durchliess.
+   * Erfolgreiche Anmeldungen räumt `resetLimit` weiter unten wieder ab.
+   */
+  if (!(await rateLimit(accountKey, LOGIN_ATTEMPTS, LOGIN_WINDOW_SEC))) {
     await audit({
       action: "auth.login_failed",
       metadata: { email, reason: "throttled" },
@@ -225,7 +240,6 @@ export async function loginAction(
     ? await bcrypt.compare(parsed.data.password, user.passwordHash)
     : await bcrypt.compare(parsed.data.password, DUMMY_HASH).then(() => false);
   if (!user || !passwordOk) {
-    await penalize(accountKey, LOGIN_WINDOW_SEC);
     await audit({
       action: "auth.login_failed",
       actorId: user?.id ?? null,
@@ -320,15 +334,37 @@ export async function completeTotpLoginAction(
     step !== null ? false : await consumeRecoveryCode(user.id, code);
 
   if (!codeOk && !recoveryOk) {
+    /**
+     * `unseal` meldet null auch dann, wenn APP_SECRET gewechselt hat
+     * oder der Wert beschädigt ist — nicht nur bei einem falschen Code.
+     * Ohne diese Unterscheidung stünde dort "Code stimmt nicht.", die
+     * Person suchte den Fehler bei ihrem Authenticator, und im Betrieb
+     * fiele nichts auf. Geprüft wird es erst hier: der
+     * Wiederherstellungscode hängt nicht am Schlüssel und bleibt auch
+     * dann der Weg zurück ins Konto.
+     */
+    const unreadable = !secret;
+    if (unreadable) {
+      log.error({ userId: user.id }, "totp secret unreadable");
+    }
     await audit({
       action: "auth.login_failed",
       actorId: user.id,
-      metadata: { reason: replayed ? "totp_replay" : "bad_totp" },
+      metadata: {
+        reason: unreadable
+          ? "totp_secret_unreadable"
+          : replayed
+            ? "totp_replay"
+            : "bad_totp",
+      },
     });
     return {
-      error: replayed
-        ? "Dieser Code wurde schon verwendet. Warte auf den nächsten."
-        : "Code stimmt nicht.",
+      error: unreadable
+        ? "Der zweite Faktor lässt sich zurzeit nicht prüfen. Nutze einen " +
+          "Wiederherstellungscode oder wende dich an die Administration."
+        : replayed
+          ? "Dieser Code wurde schon verwendet. Warte auf den nächsten."
+          : "Code stimmt nicht.",
     };
   }
 

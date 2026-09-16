@@ -13,6 +13,7 @@ import { buildResetUrl, sendPasswordResetEmail } from "@/lib/mail";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
 import { audit } from "@/lib/audit";
+import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 
 export type ResetState = { error?: string; sent?: boolean } | undefined;
 
@@ -51,12 +52,6 @@ export async function requestResetAction(
       RESET_ACCOUNT_WINDOW_SEC,
     ))
   ) {
-    // Ein neuer Link entwertet den vorherigen: sonst sammelten sich
-    // gleichzeitig gültige Zugänge zu demselben Konto an.
-    await prisma.passwordResetToken.updateMany({
-      where: { userId: user.id, usedAt: null },
-      data: { usedAt: new Date() },
-    });
     const { token, tokenHash } = generateInviteToken();
     const reset = await prisma.passwordResetToken.create({
       data: {
@@ -70,14 +65,39 @@ export async function requestResetAction(
         to: email,
         resetUrl: buildResetUrl(reset.id, token),
       });
+      // Ein neuer Link entwertet den vorherigen: sonst sammelten sich
+      // gleichzeitig gültige Zugänge zu demselben Konto an. Das
+      // geschieht erst NACH dem Versand — sonst stünde die Person nach
+      // einem Ausfall des Mailversands ganz ohne gültigen Link da, mit
+      // aufgebrauchter Bremse und einer Bestätigung im Browser.
+      await prisma.passwordResetToken.updateMany({
+        where: { userId: user.id, usedAt: null, id: { not: reset.id } },
+        data: { usedAt: new Date() },
+      });
     } catch (e) {
-      log.error({ err: String(e) }, "reset mail failed");
+      // Der eben erzeugte Link ist nie angekommen und wird sofort
+      // entwertet; der zuletzt verschickte bleibt gültig.
+      await prisma.passwordResetToken.update({
+        where: { id: reset.id },
+        data: { usedAt: new Date() },
+      });
+      // Die Antwort bleibt der Geheimhaltung wegen { sent: true }. Damit
+      // sich der Fall im Betrieb überhaupt wiederfinden lässt, trägt die
+      // Meldung Konto und Token — die Adresse bewusst nicht.
+      log.error(
+        { err: String(e), userId: user.id, resetId: reset.id },
+        "reset mail failed",
+      );
     }
   }
   return { sent: true };
 }
 
-const pwSchema = z.object({ password: z.string().min(8, "Min. 8 Zeichen") });
+const pwSchema = z.object({
+  password: z
+    .string()
+    .min(PASSWORD_MIN_LENGTH, `Min. ${PASSWORD_MIN_LENGTH} Zeichen`),
+});
 
 export async function performResetAction(
   _prev: ResetState,
@@ -117,7 +137,7 @@ export async function performResetAction(
     prisma.user.update({
       where: { id: reset.userId },
       data: {
-        passwordHash: await bcrypt.hash(parsed.data.password, 10),
+        passwordHash: await bcrypt.hash(parsed.data.password, BCRYPT_COST),
         tokenVersion: { increment: 1 }, // alle Sessions entwerten
       },
     }),

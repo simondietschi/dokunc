@@ -4,7 +4,14 @@ import { ImportError, type ImportFile } from "./types";
 
 /** Obergrenzen gegen Zip-Bomben und Speicherfresser. */
 export const ZIP_MAX_ENTRIES = 2000;
-const ZIP_MAX_UNPACKED = 500 * 1024 * 1024; // 500 MB
+/** Entpackt je Request. Bemessen am Container (docker-compose: mem_limit
+ *  2g fuer Next UND Hocuspocus zusammen): ein Import haelt daneben schon
+ *  bis zu IMPORT_MAX_MB (Standard 100 MB) aus formData() und
+ *  arrayBuffer() im Speicher. Mit 500 MB entpackt reichten zwei
+ *  gleichzeitige Importe am Rand des Budgets, um den Container per OOM
+ *  zu beenden — das riss den Collab-Server mit und damit die noch nicht
+ *  gespeicherten Bearbeitungen aller Verbundenen. */
+const ZIP_MAX_UNPACKED = 200 * 1024 * 1024; // 200 MB
 /** Einzelne Eintraege ueber dieser Groesse werden uebersprungen (Bilder sind
  *  ohnehin auf 10 MB begrenzt, Seitendateien auf MAX_PAGE_FILE_BYTES). */
 export const ZIP_MAX_FILE = 32 * 1024 * 1024; // 32 MB
