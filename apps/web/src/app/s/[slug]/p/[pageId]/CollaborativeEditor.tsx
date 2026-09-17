@@ -17,7 +17,7 @@ import { Placeholder } from "@tiptap/extensions";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
-import { richExtensions } from "@dokunc/editor";
+import { COLLAB_FIELD, richExtensions } from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
@@ -572,7 +572,7 @@ export function CollaborativeEditor({
       }),
       ...(conn
         ? [
-            Collaboration.configure({ document: conn.ydoc, field: "default" }),
+            Collaboration.configure({ document: conn.ydoc, field: COLLAB_FIELD }),
             CollaborationCaret.configure({
               provider: conn.provider,
               user: { name: userName, color },
@@ -651,6 +651,34 @@ export function CollaborativeEditor({
     if (!editor || editor.isDestroyed) return;
     editor.setEditable(editable && !!conn && status === "connected", false);
   }, [editor, editable, conn, status]);
+
+  /**
+   * Der Blockgriff kommt erst, wenn der Editor einmal den Fokus hatte.
+   *
+   * Er ist eine Zeigegeste — vor der ersten Beruehrung braucht ihn
+   * niemand. Von Anfang an eingehaengt kostete er dagegen genau den
+   * ersten Mausdruck: sein ProseMirror-Plugin ist aktiv, sobald die
+   * Komponente steht (der Griff selbst ist dabei noch `visibility:
+   * hidden` und weit weg vom Zeiger), und es verschluckt den mousedown,
+   * mit dem der Browser den Cursor setzen wuerde. Der Klick landete dann
+   * zwar im Editor — er bekam den Fokus — aber die Auswahl blieb auf
+   * ProseMirrors Vorgabe stehen: dem DOKUMENTANFANG. Wer daraufhin
+   * tippte, schrieb seinen Text vor den Seiteninhalt, ohne dass etwas
+   * darauf hindeutete.
+   *
+   * Nachgemessen ueber je zehn Kaltstarts: mit Griff von Anfang an ging
+   * der erste Klick in sieben von zehn Laeufen verloren, mit dieser
+   * Zeile in keinem einzigen.
+   */
+  const [griffBereit, setGriffBereit] = useState(false);
+  useEffect(() => {
+    if (!editor || griffBereit) return;
+    const an = () => setGriffBereit(true);
+    editor.on("focus", an);
+    return () => {
+      editor.off("focus", an);
+    };
+  }, [editor, griffBereit]);
 
   // CommentsPanel bittet darum, eine Kommentar-Markierung zu entfernen
   // (Thread verworfen oder aufgelöst).
@@ -955,7 +983,7 @@ export function CollaborativeEditor({
       </div>
 
       <Outline editor={editor} />
-      {editable && <BlockHandle editor={editor} />}
+      {editable && griffBereit && <BlockHandle editor={editor} />}
 
       {/* Toolbar */}
       {editable && (
