@@ -7,6 +7,7 @@ import { visiblePageWhere } from "@/lib/page-access";
 import { buildTree, type TreeNode } from "@/lib/page-tree";
 import { importMaxMb } from "@/lib/import/limits";
 import { ImportForm, type ParentOption } from "./ImportForm";
+import { pageTitle } from "@/lib/page-title";
 
 const FORMATS = [
   {
@@ -28,7 +29,7 @@ const FORMATS = [
 
 function flatten(nodes: TreeNode[], depth = 0): ParentOption[] {
   return nodes.flatMap((n) => [
-    { id: n.id, title: n.title || "Untitled", depth },
+    { id: n.id, title: pageTitle(n.title), depth },
     ...flatten(n.children, depth + 1),
   ]);
 }

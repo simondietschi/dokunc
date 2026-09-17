@@ -6,7 +6,11 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
-import { createSession, destroySession } from "@/lib/session";
+import {
+  createSession,
+  destroySession,
+  getSessionClaims,
+} from "@/lib/session";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
 import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
@@ -61,6 +65,12 @@ export async function changePasswordAction(
     return { error: "Aktuelles Passwort ist falsch." };
   }
 
+  // Vor dem Entwerten lesen: die neue Sitzung soll dieselbe Form haben
+  // wie die alte. Ohne das wird aus einer Anmeldung, die mit dem
+  // Browserfenster enden sollte, still eine dauerhafte — createSession
+  // setzt ohne Angabe ein Ablaufdatum.
+  const remember = (await getSessionClaims())?.rem ?? true;
+
   // Passwort setzen + alle bestehenden Sessions entwerten.
   const updated = await prisma.user.update({
     where: { id: dbUser.id },
@@ -81,7 +91,7 @@ export async function changePasswordAction(
     data: { revokedAt: new Date() },
   });
   // Aktuelles Gerät frisch einloggen (neue Token-Version).
-  await createSession(updated.id, updated.tokenVersion);
+  await createSession(updated.id, updated.tokenVersion, { remember });
   await audit({ action: "auth.password_changed", actorId: updated.id });
   return { success: "Passwort geändert. Andere Sitzungen wurden beendet." };
 }

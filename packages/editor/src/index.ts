@@ -11,8 +11,9 @@ import Youtube from "@tiptap/extension-youtube";
 // Tiptap jederzeit stilllegen kann — und das Schema muss hier mit dem
 // Collab-Server exakt uebereinstimmen.
 import { Table, TableRow, TableHeader, TableCell } from "@tiptap/extension-table";
-import { TaskList } from "@tiptap/extension-task-list";
-import { TaskItem } from "@tiptap/extension-task-item";
+// Aus demselben Grund: @tiptap/extension-task-list und -task-item sind
+// seit v3 leere Weiterleitungen auf @tiptap/extension-list.
+import { TaskList, TaskItem } from "@tiptap/extension-list";
 import { Attachment } from "./attachment";
 import { Callout } from "./callout";
 import { AnchoredHeading } from "./heading";

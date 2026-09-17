@@ -7,6 +7,7 @@ import {
   visiblePageWhere,
 } from "./page-access";
 import { insertAt, positionUpdates } from "./page-move";
+import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
 
 /**
  * Bindung von Objekt-IDs an das, was die handelnde Person tatsächlich
@@ -117,7 +118,7 @@ export async function renamePageInSpace(
     // kein maxLength. Ohne das Kappen landete ein Titel bis zur Grösse
     // des Action-Limits im Seitenbaum, in den Breadcrumbs und in jeder
     // Seitenliste — überall dort, wo er ungekürzt gerendert wird.
-    data: { title: title.slice(0, PAGE_TITLE_MAX) || "Untitled" },
+    data: { title: title.slice(0, PAGE_TITLE_MAX) || DEFAULT_PAGE_TITLE },
   });
   return count > 0;
 }

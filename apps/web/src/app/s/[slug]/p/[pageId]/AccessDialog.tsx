@@ -35,6 +35,7 @@ export function AccessDialog({
   grants,
   people,
   groups,
+  canAdminister,
 }: {
   slug: string;
   pageId: string;
@@ -44,6 +45,15 @@ export function AccessDialog({
   grants: GrantRow[];
   people: AccessCandidate[];
   groups: AccessCandidate[];
+  /**
+   * Ab ADMIN. Den Schutz aufheben und fremde Freigaben entziehen darf
+   * nur die Space-Verwaltung; die Server Actions weisen alles darunter
+   * ab (s/[slug]/actions.ts, togglePageRestrictionAction und
+   * removePageGrantAction). Ohne diese Angabe stehen die Knöpfe auch
+   * einem MEMBER offen, der auf der Seite freigegeben ist, und führen
+   * ihn nur in eine Fehlermeldung.
+   */
+  canAdminister: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [adding, setAdding] = useState<"user" | "group" | null>(null);
@@ -83,7 +93,7 @@ export function AccessDialog({
           </Button>
         }
       >
-        {!inheritedFrom && (
+        {!inheritedFrom && canAdminister && (
           <form action={togglePageRestrictionAction}>
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="pageId" value={pageId} />
@@ -139,7 +149,7 @@ export function AccessDialog({
                       )}
                     </div>
                   </div>
-                  {!inheritedFrom && (
+                  {!inheritedFrom && canAdminister && (
                     <form action={removePageGrantAction}>
                       <input type="hidden" name="slug" value={slug} />
                       <input type="hidden" name="pageId" value={pageId} />

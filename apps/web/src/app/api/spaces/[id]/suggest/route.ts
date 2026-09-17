@@ -3,8 +3,9 @@ import { prisma } from "@dokunc/db";
 import { effectiveRole } from "@/lib/space-access";
 import { visiblePageWhere } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
-import { likeEscape } from "@/lib/palette";
+import { likeEscape, normalizeQuery } from "@/lib/palette";
 import { rateLimit } from "@/lib/rate-limit";
+import { pageTitle } from "@/lib/page-title";
 
 export const runtime = "nodejs";
 
@@ -52,7 +53,7 @@ export async function GET(
   // Wie in der Schwesterroute api/search auf 100 Zeichen geschnitten:
   // ungekuerzt wird aus jedem Query-String, den der Proxy durchlaesst,
   // ein ILIKE-Muster dieser Laenge ueber alle Seiten des Space.
-  const q = (url.searchParams.get("q") ?? "").trim().slice(0, 100);
+  const q = normalizeQuery(url.searchParams.get("q"));
 
   if (kind === "members") {
     // Zugang direkt oder über eine Gruppe. Der Collab-Server behandelt
@@ -104,6 +105,6 @@ export async function GET(
     take: 8,
   });
   return NextResponse.json({
-    items: pages.map((p) => ({ id: p.id, label: p.title || "Untitled" })),
+    items: pages.map((p) => ({ id: p.id, label: pageTitle(p.title) })),
   });
 }

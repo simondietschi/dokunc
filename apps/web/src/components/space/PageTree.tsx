@@ -23,6 +23,7 @@ import {
 import { cn } from "@/lib/cn";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { movePageAction } from "@/app/s/[slug]/move-actions";
+import { pageTitle } from "@/lib/page-title";
 
 /**
  * Seitenbaum der Sidebar. Mit "managePages"-Recht lassen sich Seiten per
@@ -414,7 +415,7 @@ function TreeItem({
               {node.icon}
             </span>
           )}
-          <span className="truncate">{node.title || "Untitled"}</span>
+          <span className="truncate">{pageTitle(node.title)}</span>
         </Link>
         {canManage && (
           <form action={createPageAction}>

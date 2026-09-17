@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import { Loader2, LockKeyhole, Eye, EyeOff } from "lucide-react";
 import { performResetAction, type ResetState } from "../actions";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { FIELD_LABEL_CLASS, Input } from "@/components/ui/Input";
 import { stagger } from "../../stagger";
 
 export function ResetForm({ id, token }: { id: string; token: string }) {
@@ -37,7 +37,7 @@ export function ResetForm({ id, token }: { id: string; token: string }) {
         <input type="hidden" name="id" value={id} />
         <input type="hidden" name="token" value={token} />
         <div style={stagger(3)}>
-          <span className="mb-1.5 block text-[13px] font-medium text-muted">
+          <span className={FIELD_LABEL_CLASS}>
             Neues Passwort
           </span>
           <div className="relative">

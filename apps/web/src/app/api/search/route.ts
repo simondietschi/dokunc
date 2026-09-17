@@ -2,7 +2,12 @@ import { NextResponse } from "next/server";
 import { Prisma, prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
 import { rateLimit } from "@/lib/rate-limit";
-import { HL_START, HL_STOP, likeEscape } from "@/lib/palette";
+import {
+  HL_START,
+  HL_STOP,
+  likeEscape,
+  normalizeQuery,
+} from "@/lib/palette";
 import { accessibleSpaces } from "@/lib/space-access";
 import {
   seesEverything,
@@ -49,8 +54,7 @@ export async function GET(req: Request) {
     );
   }
 
-  const q =
-    new URL(req.url).searchParams.get("q")?.trim().slice(0, 100) ?? "";
+  const q = normalizeQuery(new URL(req.url).searchParams.get("q"));
 
   const spaces = await accessibleSpaces(user.id);
   const spaceIds = spaces.map((s) => s.spaceId);

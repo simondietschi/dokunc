@@ -22,6 +22,7 @@ import { cn } from "@/lib/cn";
 import {
   isAuthPath,
   matchesQuery,
+  normalizeQuery,
   spaceSlugFromPath,
   splitHighlights,
 } from "@/lib/palette";
@@ -29,6 +30,7 @@ import { toggleTheme } from "@/lib/theme";
 import type { SearchResponse } from "@/app/api/search/route";
 import type { FavoritesResponse } from "@/app/api/favorites/route";
 import { createPageAction } from "@/app/s/[slug]/actions";
+import { pageTitle } from "@/lib/page-title";
 
 const OPEN_EVENT = "dokunc:cmdk";
 
@@ -194,7 +196,7 @@ export function CommandPalette() {
   // Solange die Antwort noch zur alten Eingabe gehört (Debounce),
   // werden Server-Items client-seitig mitgefiltert — sonst trifft
   // Enter bei schnellem Tippen veraltete Treffer.
-  const stale = data.q !== query.trim().slice(0, 100);
+  const stale = data.q !== normalizeQuery(query);
   const items: Item[] = [];
   const favoriteIds = new Set<string>();
   if (!query.trim()) {
@@ -204,7 +206,7 @@ export function CommandPalette() {
         key: `fav:${f.id}`,
         group: "Favoriten",
         icon: <Star className="h-4 w-4" />,
-        label: f.title || "Untitled",
+        label: pageTitle(f.title),
         hint: f.spaceName,
         run: () => go(`/s/${f.slug}/p/${f.id}`),
       });
@@ -212,12 +214,12 @@ export function CommandPalette() {
   }
   for (const p of data.pages) {
     if (favoriteIds.has(p.id)) continue;
-    if (stale && !matchesQuery(p.title || "Untitled", query)) continue;
+    if (stale && !matchesQuery(pageTitle(p.title), query)) continue;
     items.push({
       key: `page:${p.id}`,
       group: "Seiten",
       icon: <FileText className="h-4 w-4" />,
-      label: p.title || "Untitled",
+      label: pageTitle(p.title),
       hint: p.spaceName,
       snippet: p.snippet,
       badge: p.isTemplate ? "Vorlage" : undefined,

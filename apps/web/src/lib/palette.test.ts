@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_QUERY_LENGTH,
   isAuthPath,
   likeEscape,
+  normalizeQuery,
   matchesQuery,
   spaceSlugFromPath,
   splitHighlights,
@@ -98,5 +100,20 @@ describe("splitHighlights", () => {
       { text: "offen", hit: false },
     ]);
     expect(splitHighlights("")).toEqual([]);
+  });
+});
+
+describe("normalizeQuery()", () => {
+  it("trimmt und kappt auf die gemeinsame Grenze", () => {
+    expect(normalizeQuery("  hallo  ")).toBe("hallo");
+    expect(normalizeQuery("x".repeat(150))).toHaveLength(MAX_QUERY_LENGTH);
+  });
+
+  it("macht aus fehlender Eingabe einen leeren String", () => {
+    // Die Routen lesen einen Query-Parameter, der fehlen kann; die
+    // Palette vergleicht ihr Ergebnis damit. Beide muessen denselben
+    // Wert sehen, sonst gilt jede Antwort als veraltet.
+    expect(normalizeQuery(null)).toBe("");
+    expect(normalizeQuery(undefined)).toBe("");
   });
 });

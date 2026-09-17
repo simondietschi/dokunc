@@ -17,6 +17,7 @@ import {
   deleteTemplateAction,
   importBuiltinTemplateAction,
 } from "../template-actions";
+import { pageTitle } from "@/lib/page-title";
 
 type TemplateRow = {
   id: string;
@@ -86,7 +87,7 @@ export function TemplatesView({
             >
               <div className="min-w-[240px] flex-1">
                 <p className="truncate text-sm font-medium">
-                  {t.title || "Ohne Titel"}
+                  {pageTitle(t.title)}
                 </p>
                 <p className="text-xs text-faint">
                   Zuletzt geändert am{" "}
@@ -114,7 +115,7 @@ export function TemplatesView({
                   <input type="hidden" name="slug" value={slug} />
                   <input type="hidden" name="pageId" value={t.id} />
                   <ConfirmButton
-                    message={`Vorlage „${t.title || "Ohne Titel"}“ in den Papierkorb verschieben?`}
+                    message={`Vorlage „${pageTitle(t.title)}“ in den Papierkorb verschieben?`}
                     title="Vorlage löschen"
                     className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
                   >

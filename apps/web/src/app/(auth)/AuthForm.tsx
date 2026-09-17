@@ -5,7 +5,7 @@ import { useActionState, useState } from "react";
 import { ArrowRight, Eye, EyeOff, KeyRound, Loader2 } from "lucide-react";
 import { loginAction, registerAction, type ActionState } from "./actions";
 import { Button } from "@/components/ui/Button";
-import { Input, Field } from "@/components/ui/Input";
+import { FIELD_LABEL_CLASS, Field, Input } from "@/components/ui/Input";
 import { Logo } from "@/components/ui/Logo";
 import { stagger } from "./stagger";
 
@@ -167,7 +167,7 @@ export function AuthForm({
         </div>
         <div style={stagger(3)}>
           <div className="flex items-baseline justify-between">
-            <span className="mb-1.5 block text-[13px] font-medium text-muted">
+            <span className={FIELD_LABEL_CLASS}>
               Passwort
             </span>
             {isLogin && (

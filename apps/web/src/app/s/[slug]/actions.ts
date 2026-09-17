@@ -29,6 +29,7 @@ import { effectiveRole } from "@/lib/space-access";
 import { atLeast } from "@/lib/permissions";
 import { isValidIcon } from "@/lib/space-settings";
 import { appUrl } from "@dokunc/mail";
+import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
 
 /**
  * Der Kontext, den die Guards brauchen: Space, Person und Rolle. Als
@@ -91,7 +92,7 @@ export async function createPageAction(form: FormData) {
       data: {
         spaceId: space.id,
         parentId,
-        title: template?.title ?? "Untitled",
+        title: template?.title ?? DEFAULT_PAGE_TITLE,
         icon: template?.icon ?? null,
         content: template?.content ?? undefined,
         textContent: template?.textContent ?? "",

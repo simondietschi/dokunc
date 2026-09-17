@@ -2,6 +2,7 @@
  * Reine Logik für das Kopieren von Seiten (Duplizieren, Vorlagen).
  * Ohne DB-Zugriff, damit sie testbar bleibt.
  */
+import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
 
 type JsonNode = {
   type?: string;
@@ -36,7 +37,7 @@ export function stripCommentMarks<T>(content: T): T {
 
 /** Titel einer Kopie: "Titel (Kopie)". */
 export function copyTitle(title: string): string {
-  const base = title.trim() || "Untitled";
+  const base = title.trim() || DEFAULT_PAGE_TITLE;
   return `${base} (Kopie)`;
 }
 

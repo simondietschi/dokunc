@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import { Loader2, Trash2 } from "lucide-react";
 import type { SpaceRole, SpaceVisibility } from "@dokunc/db";
 import { Button } from "@/components/ui/Button";
-import { Input, Field } from "@/components/ui/Input";
+import { FIELD_LABEL_CLASS, Field, Input } from "@/components/ui/Input";
 import { cn } from "@/lib/cn";
 import {
   QUICK_ICONS,
@@ -153,7 +153,7 @@ export function GeneralForm({
       <div>
         <label
           htmlFor="visibility"
-          className="mb-1.5 block text-[13px] font-medium text-muted"
+          className={FIELD_LABEL_CLASS}
         >
           Sichtbarkeit
         </label>
@@ -171,7 +171,7 @@ export function GeneralForm({
       <div>
         <label
           htmlFor="joinRole"
-          className="mb-1.5 block text-[13px] font-medium text-muted"
+          className={FIELD_LABEL_CLASS}
         >
           Rolle beim Beitritt
         </label>

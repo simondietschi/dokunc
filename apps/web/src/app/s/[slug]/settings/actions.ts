@@ -142,6 +142,17 @@ export async function leaveSpaceAction(
     }
     throw e;
   }
+  // Gegenstueck zu space.joined in spaces/actions.ts. Ohne diesen
+  // Eintrag verzeichnet das Protokoll jeden Beitritt, aber keinen
+  // Austritt: eine Mitgliederliste laesst sich daraus nicht
+  // nachvollziehen, obwohl der Eintrag dafuer laengst vorgesehen ist
+  // (lib/audit.ts, AuditAction und AUDIT_LABELS).
+  await audit({
+    action: "space.left",
+    actorId: user.id,
+    spaceId: space.id,
+    metadata: { name: space.name },
+  });
   await revokeCollabAccess(user.id, space.id);
   revalidatePath("/spaces");
   redirect("/spaces");

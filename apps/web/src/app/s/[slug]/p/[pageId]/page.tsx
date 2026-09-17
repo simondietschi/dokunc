@@ -11,13 +11,14 @@ import type {
   AccessCandidate,
   GrantRow,
 } from "./AccessDialog";
-import { can } from "@/lib/permissions";
+import { atLeast, can } from "@/lib/permissions";
 import { resolveCollabUrl } from "@/lib/collab-url";
 import { loadAncestors } from "@/lib/page-ancestors";
 import { recordPageVisit } from "@/lib/page-visits";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
 import { PageAttachments } from "@/components/space/PageAttachments";
+import { pageTitle } from "@/lib/page-title";
 
 /**
  * Ab wann ein Kommentar als nachträglich geändert gilt.
@@ -209,6 +210,10 @@ export default async function PageView({
         collabUrl={collabUrl}
         editable={can(role, "write")}
         canManage={can(role, "managePages")}
+        // Schutz setzen darf managePages, ihn AUFHEBEN und fremde
+        // Freigaben entziehen nur die Verwaltung — genau so prüfen es
+        // togglePageRestrictionAction und removePageGrantAction.
+        canAdminister={atLeast(role, "ADMIN")}
         userId={user.id}
         userName={user.name}
         pdfEnabled={!!process.env.GOTENBERG_URL}
@@ -245,7 +250,7 @@ export default async function PageView({
                     href={`/s/${slug}/p/${source.id}`}
                     className="inline-flex items-center rounded-lg border border-line bg-surface px-2.5 py-1 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-ink"
                   >
-                    {source.title || "Untitled"}
+                    {pageTitle(source.title)}
                   </Link>
                 </li>
               ))}
@@ -419,7 +424,7 @@ async function loadPageAccess(
 
   return {
     isRestricted: page.isRestricted,
-    inheritedFrom: inherited?.title || (inherited ? "Ohne Titel" : null),
+    inheritedFrom: inherited ? pageTitle(inherited.title) : null,
     grants: grantRows,
     people: [...candidates.values()].sort((a, b) =>
       a.label.localeCompare(b.label),

@@ -17,6 +17,18 @@ export function Input({
   );
 }
 
+/**
+ * Die Beschriftung ueber einem Eingabefeld.
+ *
+ * Als Konstante, weil nicht jede Stelle die `Field`-Huelle verwenden
+ * kann: mal steht die Beschriftung in einem eigenen `label` mit
+ * `htmlFor`, mal neben einem Feld, das sein Layout selbst bestimmt. Die
+ * Klassenkette stand deshalb an sechs Orten woertlich da und lief bei
+ * jeder Anpassung auseinander.
+ */
+export const FIELD_LABEL_CLASS =
+  "mb-1.5 block text-[13px] font-medium text-muted";
+
 export function Field({
   label,
   children,
@@ -26,7 +38,7 @@ export function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[13px] font-medium text-muted">
+      <span className={FIELD_LABEL_CLASS}>
         {label}
       </span>
       {children}

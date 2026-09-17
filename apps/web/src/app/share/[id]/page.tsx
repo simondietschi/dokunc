@@ -6,6 +6,7 @@ import { prisma } from "@dokunc/db";
 import { contentToHtml } from "@/lib/page-html";
 import { resolveShare, rewriteFileUrls } from "@/lib/share";
 import { Logo } from "@/components/ui/Logo";
+import { pageTitle } from "@/lib/page-title";
 
 /**
  * Geteilte Seite: Lesen ohne Konto.
@@ -81,7 +82,7 @@ export default async function SharedPage({
           <div className="mb-1 text-5xl leading-none">{share.page.icon}</div>
         )}
         <h1 className="text-[2.5rem] font-bold leading-tight tracking-tight">
-          {share.page.title || "Ohne Titel"}
+          {pageTitle(share.page.title)}
         </h1>
         <p className="mt-1.5 text-[13px] text-faint">
           aus „{share.spaceName}" ·{" "}
@@ -112,7 +113,7 @@ export default async function SharedPage({
                     className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-surface px-2.5 py-1 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-ink"
                   >
                     {c.icon && <span aria-hidden>{c.icon}</span>}
-                    {c.title || "Ohne Titel"}
+                    {pageTitle(c.title)}
                   </Link>
                 </li>
               ))}

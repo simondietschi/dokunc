@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/Button";
 import type { TemplateOptions } from "@/lib/template-options";
 import { createFromTemplateAction } from "@/app/s/[slug]/template-actions";
+import { pageTitle } from "@/lib/page-title";
 
 type Selection =
   | { kind: "space"; id: string }
@@ -59,7 +60,7 @@ export function TemplatePicker({
       const t = templates.space.find((x) => x.id === selected.id);
       return t
         ? {
-            title: t.title || "Ohne Titel",
+            title: pageTitle(t.title),
             subtitle: `Zuletzt geändert am ${formatDate(t.updatedAt)}`,
             preview: t.preview,
           }
@@ -137,7 +138,7 @@ export function TemplatePicker({
                       className={itemClass(isSelected({ kind: "space", id: t.id }))}
                     >
                       <LayoutTemplate className="h-3.5 w-3.5 shrink-0" />
-                      <span className="truncate">{t.title || "Ohne Titel"}</span>
+                      <span className="truncate">{pageTitle(t.title)}</span>
                     </button>
                   </li>
                 ))}

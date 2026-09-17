@@ -33,6 +33,7 @@ import type { TemplateOptions } from "@/lib/template-options";
 import { NewPageButton } from "@/components/space/NewPageButton";
 import { logoutAction } from "@/app/(auth)/actions";
 import { PaletteButton } from "@/components/CommandPalette";
+import { pageTitle } from "@/lib/page-title";
 
 type Props = {
   slug: string;
@@ -311,7 +312,7 @@ function RecentSection({
                   <span className="w-4 shrink-0 text-center text-[13px] leading-none">
                     {p.icon ?? ""}
                   </span>
-                  <span className="truncate">{p.title || "Untitled"}</span>
+                  <span className="truncate">{pageTitle(p.title)}</span>
                 </Link>
               </li>
             );

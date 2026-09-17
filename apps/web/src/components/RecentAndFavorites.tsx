@@ -4,6 +4,8 @@ import { prisma, type Prisma } from "@dokunc/db";
 import { relativeTime } from "@/lib/relative-time";
 import { accessibleSpaces } from "@/lib/space-access";
 import { visiblePagesAcrossSpaces } from "@/lib/page-access";
+import { pageTitle } from "@/lib/page-title";
+import { Panel } from "@/components/ui/Panel";
 
 type Entry = {
   id: string;
@@ -103,14 +105,7 @@ function Section({
   showSpace?: boolean;
 }) {
   return (
-    <section
-      aria-label={title}
-      className="rounded-xl border border-line bg-surface shadow-soft"
-    >
-      <h2 className="flex items-center gap-2 border-b border-line px-4 py-3 text-[13px] font-semibold text-muted">
-        <span className="text-faint">{icon}</span>
-        {title}
-      </h2>
+    <Panel title={title} icon={icon}>
       <ul className="p-1.5">
         {entries.map((e) => (
           <li key={e.id}>
@@ -121,7 +116,7 @@ function Section({
               <FileText className="h-4 w-4 shrink-0 text-faint transition-colors group-hover:text-accent" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13.5px] font-medium text-ink">
-                  {e.title || "Untitled"}
+                  {pageTitle(e.title)}
                 </span>
                 <span className="block truncate text-[12px] text-faint">
                   {showSpace ? `${e.spaceName} · ${e.meta}` : e.meta}
@@ -131,6 +126,6 @@ function Section({
           </li>
         ))}
       </ul>
-    </section>
+    </Panel>
   );
 }

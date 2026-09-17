@@ -28,6 +28,7 @@ import {
   type ImportNode,
   type JsonNode,
 } from "./types";
+import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
 
 /** Obergrenze fuer Seiten pro Import (Transaktionsdauer, UI). */
 const IMPORT_MAX_PAGES = 2000;
@@ -130,7 +131,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
             data: {
               spaceId: opts.spaceId,
               parentId,
-              title: node.title.slice(0, 200) || "Untitled",
+              title: node.title.slice(0, 200) || DEFAULT_PAGE_TITLE,
               position: base + i,
               content: emptyDoc() as object,
               textContent: "",

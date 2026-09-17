@@ -40,7 +40,21 @@ export function sessionMaxAgeSeconds(): number {
   return durationToSeconds(EXPIRES);
 }
 
-export type SessionClaims = { sub: string; tv: number; sid: string };
+export type SessionClaims = {
+  sub: string;
+  tv: number;
+  sid: string;
+  /**
+   * Ob die Anmeldung das Browserfenster ueberdauern soll.
+   *
+   * Steht im Token, weil das Cookie es nicht verraet: gelesen kommt nur
+   * sein Wert zurueck, nicht sein Ablauf. Wer die Sitzung spaeter neu
+   * ausstellt (Passwortwechsel), wuesste sonst nicht, welche der beiden
+   * Formen die Person gewaehlt hatte, und machte aus einer Anmeldung
+   * fuer dieses eine Fenster still eine dauerhafte.
+   */
+  rem: boolean;
+};
 
 /**
  * Meldet ein Gerät an.
@@ -58,6 +72,9 @@ export async function createSession(
   options: { remember?: boolean } = {},
 ) {
   const maxAge = sessionMaxAgeSeconds();
+  // Einmal ausgewertet: derselbe Wert entscheidet ueber das Cookie und
+  // wandert ins Token, damit ein spaeteres Neuausstellen ihn kennt.
+  const remember = options.remember !== false;
   const h = await headers();
   const session = await prisma.session.create({
     data: {
@@ -80,7 +97,11 @@ export async function createSession(
    * nicht — dagegen hilft nur der Ablauf des Datensatzes.
    */
   try {
-    const token = await new SignJWT({ tv: tokenVersion, sid: session.id })
+    const token = await new SignJWT({
+      tv: tokenVersion,
+      sid: session.id,
+      rem: remember,
+    })
       .setProtectedHeader({ alg: "HS256" })
       .setSubject(userId)
       .setAudience(AUDIENCE)
@@ -96,7 +117,7 @@ export async function createSession(
       path: "/",
       // Ohne Haken kein Ablaufdatum: die Anmeldung endet mit dem
       // Browserfenster. Sonst laufen Cookie und JWT gemeinsam ab.
-      ...(options.remember === false ? {} : { maxAge }),
+      ...(remember ? { maxAge } : {}),
     });
   } catch (e) {
     await prisma.session.deleteMany({ where: { id: session.id } }).catch(() => {
@@ -142,6 +163,9 @@ export async function getSessionClaims(): Promise<SessionClaims | null> {
       sub: payload.sub,
       tv: Number(payload.tv ?? 0),
       sid: payload.sid,
+      // Aeltere Token kennen das Feld nicht. Fuer sie gilt die bisherige
+      // Vorgabe: dauerhaft, so wie createSession ohne Angabe ausstellte.
+      rem: payload.rem !== false,
     };
   } catch {
     return null;

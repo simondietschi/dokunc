@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/Button";
 import { MenuItem, useCloseMenu } from "@/components/space/PageActions";
 import { movePageAction } from "@/app/s/[slug]/move-actions";
 import type { SpacePagesResponse } from "@/app/api/spaces/[id]/pages/route";
+import { pageTitle } from "@/lib/page-title";
 
 /**
  * Menueeintrag "Verschieben nach..." fuer PageActions. Schliesst das
@@ -58,7 +59,7 @@ function flattenWithDepth(
   out: Option[] = [],
 ): Option[] {
   for (const n of nodes) {
-    const title = n.title || "Untitled";
+    const title = pageTitle(n.title);
     out.push({
       id: n.id,
       title,
@@ -289,7 +290,7 @@ export function MovePageDialog({
           </h2>
           {currentTitle !== undefined && (
             <p className="mt-0.5 truncate text-[12.5px] text-muted">
-              Seite „{currentTitle || "Untitled"}“ unter eine andere Seite
+              Seite „{pageTitle(currentTitle)}“ unter eine andere Seite
               einordnen.
             </p>
           )}

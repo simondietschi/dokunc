@@ -10,7 +10,10 @@ import {
 } from "@tiptap/react";
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import Placeholder from "@tiptap/extension-placeholder";
+// @tiptap/extension-placeholder ist seit v3 eine leere Weiterleitung
+// auf @tiptap/extensions und liegt im Tiptap-Repo unter
+// packages-deprecated; direkt aus der Quelle importiert.
+import { Placeholder } from "@tiptap/extensions";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
@@ -81,6 +84,7 @@ import {
   setPageCoverAction,
   setPageIconAction,
 } from "../../actions";
+import { DEFAULT_PAGE_TITLE, EMPTY_PAGE_TITLE } from "@/lib/page-title";
 
 /**
  * Titelbild hochladen. Der Rest der Dateiwege laeuft ueber
@@ -216,6 +220,7 @@ export function CollaborativeEditor({
   collabUrl,
   editable,
   canManage,
+  canAdminister,
   userId,
   userName,
   pdfEnabled,
@@ -239,6 +244,8 @@ export function CollaborativeEditor({
   collabUrl: string;
   editable: boolean;
   canManage: boolean;
+  /** Ab ADMIN: darf Schutz und Freigaben einer Seite verwalten. */
+  canAdminister: boolean;
   userId: string;
   userName: string;
   pdfEnabled: boolean;
@@ -317,7 +324,7 @@ export function CollaborativeEditor({
     (value: string) => {
       window.dispatchEvent(
         new CustomEvent("dokunc:page-renamed", {
-          detail: { pageId, title: value || "Untitled" },
+          detail: { pageId, title: value || DEFAULT_PAGE_TITLE },
         }),
       );
     },
@@ -825,6 +832,7 @@ export function CollaborativeEditor({
                   inheritedFrom={access.inheritedFrom}
                   grants={access.grants}
                   people={access.people}
+                  canAdminister={canAdminister}
                   groups={access.groups}
                 />
               </>
@@ -939,7 +947,7 @@ export function CollaborativeEditor({
               editor?.commands.focus("start");
             }
           }}
-          placeholder="Ohne Titel"
+          placeholder={EMPTY_PAGE_TITLE}
           className="w-full bg-transparent text-[2.5rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-faint"
         />
       </div>
