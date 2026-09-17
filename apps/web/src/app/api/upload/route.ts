@@ -12,6 +12,7 @@ import { canSeePage } from "@/lib/page-access";
 import { audit } from "@/lib/audit";
 import { declaredBodySize } from "@/lib/body-size";
 import { log } from "@/lib/log";
+import { stripImageMetadata } from "@/lib/image-metadata";
 import {
   UPLOAD_DIR,
   ALLOWED_IMAGE_TYPES,
@@ -213,22 +214,21 @@ export async function POST(req: Request) {
   const storedName = `${randomBytes(16).toString("hex")}.${ext}`;
 
   const fullPath = path.join(UPLOAD_DIR, storedName);
-  // Die Bytes gehen unveraendert auf die Platte: kein Neucodieren, kein
-  // Entfernen von Metadaten. Ein Foto behaelt damit seine EXIF-Daten —
-  // GPS-Ort, Aufnahmezeit, Geraet — und /api/files, der Freigabelink und
-  // die Einbettung im Export liefern es genauso wieder aus. Wer ein Bild
-  // in eine Seite zieht, teilt also womoeglich mehr, als er sieht.
+  // Metadaten raus, BEVOR die Datei liegt. Sonst behaelt ein Foto seine
+  // EXIF-Daten — GPS-Ort, Aufnahmezeit, Geraet — und /api/files, der
+  // Freigabelink und die Einbettung im Export liefern sie genauso wieder
+  // aus: wer ein Bild in eine Seite zieht, teilte mehr, als er sieht.
   //
-  // Bewusst nicht hier geloest: Metadaten sauber zu strippen heisst, die
-  // Datei neu zu schreiben (JPEG-APPn-Segmente, PNG-Textchunks), und das
-  // will entweder eine Bildbibliothek (sharp) — eine neue Abhaengigkeit,
-  // die dieses Projekt nicht aufnehmen will — oder einen eigenen,
-  // verlustfreien Umschreiber samt Entscheidung, welche Segmente
-  // (Orientierung, Farbprofil) erhalten bleiben muessen, damit das Bild
-  // nicht gedreht oder verfaerbt herauskommt.
+  // Nur fuer erkannte Bildtypen (imageType kommt aus den Magic Bytes,
+  // nicht aus der Endung) und ohne Neucodieren: lib/image-metadata laesst
+  // ganze Abschnitte des Containers weg und ruehrt die Bilddaten nicht
+  // an. Bei allem, was nicht aufgeht, bleibt die Datei, wie sie ist.
+  const gespeicherteBytes = imageType
+    ? stripImageMetadata(bytes, imageType)
+    : bytes;
   try {
     await mkdir(UPLOAD_DIR, { recursive: true });
-    await writeFile(fullPath, bytes);
+    await writeFile(fullPath, gespeicherteBytes);
   } catch (e) {
     // Ohne diesen Zweig verliesse ein Schreibfehler (Verzeichnis nicht
     // beschreibbar, Platte voll) die Route unbehandelt: kein Eintrag im
@@ -257,7 +257,10 @@ export async function POST(req: Request) {
         name,
         mimeType,
         kind,
-        size: bytes.length,
+        // Die abgelegte Groesse, nicht die hochgeladene: nach dem
+        // Entfernen der Metadaten ist die Datei kleiner, und die Anzeige
+        // soll die Datei beschreiben, die wirklich da liegt.
+        size: gespeicherteBytes.length,
       },
       select: { name: true, size: true, mimeType: true },
     });
@@ -268,7 +271,7 @@ export async function POST(req: Request) {
       targetId: storedName,
       metadata: {
         mimeType,
-        size: bytes.length,
+        size: gespeicherteBytes.length,
         kind,
         pageId: attachedPageId,
       },

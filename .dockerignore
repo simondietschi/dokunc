@@ -26,3 +26,5 @@ playwright.config.ts
 **/*.test.tsx
 **/vitest.config.ts
 **/vitest.integration.config.ts
+# Bilddateien, die nur Tests lesen (Metadaten-Entfernung).
+**/test/fixtures

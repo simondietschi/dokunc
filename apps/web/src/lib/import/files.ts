@@ -2,6 +2,7 @@ import "server-only";
 import { randomBytes } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { stripImageMetadata } from "@/lib/image-metadata";
 import {
   ALLOWED_IMAGE_TYPES,
   UPLOAD_DIR,
@@ -30,10 +31,15 @@ export async function storeImportedImage(
   const ext = mimeType ? ALLOWED_IMAGE_TYPES[mimeType] : undefined;
   if (!mimeType || !ext) return { ok: false, reason: "type" };
 
+  // Wie beim Upload ueber /api/upload: Metadaten raus, bevor die Datei
+  // liegt. Ein Export aus einem anderen Wiki bringt die EXIF-Daten der
+  // Originalfotos unveraendert mit.
+  const rein = stripImageMetadata(bytes, mimeType);
+
   const storedName = `${randomBytes(16).toString("hex")}.${ext}`;
   await mkdir(UPLOAD_DIR, { recursive: true });
-  await writeFile(path.join(UPLOAD_DIR, storedName), bytes);
-  return { ok: true, file: { storedName, mimeType, size: bytes.length } };
+  await writeFile(path.join(UPLOAD_DIR, storedName), rein);
+  return { ok: true, file: { storedName, mimeType, size: rein.length } };
 }
 
 /** data:image/...;base64,... -> Bytes (null bei fremdem Format). */

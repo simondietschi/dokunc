@@ -1,4 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
@@ -173,4 +175,50 @@ test("SVG wird als Anhang gespeichert und nie inline ausgeliefert", async ({
   expect(res.headers()["content-disposition"] ?? "").toMatch(/^attachment;/);
   expect(res.headers()["content-type"]).not.toContain("svg");
   expect(res.headers()["x-content-type-options"]).toBe("nosniff");
+});
+
+test("ein hochgeladenes Foto verliert Ort und Geraet", async ({ page }) => {
+  // Der Unit-Test deckt das Entfernen selbst ab (lib/image-metadata).
+  // Hier geht es um die Verdrahtung: dass /api/upload es wirklich
+  // anwendet, BEVOR die Datei liegt, und dass /api/files danach die
+  // bereinigte Fassung ausliefert — bisher ging das Foto unveraendert
+  // durch, samt GPS-Ort, Aufnahmezeit und Geraet.
+  await login(page);
+  await openNewPage(page, `Foto ${Date.now()}`);
+
+  const foto = readFileSync(
+    join(__dirname, "../apps/web/test/fixtures/foto.jpg"),
+  );
+  expect(foto.toString("latin1")).toContain("ACME Kamerawerk");
+
+  const editor = page.locator(".ProseMirror");
+  await editor.click();
+  await page.keyboard.press("Control+End");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("/bild");
+  const eintrag = page.locator(".shadow-pop button", {
+    hasText: "Datei hochladen",
+  });
+  await expect(eintrag).toBeVisible({ timeout: 8000 });
+  const [chooser] = await Promise.all([
+    page.waitForEvent("filechooser"),
+    eintrag.click(),
+  ]);
+  await chooser.setFiles({
+    name: `foto-${Date.now()}.jpg`,
+    mimeType: "image/jpeg",
+    buffer: foto,
+  });
+
+  const bild = editor.locator('img[src^="/api/files/"]');
+  await expect(bild).toBeVisible({ timeout: 15_000 });
+  const src = await bild.getAttribute("src");
+
+  const res = await page.request.get(src!);
+  expect(res.status()).toBe(200);
+  const geliefert = (await res.body()).toString("latin1");
+  expect(geliefert).not.toContain("ACME Kamerawerk");
+  expect(geliefert).not.toContain("2026:04:01");
+  // Die Ausrichtung bleibt, sonst laege das Foto auf der Seite.
+  expect(geliefert).toContain("II\x2a\x00");
 });
