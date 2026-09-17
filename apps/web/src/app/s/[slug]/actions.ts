@@ -30,6 +30,7 @@ import { atLeast } from "@/lib/permissions";
 import { isValidIcon } from "@/lib/space-settings";
 import { appUrl } from "@dokunc/mail";
 import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
+import { nextSiblingPosition } from "@/lib/page-position";
 
 /**
  * Der Kontext, den die Guards brauchen: Space, Person und Rolle. Als
@@ -67,27 +68,17 @@ export async function createPageAction(form: FormData) {
       })
     : null;
 
-  // Neue Seiten ans Ende der Geschwister (position = max + 1). Ohne das
-  // stehen alle neuen Seiten auf 0 und der Baum sortiert sie nach Titel.
-  //
-  // `isTemplate: false` gehoert dazu, weil Vorlagen im selben Space
-  // liegen, kein Elternteil haben und mit der Standardposition 0
-  // stehenbleiben. Ohne den Filter zaehlt eine Seite auf oberster Ebene
-  // (parentId null) die Vorlagen mit und beginnt in einem Space, in dem
-  // es nur Vorlagen gibt, bei 1 statt 0 — waehrend nextPosition in
-  // template-actions.ts und der Import sie ausklammern. Dieselbe
-  // Elternseite lieferte je nach Weg eine andere Zielposition.
-  const last = await prisma.page.aggregate({
-    where: { spaceId: space.id, parentId, deletedAt: null, isTemplate: false },
-    _max: { position: true },
-  });
-
   // Anlegen und Nachziehen der Zugriffswurzel in EINEM Zug. Getrennt
   // ausgeführt bleibt bei einem Abbruch dazwischen eine Seite unter
   // einer geschützten Elternseite mit accessRootId null stehen, und
   // genau das wertet visiblePageWhere als offen: sie wäre dauerhaft für
   // den ganzen Space lesbar, ohne dass es jemandem auffiele.
   const page = await prisma.$transaction(async (tx) => {
+    // Neue Seiten ans Ende der Geschwister. Die Zahl kommt aus
+    // lib/page-position, nicht aus einem eigenen aggregate hier: dort
+    // sperrt sie die Geschwisterreihe, sonst vergeben zwei gleichzeitige
+    // Anlagen unter derselben Elternseite dieselbe Position.
+    const position = await nextSiblingPosition(tx, space.id, parentId);
     const created = await tx.page.create({
       data: {
         spaceId: space.id,
@@ -96,7 +87,7 @@ export async function createPageAction(form: FormData) {
         icon: template?.icon ?? null,
         content: template?.content ?? undefined,
         textContent: template?.textContent ?? "",
-        position: (last._max.position ?? -1) + 1,
+        position,
       },
       select: { id: true },
     });

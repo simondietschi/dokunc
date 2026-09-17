@@ -29,6 +29,7 @@ import {
   type JsonNode,
 } from "./types";
 import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
+import { nextSiblingPosition } from "@/lib/page-position";
 
 /** Obergrenze fuer Seiten pro Import (Transaktionsdauer, UI). */
 const IMPORT_MAX_PAGES = 2000;
@@ -97,29 +98,19 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
 
   // --- Schritt 2: Seiten anlegen -------------------------------------
   const created = new Map<ImportNode, Created>();
-  // Bekannte Luecke: zwei gleichzeitige Importe in dieselbe Geschwister-
-  // reihe lesen hier dasselbe Maximum und vergeben danach dieselben
-  // Positionen; die Reihenfolge in der Seitenleiste mischt sich dann.
-  // Das aggregate in die Transaktion zu ziehen behebt das NICHT — unter
-  // READ COMMITTED sieht jede Transaktion die noch nicht committeten
-  // Zeilen der anderen ohnehin nicht. Zu schliessen ist es nur dort, wo
-  // Positionen ueberhaupt vergeben werden, und das ist mehr als diese
-  // Datei (auch createPageAction vergibt sie so).
-  const start =
-    ((
-      await prisma.page.aggregate({
-        _max: { position: true },
-        where: {
-          spaceId: opts.spaceId,
-          parentId: opts.parentId,
-          deletedAt: null,
-          isTemplate: false,
-        },
-      })
-    )._max.position ?? -1) + 1;
+  // Startposition erst in der Transaktion unten, nicht hier: nur
+  // dort haelt die Sperre aus lib/page-position.
 
   await prisma.$transaction(
     async (tx) => {
+      // Ohne Sperre lesen zwei gleichzeitige Importe in dieselbe
+      // Geschwisterreihe dasselbe Maximum und vergeben danach
+      // dieselben Positionen; die Seitenleiste mischt beide Baeume
+      // dann ineinander. nextSiblingPosition sperrt genau diese eine
+      // Reihe bis zum Ende der Transaktion. Gesperrt wird nur die
+      // oberste Ebene — die tieferen haengen an Seiten, die es vor
+      // diesem Import nicht gab.
+      const start = await nextSiblingPosition(tx, opts.spaceId, opts.parentId);
       const createLevel = async (
         nodes: ImportNode[],
         parentId: string | null,

@@ -18,6 +18,7 @@ import {
   visiblePageSql,
   visiblePageWhere,
 } from "@/lib/page-access";
+import { lockSiblingOrder, nextSiblingPosition } from "@/lib/page-position";
 
 /**
  * Server Actions rund um Vorlagen und das Duplizieren von Seiten.
@@ -56,16 +57,6 @@ function jsonInput(content: unknown): Prisma.InputJsonValue | undefined {
   return content && typeof content === "object"
     ? (content as Prisma.InputJsonValue)
     : undefined;
-}
-
-/** Nächste freie Position am Ende der Geschwister (nicht-Vorlagen). */
-async function nextPosition(spaceId: string, parentId: string | null) {
-  const last = await prisma.page.findFirst({
-    where: { spaceId, parentId, deletedAt: null, isTemplate: false },
-    orderBy: { position: "desc" },
-    select: { position: true },
-  });
-  return last ? last.position + 1 : 0;
 }
 
 /**
@@ -167,20 +158,29 @@ export async function createFromTemplateAction(form: FormData) {
   }
 
   const parentId = await resolveParent(scope, strOrNull(form, "parentId"));
-  const page = await prisma.page.create({
-    data: {
-      spaceId: space.id,
-      parentId,
-      title,
-      content: jsonInput(content),
-      textContent: extractText(content),
-      position: await nextPosition(space.id, parentId),
-      lastEditedById: user.id,
-    },
-    select: { id: true },
+  // Position, Anlegen und Zugriffswurzel in EINEM Zug: die Sperre aus
+  // nextSiblingPosition gilt nur innerhalb der Transaktion, und eine
+  // getrennt nachgezogene Wurzel liesse bei einem Abbruch dazwischen
+  // eine Seite unter geschuetztem Elternteil mit accessRootId null
+  // stehen — was visiblePageWhere als offen wertet.
+  const page = await prisma.$transaction(async (tx) => {
+    const position = await nextSiblingPosition(tx, space.id, parentId);
+    const created = await tx.page.create({
+      data: {
+        spaceId: space.id,
+        parentId,
+        title,
+        content: jsonInput(content),
+        textContent: extractText(content),
+        position,
+        lastEditedById: user.id,
+      },
+      select: { id: true },
+    });
+    // Unter einer geschützten Seite ist auch die neue geschützt.
+    if (parentId) await refreshAccessRoots(created.id, tx);
+    return created;
   });
-  // Unter einer geschützten Seite ist auch die neue geschützt.
-  if (parentId) await refreshAccessRoots(page.id);
   revalidatePath(`/s/${space.slug}`, "layout");
   redirect(`/s/${space.slug}/p/${page.id}`);
 }
@@ -278,6 +278,12 @@ export async function duplicatePageAction(form: FormData) {
       // Geschwister in Anzeige-Reihenfolge kompakt nummerieren und die
       // Kopie direkt hinter dem Original einreihen — robust auch bei
       // gleichen Positionen (Altbestand) und Lücken.
+      //
+      // Dieselbe Sperre wie beim Anlegen: hier wird die ganze Reihe neu
+      // durchnummeriert, und eine gleichzeitige Anlage darunter wuerde
+      // sonst eine Position vergeben, die diese Nummerierung schon
+      // wieder vergeben hat.
+      await lockSiblingOrder(tx, space.id, original.parentId);
       const siblings = await tx.page.findMany({
         where: {
           spaceId: space.id,
