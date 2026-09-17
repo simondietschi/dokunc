@@ -27,6 +27,13 @@ COPY apps/collab/package.json apps/collab/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/editor/package.json packages/editor/package.json
 COPY packages/mail/package.json packages/mail/package.json
+# Bewusst ohne --prod: der Laufzeitbetrieb hängt an devDependencies. Der
+# Collab-Server läuft mit tsx direkt aus den .ts-Quellen (apps/collab,
+# "start"), und der Containerstart setzt die Migrationen mit der
+# Prisma-CLI (packages/db, s. CMD). Mit --prod fehlt beides und der
+# Container kommt nicht hoch. Preis dafür: das Laufzeit-Image trägt auch
+# vitest und @playwright/test mit, die es nie ausführt — ein Image-Scan
+# meldet deren Advisories.
 RUN pnpm install --frozen-lockfile
 
 ############################

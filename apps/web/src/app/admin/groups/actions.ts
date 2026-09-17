@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { prisma } from "@dokunc/db";
+import { prisma, Prisma } from "@dokunc/db";
 import { requireAdmin } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
@@ -29,10 +29,30 @@ export async function createGroupAction(
   if (await prisma.group.findUnique({ where: { name }, select: { id: true } })) {
     return { error: "Diese Gruppe gibt es schon." };
   }
-  const group = await prisma.group.create({
-    data: { name, description: str(form, "description").slice(0, 200) || null },
-    select: { id: true },
-  });
+  // Der Vorab-Check oben entscheidet das Rennen nicht: bei zwei
+  // gleichzeitigen Anlagen — oder einem doppelt abgeschickten Formular —
+  // sehen beide Anfragen den Namen als frei, und die zweite lief bisher
+  // ungefangen in den Unique-Fehler auf Group.name, also in die
+  // Fehlerseite statt in die Meldung, die es dafuer schon gibt. Wie in
+  // createSpaceAction wird deshalb genau P2002 abgefangen.
+  let group: { id: string };
+  try {
+    group = await prisma.group.create({
+      data: {
+        name,
+        description: str(form, "description").slice(0, 200) || null,
+      },
+      select: { id: true },
+    });
+  } catch (e) {
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === "P2002"
+    ) {
+      return { error: "Diese Gruppe gibt es schon." };
+    }
+    throw e;
+  }
   await audit({
     action: "group.created",
     actorId: admin.id,
@@ -60,16 +80,24 @@ export async function renameGroupAction(form: FormData) {
   });
   if (taken) return;
 
-  await prisma.group.update({
+  // updateMany statt update: die groupId kommt aus dem Formular und kann
+  // leer oder laengst geloescht sein (eine zweite Verwaltung raeumt die
+  // Gruppe zwischen Rendern und Abschicken weg). `update` wirft dann
+  // P2025 und die Aktion endet in der Fehlerseite; ein Treffer weniger
+  // ist hier aber kein Fehlerfall, sondern das stille Nichts, das auch
+  // deleteGroupAction und addGroupMemberAction zurueckgeben.
+  const { count } = await prisma.group.updateMany({
     where: { id: groupId },
     data: { name, description: str(form, "description").slice(0, 200) || null },
   });
-  await audit({
-    action: "group.updated",
-    actorId: admin.id,
-    targetId: groupId,
-    metadata: { name },
-  });
+  if (count > 0) {
+    await audit({
+      action: "group.updated",
+      actorId: admin.id,
+      targetId: groupId,
+      metadata: { name },
+    });
+  }
   revalidatePath("/admin/groups");
 }
 

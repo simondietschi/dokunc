@@ -68,24 +68,41 @@ export async function createSession(
     select: { id: true },
   });
 
-  const token = await new SignJWT({ tv: tokenVersion, sid: session.id })
-    .setProtectedHeader({ alg: "HS256" })
-    .setSubject(userId)
-    .setAudience(AUDIENCE)
-    .setIssuedAt()
-    .setExpirationTime(EXPIRES)
-    .sign(secret());
+  /**
+   * Der Datensatz steht schon, das Cookie noch nicht. Scheitert das
+   * Signieren (fehlendes APP_SECRET) oder das Setzen des Cookies, bliebe
+   * ohne dieses Aufraeumen eine Sitzung mit `revokedAt = null` und voller
+   * Restlaufzeit zurueck, zu der kein Geraet gehoert: /account fuehrt sie
+   * als "Angemeldetes Geraet" auf und der Datenexport gibt sie aus.
+   * Aufraeumen ist best effort, der Fehler selbst geht unveraendert
+   * weiter nach oben. Gegen einen Prozessabbruch genau hier hilft das
+   * nicht — dagegen hilft nur der Ablauf des Datensatzes.
+   */
+  try {
+    const token = await new SignJWT({ tv: tokenVersion, sid: session.id })
+      .setProtectedHeader({ alg: "HS256" })
+      .setSubject(userId)
+      .setAudience(AUDIENCE)
+      .setIssuedAt()
+      .setExpirationTime(EXPIRES)
+      .sign(secret());
 
-  const store = await cookies();
-  store.set(COOKIE, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    // Ohne Haken kein Ablaufdatum: die Anmeldung endet mit dem
-    // Browserfenster. Sonst laufen Cookie und JWT gemeinsam ab.
-    ...(options.remember === false ? {} : { maxAge }),
-  });
+    const store = await cookies();
+    store.set(COOKIE, token, {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: process.env.NODE_ENV === "production",
+      path: "/",
+      // Ohne Haken kein Ablaufdatum: die Anmeldung endet mit dem
+      // Browserfenster. Sonst laufen Cookie und JWT gemeinsam ab.
+      ...(options.remember === false ? {} : { maxAge }),
+    });
+  } catch (e) {
+    await prisma.session.deleteMany({ where: { id: session.id } }).catch(() => {
+      /* der Datensatz laeuft ohnehin ab */
+    });
+    throw e;
+  }
 }
 
 /** Meldet nur dieses Gerät ab. */

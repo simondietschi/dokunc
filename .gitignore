@@ -2,8 +2,14 @@ node_modules/
 .next/
 dist/
 build/
+# Alle Schreibweisen, die Next.js von sich aus einliest (.env.production,
+# .env.development.local …). Mit nur .env und .env.local nahm `git add -A`
+# eine so benannte Datei mit echtem APP_SECRET oder SMTP_PASSWORD
+# kommentarlos auf. .env.example ist die einzige Ausnahme: sie enthält
+# nur Platzhalter und gehört ins Repo.
 .env
-.env.local
+.env.*
+!.env.example
 *.log
 .DS_Store
 .pgdata/

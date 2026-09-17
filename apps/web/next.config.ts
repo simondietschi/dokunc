@@ -56,8 +56,17 @@ const csp = [
   "frame-ancestors 'none'",
 ].join("; ");
 
-const securityHeaders = [
-  { key: "Content-Security-Policy", value: csp },
+/**
+ * Header, die in JEDEM Betriebsmodus mitgehen.
+ *
+ * Sie kosten in der Entwicklung nichts — keiner von ihnen beeinflusst
+ * das Laden von Dev-Ressourcen oder den Collab-WS. Hingen sie wie bisher
+ * mit an `isProd`, ginge jede Antwort ohne sie raus, sobald NODE_ENV
+ * nicht exakt "production" ist: also in Dev und Test, aber auch bei
+ * einem selbst gestarteten Prozess oder einer Staging-Instanz, die die
+ * Variable nicht setzt.
+ */
+const baseSecurityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -66,6 +75,14 @@ const securityHeaders = [
     value: "camera=(), microphone=(), geolocation=()",
   },
   // HSTS wird am TLS-Edge (Caddy) gesetzt, hier bewusst nicht doppelt.
+];
+
+// Zusätzlich in Produktion: die CSP. Sie bleibt an isProd gebunden, weil
+// der Collab-WS in der Entwicklung auf einem eigenen Port liegt und Next
+// dort Ressourcen nachlädt, die 'self' nicht abdeckt.
+const securityHeaders = [
+  { key: "Content-Security-Policy", value: csp },
+  ...baseSecurityHeaders,
 ];
 
 const nextConfig: NextConfig = {
@@ -81,10 +98,14 @@ const nextConfig: NextConfig = {
     },
   },
   async headers() {
-    // Strikte Header nur in Produktion (Dev bleibt entwicklerfreundlich,
-    // u. a. wegen Collab-WS auf separatem Port).
-    if (!isProd) return [];
-    return [{ source: "/:path*", headers: securityHeaders }];
+    // Die Grundhärtung gilt immer, die CSP nur in Produktion (Dev bleibt
+    // entwicklerfreundlich, u. a. wegen Collab-WS auf separatem Port).
+    return [
+      {
+        source: "/:path*",
+        headers: isProd ? securityHeaders : baseSecurityHeaders,
+      },
+    ];
   },
 };
 

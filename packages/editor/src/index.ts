@@ -2,10 +2,15 @@ import StarterKit from "@tiptap/starter-kit";
 import Highlight from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
 import Youtube from "@tiptap/extension-youtube";
-import { Table } from "@tiptap/extension-table";
-import { TableRow } from "@tiptap/extension-table-row";
-import { TableHeader } from "@tiptap/extension-table-header";
-import { TableCell } from "@tiptap/extension-table-cell";
+// Zeile, Kopfzelle und Zelle kommen aus @tiptap/extension-table, nicht
+// aus den gleichnamigen Einzelpaketen: @tiptap/extension-table-row,
+// -table-header und -table-cell enthalten seit v3 keine Implementierung
+// mehr, sondern reichen nur noch denselben Node aus @tiptap/extension-table
+// durch (peerDependency). Ueber die Einzelpakete importiert haengt die
+// geladene Codeversion dieses Schemas an einem Weiterleitungspaket, das
+// Tiptap jederzeit stilllegen kann — und das Schema muss hier mit dem
+// Collab-Server exakt uebereinstimmen.
+import { Table, TableRow, TableHeader, TableCell } from "@tiptap/extension-table";
 import { TaskList } from "@tiptap/extension-task-list";
 import { TaskItem } from "@tiptap/extension-task-item";
 import { Attachment } from "./attachment";
@@ -153,18 +158,19 @@ function walk(node: unknown, visit: (n: JsonNode) => void): void {
   }
 }
 
+// Nach aussen geht nur, was apps/web und apps/collab auch importieren.
+// Die Node- und Mark-Definitionen selbst (Mermaid, WikiLink, Mention,
+// CommentMark, AnchoredHeading, Toggle, Excalidraw, Drawio, RichImage,
+// Attachment, codeBlockExtension, lowlight) bleiben paketintern: sie
+// gehoeren ins gemeinsame Schema und kommen ausschliesslich ueber
+// richExtensions heraus. Waeren sie einzeln exportiert, muesste jede
+// Aenderung an ihnen mit Abnehmern rechnen, die es nicht gibt — und
+// jemand koennte eine davon an richExtensions vorbei einbinden, womit
+// Client und Collab-Server verschiedene Schemata fahren.
 export type { CalloutType } from "./callout";
-export { Mermaid } from "./mermaid";
-export { WikiLink } from "./wiki-link";
-export { Mention } from "./mention";
-export { CommentMark } from "./comment-mark";
 export { chunkText, headingSlug } from "./text";
-export { AnchoredHeading } from "./heading";
-export { Toggle } from "./toggle";
-export { Excalidraw, toBase64 } from "./excalidraw";
-export { lowlight, CODE_LANGUAGES, codeBlockExtension } from "./code-block";
-export { RichImage, IMAGE_WIDTHS } from "./image";
-export { Attachment, formatBytes, isSafeAttachmentSrc } from "./attachment";
-export type { AttachmentAttrs } from "./attachment";
+export { toBase64 } from "./excalidraw";
+export { CODE_LANGUAGES } from "./code-block";
+export { IMAGE_WIDTHS } from "./image";
+export { formatBytes, isSafeAttachmentSrc } from "./attachment";
 export type { ImageWidth } from "./image";
-export { Drawio } from "./drawio";

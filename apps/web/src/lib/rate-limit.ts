@@ -11,7 +11,10 @@ import { log } from "./log";
  * unsichtbar, denn der Fallback greift lautlos.
  */
 function redisFailed(op: string, e: unknown): void {
-  log.warn({ err: String(e), op }, "rate limit: redis nicht erreichbar");
+  // Fehlerobjekt statt String: pino serialisiert daraus Typ, Meldung und
+  // Stack — aus String(e) bliebe nur die Meldung, und die Aufrufstelle
+  // waere nicht mehr zu bestimmen.
+  log.warn({ err: e, op }, "rate limit: redis nicht erreichbar");
 }
 
 let redis: Redis | null | undefined;

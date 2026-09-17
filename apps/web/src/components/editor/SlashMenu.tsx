@@ -1,12 +1,6 @@
 "use client";
 
-import {
-  forwardRef,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from "react";
+import { useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -21,14 +15,34 @@ export type SlashMenuHandle = {
   onKeyDown: (e: KeyboardEvent) => boolean;
 };
 
-export const SlashMenu = forwardRef<
-  SlashMenuHandle,
-  { items: SlashItem[] }
->(function SlashMenu({ items }, ref) {
+/**
+ * `ref` steht bewusst als normale Prop in der Signatur: seit React 19
+ * reicht eine Funktionskomponente die ref selbst durch, forwardRef ist
+ * abgekuendigt. Der ReactRenderer von TipTap haengt die ref ab React 19
+ * ohnehin an jede Komponente, nicht nur an forwardRef-Komponenten —
+ * `component.ref.onKeyDown` in SuggestionPopup bleibt also gefuellt und
+ * die Tastaturnavigation funktioniert unveraendert.
+ */
+export function SlashMenu({
+  items,
+  ref,
+}: {
+  items: SlashItem[];
+  ref?: React.Ref<SlashMenuHandle>;
+}) {
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => setActive(0), [items]);
+  // Neue Trefferliste, neue Auswahl: zurück auf den ersten Eintrag.
+  // Bewusst während des Renderns statt in einem Effekt — React rechnet
+  // dann sofort neu, ohne den Zwischenstand mit der alten Auswahl
+  // überhaupt festzuschreiben. Als Effekt blitzte für einen Durchgang
+  // der Eintrag der vorherigen Liste als ausgewählt auf.
+  const [prevItems, setPrevItems] = useState(items);
+  if (prevItems !== items) {
+    setPrevItems(items);
+    setActive(0);
+  }
 
   // Tastaturnavigation: aktiven Eintrag in der scrollbaren Liste sichtbar halten.
   useEffect(() => {
@@ -113,4 +127,4 @@ export const SlashMenu = forwardRef<
       })}
     </div>
   );
-});
+}

@@ -20,8 +20,11 @@ export async function qrSvg(text: string): Promise<string | null> {
     });
   } catch (e) {
     // Ohne Bild bleibt das Geheimnis zum Abtippen — die Einrichtung
-    // scheitert daran nicht.
-    log.warn({ err: String(e) }, "QR-Code konnte nicht erzeugt werden");
+    // scheitert daran nicht. Der Fehler geht als Objekt ins Log, nicht
+    // als String: pino haengt daraus Typ, Meldung und Stack an, sonst
+    // bliebe nur die Meldung — und bei einem geworfenen Objekt ohne
+    // toString stuende dort "[object Object]".
+    log.warn({ err: e }, "QR-Code konnte nicht erzeugt werden");
     return null;
   }
 }

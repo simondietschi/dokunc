@@ -109,6 +109,23 @@ async function shouldSnapshot(pageId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Gegenstück zu `shouldSnapshot`: gibt das Zeitfenster wieder frei,
+ * wenn der Snapshot nach dem Belegen doch nicht zustande kam.
+ * Scheitert auch das Löschen, verfällt der Schlüssel spätestens nach
+ * VERSION_INTERVAL_MS von selbst — dann bleibt es beim alten Verhalten.
+ */
+async function releaseSnapshot(pageId: string): Promise<void> {
+  try {
+    await redis.del(`dokunc:snapshot:${pageId}`);
+  } catch (e) {
+    log.warn(
+      { err: e, pageId },
+      "Snapshot-Drossel nicht freigegeben, History-Lücke möglich",
+    );
+  }
+}
+
 async function authorize(token: string | undefined, pageId: string) {
   if (!token) throw new Error("Kein Ticket");
   const { payload } = await jwtVerify(token, SECRET, {
@@ -295,15 +312,25 @@ const server = new Server({
     }
 
     if (await shouldSnapshot(pageId)) {
-      await prisma.pageVersion.create({
-        data: {
-          pageId,
-          title: before?.title ?? "Untitled",
-          content: json,
-          textContent,
-          authorId: editorId,
-        },
-      });
+      try {
+        await prisma.pageVersion.create({
+          data: {
+            pageId,
+            title: before?.title ?? "Untitled",
+            content: json,
+            textContent,
+            authorId: editorId,
+          },
+        });
+      } catch (e) {
+        // Die Drossel ist schon belegt, der Snapshot aber nicht
+        // geschrieben. Ohne diese Freigabe bliebe das Zeitfenster
+        // verbraucht: zwei Minuten lang lieferte shouldSnapshot für
+        // diese Seite false, und die Änderungen dieses Fensters
+        // fehlten dauerhaft in der Versionsgeschichte.
+        await releaseSnapshot(pageId);
+        throw e;
+      }
     }
   },
 });
@@ -632,31 +659,52 @@ const REVOCATION_INTERVAL_MS = 60_000;
  * steht accessRootId hier schon richtig.
  */
 async function enforcePageAccess(pageId: string): Promise<number> {
-  const offen = [...server.hocuspocus.documents.keys()];
-  if (offen.length === 0) return 0;
+  // Schlüssel der geöffneten Dokumente — das sind Seiten-IDs.
+  const openIds = [...server.hocuspocus.documents.keys()];
+  if (openIds.length === 0) return 0;
 
-  const seiten = await prisma.page.findMany({
+  const pages = await prisma.page.findMany({
     where: {
-      id: { in: offen },
+      id: { in: openIds },
       OR: [{ id: pageId }, { accessRootId: pageId }],
     },
     select: { id: true, spaceId: true },
   });
 
-  let geschlossen = 0;
-  for (const seite of seiten) {
-    const doc = server.hocuspocus.documents.get(seite.id);
+  /**
+   * Entscheidung je Seite und Person merken. Eine Person kann dieselbe
+   * Seite in beliebig vielen Tabs offen haben, und jede dieser
+   * Verbindungen führte sonst dieselben zwei Abfragen aus
+   * (effectiveSpaceRole, canSeePage): die Last hinge an der Zahl der
+   * Verbindungen statt an der Zahl der Personen.
+   */
+  const mayStay = new Map<string, Promise<boolean>>();
+  const checkAccess = (id: string, spaceId: string, userId: string) => {
+    const key = `${id}:${userId}`;
+    let cached = mayStay.get(key);
+    if (!cached) {
+      cached = (async () => {
+        const role = await effectiveSpaceRole(userId, spaceId);
+        return !!role && (await canSeePage(id, userId, role));
+      })();
+      mayStay.set(key, cached);
+    }
+    return cached;
+  };
+
+  let closed = 0;
+  for (const page of pages) {
+    const doc = server.hocuspocus.documents.get(page.id);
     if (!doc) continue;
     for (const connection of doc.getConnections()) {
       const userId = (connection.context as { userId?: string } | null)?.userId;
       if (!userId) continue;
-      const rolle = await effectiveSpaceRole(userId, seite.spaceId);
-      if (rolle && (await canSeePage(seite.id, userId, rolle))) continue;
+      if (await checkAccess(page.id, page.spaceId, userId)) continue;
       closeConnection(connection, "Zugriff auf diese Seite entzogen");
-      geschlossen += 1;
+      closed += 1;
     }
   }
-  return geschlossen;
+  return closed;
 }
 
 async function enforceRevocations(): Promise<void> {
@@ -887,14 +935,27 @@ function startDocResetListener(): void {
   });
 }
 
-server.listen().then(() => {
-  log.info({ port: PORT }, "Hocuspocus läuft");
-  // Mail-Versand von Benachrichtigungen (periodisch, Redis-gelockt).
-  startMailDispatcher({ redis, log });
-  startDocResetListener();
-  setInterval(() => {
-    void enforceRevocations().catch((e) =>
-      log.warn({ err: String(e) }, "Rechteprüfung fehlgeschlagen"),
-    );
-  }, REVOCATION_INTERVAL_MS).unref();
-});
+server
+  .listen()
+  .then(() => {
+    log.info({ port: PORT }, "Hocuspocus läuft");
+    // Mail-Versand von Benachrichtigungen (periodisch, Redis-gelockt).
+    startMailDispatcher({ redis, log });
+    startDocResetListener();
+    setInterval(() => {
+      void enforceRevocations().catch((e) =>
+        log.warn({ err: String(e) }, "Rechteprüfung fehlgeschlagen"),
+      );
+    }, REVOCATION_INTERVAL_MS).unref();
+  })
+  .catch((e) => {
+    // Ohne diesen Zweig fehlt der Startfehler (belegter Port) im
+    // strukturierten Log vollständig — Node beendete den Prozess wegen
+    // der unbehandelten Rejection mit einer Rohausgabe auf stderr.
+    // Kippt stattdessen der then-Block, steht "Hocuspocus läuft" schon
+    // im Log, während Mailversand und Redis-Listener nie gestartet
+    // sind: ein halb gestarteter Dienst ist nicht brauchbar, also
+    // beenden wir genauso, wie es vorher unbemerkt geschah.
+    log.error({ err: e, port: PORT }, "Collab-Server nicht gestartet");
+    process.exit(1);
+  });

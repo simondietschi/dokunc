@@ -1,3 +1,13 @@
+/**
+ * Farbtopf fuer fremde Cursor im Editor.
+ *
+ * Der erste Eintrag ist absichtlich die Akzentfarbe der Anwendung. Sie
+ * steht hier als Literal, weil dieselbe Farbe an drei weiteren Orten
+ * ausgeschrieben ist, die sich gegenseitig nicht lesen koennen:
+ * `--accent` in app/globals.css sowie Knopf und Link in den Mail-
+ * Vorlagen (packages/mail). Wer die Akzentfarbe aendert, muss alle vier
+ * anfassen — sonst behalten Mails und der erste Cursor den alten Ton.
+ */
 export const CARET_COLORS = [
   "#5e60e8",
   "#0ea5e9",

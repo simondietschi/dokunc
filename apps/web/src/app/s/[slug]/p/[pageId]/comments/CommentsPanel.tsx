@@ -44,6 +44,40 @@ type ThreadData = {
   }[];
 };
 
+/**
+ * Klassenkette der vier Kommentar-Textfelder (neuer Thread, Kommentar
+ * zur Seite, Antwort, Bearbeiten). Vorher stand sie viermal einzeln da
+ * und war bereits auseinandergelaufen: das Bearbeiten-Feld hatte `p-2`
+ * statt `p-2.5` und sass dadurch enger als das Eingabefeld darueber.
+ */
+const COMMENT_TEXTAREA_CLASS =
+  "w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent";
+
+/**
+ * Knopfzeile unter jedem Kommentar-Formular: absenden plus abbrechen.
+ * Auch diese Zeile stand viermal da und lief auseinander (`mt-1.5` beim
+ * Bearbeiten gegen `mt-2` sonst). Nur die Beschriftung und das, was
+ * "Abbrechen" zuruecknimmt, unterscheiden sich wirklich.
+ */
+function CommentFormActions({
+  submitLabel,
+  onCancel,
+}: {
+  submitLabel: string;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="mt-2 flex gap-2">
+      <Button type="submit" size="sm">
+        {submitLabel}
+      </Button>
+      <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+        Abbrechen
+      </Button>
+    </div>
+  );
+}
+
 /** Wird vom Editor-Toolbar-Button gefeuert (Text markiert -> Thread). */
 type NewThreadEvent = CustomEvent<{
   id: string;
@@ -190,21 +224,12 @@ export function CommentsPanel({
               rows={2}
               aria-label="Kommentar"
               placeholder="Kommentar schreiben…"
-              className="w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent"
+              className={COMMENT_TEXTAREA_CLASS}
             />
-            <div className="mt-2 flex gap-2">
-              <Button type="submit" size="sm">
-                Kommentieren
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={cancelDraft}
-              >
-                Abbrechen
-              </Button>
-            </div>
+            <CommentFormActions
+              submitLabel="Kommentieren"
+              onCancel={cancelDraft}
+            />
           </form>
         </div>
       )}
@@ -317,24 +342,15 @@ function PageCommentComposer({
         rows={2}
         aria-label="Kommentar zur Seite"
         placeholder="Kommentar zur ganzen Seite…"
-        className="w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent"
+        className={COMMENT_TEXTAREA_CLASS}
       />
-      <div className="mt-2 flex gap-2">
-        <Button type="submit" size="sm">
-          Kommentieren
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setOpen(false);
-            setThreadId(null);
-          }}
-        >
-          Abbrechen
-        </Button>
-      </div>
+      <CommentFormActions
+        submitLabel="Kommentieren"
+        onCancel={() => {
+          setOpen(false);
+          setThreadId(null);
+        }}
+      />
     </form>
   );
 }
@@ -436,21 +452,12 @@ function Thread({
                 rows={2}
                 aria-label="Antwort"
                 placeholder="Antworten…"
-                className="w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent"
+                className={COMMENT_TEXTAREA_CLASS}
               />
-              <div className="mt-2 flex gap-2">
-                <Button type="submit" size="sm">
-                  Antworten
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setReplying(false)}
-                >
-                  Abbrechen
-                </Button>
-              </div>
+              <CommentFormActions
+                submitLabel="Antworten"
+                onCancel={() => setReplying(false)}
+              />
             </form>
           ) : (
             <>
@@ -584,21 +591,12 @@ function CommentRow({
               rows={2}
               defaultValue={body}
               aria-label="Kommentar bearbeiten"
-              className="w-full rounded-lg border border-line-strong bg-surface p-2 text-sm outline-none focus-visible:border-accent"
+              className={COMMENT_TEXTAREA_CLASS}
             />
-            <div className="mt-1.5 flex gap-2">
-              <Button type="submit" size="sm">
-                Speichern
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setEditing(false)}
-              >
-                Abbrechen
-              </Button>
-            </div>
+            <CommentFormActions
+              submitLabel="Speichern"
+              onCancel={() => setEditing(false)}
+            />
           </form>
         ) : (
           <p className="mt-0.5 whitespace-pre-wrap text-sm">{body}</p>

@@ -68,8 +68,16 @@ export async function createPageAction(form: FormData) {
 
   // Neue Seiten ans Ende der Geschwister (position = max + 1). Ohne das
   // stehen alle neuen Seiten auf 0 und der Baum sortiert sie nach Titel.
+  //
+  // `isTemplate: false` gehoert dazu, weil Vorlagen im selben Space
+  // liegen, kein Elternteil haben und mit der Standardposition 0
+  // stehenbleiben. Ohne den Filter zaehlt eine Seite auf oberster Ebene
+  // (parentId null) die Vorlagen mit und beginnt in einem Space, in dem
+  // es nur Vorlagen gibt, bei 1 statt 0 — waehrend nextPosition in
+  // template-actions.ts und der Import sie ausklammern. Dieselbe
+  // Elternseite lieferte je nach Weg eine andere Zielposition.
   const last = await prisma.page.aggregate({
-    where: { spaceId: space.id, parentId, deletedAt: null },
+    where: { spaceId: space.id, parentId, deletedAt: null, isTemplate: false },
     _max: { position: true },
   });
 

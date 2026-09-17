@@ -26,16 +26,36 @@ import { unseal } from "@/lib/secret-box";
 import { verifyTotpStep } from "@/lib/totp";
 import { claimTotpStep, consumeRecoveryCode } from "@/lib/totp-store";
 
+/**
+ * Obergrenze wie beim Space-Namen (lib/space-settings.ts): ein Name ist
+ * eine Zeile. Ohne sie nimmt ausgerechnet der Eingang beliebig lange
+ * Werte an, die danach in jeder Mitgliederliste stehen.
+ */
+const NAME_MAX = 80;
+
 const registerSchema = z.object({
-  name: z.string().min(2, "Name zu kurz"),
-  email: z.string().email("Ungültige E-Mail"),
+  /**
+   * Getrimmt und begrenzt geprüft. Ohne `trim` zählte `min(2)` Rohzeichen,
+   * zwei Leerzeichen gingen also als Name durch: das Konto stünde danach
+   * ohne sichtbaren Namen in Mitgliederlisten und als Kommentarautor —
+   * und `updateProfileAction` lehnte denselben Wert ab, weil es über
+   * `str()` längst getrimmt prüft. Die schwächere Fassung sass am Eingang.
+   */
+  name: z
+    .string()
+    .trim()
+    .min(2, "Name zu kurz")
+    .max(NAME_MAX, `Name darf höchstens ${NAME_MAX} Zeichen haben`),
+  // `z.email()` statt der in zod 4 abgekündigten Methodenform
+  // `z.string().email()`.
+  email: z.email("Ungültige E-Mail"),
   password: z
     .string()
     .min(PASSWORD_MIN_LENGTH, `Passwort min. ${PASSWORD_MIN_LENGTH} Zeichen`),
 });
 
 const loginSchema = z.object({
-  email: z.string().email("Ungültige E-Mail"),
+  email: z.email("Ungültige E-Mail"),
   password: z.string().min(1, "Passwort fehlt"),
 });
 

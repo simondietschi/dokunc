@@ -155,7 +155,15 @@ export function startMailDispatcher(opts: {
     try {
       const done = await redis.get(utcDayKey(now));
       return !done;
-    } catch {
+    } catch (e) {
+      // Wir setzen aus (kein Digest ohne verlässlichen Marker — sonst
+      // dieselbe Tagesmail mehrfach). Ohne diese Meldung bliebe aber
+      // unbemerkt, dass Nutzer mit Modus DAILY überhaupt keine Mail
+      // mehr bekommen: jeder Lauf hielte den Digest still für erledigt.
+      log.warn(
+        { err: String(e) },
+        "Digest-Marker nicht lesbar, Tagesdigest ausgesetzt",
+      );
       return false;
     }
   }

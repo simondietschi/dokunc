@@ -84,8 +84,11 @@ export async function audit(entry: AuditEntry): Promise<void> {
       },
     });
   } catch (e) {
+    // Fehlerobjekt statt String: pino haengt Typ, Meldung und Stack an.
+    // Genau das braucht es hier, denn der Eintrag ist verloren und das
+    // Log die einzige Spur.
     log.error(
-      { err: String(e), action: entry.action },
+      { err: e, action: entry.action },
       "audit-Eintrag konnte nicht geschrieben werden",
     );
   }

@@ -44,7 +44,16 @@ function block(node: Node, depth = 0): string {
     case "doc":
       return children(node).map((n) => block(n, depth)).join("\n\n");
     case "heading": {
-      const lvl = Number(node.attrs?.level ?? 1);
+      // Die Ebene kommt ungeprueft aus Page.content. Ohne Klemme wirft
+      // "#".repeat(-1) einen RangeError, und der Markdown-Export endet
+      // mit 500 statt mit einer Datei (api/pages/[id]/export faengt
+      // dort nichts ab, anders als der HTML-Zweig). Eine nicht
+      // numerische Ebene ergab repeat(0), also eine Ueberschrift, die im
+      // Export als gewoehnlicher Text erschien. Geklemmt wird auf 1 bis
+      // 6 — die Spanne, die Markdown kennt; lib/toc.ts und
+      // packages/editor/src/heading.ts pruefen dieselbe Angabe ebenso.
+      const roh = Math.trunc(Number(node.attrs?.level ?? 1));
+      const lvl = Number.isFinite(roh) ? Math.min(6, Math.max(1, roh)) : 1;
       return `${"#".repeat(lvl)} ${children(node).map(inline).join("")}`;
     }
     case "paragraph":

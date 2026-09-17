@@ -97,6 +97,16 @@ export const fileAccessDeps: FileAccessDeps = {
  * Platte raeumen. Die Attachment-Zeilen fallen per Kaskade — die Bytes
  * nicht: ohne diesen Schritt bleiben sie als verwaiste Dateien liegen.
  * Die Namen muessen VOR dem Loeschen gelesen werden.
+ *
+ * Zwei Luecken bleiben, und beide enden gleich: Bytes ohne Datensatz.
+ * Ein Upload, der zwischen die Namensliste und das Loeschen faellt,
+ * steht nicht in der Liste, seine Zeile faellt aber per Kaskade; und
+ * endet der Prozess nach dem Loeschen, bevor `unlink` durch ist, bleibt
+ * der Rest liegen. Beides laesst sich hier nicht schliessen: nach dem
+ * Loeschen ist nicht mehr nachzulesen, welche Dateien zum Space
+ * gehoerten. Dafuer braucht es einen Aufraeumjob, der Dateien ohne
+ * Attachment-Zeile einsammelt — den gibt es noch nicht, `unlink` kommt
+ * im ganzen Repository nur hier und in api/upload vor.
  */
 export async function deleteSpaceWithUploads(spaceId: string): Promise<void> {
   const attachments = await prisma.attachment.findMany({

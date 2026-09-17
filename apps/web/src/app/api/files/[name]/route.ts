@@ -1,5 +1,4 @@
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/current-user";
@@ -28,13 +27,13 @@ export async function GET(
   // Sitzung soll auch keine Dateien mehr bekommen.
   const user = await getCurrentUser();
   if (!user) {
-    return new NextResponse("Nicht angemeldet", { status: 401 });
+    return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   }
 
   const { name } = await params;
   const full = uploadPath(name);
   if (!isSafeFilename(name) || !full) {
-    return new NextResponse("Bad request", { status: 400 });
+    return NextResponse.json({ error: "Ungültige Anfrage" }, { status: 400 });
   }
 
   // Bewusst 404 statt 403: sonst verraet die Antwort, ob es die Datei
@@ -42,23 +41,34 @@ export async function GET(
   // Registrierung bleiben unlesbar.
   const attachment = await findReadableAttachment(name, user.id);
   if (!attachment) {
-    return new NextResponse("Not found", { status: 404 });
+    return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
   }
 
-  let size: number;
+  // Erst oeffnen, dann messen, und aus genau diesem Deskriptor lesen:
+  // wird die Datei danach geloescht oder ersetzt (deleteSpaceWithUploads
+  // in lib/file-access), liest der Strom weiter den geoeffneten Stand.
+  // Mit `stat` auf den Pfad und einem zweiten Oeffnen beim Lesen lagen
+  // Content-Length und Inhalt auseinander: die Kopfzeilen waren dann
+  // schon raus, statt eines 404 brach der Body mitten im Transfer ab.
+  let handle;
   try {
-    const s = await stat(full);
-    if (!s.isFile()) return new NextResponse("Not found", { status: 404 });
-    size = s.size;
+    handle = await open(full, "r");
   } catch {
-    return new NextResponse("Not found", { status: 404 });
+    return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
+  }
+  const s = await handle.stat();
+  if (!s.isFile()) {
+    await handle.close();
+    return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
   }
 
   const wantInline = new URL(req.url).searchParams.get("inline") === "1";
-  const headers = fileResponseHeaders(attachment, size, wantInline);
+  const headers = fileResponseHeaders(attachment, s.size, wantInline);
 
+  // Der Lesestrom schliesst den Deskriptor bei "end" und bei "error"
+  // (autoClose), sonst bliebe je Abruf einer offen.
   const stream = Readable.toWeb(
-    createReadStream(full),
+    handle.createReadStream({ autoClose: true }),
   ) as unknown as ReadableStream<Uint8Array>;
   return new NextResponse(stream, { headers });
 }

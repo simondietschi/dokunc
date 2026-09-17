@@ -15,6 +15,7 @@ import { log } from "@/lib/log";
 import {
   UPLOAD_DIR,
   ALLOWED_IMAGE_TYPES,
+  isInlineImageType,
   mimeTypeForExtension,
   safeExtension,
   sanitizeFilename,
@@ -76,8 +77,19 @@ export async function POST(req: Request) {
     maxBody + 64 * 1024,
   );
   if (declared.kind === "zu-gross") {
+    // Vor dem Puffern steht die Art der Datei noch nicht fest, geprueft
+    // wird deshalb an der groesseren Anhang-Grenze. Die Meldung nennt
+    // trotzdem beide Zahlen: stuende dort nur die Anhang-Grenze, wuerde
+    // ein 30-MB-Bild hier mit "max. 25 MB" abgelehnt, und dieselbe
+    // Datei auf 20 MB verkleinert unten noch einmal mit "max. 10 MB" —
+    // zwei Absagen mit zwei Zahlen, von denen die erste nie die Grenze
+    // war, an der die Datei tatsaechlich scheitert.
+    const grenzen =
+      uploadLimitMb("IMAGE") === uploadLimitMb("FILE")
+        ? `max. ${uploadLimitMb("FILE")} MB`
+        : `max. ${uploadLimitMb("FILE")} MB, Bilder ${uploadLimitMb("IMAGE")} MB`;
     return NextResponse.json(
-      { error: `Datei zu gross (max. ${uploadLimitMb("FILE")} MB)` },
+      { error: `Datei zu gross (${grenzen})` },
       { status: 413 },
     );
   }
@@ -185,7 +197,18 @@ export async function POST(req: Request) {
   const ext = imageType
     ? ALLOWED_IMAGE_TYPES[imageType]
     : safeExtension(file.name);
-  const mimeType = imageType ?? mimeTypeForExtension(ext);
+  const typ = imageType ?? mimeTypeForExtension(ext);
+  // Einen Bildtyp gibt es nur gegen die Magic Bytes. Sonst entschiede
+  // bei kind=file allein die vom Client gewaehlte Endung ueber den
+  // gespeicherten MIME-Typ: eine Datei "x.gif" mit beliebigem Inhalt
+  // bekaeme image/gif, und fileResponseHeaders liefert jeden Bildtyp
+  // mit Content-Disposition: inline und genau diesem Content-Type aus —
+  // eine Typangabe, die nicht zum Inhalt passt. Als octet-stream geht
+  // dieselbe Datei als Download raus.
+  const mimeType =
+    isInlineImageType(typ) && typ !== sniffed
+      ? "application/octet-stream"
+      : typ;
   const name = sanitizeFilename(file.name);
   const storedName = `${randomBytes(16).toString("hex")}.${ext}`;
 
@@ -245,8 +268,19 @@ export async function POST(req: Request) {
       kind: kind === "IMAGE" ? "image" : "file",
     });
   } catch (e) {
-    // Ohne Datensatz keine verwaiste Datei zuruecklassen.
-    await unlink(fullPath).catch(() => {});
+    // Ohne Datensatz keine verwaiste Datei zuruecklassen — aber nur
+    // dann. `create` kann auch fehlschlagen, nachdem die Zeile
+    // geschrieben ist und nur die Antwort verloren ging (Verbindung
+    // weg, Timeout nach dem Commit). Ungeprueft geloescht, bliebe ein
+    // Anhang in der Liste des Space stehen, dessen Bytes fehlen: der
+    // Abruf ueber /api/files antwortet 404, und der Verweis laesst sich
+    // nicht mehr heilen. Die Datei liegen zu lassen ist der harmlosere
+    // Ausgang. Laesst sich die Zeile nicht nachsehen (Datenbank weg),
+    // bleibt es beim Loeschen wie bisher.
+    const angelegt = await prisma.attachment
+      .findUnique({ where: { storedName }, select: { id: true } })
+      .catch(() => null);
+    if (!angelegt) await unlink(fullPath).catch(() => {});
     log.error(
       { err: String(e), spaceId },
       "Attachment konnte nicht gespeichert werden",

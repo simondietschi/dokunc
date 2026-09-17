@@ -282,22 +282,31 @@ export async function detachLiveChildren(
  * Muss vor jedem Verschieben geprüft werden: eine Seite unter ihre
  * eigene Unterseite zu hängen, schneidet den ganzen Ast vom Baum ab —
  * er wäre in der Oberfläche nicht mehr erreichbar und liesse sich auch
- * nicht mehr zurückholen.
+ * nicht mehr zurückholen. `movePageInSpace` ist der einzige
+ * Produktivpfad und fragt hier; die Abfrage stand dort vorher ein
+ * zweites Mal inline, sodass der Test eine Funktion prüfte, die im
+ * Betrieb niemand aufrief, und der laufende Zyklus-Schutz ungetestet
+ * blieb.
+ *
+ * Optional im Client einer laufenden Transaktion: der Aufruf in
+ * `movePageInSpace` muss denselben Baum sehen wie das Umhängen
+ * danach, sonst prüfte er einen Stand von vor der Transaktion.
  */
 export async function isDescendantOf(
   spaceId: string,
   pageId: string,
   candidateId: string,
+  tx: Pick<typeof prisma, "$queryRaw"> = prisma,
 ): Promise<boolean> {
   if (pageId === candidateId) return true;
-  const rows = await prisma.$queryRaw<{ id: string }[]>`
+  const rows = await tx.$queryRaw<{ id: string }[]>`
     WITH RECURSIVE sub AS (
       SELECT id FROM "Page" WHERE id = ${pageId} AND "spaceId" = ${spaceId}
       UNION ALL
       SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
       WHERE p."spaceId" = ${spaceId}
     )
-    SELECT id FROM sub WHERE id = ${candidateId}
+    SELECT id FROM sub WHERE id = ${candidateId} LIMIT 1
   `;
   return rows.length > 0;
 }
@@ -348,16 +357,7 @@ export async function movePageInSpace(
       if (!parent) return { ok: false, error: "Zielseite nicht gefunden" };
 
       // Zyklus-Check: die Zielseite darf kein Nachfahre der Seite sein.
-      const cyclic = await tx.$queryRaw<{ id: string }[]>`
-        WITH RECURSIVE sub AS (
-          SELECT id FROM "Page" WHERE id = ${page.id} AND "spaceId" = ${scope.spaceId}
-          UNION ALL
-          SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
-          WHERE p."spaceId" = ${scope.spaceId}
-        )
-        SELECT id FROM sub WHERE id = ${parentId} LIMIT 1
-      `;
-      if (cyclic.length > 0) {
+      if (await isDescendantOf(scope.spaceId, page.id, parentId, tx)) {
         return {
           ok: false,
           error:

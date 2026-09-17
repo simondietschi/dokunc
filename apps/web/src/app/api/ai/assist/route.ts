@@ -68,7 +68,14 @@ export async function POST(req: Request) {
     const result = await assist(body.action, text);
     return NextResponse.json({ result });
   } catch (e) {
-    log.error({ err: String(e) }, "assist fehlgeschlagen");
+    // Konto und Aktion mit ins Log: bei 30 zugelassenen Anfragen pro
+    // Stunde und Person laesst sich aus dem blossen Fehlertext nicht
+    // ablesen, ob eine Haeufung ein einzelnes Konto, eine bestimmte
+    // Aktion oder den Anbieter betrifft.
+    log.error(
+      { err: String(e), userId: user.id, action: body.action },
+      "assist fehlgeschlagen",
+    );
     return NextResponse.json(
       { error: "KI-Anfrage fehlgeschlagen" },
       { status: 502 },

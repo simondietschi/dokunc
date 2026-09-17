@@ -55,7 +55,10 @@ export async function askAction(
     const result = await askWiki(question, chunks);
     return { question, ...result };
   } catch (e) {
-    log.error({ err: String(e) }, "askWiki fehlgeschlagen");
+    // Wie in /api/ai/assist das Konto mit ins Log — ohne die Frage
+    // selbst, die gehoert der Person. Sonst bliebe bei einer Haeufung
+    // offen, ob ein einzelnes Konto oder der Anbieter klemmt.
+    log.error({ err: String(e), userId: user.id }, "askWiki fehlgeschlagen");
     return { error: "KI-Anfrage fehlgeschlagen. Bitte später erneut." };
   }
 }

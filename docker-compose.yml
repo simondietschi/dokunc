@@ -14,6 +14,13 @@ services:
       - caddy_config:/config
     # Host-Port 7891 -> Caddy 443 (https://localhost:7891). Port 80 ist
     # nicht gemappt: die HTTP->HTTPS-Umleitung würde auf :443 zeigen.
+    #
+    # Die Bindung an 127.0.0.1 ist Absicht (kein LAN-Zugriff bei der
+    # Standard-Installation) und aus der .env NICHT aufhebbar: von dort
+    # kommt nur die Portnummer. Für eine eigene Domain genügt deshalb
+    # `APP_PORT=443` in der .env nicht — ohne das `127.0.0.1:` hier
+    # antwortet die Instanz nur auf dem Loopback des Servers und auch der
+    # Let's-Encrypt-Bezug (Port 80, s. README) läuft ins Leere.
     ports:
       - "127.0.0.1:${APP_PORT:-7891}:443"
 

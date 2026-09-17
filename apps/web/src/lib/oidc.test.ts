@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import {
   authorizationUrl,
+  oidcConfig,
   pkceChallenge,
   randomToken,
   readClaims,
@@ -114,5 +115,73 @@ describe("Claims", () => {
   it("verwirft eine Adresse, die keine ist", () => {
     expect(readClaims({ sub: "x", email: "kein-at-zeichen" }).email).toBeNull();
     expect(readClaims({ sub: "x", email: 42 }).email).toBeNull();
+  });
+
+  it("verwirft eine Adresse ohne lokalen Teil oder ohne Domain", () => {
+    // Mit blossem includes("@") liefe „@" durch, wanderte als
+    // eindeutiger Schlüssel in die Benutzertabelle und ergäbe beim
+    // Anlegen ein Konto mit leerem Anzeigenamen.
+    expect(readClaims({ sub: "x", email: "@" }).email).toBeNull();
+    expect(readClaims({ sub: "x", email: "alex@" }).email).toBeNull();
+    expect(readClaims({ sub: "x", email: "@team.de" }).email).toBeNull();
+    expect(readClaims({ sub: "x", email: "a@b@c.de" }).email).toBeNull();
+    expect(
+      readClaims({ sub: "x", email: "vor name@team.de" }).email,
+    ).toBeNull();
+  });
+
+  it("verwirft eine überlange Adresse", () => {
+    const lang = `${"a".repeat(250)}@team.de`;
+    expect(readClaims({ sub: "x", email: lang }).email).toBeNull();
+  });
+
+  it("nimmt eine Adresse ohne Punkt in der Domain", () => {
+    // Im Verzeichnis eines Anbieters kommen sie vor; die Prüfung soll
+    // die Form absichern, nicht enger sein als die Wirklichkeit.
+    expect(readClaims({ sub: "x", email: "alex@intranet" }).email).toBe(
+      "alex@intranet",
+    );
+  });
+});
+
+describe("Aussteller aus der Umgebung", () => {
+  const vorher = { ...process.env };
+  afterEach(() => {
+    process.env.OIDC_ISSUER = vorher.OIDC_ISSUER;
+    process.env.OIDC_CLIENT_ID = vorher.OIDC_CLIENT_ID;
+  });
+
+  const mitIssuer = (issuer: string) => {
+    process.env.OIDC_ISSUER = issuer;
+    process.env.OIDC_CLIENT_ID = "dokunc";
+    return oidcConfig();
+  };
+
+  it("nimmt https und schneidet abschliessende Schrägstriche ab", () => {
+    expect(mitIssuer("  https://idp.example/  ")?.issuer).toBe(
+      "https://idp.example",
+    );
+  });
+
+  it("lässt http nur auf dem eigenen Rechner zu", () => {
+    expect(mitIssuer("http://localhost:8080/realms/dokunc")?.issuer).toBe(
+      "http://localhost:8080/realms/dokunc",
+    );
+    expect(mitIssuer("http://127.0.0.1:8080")?.issuer).toBe(
+      "http://127.0.0.1:8080",
+    );
+  });
+
+  it("schaltet SSO bei einem http-Aussteller im Netz ab", () => {
+    // Sonst gingen Discovery, JWKS und das Client-Secret unverschlüsselt
+    // durchs Netz und die Signaturschlüssel wären unterwegs austauschbar.
+    expect(mitIssuer("http://idp.example")).toBeNull();
+  });
+
+  it("schaltet SSO bei einem Wert ohne Schema ab", () => {
+    // Früher scheiterte erst das fetch, und im Browser stand nur
+    // sso=error ohne Hinweis auf die Ursache.
+    expect(mitIssuer("idp.example")).toBeNull();
+    expect(mitIssuer("ftp://idp.example")).toBeNull();
   });
 });

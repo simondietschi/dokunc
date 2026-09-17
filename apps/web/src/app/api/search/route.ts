@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { Prisma, prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
+import { rateLimit } from "@/lib/rate-limit";
 import { HL_START, HL_STOP, likeEscape } from "@/lib/palette";
 import { accessibleSpaces } from "@/lib/space-access";
 import {
@@ -35,6 +36,19 @@ export async function GET(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   }
+
+  // Bremse wie bei den anderen teuren Leseendpunkten: jede Anfrage
+  // kostet ILIKE, ts_rank und ts_headline ueber alle sichtbaren Seiten.
+  // Die Palette fragt entprellt und je Tastendruck hoechstens einmal;
+  // dieses Fenster liegt weit ueber dem, was Tippen erzeugt, und trifft
+  // nur den, der die Abfrage in Schleife wiederholt.
+  if (!(await rateLimit(`search:${user.id}`, 120, 60))) {
+    return NextResponse.json(
+      { error: "Zu viele Suchanfragen. Bitte kurz warten." },
+      { status: 429 },
+    );
+  }
+
   const q =
     new URL(req.url).searchParams.get("q")?.trim().slice(0, 100) ?? "";
 
@@ -57,7 +71,14 @@ export async function GET(req: Request) {
   body.spaces = await prisma.space.findMany({
     where: {
       id: { in: spaceIds },
-      ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
+      // Dieselbe Eingabe, dieselbe Behandlung wie unten in der
+      // Rohabfrage: `contains` baut ein LIKE-Muster, ohne % und _ zu
+      // maskieren. Ohne likeEscape faende eine Suche nach "%" alle
+      // Spaces, aber keine einzige Seite — zwei Trefferlisten aus
+      // derselben Eingabe.
+      ...(q
+        ? { name: { contains: likeEscape(q), mode: "insensitive" } }
+        : {}),
     },
     orderBy: { createdAt: "asc" },
     take: 6,

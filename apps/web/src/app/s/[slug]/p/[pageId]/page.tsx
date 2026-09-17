@@ -19,6 +19,21 @@ import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
 import { PageAttachments } from "@/components/space/PageAttachments";
 
+/**
+ * Ab wann ein Kommentar als nachträglich geändert gilt.
+ *
+ * Prisma setzt `updatedAt` schon beim Anlegen mit, meist ein paar
+ * Millisekunden nach `createdAt`; erst ein spürbarer Abstand heisst
+ * wirklich "nachträglich geändert". Wurzelkommentar und Antworten
+ * müssen denselben Massstab anlegen, sonst zeigte derselbe Thread den
+ * Zusatz "(bearbeitet)" für Frage und Antwort nach zwei Regeln.
+ */
+const EDITED_AFTER_MS = 1000;
+
+function wasEdited(createdAt: Date, updatedAt: Date): boolean {
+  return updatedAt.getTime() - createdAt.getTime() > EDITED_AFTER_MS;
+}
+
 /** Seitentitel im Browser-Tab und im Verlauf statt eines globalen Titels. */
 export async function generateMetadata({
   params,
@@ -262,9 +277,7 @@ export default async function PageView({
             anchorText: c.anchorText,
             resolved: !!c.resolvedAt,
             createdAt: c.createdAt.toISOString(),
-            // Prisma setzt updatedAt beim Anlegen mit; erst ein
-            // spürbarer Abstand heisst wirklich "nachträglich geändert".
-            edited: c.updatedAt.getTime() - c.createdAt.getTime() > 1000,
+            edited: wasEdited(c.createdAt, c.updatedAt),
             author: c.author
               ? { id: c.author.id, name: c.author.name }
               : null,
@@ -272,7 +285,7 @@ export default async function PageView({
               id: r.id,
               body: r.body,
               createdAt: r.createdAt.toISOString(),
-              edited: r.updatedAt.getTime() - r.createdAt.getTime() > 1000,
+              edited: wasEdited(r.createdAt, r.updatedAt),
               author: r.author
                 ? { id: r.author.id, name: r.author.name }
                 : null,
