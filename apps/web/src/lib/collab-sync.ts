@@ -24,18 +24,36 @@ const client = sharedRedis({ retries: 1, lazy: true });
 
 /**
  * Collab-Server bitten, das Dokument der Seite neu zu laden.
- * Best effort: ohne Redis (oder ohne laufenden Collab-Server) bleibt es
- * beim geschriebenen `Page.content`, aus dem beim naechsten Oeffnen
- * ohnehin neu geseedet wird.
+ *
+ * Gibt zurueck, ob die Bitte ueberhaupt abgeschickt wurde. Das ist kein
+ * Detail: schlaegt sie fehl, bleibt ein geoeffnetes Dokument im Speicher
+ * des Collab-Servers stehen und ueberschreibt den eben geschriebenen
+ * `Page.content` beim naechsten Speichern. Wer nichts zurueckbekommt,
+ * meldet der Person Erfolg fuer etwas, das gleich wieder verschwindet.
+ *
+ * Nicht zurueckgegeben wird, ob der Collab-Server sie auch ausgefuehrt
+ * hat — dafuer brauchte es eine Quittung von dort. Dieses `false` deckt
+ * den haeufigen Fall ab: kein Redis, keine Verbindung.
  */
-export async function requestDocumentReset(pageId: string): Promise<void> {
+/**
+ * Adresszeilen-Merker fuer den Fall, dass genau das schiefging: der
+ * wiederhergestellte Stand steht in der Datenbank, aber ein offener
+ * Editor weiss womoeglich nichts davon. Steht hier und nicht in der
+ * Action, weil eine Datei mit "use server" nur asynchrone Funktionen
+ * ausfuehren darf — und weil die Bedeutung hierher gehoert.
+ */
+export const RESTORE_STALE_PARAM = "neu-laden";
+
+export async function requestDocumentReset(pageId: string): Promise<boolean> {
   const r = client();
-  if (!r) return;
+  if (!r) return false;
   const message: DocResetMessage = { pageId, nonce: randomUUID() };
   try {
     await r.publish(DOC_RESET_CHANNEL, JSON.stringify(message));
+    return true;
   } catch (err) {
     log.warn({ err: String(err), pageId }, "Doc-Reset konnte nicht gesendet werden");
+    return false;
   }
 }
 

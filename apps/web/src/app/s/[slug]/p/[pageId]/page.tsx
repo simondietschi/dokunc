@@ -19,6 +19,7 @@ import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
 import { PageAttachments } from "@/components/space/PageAttachments";
 import { pageTitle } from "@/lib/page-title";
+import { RESTORE_STALE_PARAM } from "@/lib/collab-sync";
 
 /**
  * Ab wann ein Kommentar als nachträglich geändert gilt.
@@ -72,10 +73,17 @@ export async function generateMetadata({
 
 export default async function PageView({
   params,
+  searchParams,
 }: {
   params: Promise<{ slug: string; pageId: string }>;
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { slug, pageId } = await params;
+  // Gesetzt, wenn die Wiederherstellung den Collab-Server nicht erreicht
+  // hat (siehe restoreVersionAction). Der Stand steht dann zwar in der
+  // Datenbank, ein offener Editor wuerde ihn aber beim naechsten
+  // Speichern ueberschreiben.
+  const bitteNeuLaden = (await searchParams)[RESTORE_STALE_PARAM] === "1";
   const { space, role, user } = await loadSpace(slug);
 
   const page = await prisma.page.findFirst({
@@ -201,6 +209,17 @@ export default async function PageView({
 
   return (
     <div>
+      {bitteNeuLaden && (
+        <p
+          role="alert"
+          className="mx-auto mt-4 max-w-[760px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink"
+        >
+          Der Stand ist gespeichert, aber die Mitteilung an den
+          Echtzeit-Server kam nicht durch. Wer diese Seite offen hat,
+          sollte sie neu laden — sonst überschreibt der alte Stand aus
+          dem geöffneten Editor den wiederhergestellten.
+        </p>
+      )}
       <CollaborativeEditor
         key={page.id}
         slug={slug}

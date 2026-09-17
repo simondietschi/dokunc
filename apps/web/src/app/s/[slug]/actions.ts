@@ -7,7 +7,11 @@ import { authorizeAction } from "@/lib/space-context";
 import { str, strOrNull } from "@/lib/form";
 import { audit } from "@/lib/audit";
 import { generateInviteToken } from "@/lib/invitations";
-import { requestDocumentReset, revokePageAccess } from "@/lib/collab-sync";
+import {
+  RESTORE_STALE_PARAM,
+  requestDocumentReset,
+  revokePageAccess,
+} from "@/lib/collab-sync";
 import {
   detachLiveChildren,
   findLivePage,
@@ -304,7 +308,7 @@ export async function restoreVersionAction(form: FormData) {
   // ueberschriebe den wiederhergestellten Stand beim naechsten Speichern.
   // Deshalb den Server bitten, es aus der Datenbank neu aufzubauen — die
   // offenen Editoren ziehen live nach, niemand muss neu laden.
-  await requestDocumentReset(version.pageId);
+  const zugestellt = await requestDocumentReset(version.pageId);
   await audit({
     action: "page.version_restored",
     actorId: user.id,
@@ -316,7 +320,13 @@ export async function restoreVersionAction(form: FormData) {
     },
   });
   revalidatePath(`/s/${space.slug}/p/${version.pageId}`);
-  redirect(`/s/${space.slug}/p/${version.pageId}`);
+  // Kam die Bitte nicht heraus, ist der Stand zwar geschrieben, aber ein
+  // offener Editor wuerde ihn beim naechsten Speichern ueberschreiben.
+  // Das gehoert gesagt, statt Erfolg zu melden und es geschehen zu
+  // lassen.
+  redirect(
+    `/s/${space.slug}/p/${version.pageId}${zugestellt ? "" : `?${RESTORE_STALE_PARAM}=1`}`,
+  );
 }
 
 export type ShareState = { url?: string; error?: string } | undefined;
