@@ -36,6 +36,10 @@ overrides:
   nanoid@3: "^3.3.18"
   # GHSA-fxqj-rqcc-2cmp. Steckt in der Build-Kette (Tailwind/Next).
   postcss: "^8.5.23"
+  # GHSA-395f-4hp3-45gv: quadratische Laufzeit beim Quoten (DoS),
+  # behoben ab 1.8.5. Kommt aus concurrently, das seit dem Laufzeit-
+  # Image unter dependencies steht und damit im Bild landet.
+  shell-quote: "^1.10.0"
   # GHSA-5qjj-4xww-7phc. Kommt über den Prisma-Client mit.
   valibot: "^1.4.2"
 
