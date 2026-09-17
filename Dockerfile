@@ -27,13 +27,22 @@ COPY apps/collab/package.json apps/collab/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/editor/package.json packages/editor/package.json
 COPY packages/mail/package.json packages/mail/package.json
-# Bewusst ohne --prod: der Laufzeitbetrieb hängt an devDependencies. Der
-# Collab-Server läuft mit tsx direkt aus den .ts-Quellen (apps/collab,
-# "start"), und der Containerstart setzt die Migrationen mit der
-# Prisma-CLI (packages/db, s. CMD). Mit --prod fehlt beides und der
-# Container kommt nicht hoch. Preis dafür: das Laufzeit-Image trägt auch
-# vitest und @playwright/test mit, die es nie ausführt — ein Image-Scan
-# meldet deren Advisories.
+# Ohne --prod, weil diese Stufe auch die Build-Stufe speist: `next build`
+# braucht typescript, tailwind und die @types.
+#
+# Der frühere Grund war ein anderer und ist weggefallen: tsx (der
+# Collab-Server läuft damit direkt aus den .ts-Quellen) und die
+# Prisma-CLI (der Containerstart setzt damit die Migrationen, s. CMD)
+# standen unter devDependencies, obwohl beide zur Laufzeit gebraucht
+# werden. Sie stehen jetzt dort, wo sie hingehören, unter dependencies.
+#
+# Was bleibt: die runner-Stufe übernimmt das GESAMTE /app aus dem Build
+# und trägt damit auch vitest, @playwright/test und typescript mit, die
+# sie nie ausführt — ein Image-Scan meldet deren Advisories. Das aufzulösen
+# heisst eine zweite Stufe `pnpm install --frozen-lockfile --prod`, aus der
+# die runner-Stufe den Abhängigkeitsbaum nimmt, während Build-Ergebnis und
+# der erzeugte Prisma-Client aus dem Build dazukommen. Nicht gemacht, weil
+# es sich nur mit einem echten Image-Bau abnehmen lässt.
 RUN pnpm install --frozen-lockfile
 
 ############################
