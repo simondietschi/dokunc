@@ -1,4 +1,4 @@
-import { escapeHtml, mailButton, mailLayout } from "./index";
+import { ACCENT, escapeHtml, mailButton, mailLayout } from "./index";
 
 /**
  * Mail-Vorlagen für Benachrichtigungen (Sofort-Mail und Tageszusammen-
@@ -69,7 +69,7 @@ function itemHtml(item: NotificationMailItem): string {
         <div style="line-height:1.5">
           <strong>${escapeHtml(item.actorName)}</strong>
           ${escapeHtml(describeNotification(item.type))} —
-          <a href="${escapeHtml(item.url)}" style="color:#5e60e8;text-decoration:none">
+          <a href="${escapeHtml(item.url)}" style="color:${ACCENT};text-decoration:none">
             ${escapeHtml(item.pageTitle)}</a>
         </div>
         ${

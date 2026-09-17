@@ -44,6 +44,8 @@ services:
       # APP_SECRET in .env setzen — openssl rand -base64 48
       APP_SECRET: ${APP_SECRET:-}
       JWT_EXPIRES_IN: 7d
+      # Muss denselben Namen tragen wie SITE_ADDRESS oben: die App
+      # nimmt nur Anfragen von hier an (Upload, Import, Collab-Ticket).
       APP_URL: ${APP_URL:-https://localhost:7891}
       # Leer = zur Laufzeit aus der aufgerufenen Adresse abgeleitet
       # (wss://<host>/collab). Nur setzen, wenn der Collab-Server unter

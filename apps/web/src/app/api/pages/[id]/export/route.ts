@@ -8,6 +8,7 @@ import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
 import { htmlToPdf, gotenbergUrl } from "@/lib/pdf";
 import { inlineUploadImages } from "@/lib/inline-images";
 import { uploadLoaderFor } from "@/lib/file-access";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -50,7 +51,11 @@ export async function GET(
   // im eigenen Prozess und bleiben ungebremst.
   if (
     format === "pdf" &&
-    !(await rateLimit(`export-pdf:${user.id}`, 10, 600))
+    !(await rateLimit(
+      `export-pdf:${user.id}`,
+      RATE_LIMITS.exportPdf.versuche,
+      RATE_LIMITS.exportPdf.fenster,
+    ))
   ) {
     return new NextResponse("Zu viele PDF-Exporte. Bitte kurz warten.", {
       status: 429,

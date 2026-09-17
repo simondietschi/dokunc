@@ -25,6 +25,7 @@ import {
 import { unseal } from "@/lib/secret-box";
 import { verifyTotpStep } from "@/lib/totp";
 import { claimTotpStep, consumeRecoveryCode } from "@/lib/totp-store";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 /**
  * Obergrenze wie beim Space-Namen (lib/space-settings.ts): ein Name ist
@@ -62,19 +63,6 @@ const loginSchema = z.object({
 export type ActionState = { error?: string } | undefined;
 
 /**
- * Bremse pro Konto, zusätzlich zur Bremse pro IP. Greift auch dann,
- * wenn die Versuche über wechselnde IPs kommen.
- *
- * Bewusst ein ablaufendes Fenster und keine harte Sperre: eine echte
- * Sperre liesse sich missbrauchen, um fremde Konten gezielt
- * auszusperren. Gezählt wird jeder Versuch, aber ein erfolgreicher
- * Login räumt den Zähler sofort: sonst sperrte sich aus, wer sich an
- * mehreren Geräten anmeldet.
- */
-const LOGIN_ATTEMPTS = 8;
-const LOGIN_WINDOW_SEC = 900;
-
-/**
  * Vergleichswert für Anmeldungen ohne Konto — ein bcrypt-Hash mit
  * demselben Aufwand wie ein echter. Der Klartext dazu ist niemandem
  * bekannt und wird nirgends gebraucht.
@@ -96,10 +84,6 @@ const DUMMY_HASH = bcrypt.hashSync(
  * Bremse ist inzwischen die pro Konto. Diese hier fängt nur das breite
  * Durchprobieren vieler Adressen ab.
  */
-const LOGIN_IP_ATTEMPTS = 30;
-const LOGIN_IP_WINDOW_SEC = 300;
-const REGISTER_ATTEMPTS = 10;
-const REGISTER_WINDOW_SEC = 600;
 
 /** Session anlegen und in die App leiten (gemeinsamer Abschluss von Login/Register). */
 async function startSession(
@@ -128,8 +112,8 @@ export async function registerAction(
   if (
     !(await rateLimit(
       await clientKey("register"),
-      REGISTER_ATTEMPTS,
-      REGISTER_WINDOW_SEC,
+      RATE_LIMITS.register.versuche,
+      RATE_LIMITS.register.fenster,
     ))
   ) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
@@ -217,8 +201,8 @@ export async function loginAction(
   if (
     !(await rateLimit(
       await clientKey("login"),
-      LOGIN_IP_ATTEMPTS,
-      LOGIN_IP_WINDOW_SEC,
+      RATE_LIMITS.loginIp.versuche,
+      RATE_LIMITS.loginIp.fenster,
     ))
   ) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
@@ -236,7 +220,13 @@ export async function loginAction(
    * waren so viele Versuche möglich, wie die IP-Bremse durchliess.
    * Erfolgreiche Anmeldungen räumt `resetLimit` weiter unten wieder ab.
    */
-  if (!(await rateLimit(accountKey, LOGIN_ATTEMPTS, LOGIN_WINDOW_SEC))) {
+  if (
+    !(await rateLimit(
+      accountKey,
+      RATE_LIMITS.login.versuche,
+      RATE_LIMITS.login.fenster,
+    ))
+  ) {
     await audit({
       action: "auth.login_failed",
       metadata: { email, reason: "throttled" },
@@ -319,7 +309,13 @@ export async function completeTotpLoginAction(
   if (!code) return { error: "Code fehlt" };
 
   const brakeKey = `login:totp:${pending.userId}`;
-  if (!(await rateLimit(brakeKey, LOGIN_ATTEMPTS, LOGIN_WINDOW_SEC))) {
+  if (
+    !(await rateLimit(
+      brakeKey,
+      RATE_LIMITS.login.versuche,
+      RATE_LIMITS.login.fenster,
+    ))
+  ) {
     return { error: "Zu viele Versuche. Bitte in 15 Minuten erneut." };
   }
 

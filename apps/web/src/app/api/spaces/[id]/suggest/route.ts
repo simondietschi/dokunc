@@ -6,6 +6,7 @@ import { getCurrentUser } from "@/lib/current-user";
 import { likeEscape, normalizeQuery } from "@/lib/palette";
 import { rateLimit } from "@/lib/rate-limit";
 import { pageTitle } from "@/lib/page-title";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 export const runtime = "nodejs";
 
@@ -35,7 +36,11 @@ export async function GET(
   // Bremse laesst sich die Abfrage (zwei `contains` mit fuehrendem
   // Platzhalter, also ohne Index) beliebig oft wiederholen; alle
   // anderen teuren Endpunkte haben eine.
-  if (!(await rateLimit(`suggest:${user.id}`, 240, 60))) {
+  if (!(await rateLimit(
+      `suggest:${user.id}`,
+      RATE_LIMITS.suggest.versuche,
+      RATE_LIMITS.suggest.fenster,
+    ))) {
     return NextResponse.json(
       { error: "Zu viele Anfragen. Bitte kurz warten." },
       { status: 429 },

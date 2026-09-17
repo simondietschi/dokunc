@@ -1,6 +1,17 @@
 import nodemailer, { type Transporter } from "nodemailer";
 
 /**
+ * Akzentfarbe der Marke, gleichlautend mit --accent in app/globals.css.
+ *
+ * Hier eigenstaendig und nicht importiert: packages/mail ist ein eigenes
+ * Paket ohne Abhaengigkeit auf die Web-App, und Mailprogramme lesen
+ * keine CSS-Variablen. Innerhalb dieses Pakets steht sie aber nur noch
+ * einmal — notifications.ts liest sie von hier.
+ */
+export const ACCENT = "#5e60e8";
+
+
+/**
  * Geteilter Mail-Transport für Web-App UND Collab/Worker-Prozess.
  * SMTP wird aus den Umgebungsvariablen gelesen (SMTP_HOST, SMTP_PORT,
  * SMTP_SECURE, SMTP_USERNAME, SMTP_PASSWORD, MAIL_FROM_ADDRESS).
@@ -98,7 +109,7 @@ export function mailLayout(opts: { title: string; bodyHtml: string }): string {
 
 export function mailButton(href: string, label: string): string {
   return `<p><a href="${escapeHtml(href)}"
-     style="display:inline-block;background:#5e60e8;color:#fff;
+     style="display:inline-block;background:${ACCENT};color:#fff;
             padding:10px 18px;border-radius:10px;text-decoration:none">
     ${escapeHtml(label)}</a></p>`;
 }

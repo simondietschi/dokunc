@@ -497,11 +497,11 @@ export function CollaborativeEditor({
     () =>
       createSlashCommands({
         onImage: (e, r) =>
-          pickAndUpload(
-            e,
-            { spaceId, pageId },
-            { accept: IMAGE_ACCEPT, range: r },
-          ),
+          pickAndUpload(e, { spaceId, pageId }, {
+            accept: IMAGE_ACCEPT,
+            range: r,
+            onError: onUploadError,
+          }),
         onMarkdownImport: (e, r) =>
           pickAndImportMarkdown(e, r, () =>
             toast({
@@ -510,10 +510,11 @@ export function CollaborativeEditor({
               variant: "error",
             }),
           ),
-        onAttachment: (e, r) => pickAndUpload(e, { spaceId, pageId }, { range: r }),
+        onAttachment: (e, r) =>
+          pickAndUpload(e, { spaceId, pageId }, { range: r, onError: onUploadError }),
         onPrompt: openPrompt,
       }),
-    [openPrompt, pageId, spaceId, toast],
+    [onUploadError, openPrompt, pageId, spaceId, toast],
   );
 
   const wikiLinkSuggest = useMemo(
@@ -607,7 +608,7 @@ export function CollaborativeEditor({
         const files = Array.from(event.clipboardData?.files ?? []);
         if (files.length > 0) {
           event.preventDefault();
-          void uploadAndInsert(view, files, { spaceId, pageId });
+          void uploadAndInsert(view, files, { spaceId, pageId }, onUploadError);
           return true;
         }
 
@@ -635,7 +636,7 @@ export function CollaborativeEditor({
           left: event.clientX,
           top: event.clientY,
         })?.pos;
-        void uploadAndInsert(view, files, { spaceId, pageId }, pos);
+        void uploadAndInsert(view, files, { spaceId, pageId }, onUploadError, pos);
         return true;
       },
     },

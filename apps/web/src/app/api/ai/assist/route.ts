@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { getCurrentUser } from "@/lib/current-user";
-import { isSameOrigin } from "@/lib/origin";
+import { isSameOrigin, originRejectionHint } from "@/lib/origin";
 import { rateLimit } from "@/lib/rate-limit";
 import { aiAvailable, assist, isAssistAction } from "@/lib/ai";
 import { log } from "@/lib/log";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 export const runtime = "nodejs";
 // KI-Antworten können dauern — großzügiges Zeitfenster.
@@ -17,6 +18,15 @@ export async function POST(req: Request) {
       req.headers.get("host"),
     )
   ) {
+    // Der eine Fall, der sonst raetselhaft bleibt, gehoert ins Log:
+    // die Instanz ist unter diesem Namen erreichbar, APP_URL nennt
+    // aber einen anderen.
+    const hinweis = originRejectionHint(
+      req.headers.get("origin"),
+      process.env.APP_URL,
+      req.headers.get("host"),
+    );
+    if (hinweis) log.warn({ hinweis }, "Anfrage wegen fremder Herkunft abgelehnt");
     return NextResponse.json({ error: "Ungültige Herkunft" }, { status: 403 });
   }
 
@@ -32,7 +42,11 @@ export async function POST(req: Request) {
     );
   }
 
-  if (!(await rateLimit(`assist:${user.id}`, 30, 3600))) {
+  if (!(await rateLimit(
+      `assist:${user.id}`,
+      RATE_LIMITS.aiAssist.versuche,
+      RATE_LIMITS.aiAssist.fenster,
+    ))) {
     return NextResponse.json(
       { error: "Zu viele KI-Anfragen. Bitte später erneut." },
       { status: 429 },

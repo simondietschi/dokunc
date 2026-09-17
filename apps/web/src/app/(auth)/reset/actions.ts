@@ -14,6 +14,7 @@ import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
 import { audit } from "@/lib/audit";
 import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 export type ResetState = { error?: string; sent?: boolean } | undefined;
 
@@ -34,10 +35,16 @@ export async function requestResetAction(
   form: FormData,
 ): Promise<ResetState> {
   const email = normalizeEmail(String(form.get("email") ?? ""));
-  if (!z.string().email().safeParse(email).success) {
+  if (!z.email().safeParse(email).success) {
     return { error: "Ungültige E-Mail" };
   }
-  if (!(await rateLimit(await clientKey("reset-req"), 5, 900))) {
+  if (
+    !(await rateLimit(
+      await clientKey("reset-req"),
+      RATE_LIMITS.resetRequest.versuche,
+      RATE_LIMITS.resetRequest.fenster,
+    ))
+  ) {
     return { error: "Zu viele Anfragen. Bitte später erneut." };
   }
 
@@ -110,7 +117,13 @@ export async function performResetAction(
 
   // Auch das Einlösen drosseln: sonst lässt sich zu einer bekannten
   // Reset-ID unbegrenzt oft ein Token raten.
-  if (!(await rateLimit(await clientKey("reset-do"), 10, 900))) {
+  if (
+    !(await rateLimit(
+      await clientKey("reset-do"),
+      RATE_LIMITS.resetSubmit.versuche,
+      RATE_LIMITS.resetSubmit.fenster,
+    ))
+  ) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }
 

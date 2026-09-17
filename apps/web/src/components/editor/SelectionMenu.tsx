@@ -16,6 +16,7 @@ import { EditorButton, EditorSeparator } from "./EditorButton";
 import { normalizeLinkInput } from "@/lib/editor-text";
 import { startCommentThread } from "./comment-thread";
 import type { PromptRequest } from "./SlashCommands";
+import { DEFAULT_HIGHLIGHT } from "@/lib/brand";
 
 /**
  * Formatier-Menü direkt an der Textauswahl. Die sticky Leiste bleibt
@@ -104,7 +105,7 @@ export function SelectionMenu({
       </EditorButton>
       <EditorButton
         label="Markieren"
-        on={() => c().toggleHighlight({ color: "#fde68a" }).run()}
+        on={() => c().toggleHighlight({ color: DEFAULT_HIGHLIGHT }).run()}
         active={active.highlight}
       >
         <Highlighter className="h-4 w-4" />

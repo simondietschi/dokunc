@@ -153,6 +153,12 @@ APP_SECRET=<openssl rand -base64 48>
 POSTGRES_PASSWORD=<eigenes Passwort>
 ```
 
+`SITE_ADDRESS` und `APP_URL` müssen denselben Namen tragen: `APP_URL`
+entscheidet allein, welche Herkunft die Route-Handler (Upload, Import,
+Collab-Ticket, KI) annehmen. Bleibt sie auf `localhost` stehen, während
+die Instanz unter der Domain läuft, antworten diese Aufrufe mit 403 —
+das Log nennt dann beide Namen.
+
 Dann `docker compose up -d`. In der `Caddyfile` `tls internal` entfernen,
 damit Caddy ein Let's-Encrypt-Zertifikat holt (dafür muss Caddy zusätzlich
 auf Port 80 erreichbar sein, also `"127.0.0.1:80:80"` bzw. ohne

@@ -4,7 +4,7 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
-import { isSameOrigin } from "@/lib/origin";
+import { isSameOrigin, originRejectionHint } from "@/lib/origin";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { can } from "@/lib/permissions";
 import { effectiveRole } from "@/lib/space-access";
@@ -13,6 +13,7 @@ import { audit } from "@/lib/audit";
 import { declaredBodySize } from "@/lib/body-size";
 import { log } from "@/lib/log";
 import { stripImageMetadata } from "@/lib/image-metadata";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 import {
   UPLOAD_DIR,
   ALLOWED_IMAGE_TYPES,
@@ -49,6 +50,15 @@ export async function POST(req: Request) {
       req.headers.get("host"),
     )
   ) {
+    // Der eine Fall, der sonst raetselhaft bleibt, gehoert ins Log:
+    // die Instanz ist unter diesem Namen erreichbar, APP_URL nennt
+    // aber einen anderen.
+    const hinweis = originRejectionHint(
+      req.headers.get("origin"),
+      process.env.APP_URL,
+      req.headers.get("host"),
+    );
+    if (hinweis) log.warn({ hinweis }, "Anfrage wegen fremder Herkunft abgelehnt");
     return NextResponse.json({ error: "Ungültige Herkunft" }, { status: 403 });
   }
 
@@ -57,7 +67,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   }
 
-  if (!(await rateLimit(await clientKey("upload"), 30, 60))) {
+  if (!(await rateLimit(
+      await clientKey("upload"),
+      RATE_LIMITS.upload.versuche,
+      RATE_LIMITS.upload.fenster,
+    ))) {
     return NextResponse.json(
       { error: "Zu viele Uploads. Bitte kurz warten." },
       { status: 429 },

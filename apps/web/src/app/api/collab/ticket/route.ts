@@ -3,8 +3,10 @@ import { prisma } from "@dokunc/db";
 import { effectiveRole } from "@/lib/space-access";
 import { canSeePage } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
-import { isSameOrigin } from "@/lib/origin";
+import { isSameOrigin, originRejectionHint } from "@/lib/origin";
 import { rateLimit } from "@/lib/rate-limit";
+import { log } from "@/lib/log";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 import {
   issueCollabTicket,
   COLLAB_TICKET_TTL_SEC,
@@ -25,6 +27,15 @@ export async function POST(req: Request) {
       req.headers.get("host"),
     )
   ) {
+    // Der eine Fall, der sonst raetselhaft bleibt, gehoert ins Log:
+    // die Instanz ist unter diesem Namen erreichbar, APP_URL nennt
+    // aber einen anderen.
+    const hinweis = originRejectionHint(
+      req.headers.get("origin"),
+      process.env.APP_URL,
+      req.headers.get("host"),
+    );
+    if (hinweis) log.warn({ hinweis }, "Anfrage wegen fremder Herkunft abgelehnt");
     return NextResponse.json({ error: "Ungültige Herkunft" }, { status: 403 });
   }
 
@@ -34,7 +45,11 @@ export async function POST(req: Request) {
   }
 
   // Reconnects sind normal, massenhaftes Abholen nicht.
-  if (!(await rateLimit(`collab-ticket:${user.id}`, 120, 60))) {
+  if (!(await rateLimit(
+      `collab-ticket:${user.id}`,
+      RATE_LIMITS.collabTicket.versuche,
+      RATE_LIMITS.collabTicket.fenster,
+    ))) {
     return NextResponse.json({ error: "Zu viele Anfragen" }, { status: 429 });
   }
 

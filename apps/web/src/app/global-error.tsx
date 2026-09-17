@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { ACCENT_COLOR } from "@/lib/brand";
 
 export default function GlobalError({
   error,
@@ -37,7 +38,7 @@ export default function GlobalError({
             onClick={reset}
             style={{
               marginTop: 20,
-              background: "#5e60e8",
+              background: ACCENT_COLOR,
               color: "#fff",
               border: 0,
               borderRadius: 10,

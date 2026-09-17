@@ -11,6 +11,7 @@ import {
 } from "@/lib/oidc";
 import { startOidcFlow } from "@/lib/oidc-state";
 import { oidcRedirectUri } from "@/lib/oidc-redirect";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 /**
  * Beginnt die SSO-Anmeldung.
@@ -23,7 +24,11 @@ export async function GET(req: Request) {
   if (!config) {
     return NextResponse.redirect(new URL("/login?sso=disabled", req.url));
   }
-  if (!(await rateLimit(await clientKey("oidc-start"), 20, 300))) {
+  if (!(await rateLimit(
+      await clientKey("oidc-start"),
+      RATE_LIMITS.oidcStart.versuche,
+      RATE_LIMITS.oidcStart.fenster,
+    ))) {
     return NextResponse.redirect(new URL("/login?sso=throttled", req.url));
   }
 

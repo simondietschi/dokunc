@@ -17,6 +17,7 @@ import {
   verifyTotpStep,
 } from "@/lib/totp";
 import { issueRecoveryCodes } from "@/lib/totp-store";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 /**
  * Einrichtung und Abschaltung des zweiten Faktors.
@@ -34,9 +35,6 @@ export type TotpState =
       recoveryCodes?: string[];
     }
   | undefined;
-
-const CONFIRM_ATTEMPTS = 10;
-const CONFIRM_WINDOW_SEC = 600;
 
 /** Anzeigename der Instanz im Authenticator. */
 function issuerName(): string {
@@ -83,7 +81,13 @@ export async function confirmTotpAction(
   if (!code) return { error: "Code fehlt." };
 
   const brakeKey = `totp:confirm:${user.id}`;
-  if (!(await rateLimit(brakeKey, CONFIRM_ATTEMPTS, CONFIRM_WINDOW_SEC))) {
+  if (
+    !(await rateLimit(
+      brakeKey,
+      RATE_LIMITS.totpConfirm.versuche,
+      RATE_LIMITS.totpConfirm.fenster,
+    ))
+  ) {
     return { error: "Zu viele Versuche. Bitte in 10 Minuten erneut." };
   }
 
@@ -169,7 +173,13 @@ export async function disableTotpAction(
   if (!password) return { error: "Passwort fehlt." };
 
   const brakeKey = `totp:disable:${user.id}`;
-  if (!(await rateLimit(brakeKey, CONFIRM_ATTEMPTS, CONFIRM_WINDOW_SEC))) {
+  if (
+    !(await rateLimit(
+      brakeKey,
+      RATE_LIMITS.totpConfirm.versuche,
+      RATE_LIMITS.totpConfirm.fenster,
+    ))
+  ) {
     return { error: "Zu viele Versuche. Bitte in 10 Minuten erneut." };
   }
 
@@ -205,7 +215,13 @@ export async function regenerateRecoveryCodesAction(
   if (!password) return { error: "Passwort fehlt." };
 
   const brakeKey = `totp:recovery:${user.id}`;
-  if (!(await rateLimit(brakeKey, CONFIRM_ATTEMPTS, CONFIRM_WINDOW_SEC))) {
+  if (
+    !(await rateLimit(
+      brakeKey,
+      RATE_LIMITS.totpConfirm.versuche,
+      RATE_LIMITS.totpConfirm.fenster,
+    ))
+  ) {
     return { error: "Zu viele Versuche. Bitte in 10 Minuten erneut." };
   }
 

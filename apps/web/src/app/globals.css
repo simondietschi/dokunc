@@ -46,7 +46,9 @@
   --faint: #9b9fa7;
   --accent: #5e60e8;
   --accent-hover: #4d4fd6;
-  --accent-soft: color-mix(in oklab, #5e60e8 12%, transparent);
+  /* Aus --accent abgeleitet, nicht noch einmal ausgeschrieben: sonst
+     bleibt der weiche Ton zurueck, wenn der Akzent wechselt. */
+  --accent-soft: color-mix(in oklab, var(--accent) 12%, transparent);
   --accent-contrast: #ffffff;
   --danger: #e5484d;
 }
@@ -64,7 +66,7 @@
   --faint: #6c6e76;
   --accent: #7b7df0;
   --accent-hover: #8f91f4;
-  --accent-soft: color-mix(in oklab, #7b7df0 20%, transparent);
+  --accent-soft: color-mix(in oklab, var(--accent) 20%, transparent);
   --accent-contrast: #0b0b10;
   --danger: #ff6166;
 }

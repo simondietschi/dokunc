@@ -115,8 +115,8 @@ export async function uploadAndInsert(
   view: EditorView,
   files: File[],
   ctx: UploadContext,
+  onError: (reason: unknown) => void,
   pos?: number,
-  onError?: (reason: unknown) => void,
 ): Promise<void> {
   const errors: string[] = [];
   const nodes: PMNode[] = [];
@@ -133,15 +133,16 @@ export async function uploadAndInsert(
   }
   insertBlocks(view, nodes, pos);
   if (!errors.length) return;
-  // Der Aufrufer meldet den Fehler, wenn er kann: `useToast` ist ein
-  // React-Hook und hier, in einem reinen Modul, nicht aufrufbar. Ohne
-  // `onError` bleibt nur `alert` — ein blockierender Systemdialog, aber
-  // immer noch besser als ein Upload, der stillschweigend nichts tut.
+  // `onError` ist Pflicht, nicht Angebot. Frueher stand hier ein `alert`
+  // als Rueckfall, wenn der Aufrufer nichts mitgab — und weil kein
+  // einziger Aufrufer etwas mitgab, war genau dieser Rueckfall der
+  // Normalfall: ein blockierender Systemdialog mit fremdem Aussehen,
+  // waehrend derselbe Fehler beim Titelbild einen Toast erzeugte.
+  // `useToast` ist ein React-Hook und hier, in einem reinen Modul, nicht
+  // aufrufbar; erzwingen laesst sich die Meldung aber ueber den Typ.
   // Als Error uebergeben, weil die Handler im Editor genau daraus die
   // Meldung ziehen (`reason instanceof Error ? reason.message : …`).
-  const reason = new Error(errors.join("\n"));
-  if (onError) onError(reason);
-  else alert(reason.message);
+  onError(new Error(errors.join("\n")));
 }
 
 /**
@@ -155,8 +156,8 @@ export function pickAndUpload(
     accept?: string;
     range?: Range;
     /** Fehlermeldung der fehlgeschlagenen Dateien; siehe uploadAndInsert. */
-    onError?: (reason: unknown) => void;
-  } = {},
+    onError: (reason: unknown) => void;
+  },
 ): void {
   const input = document.createElement("input");
   input.type = "file";
@@ -190,7 +191,7 @@ export function pickAndUpload(
     if (opts.range) chain = chain.deleteRange(opts.range);
     chain.run();
     if (files.length) {
-      void uploadAndInsert(editor.view, files, ctx, undefined, opts.onError);
+      void uploadAndInsert(editor.view, files, ctx, opts.onError);
     }
   };
   input.addEventListener("cancel", clearRange);

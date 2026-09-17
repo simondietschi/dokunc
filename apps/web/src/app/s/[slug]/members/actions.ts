@@ -25,29 +25,14 @@ import {
   isSpaceRole,
 } from "@/lib/role-policy";
 import { isGroupRole } from "@/lib/permissions";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 export type FormState = { error?: string; success?: string } | undefined;
 
 const inviteSchema = z.object({
-  email: z.string().email("Bitte eine gültige E-Mail angeben"),
+  email: z.email("Bitte eine gültige E-Mail angeben"),
   role: z.string().refine(isInvitableRole, "Ungültige Rolle"),
 });
-
-/**
- * Bremse fuer Einladungen, pro einladender Person.
- *
- * Jede Einladung schickt eine Mail an eine frei waehlbare Adresse; ohne
- * Grenze waere die Mitgliederverwaltung ein Versandwerkzeug, und der
- * SMTP-Server der Installation stuende dafuer gerade. 20 pro Stunde
- * decken auch das Aufsetzen eines neuen Teams ab.
- *
- * Benannt und nicht als Zahlenpaar im Aufruf: sonst laesst sich die
- * Grenze nicht suchen, sondern nur lesen — und sie waere nicht von dem
- * gleich aussehenden Paar in ask/actions.ts zu unterscheiden, das fuer
- * etwas voellig anderes steht.
- */
-const INVITE_ATTEMPTS = 20;
-const INVITE_WINDOW_SEC = 3600;
 
 export async function inviteMemberAction(
   _prev: FormState,
@@ -56,7 +41,11 @@ export async function inviteMemberAction(
   const { space, user } = await authorizeAction(form, "manageSpace");
 
   if (
-    !(await rateLimit(`invite:${user.id}`, INVITE_ATTEMPTS, INVITE_WINDOW_SEC))
+    !(await rateLimit(
+      `invite:${user.id}`,
+      RATE_LIMITS.invite.versuche,
+      RATE_LIMITS.invite.fenster,
+    ))
   ) {
     return { error: "Zu viele Einladungen. Bitte später erneut." };
   }

@@ -6,6 +6,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { aiAvailable, askWiki } from "@/lib/ai";
 import { retrieveChunks } from "@/lib/retrieval";
 import { log } from "@/lib/log";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 export type AskState =
   | {
@@ -38,7 +39,11 @@ export async function askAction(
         "KI ist nicht konfiguriert. Setze ANTHROPIC_API_KEY in der Umgebung.",
     };
   }
-  if (!(await rateLimit(`ask:${user.id}`, 20, 3600))) {
+  if (!(await rateLimit(
+      `ask:${user.id}`,
+      RATE_LIMITS.ask.versuche,
+      RATE_LIMITS.ask.fenster,
+    ))) {
     return { error: "Zu viele Anfragen. Bitte später erneut." };
   }
 

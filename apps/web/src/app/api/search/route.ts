@@ -9,6 +9,7 @@ import {
   normalizeQuery,
 } from "@/lib/palette";
 import { accessibleSpaces } from "@/lib/space-access";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 import {
   seesEverything,
   visiblePagesAcrossSpaces,
@@ -47,7 +48,11 @@ export async function GET(req: Request) {
   // Die Palette fragt entprellt und je Tastendruck hoechstens einmal;
   // dieses Fenster liegt weit ueber dem, was Tippen erzeugt, und trifft
   // nur den, der die Abfrage in Schleife wiederholt.
-  if (!(await rateLimit(`search:${user.id}`, 120, 60))) {
+  if (!(await rateLimit(
+      `search:${user.id}`,
+      RATE_LIMITS.search.versuche,
+      RATE_LIMITS.search.fenster,
+    ))) {
     return NextResponse.json(
       { error: "Zu viele Suchanfragen. Bitte kurz warten." },
       { status: 429 },

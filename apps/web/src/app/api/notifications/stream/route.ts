@@ -2,6 +2,7 @@ import { loadSessionUser } from "@/lib/current-user";
 import { getSessionClaims } from "@/lib/session";
 import { subscribeNotifications } from "@/lib/notify-bus";
 import { rateLimit } from "@/lib/rate-limit";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 export const runtime = "nodejs";
 // Ein Datenstrom darf nicht zwischengespeichert werden.
@@ -60,7 +61,11 @@ export async function GET(req: Request) {
   // Bremse zusätzlich zum Deckel: ohne sie liesse sich dieser durch
   // schnelles Auf- und Zumachen umgehen, denn jeder Versuch baut eine
   // Redis-Verbindung auf, bevor er wieder abgeräumt wird.
-  if (!(await rateLimit(`notify-stream:${user.id}`, 30, 60))) {
+  if (!(await rateLimit(
+      `notify-stream:${user.id}`,
+      RATE_LIMITS.notifyStream.versuche,
+      RATE_LIMITS.notifyStream.fenster,
+    ))) {
     return new Response("Zu viele Verbindungen", { status: 429 });
   }
 

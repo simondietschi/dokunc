@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
-import { isSameOrigin } from "@/lib/origin";
+import { isSameOrigin, originRejectionHint } from "@/lib/origin";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { can } from "@/lib/permissions";
 import { effectiveRole } from "@/lib/space-access";
@@ -14,6 +14,7 @@ import { runImport } from "@/lib/import/run";
 import { ImportError, type ImportFile } from "@/lib/import/types";
 import { extname, isPageExt, normalizePath } from "@/lib/import/paths";
 import { ACCEPTED_EXT, importMaxBytes, importMaxMb } from "@/lib/import/limits";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -37,6 +38,15 @@ export async function POST(
       req.headers.get("host"),
     )
   ) {
+    // Der eine Fall, der sonst raetselhaft bleibt, gehoert ins Log:
+    // die Instanz ist unter diesem Namen erreichbar, APP_URL nennt
+    // aber einen anderen.
+    const hinweis = originRejectionHint(
+      req.headers.get("origin"),
+      process.env.APP_URL,
+      req.headers.get("host"),
+    );
+    if (hinweis) log.warn({ hinweis }, "Anfrage wegen fremder Herkunft abgelehnt");
     return NextResponse.json({ error: "Ungültige Herkunft" }, { status: 403 });
   }
 
@@ -59,7 +69,11 @@ export async function POST(
     return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
   }
 
-  if (!(await rateLimit(await clientKey(`import:${user.id}`), 5, 600))) {
+  if (!(await rateLimit(
+      await clientKey(`import:${user.id}`),
+      RATE_LIMITS.import.versuche,
+      RATE_LIMITS.import.fenster,
+    ))) {
     return NextResponse.json(
       { error: "Zu viele Importe. Bitte in ein paar Minuten erneut versuchen." },
       { status: 429 },
