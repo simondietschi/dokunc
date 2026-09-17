@@ -126,8 +126,15 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
     await page.keyboard.press("Enter");
     await page.keyboard.type("Im Callout");
     await expect(page.locator(".dk-callout-body")).toContainText("Im Callout");
+    // Zwischen den beiden Enter auf den Zwischenzustand warten: das
+    // erste legt einen leeren Absatz IM Callout an, erst das zweite hebt
+    // heraus. Ohne diese Zusicherung treffen beide Tastendruecke
+    // gelegentlich denselben Zustand, und "Danach" bleibt im Callout —
+    // der Test schlug dann scheinbar grundlos fehl.
     await page.keyboard.press("Enter");
+    await expect(page.locator(".dk-callout-body p")).toHaveCount(2);
     await page.keyboard.press("Enter");
+    await expect(page.locator(".dk-callout-body p")).toHaveCount(1);
     await page.keyboard.type("Danach");
     await expect(page.locator(".dk-callout-body")).not.toContainText("Danach");
     await expect(page.locator(".ProseMirror > p", { hasText: "Danach" })).toBeVisible();

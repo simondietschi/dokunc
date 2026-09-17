@@ -31,6 +31,7 @@ import type { SearchResponse } from "@/app/api/search/route";
 import type { FavoritesResponse } from "@/app/api/favorites/route";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { pageTitle } from "@/lib/page-title";
+import { useBackdropClose, useModal } from "@/components/ui/use-modal";
 
 const OPEN_EVENT = "dokunc:cmdk";
 
@@ -72,19 +73,15 @@ export function CommandPalette() {
   const disabled = isAuthPath(pathname);
 
   const close = useCallback(() => setOpen(false), []);
-  const restoreTo = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  // Fokus zurückgeben und Hintergrund nicht mitscrollen lassen.
-  useEffect(() => {
-    if (!open) return;
-    restoreTo.current = document.activeElement as HTMLElement | null;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      restoreTo.current?.focus?.();
-    };
-  }, [open]);
+  // Escape, Fokusfalle, Scroll-Sperre und Fokus-Rueckgabe aus useModal.
+  // Escape hing vorher am Suchfeld: wer in der Ergebnisliste stand, kam
+  // mit der Taste nicht heraus, und eine Fokusfalle gab es nicht.
+  // Ohne initialFocus: das erste fokussierbare Element im Geruest ist
+  // das Suchfeld, und das traegt bereits autoFocus.
+  useModal({ open, onClose: close, panel: panelRef });
+  const onBackdrop = useBackdropClose(panelRef, close);
 
   // ⌘K / Ctrl+K global; Custom-Event für Buttons.
   useEffect(() => {
@@ -335,10 +332,9 @@ export function CommandPalette() {
     } else if (e.key === "Enter") {
       e.preventDefault();
       items[clamped]?.run();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      close();
     }
+    // Escape nicht hier: useModal faengt es am document, damit es auch
+    // greift, wenn der Fokus in der Liste steht.
   }
 
   if (!open) return null;
@@ -348,13 +344,13 @@ export function CommandPalette() {
   return (
     <div
       className="fixed inset-0 z-50 overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
-      onMouseDown={close}
+      onMouseDown={onBackdrop}
       role="dialog"
       aria-modal="true"
       aria-label="Befehle und Suche"
     >
       <div
-        onMouseDown={(e) => e.stopPropagation()}
+        ref={panelRef}
         className="mx-auto w-full max-w-xl overflow-hidden rounded-2xl border border-line bg-surface shadow-pop animate-[rise_0.25s_cubic-bezier(0.22,1,0.36,1)]"
       >
         <div className="flex items-center gap-3 border-b border-line px-4">

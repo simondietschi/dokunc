@@ -19,6 +19,7 @@ import { MenuItem, useCloseMenu } from "@/components/space/PageActions";
 import { movePageAction } from "@/app/s/[slug]/move-actions";
 import type { SpacePagesResponse } from "@/app/api/spaces/[id]/pages/route";
 import { pageTitle } from "@/lib/page-title";
+import { useBackdropClose, useModal } from "@/components/ui/use-modal";
 
 /**
  * Menueeintrag "Verschieben nach..." fuer PageActions. Schliesst das
@@ -99,14 +100,6 @@ export function MovePageDialog({
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  // Stabil halten: der Aufrufer reicht meist eine neue Closure pro Render.
-  // Der Ref wird nach dem Commit gesetzt, nicht waehrend des Renders; gelesen
-  // wird er nur aus dem Tastatur-Handler, der ohnehin erst danach haengt.
-  const onCloseRef = useRef(onClose);
-  useEffect(() => {
-    onCloseRef.current = onClose;
-  }, [onClose]);
-
   // Seitenbaum laden.
   useEffect(() => {
     const controller = new AbortController();
@@ -127,43 +120,12 @@ export function MovePageDialog({
     return () => controller.abort();
   }, [spaceId]);
 
-  // Escape schliesst; Tab bleibt im Dialog (Fokus-Falle); Hintergrund
-  // nicht scrollen.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onCloseRef.current();
-        return;
-      }
-      if (e.key !== "Tab" || !panelRef.current) return;
-      const focusable = Array.from(
-        panelRef.current.querySelectorAll<HTMLElement>(
-          'input, button:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        ),
-      );
-      if (focusable.length === 0) return;
-      const first = focusable[0];
-      const last = focusable[focusable.length - 1];
-      const current = document.activeElement;
-      const inside = panelRef.current.contains(current);
-      if (e.shiftKey && (current === first || !inside)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (current === last || !inside)) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    inputRef.current?.focus();
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
-    };
-  }, []);
+  // Escape, Fokusfalle, Scroll-Sperre und Fokus-Rueckgabe kommen aus
+  // useModal. Die eigene Fassung gab den Fokus beim Schliessen nicht
+  // zurueck, und ihre Liste der fokussierbaren Elemente kannte weder
+  // Links noch Textfelder noch Auswahlfelder.
+  useModal({ open: true, onClose, panel: panelRef, initialFocus: inputRef });
+  const onBackdrop = useBackdropClose(panelRef, onClose);
 
   const currentParent = useMemo(
     () => pages?.find((p) => p.id === pageId)?.parentId ?? null,
@@ -270,14 +232,13 @@ export function MovePageDialog({
   return createPortal(
     <div
       className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
-      onMouseDown={onClose}
+      onMouseDown={onBackdrop}
       role="dialog"
       aria-modal="true"
       aria-labelledby="move-page-title"
     >
       <div
         ref={panelRef}
-        onMouseDown={(e) => e.stopPropagation()}
         className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-pop animate-[rise_0.25s_cubic-bezier(0.22,1,0.36,1)]"
       >
         <div className="border-b border-line px-4 pb-3 pt-4">

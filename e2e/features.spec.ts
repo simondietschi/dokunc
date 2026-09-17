@@ -294,6 +294,21 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
   await expect(
     page.getByPlaceholder("Suchen oder springen…"),
   ).toBeHidden();
+
+  // Und auch dann, wenn der Fokus nicht mehr im Suchfeld steht: die
+  // Taste hing frueher am Eingabefeld, wer per Tab weiterging, kam mit
+  // ihr nicht mehr heraus. Tab bleibt dabei im Dialog (Fokusfalle).
+  const feld = page.getByPlaceholder("Suchen oder springen…");
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(feld).toBeVisible();
+  await page.keyboard.press("Tab");
+  await expect(feld).not.toBeFocused();
+  await expect(
+    page.locator('[role="dialog"] :focus'),
+    "Tab darf den Dialog nicht verlassen",
+  ).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(feld).toBeHidden();
 });
 
 test("Datei-Auslieferung verlangt Anmeldung", async ({ page }) => {
@@ -530,10 +545,13 @@ test("Einer Seite folgen und wieder loesen", async ({ page }) => {
   // Nach dem Neuladen geprueft: der Zustand steckt in der Datenbank,
   // die Anzeige haengt an einer Revalidierung der Serverseite.
   await page.click('button[title="Dieser Seite folgen"]');
-  await page.reload();
-  await expect(
-    page.locator('button[title="Dieser Seite nicht mehr folgen"]'),
-  ).toBeVisible({ timeout: 20_000 });
+  // reloadUntil wie unten beim Loesen, nicht ein einzelnes reload(): die
+  // Server-Action und die Revalidierung brauchen unter voller Last mehr
+  // als einen Durchgang, und ein laengeres Zeitfenster allein trifft das
+  // nicht zuverlaessig (siehe e2e/wait.ts).
+  await reloadUntil(page, () =>
+    page.locator('button[title="Dieser Seite nicht mehr folgen"]').count(),
+  );
   // Wieder loesen, damit spaetere Laeufe unveraendert starten.
   await page.click('button[title="Dieser Seite nicht mehr folgen"]');
   await reloadUntil(page, () =>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { FilePlus2, LayoutTemplate, Sparkles, X } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import type { TemplateOptions } from "@/lib/template-options";
 import { createFromTemplateAction } from "@/app/s/[slug]/template-actions";
 import { pageTitle } from "@/lib/page-title";
+import { useModal } from "@/components/ui/use-modal";
 
 type Selection =
   | { kind: "space"; id: string }
@@ -38,21 +39,10 @@ export function TemplatePicker({
   const [selected, setSelected] = useState<Selection | null>(initial);
   const dialogRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  // Fokus in den Dialog holen (Tastatur/Screenreader) und beim
-  // Schliessen an den auslösenden Button zurückgeben.
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    dialogRef.current?.focus();
-    return () => opener?.focus?.();
-  }, []);
+  // Escape, Fokusfalle, Scroll-Sperre und Fokus-Rueckgabe kommen aus
+  // useModal. Vorher fehlten hier Falle und Sperre: Tab lief aus dem
+  // Dialog heraus, der Hintergrund scrollte mit.
+  useModal({ open: true, onClose, panel: dialogRef });
 
   const current = useMemo(() => {
     if (!selected) return null;
