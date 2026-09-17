@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { canDeleteUser, orphanedSpacesFor } from "@/lib/account-deletion";
 import { deleteSpaceWithUploads } from "@/lib/file-access";
 import { log } from "@/lib/log";
+import { redirect } from "next/navigation";
 
 export async function toggleUserActiveAction(form: FormData) {
   const me = await requireAdmin();
@@ -152,14 +153,15 @@ export async function deleteUserAction(form: FormData) {
     orphanedSpaces: await orphanedSpacesFor(target.id),
   });
   if (!verdict.allowed) {
-    // Die Begruendung wuerde hier sonst verschwinden: die Action gibt
-    // nichts zurueck, die Admin-Seite kuendigt "endgueltig löschen" an,
-    // und danach passiert wortlos nichts.
     log.warn(
       { userId: target.id, reason: verdict.reason, actorId: me.id },
       "Konto-Löschung durch Admin abgelehnt",
     );
-    return;
+    // Und sichtbar: die Action gibt nichts zurueck, die Admin-Seite
+    // kuendigt "endgültig löschen" an, und danach passierte wortlos
+    // nichts. Als Kennung, nicht als Satz — die Adresszeile ist von
+    // aussen setzbar, und die Seite soll nur bekannte Texte zeigen.
+    redirect(`/admin?nicht-geloescht=${verdict.code}`);
   }
 
   // Vor dem Löschen protokollieren: die Beziehung wird dabei genullt.

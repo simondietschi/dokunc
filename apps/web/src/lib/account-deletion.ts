@@ -14,9 +14,19 @@ import { requireUser } from "./current-user";
  * eine Funktion, die nur aufruft, wer sie importiert.
  */
 
+/**
+ * Der Grund als Kennung, nicht nur als Satz.
+ *
+ * Den Satz braucht die Konto-Seite, wo die Person ueber sich selbst
+ * liest ("Du bist der letzte aktive Instanz-Admin"). Im Admin-Bereich
+ * geht es um jemand anderen, und dort waere genau dieser Satz falsch —
+ * deshalb entscheidet dort die Kennung ueber die Formulierung.
+ */
+export type DeletionReason = "letzter-admin" | "verwaiste-spaces";
+
 export type DeletionCheck =
   | { allowed: true }
-  | { allowed: false; reason: string };
+  | { allowed: false; code: DeletionReason; reason: string };
 
 export function canDeleteUser(input: {
   /** Letzter aktiver Instanz-Admin? */
@@ -27,6 +37,7 @@ export function canDeleteUser(input: {
   if (input.isLastActiveAdmin) {
     return {
       allowed: false,
+      code: "letzter-admin",
       reason:
         "Du bist der letzte aktive Instanz-Admin. Ernenne zuerst jemand anderen.",
     };
@@ -39,6 +50,7 @@ export function canDeleteUser(input: {
         : "";
     return {
       allowed: false,
+      code: "verwaiste-spaces",
       reason: `Ohne dich stünde folgender Space ohne Eigentümer da: ${list}${more}. Übergib die Rolle zuerst.`,
     };
   }
@@ -82,4 +94,23 @@ export async function orphanedSpacesFor(userId: string): Promise<string[]> {
   return owned
     .filter((o) => single.has(o.spaceId))
     .map((o) => o.space.name);
+}
+
+/**
+ * Dieselbe Ablehnung aus der Sicht einer Verwaltung.
+ *
+ * Ohne das blieb im Admin-Bereich nur ein Log-Eintrag: die Seite
+ * kuendigte "endgültig löschen" an, und danach passierte wortlos nichts.
+ * Die Space-Namen bleiben hier aussen vor — die Meldung reist als
+ * Kennung in der Adresszeile, und dort gehoeren sie nicht hin.
+ */
+export function adminDeletionMessage(code: DeletionReason): string {
+  return code === "letzter-admin"
+    ? "Konto nicht gelöscht: Es ist der letzte aktive Instanz-Admin. Ernenne zuerst jemand anderen."
+    : "Konto nicht gelöscht: Die Person ist alleinige Eigentümerin mindestens eines Space. Übergib die Rolle zuerst.";
+}
+
+/** Gehoert die Zeichenkette aus der Adresszeile zu einer bekannten Ablehnung? */
+export function isDeletionReason(value: unknown): value is DeletionReason {
+  return value === "letzter-admin" || value === "verwaiste-spaces";
 }
