@@ -25,6 +25,7 @@ import {
   spaceSlugFromPath,
   splitHighlights,
 } from "@/lib/palette";
+import { toggleTheme } from "@/lib/theme";
 import type { SearchResponse } from "@/app/api/search/route";
 import type { FavoritesResponse } from "@/app/api/favorites/route";
 import { createPageAction } from "@/app/s/[slug]/actions";
@@ -183,12 +184,6 @@ export function CommandPalette() {
       clearTimeout(t);
     };
   }, [open, query]);
-
-  function toggleTheme() {
-    const next = !document.documentElement.classList.contains("dark");
-    document.documentElement.classList.toggle("dark", next);
-    localStorage.setItem("theme", next ? "dark" : "light");
-  }
 
   function go(href: string) {
     close();

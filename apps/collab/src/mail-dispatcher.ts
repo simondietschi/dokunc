@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { Redis } from "ioredis";
 import type { Logger } from "pino";
 import {
-  isAtLeast,
+  canSeePageWithGrant,
   prisma,
   strongestSpaceRole,
   type SpaceRole,
@@ -332,18 +332,26 @@ export function startMailDispatcher(opts: {
       }
     }
 
-    /** Darf diese Person Titel und Auszug dieser Seite per Mail sehen? */
+    /**
+     * Darf diese Person Titel und Auszug dieser Seite per Mail sehen?
+     *
+     * Die Entscheidung trifft `canSeePageWithGrant` — dieselbe Regel wie
+     * beim Oeffnen der Seite, nur mit den oben gebuendelt geladenen
+     * Rollen und Freigaben statt zwei Abfragen je Zeile. Hier noch
+     * einmal von Hand nachgebaut (Rollenschwelle der Space-Verwaltung,
+     * Vorrang der Freigabe) wuerde eine Aenderung an der Regel an dieser
+     * Stelle vorbeigehen: die Mails truegen dann weiter hinaus, was die
+     * App schon nicht mehr zeigt.
+     */
     const mayRead = (
       userId: string,
       page: { spaceId: string; accessRootId: string | null },
-    ): boolean => {
-      const role = roles.get(`${userId}:${page.spaceId}`);
-      if (!role) return false;
-      if (!page.accessRootId) return true;
-      // Die Space-Verwaltung sieht auch geschützte Seiten.
-      if (isAtLeast(role, "ADMIN")) return true;
-      return granted.has(`${userId}:${page.accessRootId}`);
-    };
+    ): boolean =>
+      canSeePageWithGrant(
+        roles.get(`${userId}:${page.spaceId}`),
+        page.accessRootId,
+        granted.has(`${userId}:${page.accessRootId}`),
+      );
 
     const candidates: DispatchCandidate[] = [];
     const orphanIds: string[] = [];

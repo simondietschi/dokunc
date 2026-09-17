@@ -1,57 +1,26 @@
 import "server-only";
 import { randomUUID } from "node:crypto";
-import { Redis } from "ioredis";
+import {
+  ACCESS_REVOKED_CHANNEL,
+  DOC_RESET_CHANNEL,
+  PAGE_ACCESS_CHANNEL,
+  type AccessRevokedMessage,
+  type DocResetMessage,
+  type PageAccessMessage,
+} from "@dokunc/editor";
 import { log } from "./log";
+import { sharedRedis } from "./redis";
 
 /**
- * Kanal, ueber den die Web-App den Collab-Server bittet, das Yjs-Dokument
- * einer Seite neu aus der Datenbank aufzubauen.
+ * Die Gegenstelle dieser Nachrichten ist apps/collab/src/server.ts.
+ * Kanalnamen und Nutzlasten stehen deshalb im gemeinsamen Paket
+ * (packages/editor/src/collab-protocol.ts) und nicht hier: eine
+ * einseitige Umbenennung liesse den Collab-Server stumm weiterlaufen.
  *
- * Hintergrund: Hocuspocus haelt ein geoeffnetes Dokument im Speicher.
- * Wer serverseitig nur `Page.content` schreibt (Wiederherstellen einer
- * Version), aendert damit nichts am laufenden Dokument — der naechste
- * `onStoreDocument` schreibt den alten Speicherstand zurueck und die
- * Wiederherstellung ist stillschweigend verpufft. Deshalb die Nachricht
- * an den Collab-Server, der das Dokument ueber eine Direktverbindung
- * ersetzt (und damit auch alle offenen Editoren live nachzieht).
+ * Eigene Verbindung, kein Fehler-Rueckruf: jede Sendefunktion faengt
+ * ihren Fehler selbst und meldet ihn mit dem betroffenen Objekt.
  */
-export const DOC_RESET_CHANNEL = "dokunc:doc-reset";
-
-/**
- * Kanal, ueber den die Web-App bittet, die offenen Collab-Verbindungen
- * einer Person in einem Space zu schliessen. Ohne das behaelt jemand,
- * dem der Zugriff gerade entzogen (oder auf VIEWER gesetzt) wurde, seine
- * bestehende WebSocket-Sitzung samt Schreibrecht — bis er die Seite neu
- * laedt. Die Pruefung in `onAuthenticate` laeuft nur beim Verbinden.
- */
-export const ACCESS_REVOKED_CHANNEL = "dokunc:access-revoked";
-
-/**
- * Kanal fuer den Entzug auf einer EINZELNEN Seite.
- *
- * `ACCESS_REVOKED_CHANNEL` trennt eine bestimmte Person aus einem ganzen
- * Space. Wird dagegen eine Seite geschuetzt oder eine Freigabe entzogen,
- * aendert sich nicht die Mitgliedschaft, sondern wer diese eine Seite
- * (und ihren Unterbaum) noch sehen darf. Das betrifft mehrere Personen
- * gleichzeitig und laesst sich nur am Server entscheiden, der die
- * offenen Verbindungen kennt.
- */
-export const PAGE_ACCESS_CHANNEL = "dokunc:page-access";
-
-export type DocResetMessage = { pageId: string; nonce: string };
-export type AccessRevokedMessage = { userId: string; spaceId: string };
-export type PageAccessMessage = { pageId: string };
-
-let redis: Redis | null | undefined;
-function client(): Redis | null {
-  if (redis !== undefined) return redis;
-  const url = process.env.REDIS_URL;
-  redis = url
-    ? new Redis(url, { maxRetriesPerRequest: 1, lazyConnect: true })
-    : null;
-  redis?.on("error", () => {});
-  return redis;
-}
+const client = sharedRedis({ retries: 1, lazy: true });
 
 /**
  * Collab-Server bitten, das Dokument der Seite neu zu laden.

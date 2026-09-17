@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@dokunc/db";
 import { audit } from "./audit";
 import { decideRegistration } from "./registration";
+import { BCRYPT_COST } from "./password-policy";
 import type { OidcClaims } from "./oidc";
 
 /**
@@ -117,7 +118,13 @@ export async function resolveOidcUser(
       name: claims.name || claims.email.split("@")[0],
       // Kein nutzbares Passwort: die Anmeldung läuft über den Anbieter.
       // Wer eines will, setzt es über „Passwort vergessen".
-      passwordHash: await bcrypt.hash(randomBytes(32).toString("hex"), 10),
+      // Kostenfaktor trotzdem aus lib/password-policy und nicht nackt:
+      // sonst trüge ausgerechnet dieser Hash dauerhaft die alte Zahl in
+      // sich, falls BCRYPT_COST einmal angehoben wird.
+      passwordHash: await bcrypt.hash(
+        randomBytes(32).toString("hex"),
+        BCRYPT_COST,
+      ),
       isAdmin: decision.isAdmin,
       oidcSubject: claims.subject,
       oidcIssuer: issuer,

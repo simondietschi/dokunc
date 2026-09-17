@@ -9,7 +9,8 @@ import { requireUser } from "@/lib/current-user";
 import { createSession, destroySession } from "@/lib/session";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
-import { canDeleteUser } from "@/lib/account-deletion";
+import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
+import { canDeleteUser, orphanedSpacesFor } from "@/lib/account-deletion";
 
 export type AccountState = { error?: string; success?: string } | undefined;
 
@@ -27,7 +28,16 @@ export async function updateProfileAction(
 
 const pwSchema = z.object({
   current: z.string().min(1, "Aktuelles Passwort fehlt"),
-  next: z.string().min(8, "Neues Passwort min. 8 Zeichen"),
+  // Mindestlänge aus lib/password-policy: dieselbe Zahl gilt bei
+  // Registrierung und Reset. Stünde sie hier nackt, liesse sich die
+  // Vorgabe anheben und ausgerechnet der Passwortwechsel bliebe zurück —
+  // das schwächste Schema entscheidet dann über das ganze Konto.
+  next: z
+    .string()
+    .min(
+      PASSWORD_MIN_LENGTH,
+      `Neues Passwort min. ${PASSWORD_MIN_LENGTH} Zeichen`,
+    ),
 });
 
 export async function changePasswordAction(
@@ -55,7 +65,12 @@ export async function changePasswordAction(
   const updated = await prisma.user.update({
     where: { id: dbUser.id },
     data: {
-      passwordHash: await bcrypt.hash(parsed.data.next, 10),
+      // Kostenfaktor aus lib/password-policy, nicht nackt: die Anmeldung
+      // hasht auch gegen einen Blindwert mit demselben Faktor, damit
+      // unbekannte Adressen nicht schneller antworten. Bliebe hier eine
+      // eigene Zahl stehen, ginge diese Deckung beim nächsten Anheben
+      // verloren.
+      passwordHash: await bcrypt.hash(parsed.data.next, BCRYPT_COST),
       tokenVersion: { increment: 1 },
     },
   });
@@ -143,45 +158,6 @@ export async function revokeSessionAction(form: FormData) {
     redirect("/login");
   }
   revalidatePath("/account");
-}
-
-/**
- * Spaces, in denen diese Person der einzige Eigentümer ist.
- * Gemeinsame Grundlage für Konto-Löschung im Konto und im Admin-Bereich.
- */
-export async function orphanedSpacesFor(userId: string): Promise<string[]> {
-  // "use server" macht jeden Export dieser Datei zu einem aufrufbaren
-  // Endpunkt, auch diesen Helfer ohne Formular. Ohne die Schranke könnte
-  // darüber zu jeder beliebigen userId abgefragt werden, welche Spaces ihr
-  // allein gehören — Space-Namen inklusive.
-  const me = await requireUser();
-  if (me.id !== userId && !me.isAdmin) {
-    throw new Error("Nicht berechtigt.");
-  }
-
-  const owned = await prisma.spaceMember.findMany({
-    where: { userId, role: "OWNER" },
-    select: { spaceId: true, space: { select: { name: true } } },
-  });
-  if (owned.length === 0) return [];
-
-  // Nur aktive Konten zählen: ein deaktivierter Mit-Eigentümer kann den
-  // Space nicht übernehmen, der Space wäre also trotzdem verwaist.
-  const counts = await prisma.spaceMember.groupBy({
-    by: ["spaceId"],
-    where: {
-      spaceId: { in: owned.map((o) => o.spaceId) },
-      role: "OWNER",
-      user: { isActive: true },
-    },
-    _count: { _all: true },
-  });
-  const single = new Set(
-    counts.filter((c) => c._count._all <= 1).map((c) => c.spaceId),
-  );
-  return owned
-    .filter((o) => single.has(o.spaceId))
-    .map((o) => o.space.name);
 }
 
 /**

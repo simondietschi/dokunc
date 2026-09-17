@@ -52,21 +52,13 @@ export function uploadLimitMb(kind: "IMAGE" | "FILE"): number {
 
 /**
  * Bildtypen, die inline im Editor/Browser angezeigt werden -> Endung.
- * SVG ist bewusst ausgeschlossen (kann Skripte enthalten): eine SVG-
- * Datei wird als gewoehnlicher Anhang gespeichert und nur zum Download
- * ausgeliefert, nie inline gerendert.
+ * Die Liste selbst steht in lib/image-types und wird hier nur
+ * weitergereicht: derselbe Satz Typen bestimmt das accept-Attribut der
+ * Dateidialoge im Browser, und dieses Modul ist "server-only" — der
+ * Client koennte es gar nicht laden. Hier weiterexportiert, damit die
+ * bestehenden Importe aus @/lib/uploads unveraendert bleiben.
  */
-export const ALLOWED_IMAGE_TYPES: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/gif": "gif",
-  "image/webp": "webp",
-};
-
-/** True, wenn der Typ ein inline darstellbares Bild ist. */
-export function isInlineImageType(mimeType: string): boolean {
-  return Object.prototype.hasOwnProperty.call(ALLOWED_IMAGE_TYPES, mimeType);
-}
+export { ALLOWED_IMAGE_TYPES, isInlineImageType } from "./image-types";
 
 const FALLBACK_MIME = "application/octet-stream";
 

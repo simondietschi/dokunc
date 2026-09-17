@@ -213,6 +213,19 @@ export async function POST(req: Request) {
   const storedName = `${randomBytes(16).toString("hex")}.${ext}`;
 
   const fullPath = path.join(UPLOAD_DIR, storedName);
+  // Die Bytes gehen unveraendert auf die Platte: kein Neucodieren, kein
+  // Entfernen von Metadaten. Ein Foto behaelt damit seine EXIF-Daten —
+  // GPS-Ort, Aufnahmezeit, Geraet — und /api/files, der Freigabelink und
+  // die Einbettung im Export liefern es genauso wieder aus. Wer ein Bild
+  // in eine Seite zieht, teilt also womoeglich mehr, als er sieht.
+  //
+  // Bewusst nicht hier geloest: Metadaten sauber zu strippen heisst, die
+  // Datei neu zu schreiben (JPEG-APPn-Segmente, PNG-Textchunks), und das
+  // will entweder eine Bildbibliothek (sharp) — eine neue Abhaengigkeit,
+  // die dieses Projekt nicht aufnehmen will — oder einen eigenen,
+  // verlustfreien Umschreiber samt Entscheidung, welche Segmente
+  // (Orientierung, Farbprofil) erhalten bleiben muessen, damit das Bild
+  // nicht gedreht oder verfaerbt herauskommt.
   try {
     await mkdir(UPLOAD_DIR, { recursive: true });
     await writeFile(fullPath, bytes);

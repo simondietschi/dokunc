@@ -17,7 +17,18 @@ import {
 } from "@dokunc/db";
 import {
   richExtensions,
+  // Die Protokollwerte, auf die sich Web-App und Collab-Server einigen
+  // muessen (Feldname, Ticket-Audience, Redis-Kanaele), stehen im
+  // gemeinsamen Paket: packages/editor/src/collab-protocol.ts. Doppelt
+  // gepflegt faellt eine einseitige Umbenennung nirgends auf — der
+  // Server abonnierte einen Kanal, auf dem niemand mehr sendet, und
+  // Wiederherstellung wie Zugriffsentzug blieben stumm liegen.
   COLLAB_FIELD,
+  COLLAB_AUDIENCE,
+  NOTIFY_CHANNEL_PREFIX,
+  DOC_RESET_CHANNEL,
+  ACCESS_REVOKED_CHANNEL,
+  PAGE_ACCESS_CHANNEL,
   extractWikiLinkIds,
   extractMentionIds,
   chunkText,
@@ -46,31 +57,6 @@ function resolveAppSecret(): string {
 
 const SECRET = new TextEncoder().encode(resolveAppSecret());
 const extensions = richExtensions();
-
-/**
- * Audience der Collab-Tickets. Gegenstück: apps/web/src/lib/collab-ticket.ts.
- * Session-Cookies tragen diese Audience NICHT — ein erbeutetes
- * Sitzungstoken taugt hier also nicht als Eintrittskarte, und ein
- * Ticket nicht als Sitzung.
- */
-const COLLAB_AUDIENCE = "dokunc-collab";
-
-/**
- * Kanal für Live-Benachrichtigungen.
- * Gegenstück: apps/web/src/lib/notify-bus.ts.
- */
-const NOTIFY_CHANNEL_PREFIX = "dokunc:notify:";
-
-/**
- * Kanal, über den die Web-App bittet, ein Dokument neu aus der Datenbank
- * aufzubauen (Wiederherstellen einer Version). Muss zu
- * apps/web/src/lib/collab-sync.ts passen.
- */
-const DOC_RESET_CHANNEL = "dokunc:doc-reset";
-/** Muss zu apps/web/src/lib/collab-sync.ts passen. */
-const ACCESS_REVOKED_CHANNEL = "dokunc:access-revoked";
-/** Entzug auf einer einzelnen Seite (Schutz gesetzt, Freigabe entzogen). */
-const PAGE_ACCESS_CHANNEL = "dokunc:page-access";
 
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
 const VERSION_INTERVAL_MS = 2 * 60 * 1000;

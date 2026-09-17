@@ -6,6 +6,7 @@ import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
+import { log } from "@/lib/log";
 import { rateLimit, resetLimit } from "@/lib/rate-limit";
 import { seal, unseal } from "@/lib/secret-box";
 import { qrSvg } from "@/lib/qr";
@@ -91,9 +92,37 @@ export async function confirmTotpAction(
     select: { totpSecret: true, totpEnabledAt: true },
   });
   if (row?.totpEnabledAt) return { error: "Zwei-Faktor ist bereits aktiv." };
-  const secret = row?.totpSecret ? unseal(row.totpSecret) : null;
-  if (!secret) {
+  // Kein Geheimnis in der Datenbank: die Einrichtung wurde nie begonnen
+  // oder von `cancelTotpSetupAction` wieder weggeraeumt. Neu beginnen ist
+  // hier wirklich der Weg.
+  if (!row?.totpSecret) {
     return { error: "Die Einrichtung ist abgelaufen. Bitte neu beginnen." };
+  }
+  const secret = unseal(row.totpSecret);
+  if (!secret) {
+    /**
+     * Das Geheimnis steht sehr wohl da — nur `unseal` kommt nicht daran:
+     * APP_SECRET hat gewechselt oder der Wert ist beschaedigt. "Die
+     * Einrichtung ist abgelaufen" schickte genau dann im Kreis, denn ein
+     * neuer Anlauf legt ein Geheimnis an, das sich nach dem Neustart
+     * ebenso wenig lesen laesst. Derselbe Fall wird in (auth)/actions.ts
+     * `completeTotpLoginAction` schon unterschieden: eigener Text, laut
+     * ins Log und ein Vermerk im Audit — ohne die beiden faellt ein
+     * verlorener APP_SECRET im Betrieb nirgends auf.
+     */
+    log.error({ userId: user.id }, "totp secret unreadable");
+    await audit({
+      // Es gibt keine eigene Aktion fuer den gescheiterten Einrichtungs-
+      // schritt; `during` haelt fest, dass es nicht die Anmeldung war.
+      action: "auth.login_failed",
+      actorId: user.id,
+      metadata: { reason: "totp_secret_unreadable", during: "totp_setup" },
+    });
+    return {
+      error:
+        "Der zweite Faktor lässt sich zurzeit nicht prüfen. Ein neuer " +
+        "Anlauf hilft nicht — wende dich an die Administration.",
+    };
   }
   const step = verifyTotpStep(secret, code);
   if (step === null) {

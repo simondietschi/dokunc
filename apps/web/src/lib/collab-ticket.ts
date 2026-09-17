@@ -1,5 +1,9 @@
 import "server-only";
 import { SignJWT } from "jose";
+// Die Audience ist ein Protokollwert: der Collab-Server verlangt genau
+// sie beim Pruefen des Tickets. Deshalb kommt sie aus dem gemeinsamen
+// Paket und steht nicht zweimal im Code.
+import { COLLAB_AUDIENCE } from "@dokunc/editor";
 import { getAppSecret } from "./secret";
 
 /**
@@ -15,7 +19,6 @@ import { getAppSecret } from "./secret";
  * gebunden an genau eine Seite, gültig für zwei Minuten. Der Provider
  * holt vor jedem Verbindungsversuch ein frisches.
  */
-export const COLLAB_AUDIENCE = "dokunc-collab";
 export const COLLAB_TICKET_TTL_SEC = 120;
 
 let _secret: Uint8Array | null = null;

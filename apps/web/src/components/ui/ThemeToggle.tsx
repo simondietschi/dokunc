@@ -3,19 +3,20 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { isDarkTheme, toggleTheme } from "@/lib/theme";
 
 export function ThemeToggle({ className }: { className?: string }) {
   const [dark, setDark] = useState<boolean | null>(null);
 
+  // Erst nach dem Mount lesen: das Inline-Skript aus app/layout setzt die
+  // Klasse im Browser, der Server kennt sie nicht. `null` heisst "noch
+  // unbekannt" und rendert einen Platzhalter statt eines falschen Symbols.
   useEffect(() => {
-    setDark(document.documentElement.classList.contains("dark"));
+    setDark(isDarkTheme());
   }, []);
 
   function toggle() {
-    const next = !document.documentElement.classList.contains("dark");
-    document.documentElement.classList.toggle("dark", next);
-    localStorage.setItem("theme", next ? "dark" : "light");
-    setDark(next);
+    setDark(toggleTheme());
   }
 
   return (

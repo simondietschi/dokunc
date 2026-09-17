@@ -5,6 +5,7 @@ import { prisma } from "@dokunc/db";
 import { getAppSecret } from "./secret";
 import { clientIp } from "./client-ip";
 import { durationToSeconds } from "./duration";
+import { log } from "./log";
 
 // Lazy + memoisiert: NICHT beim Modul-Import berechnen — `next build`
 // läuft mit NODE_ENV=production und würde sonst ohne APP_SECRET schon
@@ -153,6 +154,57 @@ export async function getUserId(): Promise<string | null> {
 
 /** Abstand, in dem `lastSeenAt` nachgeführt wird. */
 const TOUCH_INTERVAL_MS = 10 * 60 * 1000;
+
+/**
+ * Untätigkeitsgrenze der Sitzung in Sekunden, oder null für "keine".
+ *
+ * Bisher endete eine Anmeldung allein mit ihrer absoluten Laufzeit
+ * (JWT_EXPIRES_IN, Vorgabe sieben Tage): ein liegen gelassener,
+ * angemeldeter Browser blieb die vollen sieben Tage offen. Wer das
+ * nicht will — geteilte Geräte, Empfang, Schulungsraum — setzt
+ * SESSION_IDLE_TIMEOUT im Format von JWT_EXPIRES_IN ("12h", "30m").
+ *
+ * Nicht gesetzt heisst ausdrücklich "aus", und das bleibt die Vorgabe:
+ * ein fester Wert würde jede bestehende Instanz beim nächsten Update
+ * ohne Ankündigung reihenweise abmelden.
+ *
+ * Nach unten begrenzt auf das Doppelte des Nachführtakts, weil
+ * `lastSeenAt` nur auf TOUCH_INTERVAL_MS genau ist (siehe
+ * `touchSession`): eine Grenze darunter würde Leute mitten im
+ * Weiterarbeiten hinauswerfen, deren Zeitstempel gerade noch nicht
+ * nachgeführt wurde.
+ */
+export function sessionIdleLimitSeconds(): number | null {
+  const raw = process.env.SESSION_IDLE_TIMEOUT?.trim();
+  if (!raw || ["0", "off", "no", "false"].includes(raw.toLowerCase())) {
+    return null;
+  }
+  // Fallback 0: ein unlesbarer Wert soll nicht still auf die Laufzeit
+  // des Sitzungs-Tokens zurückfallen, sondern auffallen.
+  const seconds = durationToSeconds(raw, 0);
+  if (seconds <= 0) {
+    log.warn(
+      { SESSION_IDLE_TIMEOUT: raw },
+      "SESSION_IDLE_TIMEOUT ist unlesbar — keine Untätigkeitsgrenze aktiv",
+    );
+    return null;
+  }
+  return Math.max(seconds, (2 * TOUCH_INTERVAL_MS) / 1000);
+}
+
+/**
+ * Liegt die letzte Aktivität jenseits der Grenze? Rein, damit prüfbar.
+ *
+ * Ohne Grenze immer false — dann gilt weiterhin nur `expiresAt`.
+ */
+export function isSessionIdle(
+  lastSeenAt: Date,
+  limitSeconds: number | null,
+  now = Date.now(),
+): boolean {
+  if (limitSeconds === null) return false;
+  return now - lastSeenAt.getTime() > limitSeconds * 1000;
+}
 
 /**
  * Hält den Zeitstempel der Sitzung grob aktuell.

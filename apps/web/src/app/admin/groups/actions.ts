@@ -5,6 +5,7 @@ import { prisma, Prisma } from "@dokunc/db";
 import { requireAdmin } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
+import { revokeCollabAccess } from "@/lib/collab-sync";
 
 /**
  * Gruppenverwaltung.
@@ -160,6 +161,25 @@ export async function removeGroupMemberAction(form: FormData) {
       targetId: groupId,
       metadata: { userId },
     });
+    // Offene Editor-Sitzungen trennen — wie in den Space-Gruppen-Pfaden
+    // (members/actions.ts, revokeGroupCollabAccess). Das Schreibrecht
+    // prueft der Collab-Server nur beim Verbinden; ohne diese Nachricht
+    // schreibt weiter, wer den Zugang gerade mit der Mitgliedschaft
+    // verloren hat — bis zur naechsten wiederkehrenden Pruefung, also
+    // bis zu einer Minute lang.
+    //
+    // Betroffen ist jeder Space, in dem die Gruppe eine Rolle hatte: die
+    // Gruppe war womoeglich der einzige Grund, warum die Person ihn
+    // ueberhaupt sehen durfte. Wer den Space auch direkt oder ueber eine
+    // zweite Gruppe hat, verbindet sich danach neu und behaelt, was ihm
+    // dann noch bleibt — dieselbe Folge wie bei einer Rollenaenderung.
+    const spaces = await prisma.spaceGroup.findMany({
+      where: { groupId },
+      select: { spaceId: true },
+    });
+    for (const s of spaces) {
+      await revokeCollabAccess(userId, s.spaceId);
+    }
   }
   revalidatePath("/admin/groups");
 }

@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { CommandPalette } from "@/components/CommandPalette";
 import { ToastProvider } from "@/components/ui/Toast";
+import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -25,9 +26,6 @@ export const viewport: Viewport = {
   ],
 };
 
-// Setzt das Theme vor dem ersten Paint (kein Flackern).
-const themeScript = `(function(){try{var t=localStorage.getItem('theme');var d=t?t==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
-
 export default function RootLayout({
   children,
 }: {
@@ -40,7 +38,10 @@ export default function RootLayout({
       suppressHydrationWarning
     >
       <head>
-        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
+        {/* Setzt das Theme vor dem ersten Paint (kein Flackern). Bleibt
+            inline; Schluessel und Klassenname kommen aus lib/theme, damit
+            Skript und Umschalter dieselben verwenden. */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className="font-sans">
         <a href="#main" className="skip-link">

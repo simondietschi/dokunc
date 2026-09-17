@@ -1,7 +1,8 @@
 import "server-only";
-import { Redis } from "ioredis";
+import type { Redis } from "ioredis";
 import { clientIp } from "./client-ip";
 import { log } from "./log";
+import { sharedRedis } from "./redis";
 
 /**
  * Ein Redis-Ausfall schaltet die Bremse still auf die prozesslokale
@@ -17,16 +18,12 @@ function redisFailed(op: string, e: unknown): void {
   log.warn({ err: e, op }, "rate limit: redis nicht erreichbar");
 }
 
-let redis: Redis | null | undefined;
-function client(): Redis | null {
-  if (redis !== undefined) return redis;
-  const url = process.env.REDIS_URL;
-  redis = url
-    ? new Redis(url, { maxRetriesPerRequest: 1, lazyConnect: true })
-    : null;
-  redis?.on("error", () => {});
-  return redis;
-}
+/**
+ * Eigene Verbindung, kein Fehler-Rueckruf: ein Ausfall faellt ohnehin
+ * beim naechsten Befehl auf und wird dort ueber `redisFailed` gemeldet
+ * — mit der Stelle, an der er wirkt.
+ */
+const client = sharedRedis({ retries: 1, lazy: true });
 
 // Fallback, wenn kein Redis erreichbar ist (pro Instanz).
 const mem = new Map<string, { n: number; reset: number }>();

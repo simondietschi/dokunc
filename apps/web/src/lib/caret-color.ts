@@ -2,11 +2,15 @@
  * Farbtopf fuer fremde Cursor im Editor.
  *
  * Der erste Eintrag ist absichtlich die Akzentfarbe der Anwendung. Sie
- * steht hier als Literal, weil dieselbe Farbe an drei weiteren Orten
+ * steht hier als Literal, weil dieselbe Farbe an mehreren Orten
  * ausgeschrieben ist, die sich gegenseitig nicht lesen koennen:
- * `--accent` in app/globals.css sowie Knopf und Link in den Mail-
- * Vorlagen (packages/mail). Wer die Akzentfarbe aendert, muss alle vier
- * anfassen — sonst behalten Mails und der erste Cursor den alten Ton.
+ * `--accent` und `--accent-soft` in app/globals.css, der Notfall-Knopf
+ * in app/global-error.tsx (rendert ohne Stylesheet, kann die Variable
+ * also nicht nutzen), der Verlauf in app/icon.svg sowie Knopf und Link
+ * in den Mail-Vorlagen (packages/mail/src/index.ts und notifications.ts
+ * — Mailprogramme lesen keine CSS-Variablen). Wer die Akzentfarbe
+ * aendert, muss alle anfassen; sonst behalten Mails, Favicon,
+ * Fehlerseite und der erste Cursor den alten Ton.
  */
 export const CARET_COLORS = [
   "#5e60e8",

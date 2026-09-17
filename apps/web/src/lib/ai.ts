@@ -1,6 +1,13 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { RetrievedChunk } from "./retrieval";
+import { type AssistAction, isAssistAction } from "./ai-actions";
+
+// Die Aktionsnamen selbst liegen in ./ai-actions (ohne "server-only"),
+// weil das Menue im Editor dieselbe Liste braucht. Hier weitergereicht,
+// damit die Route-Handler wie bisher alles aus "@/lib/ai" beziehen.
+export { isAssistAction };
+export type { AssistAction };
 
 /**
  * Vorgabemodell. Bewusst `||` und nicht `??`: docker-compose.yml reicht
@@ -102,25 +109,22 @@ export async function askWiki(
   return { answer, sources };
 }
 
-const ASSIST_ACTIONS = {
+/**
+ * Der Prompt je Aktion. Ein Record ueber `AssistAction`: kommt in
+ * ./ai-actions ein Name dazu, schlaegt hier der Typcheck fehl, statt
+ * dass der neue Menuepunkt zur Laufzeit mit `undefined` als Aufgabe
+ * losgeschickt wird.
+ *
+ * Die Texte bleiben serverseitig — im Client-Bundle waeren sie sowohl
+ * unnoetiges Gewicht als auch frei editierbar.
+ */
+const ASSIST_PROMPTS: Record<AssistAction, string> = {
   improve: "Verbessere den folgenden Text sprachlich (Klarheit, Stil, Rechtschreibung). Behalte Bedeutung, Sprache und Ton bei. Gib NUR den überarbeiteten Text zurück, ohne Kommentar.",
   summarize: "Fasse den folgenden Text prägnant zusammen (Stichpunkte oder kurzer Absatz, je nachdem was besser passt). Gib NUR die Zusammenfassung zurück.",
   translate_en: "Übersetze den folgenden Text ins Englische. Gib NUR die Übersetzung zurück.",
   translate_de: "Übersetze den folgenden Text ins Deutsche. Gib NUR die Übersetzung zurück.",
   continue: "Setze den folgenden Wiki-Text sinnvoll fort (1-3 Absätze, gleicher Stil und gleiche Sprache). Gib NUR die Fortsetzung zurück, ohne den Ausgangstext zu wiederholen.",
-} as const;
-
-type AssistAction = keyof typeof ASSIST_ACTIONS;
-
-export function isAssistAction(v: unknown): v is AssistAction {
-  // hasOwnProperty statt `in`: `in` findet auch geerbte Schluessel, mit
-  // action="toString" kaeme sonst Function.prototype.toString als Prompt
-  // durch die Allowlist.
-  return (
-    typeof v === "string" &&
-    Object.prototype.hasOwnProperty.call(ASSIST_ACTIONS, v)
-  );
-}
+};
 
 const ASSIST_SYSTEM = `Du bist ein Schreib-Assistent in einem Team-Wiki (dokunc).
 Du erhältst eine Aufgabe und einen Text. Antworte ausschließlich mit dem Ergebnis —
@@ -144,7 +148,7 @@ export async function assist(
     messages: [
       {
         role: "user",
-        content: `${ASSIST_ACTIONS[action]}\n\nText:\n${text}`,
+        content: `${ASSIST_PROMPTS[action]}\n\nText:\n${text}`,
       },
     ],
   });

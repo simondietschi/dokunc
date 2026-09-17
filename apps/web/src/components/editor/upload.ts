@@ -5,7 +5,7 @@ import type { EditorView } from "@tiptap/pm/view";
 import { Fragment, Slice, type Node as PMNode } from "@tiptap/pm/model";
 
 /** Antwort von /api/upload. */
-type UploadResult = {
+export type UploadResult = {
   url: string;
   name: string;
   size: number;
@@ -13,23 +13,48 @@ type UploadResult = {
   kind: "image" | "file";
 };
 
-type UploadContext = { spaceId: string; pageId: string };
+export type UploadContext = { spaceId: string; pageId: string };
 
-/** Nur diese Typen werden inline als Bild eingebettet (SVG bewusst nicht). */
-export const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
+/**
+ * Art der Datei, wenn der Aufrufer sie schon kennt (Feld `kind` von
+ * /api/upload): "image" erzwingt die strenge Bildpruefung und lehnt
+ * alles andere ab, "file" speichert auch ein Bild als Anhang. Ohne
+ * Angabe entscheiden die Magic Bytes — das ist der Fall fuer alles, was
+ * im Dokument landet, denn dort sollen Bild und Anhang beide erlaubt
+ * sein.
+ */
+export type UploadKind = "image" | "file";
+
+/**
+ * Nur diese Typen werden inline als Bild eingebettet (SVG bewusst
+ * nicht). Abgeleitet aus lib/image-types, damit der Dateidialog
+ * dieselbe Liste anbietet, die /api/upload auch annimmt — hier
+ * weiterexportiert, damit die Aufrufer im Editor bei einem Import
+ * bleiben.
+ */
+export { IMAGE_ACCEPT } from "@/lib/image-types";
 
 /**
  * Datei an /api/upload schicken. Wirft mit der Server-Fehlermeldung
  * (z. B. "Datei zu gross (max. 50 MB)"), damit der Aufrufer sie zeigen kann.
+ *
+ * Exportiert, weil es mehr als einen Upload-Weg gibt: das Titelbild
+ * braucht nur die fertige URL einer einzelnen Datei und hatte dafuer
+ * eine zweite, eigene Fassung derselben Anfrage. Eine Fassung, damit
+ * Feldnamen und Fehlerbehandlung nicht auseinanderlaufen.
  */
-async function uploadFile(
+export async function uploadFile(
   file: File,
   ctx: UploadContext,
+  kind?: UploadKind,
 ): Promise<UploadResult> {
   const body = new FormData();
   body.set("file", file);
   body.set("spaceId", ctx.spaceId);
   body.set("pageId", ctx.pageId);
+  // Nur setzen, wenn der Aufrufer sich festlegt: ein leeres Feld liesse
+  // die Route auf "file" fallen und ein Bild waere nur noch Anhang.
+  if (kind) body.set("kind", kind);
   const res = await fetch("/api/upload", { method: "POST", body });
   if (!res.ok) {
     let message = "Upload fehlgeschlagen.";
@@ -91,6 +116,7 @@ export async function uploadAndInsert(
   files: File[],
   ctx: UploadContext,
   pos?: number,
+  onError?: (reason: unknown) => void,
 ): Promise<void> {
   const errors: string[] = [];
   const nodes: PMNode[] = [];
@@ -106,7 +132,16 @@ export async function uploadAndInsert(
     }
   }
   insertBlocks(view, nodes, pos);
-  if (errors.length) alert(errors.join("\n"));
+  if (!errors.length) return;
+  // Der Aufrufer meldet den Fehler, wenn er kann: `useToast` ist ein
+  // React-Hook und hier, in einem reinen Modul, nicht aufrufbar. Ohne
+  // `onError` bleibt nur `alert` — ein blockierender Systemdialog, aber
+  // immer noch besser als ein Upload, der stillschweigend nichts tut.
+  // Als Error uebergeben, weil die Handler im Editor genau daraus die
+  // Meldung ziehen (`reason instanceof Error ? reason.message : …`).
+  const reason = new Error(errors.join("\n"));
+  if (onError) onError(reason);
+  else alert(reason.message);
 }
 
 /**
@@ -116,7 +151,12 @@ export async function uploadAndInsert(
 export function pickAndUpload(
   editor: Editor,
   ctx: UploadContext,
-  opts: { accept?: string; range?: Range } = {},
+  opts: {
+    accept?: string;
+    range?: Range;
+    /** Fehlermeldung der fehlgeschlagenen Dateien; siehe uploadAndInsert. */
+    onError?: (reason: unknown) => void;
+  } = {},
 ): void {
   const input = document.createElement("input");
   input.type = "file";
@@ -149,7 +189,9 @@ export function pickAndUpload(
     let chain = editor.chain().focus();
     if (opts.range) chain = chain.deleteRange(opts.range);
     chain.run();
-    if (files.length) void uploadAndInsert(editor.view, files, ctx);
+    if (files.length) {
+      void uploadAndInsert(editor.view, files, ctx, undefined, opts.onError);
+    }
   };
   input.addEventListener("cancel", clearRange);
   window.addEventListener("focus", onWindowFocus);

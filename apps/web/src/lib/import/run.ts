@@ -37,6 +37,14 @@ const MAX_PAGE_FILE_BYTES = 5 * 1024 * 1024; // 5 MB
 type ImportResult = {
   format: ImportFormat;
   pages: number;
+  /**
+   * Angelegte Seiten, die leer geblieben sind (Konvertierung oder
+   * Speichern fehlgeschlagen). Gehoert in die Antwort, weil das Formular
+   * sonst nicht unterscheiden kann, ob ein Import glatt durchlief oder
+   * nur zum Teil: `pages` sieht in beiden Faellen gleich aus, und der
+   * Grund steht nur im zugeklappten Hinweis-Block.
+   */
+  failed: number;
   attachments: number;
   warnings: string[];
   roots: { id: string; title: string }[];
@@ -88,6 +96,14 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
 
   // --- Schritt 2: Seiten anlegen -------------------------------------
   const created = new Map<ImportNode, Created>();
+  // Bekannte Luecke: zwei gleichzeitige Importe in dieselbe Geschwister-
+  // reihe lesen hier dasselbe Maximum und vergeben danach dieselben
+  // Positionen; die Reihenfolge in der Seitenleiste mischt sich dann.
+  // Das aggregate in die Transaktion zu ziehen behebt das NICHT — unter
+  // READ COMMITTED sieht jede Transaktion die noch nicht committeten
+  // Zeilen der anderen ohnehin nicht. Zu schliessen ist es nur dort, wo
+  // Positionen ueberhaupt vergeben werden, und das ist mehr als diese
+  // Datei (auch createPageAction vergibt sie so).
   const start =
     ((
       await prisma.page.aggregate({
@@ -306,6 +322,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
   return {
     format,
     pages: count - failed,
+    failed,
     attachments,
     warnings: warnings.toArray(),
     roots: roots.map((r) => {

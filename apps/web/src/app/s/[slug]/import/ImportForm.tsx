@@ -10,6 +10,7 @@ import {
   FileArchive,
   Loader2,
   Upload,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Field } from "@/components/ui/Input";
@@ -19,6 +20,12 @@ export type ParentOption = { id: string; title: string; depth: number };
 
 type ImportResponse = {
   pages: number;
+  /**
+   * Angelegte Seiten, die leer geblieben sind. Optional, weil eine
+   * aeltere Antwort das Feld nicht kennt — fehlt es, bleibt es bei der
+   * Unterscheidung, die `pages` allein hergibt.
+   */
+  failed?: number;
   attachments: number;
   warnings: string[];
   roots: { id: string; title: string }[];
@@ -222,18 +229,67 @@ export function ImportForm({
   );
 }
 
+/**
+ * Ergebnis eines Imports.
+ *
+ * Drei Zustaende statt einem: der Kasten war immer gruen und meldete
+ * „N Seiten importiert", auch wenn keine einzige Seite gefuellt werden
+ * konnte — die Seiten sind dann zwar angelegt, aber leer, und der Grund
+ * stand nur im zugeklappten Hinweis-Block. Wer das las, hielt einen
+ * fehlgeschlagenen Import fuer erledigt.
+ *
+ * - keine Seite gefuellt -> Fehler (rot, role="alert")
+ * - ein Teil leer geblieben -> Teilerfolg (gelb)
+ * - alles durch -> Erfolg (gruen)
+ *
+ * Die Wurzelseiten werden in allen drei Faellen verlinkt: angelegt sind
+ * sie so oder so, und wer die leeren Huellen wegraeumen will, muss
+ * hinkommen.
+ */
 function Result({ result, slug }: { result: ImportResponse; slug: string }) {
+  const failed = result.failed ?? 0;
+  const tone =
+    result.pages === 0 ? "fehler" : failed > 0 ? "teilweise" : "erfolg";
+  const box =
+    tone === "fehler"
+      ? "border-danger/30 bg-danger/10"
+      : tone === "teilweise"
+        ? "border-amber-500/30 bg-amber-500/10"
+        : "border-emerald-500/30 bg-emerald-500/10";
+  const text =
+    tone === "fehler"
+      ? "text-danger"
+      : tone === "teilweise"
+        ? "text-amber-700 dark:text-amber-400"
+        : "text-emerald-700 dark:text-emerald-400";
+  const Icon =
+    tone === "fehler" ? XCircle : tone === "teilweise" ? AlertTriangle : CheckCircle2;
+  const leer = `${failed} ${failed === 1 ? "Seite" : "Seiten"} angelegt, aber leer geblieben`;
+
   return (
     <div
-      role="status"
-      className="space-y-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3"
+      // Der Fehlerfall wird angesagt, nicht nur angezeigt: role="status"
+      // meldet sich zurueckhaltend, role="alert" unterbricht — und genau
+      // das ist hier gemeint.
+      role={tone === "fehler" ? "alert" : "status"}
+      className={`space-y-3 rounded-lg border px-4 py-3 ${box}`}
     >
-      <p className="flex items-center gap-2 text-[13px] font-medium text-emerald-700 dark:text-emerald-400">
-        <CheckCircle2 className="h-4 w-4" />
-        {result.pages} {result.pages === 1 ? "Seite" : "Seiten"} importiert
-        {result.attachments > 0 &&
-          `, ${result.attachments} ${result.attachments === 1 ? "Anhang" : "Anhänge"} gespeichert`}
-        .
+      <p className={`flex items-start gap-2 text-[13px] font-medium ${text}`}>
+        <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+        <span>
+          {tone === "fehler" ? (
+            // `failed` kann fehlen (aeltere Antwort); dann bleibt es bei
+            // der nackten Aussage, statt „0 Seiten" zu behaupten.
+            <>Kein Inhalt importiert{failed > 0 && ` — ${leer}`}.</>
+          ) : (
+            <>
+              {result.pages} {result.pages === 1 ? "Seite" : "Seiten"} importiert
+              {result.attachments > 0 &&
+                `, ${result.attachments} ${result.attachments === 1 ? "Anhang" : "Anhänge"} gespeichert`}
+              {failed > 0 && `; ${leer}`}.
+            </>
+          )}
+        </span>
       </p>
       {result.roots.length > 0 && (
         <ul className="flex flex-wrap gap-1.5">
@@ -251,7 +307,10 @@ function Result({ result, slug }: { result: ImportResponse; slug: string }) {
         </ul>
       )}
       {result.warnings.length > 0 && (
-        <details className="text-[12.5px]">
+        // Ging etwas schief, stehen hier die Gruende — dann von selbst
+        // offen. Bei einem sauberen Import bleiben es Randnotizen und
+        // der Block bleibt zu.
+        <details className="text-[12.5px]" open={failed > 0}>
           <summary className="flex cursor-pointer items-center gap-1.5 text-muted">
             <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
             {result.warnings.length}{" "}

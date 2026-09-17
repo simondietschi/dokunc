@@ -1,9 +1,19 @@
+import "server-only";
+import { prisma } from "@dokunc/db";
+import { requireUser } from "./current-user";
+
 /**
  * Wann darf ein Konto verschwinden?
  *
- * Rein und ohne Datenbank, damit dieselbe Regel im Konto und im
- * Admin-Bereich gilt und sich testen lässt.
+ * Die Entscheidung selbst (`canDeleteUser`) bleibt rein und ohne
+ * Datenbank, damit dieselbe Regel im Konto und im Admin-Bereich gilt und
+ * sich testen lässt. Die Erhebung dazu (`orphanedSpacesFor`) steht
+ * daneben: sie lag vorher in app/account/actions.ts, und diese Datei
+ * trägt "use server" — dort wird JEDER Export zu einem aufrufbaren
+ * Endpunkt, auch ein Helfer ohne Formular. Hier in lib/ ist sie schlicht
+ * eine Funktion, die nur aufruft, wer sie importiert.
  */
+
 export type DeletionCheck =
   | { allowed: true }
   | { allowed: false; reason: string };
@@ -33,4 +43,43 @@ export function canDeleteUser(input: {
     };
   }
   return { allowed: true };
+}
+
+/**
+ * Spaces, in denen diese Person der einzige Eigentümer ist.
+ * Gemeinsame Grundlage für Konto-Löschung im Konto und im Admin-Bereich.
+ */
+export async function orphanedSpacesFor(userId: string): Promise<string[]> {
+  // Die Schranke bleibt, obwohl der Export kein Endpunkt mehr ist: die
+  // Antwort verrät zu einer beliebigen userId, welche Spaces ihr allein
+  // gehören — Space-Namen inklusive. Sie kostet wenig und hält fest,
+  // dass diese Funktion nicht für fremde Konten gedacht ist.
+  const me = await requireUser();
+  if (me.id !== userId && !me.isAdmin) {
+    throw new Error("Nicht berechtigt.");
+  }
+
+  const owned = await prisma.spaceMember.findMany({
+    where: { userId, role: "OWNER" },
+    select: { spaceId: true, space: { select: { name: true } } },
+  });
+  if (owned.length === 0) return [];
+
+  // Nur aktive Konten zählen: ein deaktivierter Mit-Eigentümer kann den
+  // Space nicht übernehmen, der Space wäre also trotzdem verwaist.
+  const counts = await prisma.spaceMember.groupBy({
+    by: ["spaceId"],
+    where: {
+      spaceId: { in: owned.map((o) => o.spaceId) },
+      role: "OWNER",
+      user: { isActive: true },
+    },
+    _count: { _all: true },
+  });
+  const single = new Set(
+    counts.filter((c) => c._count._all <= 1).map((c) => c.spaceId),
+  );
+  return owned
+    .filter((o) => single.has(o.spaceId))
+    .map((o) => o.space.name);
 }

@@ -5,8 +5,7 @@ import { prisma } from "@dokunc/db";
 import { requireAdmin } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
-import { canDeleteUser } from "@/lib/account-deletion";
-import { orphanedSpacesFor } from "@/app/account/actions";
+import { canDeleteUser, orphanedSpacesFor } from "@/lib/account-deletion";
 import { deleteSpaceWithUploads } from "@/lib/file-access";
 import { log } from "@/lib/log";
 

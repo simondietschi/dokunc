@@ -15,21 +15,35 @@ import {
 import { cn } from "@/lib/cn";
 import { useToast } from "@/components/ui/Toast";
 import { textToBlocks, textToInline } from "@/lib/editor-text";
+import { ASSIST_ACTIONS, type AssistAction } from "@/lib/ai-actions";
 
-type Action = "improve" | "summarize" | "translate_en" | "translate_de" | "continue";
+/**
+ * Darstellung je Aktion. Ein Record ueber `AssistAction`: kommt in
+ * lib/ai-actions ein Name dazu, schlaegt hier der Typcheck fehl, statt
+ * dass die Aktion im Menue einfach fehlt. Frueher stand die Liste der
+ * Namen hier ein zweites Mal als eigener Union-Typ — Client und Server
+ * konnten auseinanderlaufen, ohne dass es beim Bauen auffiel.
+ */
+const ITEM_BY_ACTION: Record<
+  AssistAction,
+  {
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    needsSelection: boolean;
+  }
+> = {
+  improve: { label: "Text verbessern", icon: Wand2, needsSelection: true },
+  summarize: { label: "Zusammenfassen", icon: AlignLeft, needsSelection: true },
+  translate_en: { label: "Übersetzen (EN)", icon: Languages, needsSelection: true },
+  translate_de: { label: "Übersetzen (DE)", icon: Languages, needsSelection: true },
+  continue: { label: "Weiterschreiben", icon: PenLine, needsSelection: false },
+};
 
-const ITEMS: {
-  action: Action;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  needsSelection: boolean;
-}[] = [
-  { action: "improve", label: "Text verbessern", icon: Wand2, needsSelection: true },
-  { action: "summarize", label: "Zusammenfassen", icon: AlignLeft, needsSelection: true },
-  { action: "translate_en", label: "Übersetzen (EN)", icon: Languages, needsSelection: true },
-  { action: "translate_de", label: "Übersetzen (DE)", icon: Languages, needsSelection: true },
-  { action: "continue", label: "Weiterschreiben", icon: PenLine, needsSelection: false },
-];
+// Die Reihenfolge im Menue ist die der gemeinsamen Liste.
+const ITEMS = ASSIST_ACTIONS.map((action) => ({
+  action,
+  ...ITEM_BY_ACTION[action],
+}));
 
 export function AiMenu({ editor }: { editor: Editor }) {
   const [open, setOpen] = useState(false);
@@ -57,7 +71,7 @@ export function AiMenu({ editor }: { editor: Editor }) {
     };
   }, []);
 
-  async function run(action: Action) {
+  async function run(action: AssistAction) {
     setOpen(false);
     const { from, to, empty } = editor.state.selection;
     // Positionen ueber die Wartezeit hinweg mitfuehren: die KI-Anfrage

@@ -26,8 +26,6 @@ import { CommentMark } from "./comment-mark";
 import { Excalidraw } from "./excalidraw";
 import { Drawio } from "./drawio";
 
-export const COLLAB_FIELD = "default";
-
 /**
  * NodeView-Fabriken, die der Client (React) optional injiziert.
  * Server lässt sie weg — das Schema bleibt identisch, da NodeViews
@@ -167,6 +165,23 @@ function walk(node: unknown, visit: (n: JsonNode) => void): void {
 // Aenderung an ihnen mit Abnehmern rechnen, die es nicht gibt — und
 // jemand koennte eine davon an richExtensions vorbei einbinden, womit
 // Client und Collab-Server verschiedene Schemata fahren.
+// Das Protokoll zwischen Web-App und Collab-Server (Feldname, Ticket-
+// Audience, Redis-Kanaele) steht in ./collab-protocol und geht von hier
+// nach aussen: beide Anwendungen importieren ohnehin dieses Paket, und
+// beide muessen dieselben Werte verwenden.
+export {
+  COLLAB_FIELD,
+  COLLAB_AUDIENCE,
+  NOTIFY_CHANNEL_PREFIX,
+  DOC_RESET_CHANNEL,
+  ACCESS_REVOKED_CHANNEL,
+  PAGE_ACCESS_CHANNEL,
+} from "./collab-protocol";
+export type {
+  DocResetMessage,
+  AccessRevokedMessage,
+  PageAccessMessage,
+} from "./collab-protocol";
 export type { CalloutType } from "./callout";
 export { chunkText, headingSlug } from "./text";
 export { toBase64 } from "./excalidraw";

@@ -1,4 +1,5 @@
-import { getCurrentUser } from "@/lib/current-user";
+import { loadSessionUser } from "@/lib/current-user";
+import { getSessionClaims } from "@/lib/session";
 import { subscribeNotifications } from "@/lib/notify-bus";
 import { rateLimit } from "@/lib/rate-limit";
 
@@ -8,6 +9,24 @@ export const dynamic = "force-dynamic";
 
 /** Abstand der Lebenszeichen. Hält Proxys davon ab, die Leitung zu kappen. */
 const KEEPALIVE_MS = 25_000;
+
+/**
+ * Abstand, in dem die Sitzung an der offenen Leitung nachgeprüft wird.
+ *
+ * Geprüft wurde bisher nur beim Verbindungsaufbau; danach hielten
+ * Keepalive und Abo die Leitung offen, solange der Tab offen blieb.
+ * Ein Widerruf ("dieses Gerät abmelden", "überall abmelden",
+ * Passwortwechsel, Deaktivierung des Kontos) und der Ablauf der
+ * Sitzung wirkten deshalb überall sofort, nur hier nicht: der Strom
+ * schickte weiter Hinweise auf neue Benachrichtigungen, bis der
+ * Web-Prozess neu startete.
+ *
+ * Deutlich seltener als der Keepalive, weil jede Prüfung eine
+ * Datenbankabfrage je offenem Strom ist und die Verzögerung von
+ * höchstens fünf Minuten hier nichts kostet — der Strom selbst trägt
+ * keine Inhalte, nur das Signal "schau nach".
+ */
+const REVALIDATE_MS = 5 * 60_000;
 
 /**
  * Deckel für gleichzeitig offene Ströme je Person und Web-Prozess.
@@ -30,7 +49,12 @@ const offeneStroeme = new Map<string, number>();
  * der Collab-WebSocket hat eine ganz andere Aufgabe.
  */
 export async function GET(req: Request) {
-  const user = await getCurrentUser();
+  // Claims getrennt holen: `cookies()` ist nur bis zum Beginn der
+  // Antwort abrufbar, die Claims danach noch verwendbar — das
+  // Nachprüfen weiter unten braucht sie.
+  const claims = await getSessionClaims();
+  if (!claims) return new Response("Nicht angemeldet", { status: 401 });
+  const user = await loadSessionUser(claims);
   if (!user) return new Response("Nicht angemeldet", { status: 401 });
 
   // Bremse zusätzlich zum Deckel: ohne sie liesse sich dieser durch
@@ -49,6 +73,7 @@ export async function GET(req: Request) {
   const encoder = new TextEncoder();
   let subscription: { close: () => void } | null = null;
   let keepalive: ReturnType<typeof setInterval> | null = null;
+  let nachpruefung: ReturnType<typeof setInterval> | null = null;
 
   // Beide Aufräumpfade (abort und cancel) können nacheinander kommen;
   // der Zähler darf trotzdem nur einmal je Strom sinken, sonst gäbe der
@@ -58,6 +83,7 @@ export async function GET(req: Request) {
     if (abgeraeumt) return;
     abgeraeumt = true;
     if (keepalive) clearInterval(keepalive);
+    if (nachpruefung) clearInterval(nachpruefung);
     subscription?.close();
     const rest = (offeneStroeme.get(user.id) ?? 1) - 1;
     if (rest > 0) offeneStroeme.set(user.id, rest);
@@ -88,6 +114,29 @@ export async function GET(req: Request) {
       subscription = subscribeNotifications(user.id, () =>
         send("event: notification\ndata: 1\n\n"),
       );
+
+      nachpruefung = setInterval(() => {
+        /**
+         * `touch: false`: ein offener Tab ist keine Aktivität. Sonst
+         * hielte allein das Offenstehen `lastSeenAt` frisch.
+         *
+         * Fällt die Prüfung negativ aus, geht die Leitung zu. Der
+         * Browser baut danach einmal neu auf, bekommt oben 401 und
+         * lässt es dann bleiben — EventSource gibt bei einer Antwort
+         * ohne Erfolgsstatus endgültig auf.
+         *
+         * Ein Fehler der Abfrage selbst (Datenbank kurz weg) schliesst
+         * nichts: die nächste Runde prüft erneut, und eine Störung im
+         * Betrieb soll nicht reihenweise Leute abmelden.
+         */
+        void loadSessionUser(claims, { touch: false })
+          .then((noch) => {
+            if (!noch) stop();
+          })
+          .catch(() => {
+            /* beim nächsten Durchgang wieder */
+          });
+      }, REVALIDATE_MS);
 
       req.signal.addEventListener("abort", stop);
       // Brach die Anfrage schon vor dieser Zeile ab, feuert der eben

@@ -1,45 +1,31 @@
 import "server-only";
-import { Redis } from "ioredis";
+// Der Kanalname steht im gemeinsamen Paket, weil die Gegenstelle der
+// Collab-Server ist: Erwaehnungen entstehen dort und werden auf denselben
+// Kanal gesendet (packages/editor/src/collab-protocol.ts). Ohne diesen
+// Weg aktualisierte sich die Glocke erst beim naechsten Seitenaufruf.
+import { NOTIFY_CHANNEL_PREFIX } from "@dokunc/editor";
 import { log } from "./log";
+import { createRedis, sharedRedis } from "./redis";
 
 /**
- * Kanal für Live-Benachrichtigungen.
- *
- * Gegenstück im Collab-Server (Erwähnungen entstehen dort). Ohne diesen
- * Weg aktualisierte sich die Glocke erst beim nächsten Seitenaufruf.
+ * Rueckruf fuer den ersten Verbindungsfehler einer Verbindung (die
+ * Fabrik ruft ihn genau einmal). Ein leerer Handler verschwiege, dass
+ * Redis weg ist — und damit, dass die Glocke stumm bleibt.
  */
-export const NOTIFY_CHANNEL_PREFIX = "dokunc:notify:";
-
-/**
- * Verbindungsfehler melden, aber nur den ersten je Verbindung.
- *
- * Ein Handler muss sein (ioredis wirft den Fehler sonst unbehandelt),
- * ein leerer verschweigt aber, dass Redis weg ist. Und weil ioredis im
- * Sekundentakt endlos weiterprobiert, stünde ohne diese Sperre dieselbe
- * Meldung dauerhaft mehrmals pro Minute im Log.
- */
-function meldeVerbindungsfehler(client: Redis, kontext: object): void {
-  let gemeldet = false;
-  client.on("error", (e: Error) => {
-    if (gemeldet) return;
-    gemeldet = true;
+function meldeVerbindungsfehler(kontext: object): (e: Error) => void {
+  return (e: Error) =>
     log.warn(
       { err: e, ...kontext },
       "Redis-Verbindung für Benachrichtigungen gestört",
     );
-  });
 }
 
-let pub: Redis | null | undefined;
-function publisher(): Redis | null {
-  if (pub !== undefined) return pub;
-  const url = process.env.REDIS_URL;
-  pub = url
-    ? new Redis(url, { maxRetriesPerRequest: 2, lazyConnect: true })
-    : null;
-  if (pub) meldeVerbindungsfehler(pub, { rolle: "publisher" });
-  return pub;
-}
+/** Eine Verbindung fuer alle Sendevorgaenge dieses Prozesses. */
+const publisher = sharedRedis({
+  retries: 2,
+  lazy: true,
+  onFirstError: meldeVerbindungsfehler({ rolle: "publisher" }),
+});
 
 /** Meldet einer Person, dass es etwas Neues gibt. Nie werfend. */
 export async function publishNotification(userIds: string[]): Promise<void> {
@@ -65,10 +51,14 @@ export function subscribeNotifications(
   userId: string,
   onEvent: () => void,
 ): { close: () => void } | null {
-  const url = process.env.REDIS_URL;
-  if (!url) return null;
-  const sub = new Redis(url, { maxRetriesPerRequest: 2 });
-  meldeVerbindungsfehler(sub, { userId, rolle: "subscriber" });
+  // lazy: false — ein Abonnent sendet nie einen gewoehnlichen Befehl,
+  // die Verbindung kaeme sonst nie zustande.
+  const sub = createRedis({
+    retries: 2,
+    lazy: false,
+    onFirstError: meldeVerbindungsfehler({ userId, rolle: "subscriber" }),
+  });
+  if (!sub) return null;
   sub.on("message", () => onEvent());
   // Scheitert das Abonnement, bleibt der SSE-Strom trotzdem offen und
   // sendet weiter seinen Ping: der Browser hält die Leitung für gesund,

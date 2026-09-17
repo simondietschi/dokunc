@@ -17,6 +17,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { useToast } from "@/components/ui/Toast";
+import { MAX_COMMENT_LENGTH } from "@/lib/comment-limits";
 import {
   createThreadAction,
   editCommentAction,
@@ -45,13 +46,41 @@ type ThreadData = {
 };
 
 /**
- * Klassenkette der vier Kommentar-Textfelder (neuer Thread, Kommentar
- * zur Seite, Antwort, Bearbeiten). Vorher stand sie viermal einzeln da
- * und war bereits auseinandergelaufen: das Bearbeiten-Feld hatte `p-2`
- * statt `p-2.5` und sass dadurch enger als das Eingabefeld darueber.
+ * Die vier Kommentar-Textfelder (neuer Thread, Kommentar zur Seite,
+ * Antwort, Bearbeiten). Sie standen viermal einzeln da und waren bereits
+ * auseinandergelaufen: das Bearbeiten-Feld hatte `p-2` statt `p-2.5` und
+ * sass dadurch enger als das Eingabefeld darueber.
+ *
+ * `maxLength` ist der Grund, warum daraus eine Komponente wurde: die
+ * Server Actions weisen Texte ueber MAX_COMMENT_LENGTH still ab (sie
+ * kehren ohne Fehler zurueck). Fehlte die Grenze an nur einem der vier
+ * Felder, koennte man dort weiter beliebig lange Kommentare tippen und
+ * saehe beim Absenden bloss, dass nichts geschieht.
  */
-const COMMENT_TEXTAREA_CLASS =
-  "w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent";
+function CommentTextarea({
+  label,
+  placeholder,
+  defaultValue,
+}: {
+  /** Beschriftung fuer Screenreader; die Felder haben kein sichtbares Label. */
+  label: string;
+  placeholder?: string;
+  defaultValue?: string;
+}) {
+  return (
+    <textarea
+      name="body"
+      required
+      autoFocus
+      rows={2}
+      maxLength={MAX_COMMENT_LENGTH}
+      aria-label={label}
+      placeholder={placeholder}
+      defaultValue={defaultValue}
+      className="w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent"
+    />
+  );
+}
 
 /**
  * Knopfzeile unter jedem Kommentar-Formular: absenden plus abbrechen.
@@ -217,14 +246,9 @@ export function CommentsPanel({
               name="anchorText"
               value={draft.anchorText}
             />
-            <textarea
-              name="body"
-              required
-              autoFocus
-              rows={2}
-              aria-label="Kommentar"
+            <CommentTextarea
+              label="Kommentar"
               placeholder="Kommentar schreiben…"
-              className={COMMENT_TEXTAREA_CLASS}
             />
             <CommentFormActions
               submitLabel="Kommentieren"
@@ -335,14 +359,9 @@ function PageCommentComposer({
       <input type="hidden" name="slug" value={slug} />
       <input type="hidden" name="pageId" value={pageId} />
       <input type="hidden" name="threadId" value={threadId ?? ""} />
-      <textarea
-        name="body"
-        required
-        autoFocus
-        rows={2}
-        aria-label="Kommentar zur Seite"
+      <CommentTextarea
+        label="Kommentar zur Seite"
         placeholder="Kommentar zur ganzen Seite…"
-        className={COMMENT_TEXTAREA_CLASS}
       />
       <CommentFormActions
         submitLabel="Kommentieren"
@@ -445,15 +464,7 @@ function Thread({
             >
               <input type="hidden" name="slug" value={slug} />
               <input type="hidden" name="threadId" value={thread.id} />
-              <textarea
-                name="body"
-                required
-                autoFocus
-                rows={2}
-                aria-label="Antwort"
-                placeholder="Antworten…"
-                className={COMMENT_TEXTAREA_CLASS}
-              />
+              <CommentTextarea label="Antwort" placeholder="Antworten…" />
               <CommentFormActions
                 submitLabel="Antworten"
                 onCancel={() => setReplying(false)}
@@ -584,14 +595,9 @@ function CommentRow({
           >
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="commentId" value={commentId} />
-            <textarea
-              name="body"
-              required
-              autoFocus
-              rows={2}
+            <CommentTextarea
+              label="Kommentar bearbeiten"
               defaultValue={body}
-              aria-label="Kommentar bearbeiten"
-              className={COMMENT_TEXTAREA_CLASS}
             />
             <CommentFormActions
               submitLabel="Speichern"
