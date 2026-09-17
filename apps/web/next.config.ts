@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 import { config as loadEnv } from "dotenv";
+import { contentSecurityPolicy } from "./src/lib/csp";
 
 // Monorepo: Root-.env laden, damit web dieselben Variablen wie collab/db nutzt.
 loadEnv({ path: new URL("../../.env", import.meta.url).pathname });
@@ -14,47 +15,9 @@ function appUrlHost(): string[] {
   }
 }
 
-/**
- * Erlaubtes Ziel für den Collab-WebSocket in connect-src.
- *
- * Ohne gesetzte Variable liegt der Endpunkt auf demselben Host unter
- * `/collab` (siehe lib/collab-url.ts), und same-origin wss deckt 'self'
- * bereits ab — dann kommt hier nichts dazu. Nur ein ausdrücklich
- * konfigurierter Fremdhost wird zusätzlich freigegeben, und zwar genau
- * er: die blanken Schemata `ws: wss:` erlaubten dagegen JEDEN Host,
- * womit ein eingeschleustes Skript Seiteninhalte oder Collab-Tickets an
- * einen fremden Server schicken konnte.
- */
-function collabOrigin(): string[] {
-  const configured = process.env.NEXT_PUBLIC_COLLAB_URL?.trim();
-  if (!configured) return [];
-  try {
-    return [new URL(configured).origin];
-  } catch {
-    return [];
-  }
-}
-
-/**
- * Content-Security-Policy. 'unsafe-inline' bei script/style ist nötig für
- * den FOUC-freien Theme-Inline-Script und Next/Tailwind-Runtime-Styles.
- * connect-src deckt den Collab-WSS über 'self' ab (same-origin, über
- * den TLS-Proxy); ein abweichend konfigurierter Host kommt namentlich
- * dazu, siehe collabOrigin().
- */
-const csp = [
-  "default-src 'self'",
-  "img-src 'self' data: blob:",
-  "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline'",
-  ["connect-src", "'self'", ...collabOrigin()].join(" "),
-  "frame-src https://www.youtube-nocookie.com https://www.youtube.com https://embed.diagrams.net",
-  "font-src 'self' data:",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join("; ");
+// Die Richtlinie selbst steht in src/lib/csp.ts, weil die Middleware
+// dieselbe braucht — dort mit Nonce, hier ohne.
+const csp = contentSecurityPolicy();
 
 /**
  * Header, die in JEDEM Betriebsmodus mitgehen.
@@ -77,13 +40,13 @@ const baseSecurityHeaders = [
   // HSTS wird am TLS-Edge (Caddy) gesetzt, hier bewusst nicht doppelt.
 ];
 
-// Zusätzlich in Produktion: die CSP. Sie bleibt an isProd gebunden, weil
-// der Collab-WS in der Entwicklung auf einem eigenen Port liegt und Next
-// dort Ressourcen nachlädt, die 'self' nicht abdeckt.
-const securityHeaders = [
-  { key: "Content-Security-Policy", value: csp },
-  ...baseSecurityHeaders,
-];
+// Zusätzlich in Produktion: die CSP OHNE Nonce, und nur für /api. Die
+// Dokumente bekommen ihre eigene, mit frischer Nonce je Antwort, aus
+// src/middleware.ts — ein statischer Header kann das nicht leisten.
+// Sie bleibt an isProd gebunden, weil der Collab-WS in der Entwicklung
+// auf einem eigenen Port liegt und Next dort Ressourcen nachlädt, die
+// 'self' nicht abdeckt.
+const apiCspHeader = [{ key: "Content-Security-Policy", value: csp }];
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@dokunc/db", "@dokunc/editor", "@dokunc/mail"],
@@ -101,10 +64,8 @@ const nextConfig: NextConfig = {
     // Die Grundhärtung gilt immer, die CSP nur in Produktion (Dev bleibt
     // entwicklerfreundlich, u. a. wegen Collab-WS auf separatem Port).
     return [
-      {
-        source: "/:path*",
-        headers: isProd ? securityHeaders : baseSecurityHeaders,
-      },
+      { source: "/:path*", headers: baseSecurityHeaders },
+      ...(isProd ? [{ source: "/api/:path*", headers: apiCspHeader }] : []),
     ];
   },
 };
