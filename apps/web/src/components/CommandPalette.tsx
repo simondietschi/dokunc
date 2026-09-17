@@ -32,12 +32,11 @@ import type { FavoritesResponse } from "@/app/api/favorites/route";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { pageTitle } from "@/lib/page-title";
 import { useBackdropClose, useModal } from "@/components/ui/use-modal";
-
-const OPEN_EVENT = "dokunc:cmdk";
+import { EVENT_OPEN_PALETTE } from "@/lib/browser-events";
 
 /** Öffnet die Palette von beliebiger Stelle aus (Buttons, Hints). */
 function openPalette() {
-  window.dispatchEvent(new CustomEvent(OPEN_EVENT));
+  window.dispatchEvent(new CustomEvent(EVENT_OPEN_PALETTE));
 }
 
 type Item = {
@@ -99,10 +98,10 @@ export function CommandPalette() {
       setOpen(true);
     }
     window.addEventListener("keydown", onKey);
-    window.addEventListener(OPEN_EVENT, onOpen);
+    window.addEventListener(EVENT_OPEN_PALETTE, onOpen);
     return () => {
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener(OPEN_EVENT, onOpen);
+      window.removeEventListener(EVENT_OPEN_PALETTE, onOpen);
     };
   }, [disabled]);
 

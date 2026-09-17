@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { useToast } from "@/components/ui/Toast";
 import { MAX_COMMENT_LENGTH } from "@/lib/comment-limits";
+import { EVENT_FOCUS_COMMENT_THREAD, EVENT_NEW_COMMENT_THREAD, EVENT_REMOVE_COMMENT_MARK, EVENT_SCROLL_TO_COMMENT_MARK } from "@/lib/browser-events";
 import {
   createThreadAction,
   editCommentAction,
@@ -116,14 +117,14 @@ type NewThreadEvent = CustomEvent<{
 /** Markierung im Dokument entfernen (Thread verworfen, aufgelöst, gelöscht). */
 function removeMark(id: string) {
   window.dispatchEvent(
-    new CustomEvent("dokunc:remove-comment-mark", { detail: { id } }),
+    new CustomEvent(EVENT_REMOVE_COMMENT_MARK, { detail: { id } }),
   );
 }
 
 /** Im Dokument zur markierten Textstelle springen. */
 function scrollToMark(id: string) {
   window.dispatchEvent(
-    new CustomEvent("dokunc:scroll-to-comment-mark", { detail: { id } }),
+    new CustomEvent(EVENT_SCROLL_TO_COMMENT_MARK, { detail: { id } }),
   );
 }
 
@@ -162,9 +163,9 @@ export function CommentsPanel({
         50,
       );
     };
-    window.addEventListener("dokunc:new-comment-thread", onNew);
+    window.addEventListener(EVENT_NEW_COMMENT_THREAD, onNew);
     return () =>
-      window.removeEventListener("dokunc:new-comment-thread", onNew);
+      window.removeEventListener(EVENT_NEW_COMMENT_THREAD, onNew);
   }, []);
 
   // Klick auf eine markierte Textstelle im Editor: Thread hervorheben.
@@ -182,9 +183,9 @@ export function CommentsPanel({
           ?.scrollIntoView({ block: "center", behavior: "smooth" });
       });
     };
-    window.addEventListener("dokunc:focus-comment-thread", onFocus);
+    window.addEventListener(EVENT_FOCUS_COMMENT_THREAD, onFocus);
     return () =>
-      window.removeEventListener("dokunc:focus-comment-thread", onFocus);
+      window.removeEventListener(EVENT_FOCUS_COMMENT_THREAD, onFocus);
   }, [threads]);
 
   const cancelDraft = useCallback(() => {

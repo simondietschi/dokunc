@@ -1,4 +1,5 @@
 import type { Editor } from "@tiptap/core";
+import { EVENT_NEW_COMMENT_THREAD } from "@/lib/browser-events";
 
 /**
  * Markierten Text kommentieren: Mark setzen und das Kommentar-Panel
@@ -11,7 +12,7 @@ export function startCommentThread(editor: Editor) {
   const id = crypto.randomUUID();
   editor.chain().focus().setCommentMark(id).run();
   window.dispatchEvent(
-    new CustomEvent("dokunc:new-comment-thread", {
+    new CustomEvent(EVENT_NEW_COMMENT_THREAD, {
       detail: { id, anchorText },
     }),
   );

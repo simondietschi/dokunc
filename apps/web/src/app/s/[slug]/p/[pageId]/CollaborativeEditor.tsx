@@ -85,6 +85,7 @@ import {
   setPageIconAction,
 } from "../../actions";
 import { DEFAULT_PAGE_TITLE, EMPTY_PAGE_TITLE } from "@/lib/page-title";
+import { EVENT_FOCUS_COMMENT_THREAD, EVENT_PAGE_RENAMED, EVENT_REMOVE_COMMENT_MARK, EVENT_SCROLL_TO_COMMENT_MARK } from "@/lib/browser-events";
 
 /**
  * Titelbild hochladen. Der Rest der Dateiwege laeuft ueber
@@ -323,7 +324,7 @@ export function CollaborativeEditor({
   const announceTitle = useCallback(
     (value: string) => {
       window.dispatchEvent(
-        new CustomEvent("dokunc:page-renamed", {
+        new CustomEvent(EVENT_PAGE_RENAMED, {
           detail: { pageId, title: value || DEFAULT_PAGE_TITLE },
         }),
       );
@@ -594,7 +595,7 @@ export function CollaborativeEditor({
         const id = mark?.attrs.commentId;
         if (typeof id !== "string" || !id) return false;
         window.dispatchEvent(
-          new CustomEvent("dokunc:focus-comment-thread", { detail: { id } }),
+          new CustomEvent(EVENT_FOCUS_COMMENT_THREAD, { detail: { id } }),
         );
         return false;
       },
@@ -670,9 +671,9 @@ export function CollaborativeEditor({
       });
       if (tr.docChanged) editor.view.dispatch(tr);
     };
-    window.addEventListener("dokunc:remove-comment-mark", onRemove);
+    window.addEventListener(EVENT_REMOVE_COMMENT_MARK, onRemove);
     return () =>
-      window.removeEventListener("dokunc:remove-comment-mark", onRemove);
+      window.removeEventListener(EVENT_REMOVE_COMMENT_MARK, onRemove);
   }, [editor]);
 
   // Verwaiste Kommentar-Markierungen aufräumen: ein abgebrochener Entwurf
@@ -729,9 +730,9 @@ export function CollaborativeEditor({
         1600,
       );
     };
-    window.addEventListener("dokunc:scroll-to-comment-mark", onScrollTo);
+    window.addEventListener(EVENT_SCROLL_TO_COMMENT_MARK, onScrollTo);
     return () =>
-      window.removeEventListener("dokunc:scroll-to-comment-mark", onScrollTo);
+      window.removeEventListener(EVENT_SCROLL_TO_COMMENT_MARK, onScrollTo);
   }, []);
 
   useEffect(() => {
