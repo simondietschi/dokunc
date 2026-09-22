@@ -3,6 +3,7 @@ import { prisma } from "@dokunc/db";
 import { log } from "@/lib/log";
 import { refreshAccessRoots } from "@/lib/page-access";
 import { uploadLimitMb } from "@/lib/uploads";
+import { IMAGE_TYPE_NAMES } from "@/lib/image-types";
 import { detectFormat } from "./detect";
 import { buildImportTree, flattenTree, indexAliasKey } from "./tree";
 import { markdownToDoc } from "./markdown";
@@ -192,7 +193,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
       stored = await storeImportedImage(bytes);
     } catch (e) {
       // Ein Bild darf nie die ganze Seite kosten.
-      log.warn({ err: String(e), name }, "Import: Bild speichern fehlgeschlagen");
+      log.warn({ err: e, name }, "Import: Bild speichern fehlgeschlagen");
       warn(`Bild "${name}" konnte nicht gespeichert werden.`);
       return null;
     }
@@ -203,7 +204,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
             // die Grenze faellt mit MAX_UPLOAD_MB, ein fester Text "10 MB"
             // waere bei kleinerer Betriebsgrenze schlicht falsch.
             `Bild "${name}" ist grösser als ${uploadLimitMb("IMAGE")} MB und wurde übersprungen.`
-          : `"${name}" ist kein unterstütztes Bild (PNG, JPG, GIF, WebP).`,
+          : `"${name}" ist kein unterstütztes Bild (${IMAGE_TYPE_NAMES}).`,
       );
       return null;
     }
@@ -242,7 +243,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
       doc = converted.doc;
       dataUrls = converted.dataUrls;
     } catch (e) {
-      log.warn({ err: String(e), path: fromPath }, "Import: Konvertierung fehlgeschlagen");
+      log.warn({ err: e, path: fromPath }, "Import: Konvertierung fehlgeschlagen");
       warn(`"${fromPath}" konnte nicht konvertiert werden; die Seite bleibt leer.`);
       failed += 1;
       continue;
@@ -305,7 +306,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
           : []),
       ]);
     } catch (e) {
-      log.warn({ err: String(e), path: fromPath }, "Import: Speichern fehlgeschlagen");
+      log.warn({ err: e, path: fromPath }, "Import: Speichern fehlgeschlagen");
       warn(`"${fromPath}" konnte nicht gespeichert werden; die Seite bleibt leer.`);
       failed += 1;
     }

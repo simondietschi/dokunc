@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { prisma, type SpaceRole } from "@dokunc/db";
+import { prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str, strOrNull } from "@/lib/form";
 import { audit } from "@/lib/audit";
@@ -17,37 +17,23 @@ import {
   findLivePage,
   findRestorableVersion,
   findTrashedPage,
+  livePageWhere,
   renamePageInSpace,
   resolveParentId,
   restorePageTree,
+  scopeOf,
+  scopeWhere,
+  selectLivePage,
   subtreeHasHiddenPages,
   trashPageTree,
-  type PageScope,
 } from "@/lib/page-guards";
-import {
-  refreshAccessRoots,
-  setPageRestricted,
-  visiblePageWhere,
-} from "@/lib/page-access";
+import { refreshAccessRoots, setPageRestricted } from "@/lib/page-access";
 import { effectiveRole } from "@/lib/space-access";
 import { atLeast } from "@/lib/permissions";
 import { isValidIcon } from "@/lib/space-settings";
 import { appUrl } from "@dokunc/mail";
 import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
 import { nextSiblingPosition } from "@/lib/page-position";
-
-/**
- * Der Kontext, den die Guards brauchen: Space, Person und Rolle. Als
- * eigener Schritt, damit keine Aktion versehentlich nur die Hälfte
- * mitgibt und damit an geschützten Seiten vorbeiliefe.
- */
-function scopeOf(access: {
-  space: { id: string };
-  user: { id: string };
-  role: SpaceRole;
-}): PageScope {
-  return { spaceId: access.space.id, userId: access.user.id, role: access.role };
-}
 
 export async function createPageAction(form: FormData) {
   const access = await authorizeAction(form, "managePages");
@@ -60,16 +46,12 @@ export async function createPageAction(form: FormData) {
   // Vorlage nur aus demselben Space: die ID kommt aus dem Formular.
   const templateId = strOrNull(form, "templateId");
   const template = templateId
-    ? await prisma.page.findFirst({
-        where: {
-          id: templateId,
-          ...visiblePageWhere(access.user.id, access.role),
-          spaceId: space.id,
-          isTemplate: true,
-          deletedAt: null,
-        },
-        select: { title: true, icon: true, content: true, textContent: true },
-      })
+    ? await selectLivePage(
+        scopeOf(access),
+        templateId,
+        { title: true, icon: true, content: true, textContent: true },
+        { isTemplate: true },
+      )
     : null;
 
   // Anlegen und Nachziehen der Zugriffswurzel in EINEM Zug. Getrennt
@@ -118,12 +100,7 @@ export async function setPageIconAction(form: FormData) {
     throw new Error("Symbol muss ein einzelnes Emoji sein");
   }
   const { count } = await prisma.page.updateMany({
-    where: {
-      id: str(form, "pageId"),
-      ...visiblePageWhere(access.user.id, access.role),
-      spaceId: space.id,
-      deletedAt: null,
-    },
+    where: livePageWhere(scopeOf(access), str(form, "pageId")),
     data: { icon: icon || null },
   });
   if (count === 0) throw new Error("Seite gehört nicht zu diesem Space");
@@ -140,12 +117,7 @@ export async function setPageCoverAction(form: FormData) {
     throw new Error("Ungültige Bildquelle");
   }
   const { count } = await prisma.page.updateMany({
-    where: {
-      id: str(form, "pageId"),
-      ...visiblePageWhere(access.user.id, access.role),
-      spaceId: space.id,
-      deletedAt: null,
-    },
+    where: livePageWhere(scopeOf(access), str(form, "pageId")),
     data: { coverUrl: url || null },
   });
   if (count === 0) throw new Error("Seite gehört nicht zu diesem Space");
@@ -410,10 +382,7 @@ export async function revokeShareAction(form: FormData) {
     where: {
       id: shareId,
       revokedAt: null,
-      page: {
-        ...visiblePageWhere(access.user.id, access.role),
-        spaceId: space.id,
-      },
+      page: scopeWhere(scopeOf(access)),
     },
     data: { revokedAt: new Date() },
   });

@@ -34,6 +34,24 @@ export default function GlobalError({
           <p style={{ color: "#6b6f76", marginTop: 8 }}>
             Bitte lade die Seite neu.
           </p>
+          {/* Wie in s/[slug]/error.tsx: ohne die Kennung laesst sich der
+              Fall im Serverlog nicht wiederfinden, wenn jemand ihn
+              meldet. In der Browserkonsole allein sieht sie niemand.
+              Farbe wie der Hinweis darueber und nicht blasser, weil die
+              Kennung abgelesen und weitergegeben werden soll. */}
+          {error.digest && (
+            <p
+              style={{
+                color: "#6b6f76",
+                marginTop: 8,
+                fontFamily:
+                  "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+                fontSize: 12,
+              }}
+            >
+              Kennung: {error.digest}
+            </p>
+          )}
           <button
             onClick={reset}
             style={{

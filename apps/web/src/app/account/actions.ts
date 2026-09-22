@@ -14,7 +14,12 @@ import {
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
 import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
-import { canDeleteUser, orphanedSpacesFor } from "@/lib/account-deletion";
+import {
+  ACCOUNT_DELETE_TIMEOUT_MS,
+  canDeleteUser,
+  orphanedSpacesFor,
+} from "@/lib/account-deletion";
+import { isSerializationConflict } from "@/lib/concurrent-change";
 
 export type AccountState = { error?: string; success?: string } | undefined;
 
@@ -171,6 +176,13 @@ export async function revokeSessionAction(form: FormData) {
 }
 
 /**
+ * Bricht die Lösch-Transaktion ab, ohne als 500 nach aussen zu gehen:
+ * der Aufrufer macht daraus eine Meldung im Formular. Wie LastOwnerError
+ * in app/s/[slug]/settings/actions.ts.
+ */
+class DeletionRefusedError extends Error {}
+
+/**
  * Eigenes Konto löschen.
  *
  * Verlangt das Passwort — ein Klick allein soll ein Konto nicht
@@ -194,23 +206,49 @@ export async function deleteAccountAction(
     return { error: "Passwort ist falsch." };
   }
 
-  const activeAdmins = dbUser.isAdmin
-    ? await prisma.user.count({ where: { isAdmin: true, isActive: true } })
-    : 0;
-  const verdict = canDeleteUser({
-    isLastActiveAdmin: dbUser.isAdmin && activeAdmins <= 1,
-    orphanedSpaces: await orphanedSpacesFor(dbUser.id),
-  });
-  if (!verdict.allowed) return { error: verdict.reason };
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        const orphanedSpaces = await orphanedSpacesFor(dbUser.id, tx);
+        const activeAdmins = dbUser.isAdmin
+          ? await tx.user.count({ where: { isAdmin: true, isActive: true } })
+          : 0;
+        const verdict = canDeleteUser({
+          isLastActiveAdmin: dbUser.isAdmin && activeAdmins <= 1,
+          orphanedSpaces,
+        });
+        if (!verdict.allowed) throw new DeletionRefusedError(verdict.reason);
+        await tx.user.delete({ where: { id: dbUser.id } });
+      },
+      // Serializable: sonst zaehlen die letzten beiden aktiven Admins, die
+      // gleichzeitig ihr Konto loeschen, beide zwei, beide loeschen, und
+      // die Instanz steht ohne Admin da — genau der Zustand, den die
+      // Pruefung verhindern soll.
+      { isolationLevel: "Serializable", timeout: ACCOUNT_DELETE_TIMEOUT_MS },
+    );
+  } catch (e) {
+    if (e instanceof DeletionRefusedError) return { error: e.message };
+    // Serialisierungskonflikt: eine parallele Aenderung an den Konten
+    // hat gewonnen. Ein neuer Versuch sieht den aktuellen Stand.
+    if (isSerializationConflict(e)) {
+      return {
+        error:
+          "Gleichzeitig wurde an den Konten etwas geändert. Bitte noch einmal versuchen.",
+      };
+    }
+    throw e;
+  }
 
-  // Vor dem Löschen protokollieren: der Eintrag verweist auf den
-  // Nutzer, und die Beziehung wird beim Löschen auf null gesetzt.
+  // Erst nach der Transaktion protokollieren: vorher stuende eine
+  // Löschung im Protokoll, die die Pruefung darin noch abgelehnt hat.
+  // actorId bleibt leer, denn das Konto gibt es nicht mehr. Vorher stand
+  // der Eintrag davor und die Beziehung wurde beim Löschen genullt
+  // (onDelete: SetNull) — der Eintrag sieht also aus wie bisher.
   await audit({
     action: "account.deleted",
-    actorId: dbUser.id,
+    actorId: null,
     metadata: { email: dbUser.email, bySelf: true },
   });
-  await prisma.user.delete({ where: { id: dbUser.id } });
   await destroySession();
   redirect("/login");
 }

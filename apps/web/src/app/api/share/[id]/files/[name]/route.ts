@@ -52,7 +52,9 @@ export async function GET(
   // sich nicht sagen, ob die Freigabe die Datei deckt — sie beim Space
   // der Freigabe zu belassen, machte einen einzigen Link zum Schlüssel
   // für alle seitenlosen Dateien des ganzen Space, auch ohne Konto.
-  // Über /api/files bleiben sie mit Konto weiterhin erreichbar.
+  // Über /api/files bleiben sie mit Konto erreichbar, und zwar für alle,
+  // die jede Seite sehen dürfen, in der die Datei steckt (lib/file-access,
+  // pagelessAttachmentReadable).
   if (!attachment.pageId) return nichtGefunden();
 
   if (attachment.pageId !== share.page.id) {

@@ -8,7 +8,16 @@ import {
   visiblePagesAcrossSpaces,
   visiblePageWhere,
 } from "@/lib/page-access";
-import { findLivePage, movePageInSpace } from "@/lib/page-guards";
+import {
+  findLivePage,
+  livePageWhere,
+  movePageInSpace,
+  scopeOf,
+  scopeVisibleSql,
+  scopeWhere,
+  selectLivePage,
+  type PageScope,
+} from "@/lib/page-guards";
 import { loadAncestors } from "@/lib/page-ancestors";
 
 /**
@@ -373,5 +382,132 @@ describe("Umhängen im Baum", () => {
     } finally {
       await prisma.page.delete({ where: { id: page.id } });
     }
+  });
+});
+
+/**
+ * Die zentralen Guards in den Varianten, auf die sich Vorlagen,
+ * Duplizieren und Favoriten stuetzen. Diese Aktionen formulierten die
+ * Bindung an Space und Sichtbarkeit frueher jede fuer sich aus — und
+ * genau dort fehlte der Sichtbarkeitsteil. Jetzt beziehen sie sie von
+ * hier, also steht hier fest, was sie pruefen.
+ */
+describe("Guards für Vorlagen, Duplizieren und Favoriten", () => {
+  let templateId: string;
+  const viewer = (): PageScope => ({ spaceId, userId: viaGroup, role: "VIEWER" });
+  const admin = (): PageScope => ({ spaceId, userId: manager, role: "ADMIN" });
+
+  beforeAll(async () => {
+    const template = await prisma.page.create({
+      data: { spaceId, title: "Vorlage", isTemplate: true },
+      select: { id: true },
+    });
+    templateId = template.id;
+  });
+
+  afterAll(async () => {
+    await prisma.page.deleteMany({ where: { id: templateId } });
+  });
+
+  it("baut den Kontext aus dem Ergebnis von authorizeAction", () => {
+    expect(
+      scopeOf({
+        space: { id: spaceId },
+        user: { id: viaGroup },
+        role: "VIEWER",
+      }),
+    ).toEqual(viewer());
+  });
+
+  it("unterscheidet Vorlagen und Seiten nur auf Wunsch", async () => {
+    // Favoriten und Elternseiten: keine Vorlagen.
+    expect(
+      await findLivePage(viewer(), templateId, { isTemplate: false }),
+    ).toBeNull();
+    expect(
+      await findLivePage(viewer(), openPageId, { isTemplate: false }),
+    ).not.toBeNull();
+    // Neue Seite aus einer Vorlage: nur Vorlagen.
+    expect(
+      await findLivePage(viewer(), openPageId, { isTemplate: true }),
+    ).toBeNull();
+    expect(
+      await findLivePage(viewer(), templateId, { isTemplate: true }),
+    ).not.toBeNull();
+    // Duplizieren und "Als Vorlage speichern": beides.
+    expect(await findLivePage(viewer(), templateId)).not.toBeNull();
+  });
+
+  it("liefert den Inhalt einer geschützten Seite nicht aus", async () => {
+    expect(
+      await selectLivePage(viewer(), secretPageId, {
+        title: true,
+        content: true,
+      }),
+    ).toBeNull();
+    expect(
+      await selectLivePage(admin(), secretPageId, { title: true }),
+    ).toEqual({ title: "Geheim" });
+  });
+
+  it("findet keine Seite im Papierkorb", async () => {
+    const trashed = await prisma.page.create({
+      data: { spaceId, title: "Weg", deletedAt: new Date() },
+      select: { id: true },
+    });
+    try {
+      expect(
+        await selectLivePage(admin(), trashed.id, { id: true }),
+      ).toBeNull();
+      expect(
+        await prisma.page.count({ where: livePageWhere(admin(), trashed.id) }),
+      ).toBe(0);
+    } finally {
+      await prisma.page.delete({ where: { id: trashed.id } });
+    }
+  });
+
+  it("bindet auch Schreibzugriffe an die Sichtbarkeit", async () => {
+    // Wie beim Löschen einer Vorlage: dieselbe Bedingung in updateMany.
+    expect(
+      await prisma.page.count({
+        where: livePageWhere(viewer(), secretPageId),
+      }),
+    ).toBe(0);
+    expect(
+      await prisma.page.count({
+        where: livePageWhere(viewer(), templateId, { isTemplate: true }),
+      }),
+    ).toBe(1);
+  });
+
+  it("hält beim Laden mehrerer Seiten die geschützten zurück", async () => {
+    const ids = [openPageId, secretPageId, secretChildId];
+    const forViewer = await prisma.page.findMany({
+      where: { id: { in: ids }, ...scopeWhere(viewer()) },
+      select: { id: true },
+    });
+    expect(forViewer.map((p) => p.id)).toEqual([openPageId]);
+    const forAdmin = await prisma.page.findMany({
+      where: { id: { in: ids }, ...scopeWhere(admin()) },
+      select: { id: true },
+    });
+    expect(forAdmin.map((p) => p.id).sort()).toEqual([...ids].sort());
+  });
+
+  it("hält den Unterbaum in Rohabfragen an der geschützten Seite an", async () => {
+    async function sichtbar(scope: PageScope) {
+      const rows = await prisma.$queryRaw<{ id: string }[]>`
+        SELECT p.id FROM "Page" p
+        WHERE p."spaceId" = ${spaceId}
+          AND p.id IN (${openPageId}, ${secretPageId}, ${secretChildId})
+          AND ${scopeVisibleSql(scope)}
+      `;
+      return rows.map((r) => r.id).sort();
+    }
+    expect(await sichtbar(viewer())).toEqual([openPageId]);
+    expect(await sichtbar(admin())).toEqual(
+      [openPageId, secretPageId, secretChildId].sort(),
+    );
   });
 });

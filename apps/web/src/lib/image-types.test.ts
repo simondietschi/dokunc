@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   ALLOWED_IMAGE_TYPES,
   IMAGE_ACCEPT,
+  IMAGE_TYPE_NAMES,
   isInlineImageType,
 } from "./image-types";
 import { ALLOWED_IMAGE_TYPES as VIA_UPLOADS } from "./uploads";
@@ -18,6 +19,21 @@ describe("Bildtypen", () => {
     expect(ALLOWED_IMAGE_TYPES["image/svg+xml"]).toBeUndefined();
     expect(isInlineImageType("image/svg+xml")).toBe(false);
     expect(IMAGE_ACCEPT).not.toContain("svg");
+  });
+
+  it("IMAGE_TYPE_NAMES zaehlt die erlaubten Typen fuer Meldungen auf", () => {
+    // Genau dieser Text steht in den Meldungen von api/upload, Editor
+    // und Import — frueher dreimal von Hand.
+    expect(IMAGE_TYPE_NAMES).toBe("PNG, JPG, GIF und WebP");
+  });
+
+  it("IMAGE_TYPE_NAMES nennt jede erlaubte Endung genau einmal", () => {
+    // Kommt ein Typ zur Liste hinzu, muss er in den Meldungen auftauchen,
+    // ohne dass jemand die Texte anfasst. Als sortierte Liste verglichen,
+    // nicht als Menge: sonst bestuende auch "PNG, JPG, JPG, GIF und WebP".
+    const names = IMAGE_TYPE_NAMES.toLowerCase().split(/, | und /).sort();
+    const endungen = [...new Set(Object.values(ALLOWED_IMAGE_TYPES))].sort();
+    expect(names).toEqual(endungen);
   });
 
   it("lib/uploads reicht dieselbe Liste weiter", () => {

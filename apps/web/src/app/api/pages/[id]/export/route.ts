@@ -17,6 +17,10 @@ export const maxDuration = 60;
  * Seiten-Export: ?format=md (Default) | html | pdf
  * PDF nutzt Gotenberg (GOTENBERG_URL); ohne Gotenberg antwortet die
  * Route mit 501 + Hinweis auf die Druckansicht (/p/[id]/print).
+ *
+ * Absagen gehen wie bei den uebrigen Routen als JSON mit dem Feld
+ * `error` hinaus, nicht als reiner Text: so liest ein Client jede
+ * Fehlermeldung auf dieselbe Weise aus.
  */
 export async function GET(
   req: Request,
@@ -24,7 +28,7 @@ export async function GET(
 ) {
   const user = await getCurrentUser();
   if (!user) {
-    return new NextResponse("Nicht angemeldet", { status: 401 });
+    return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   }
   const { id } = await params;
   const format = new URL(req.url).searchParams.get("format") ?? "md";
@@ -38,10 +42,12 @@ export async function GET(
       space: { select: { name: true } },
     },
   });
-  if (!page) return new NextResponse("Nicht gefunden", { status: 404 });
+  if (!page) {
+    return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
+  }
 
   if (!(await readablePageRole(user.id, id, page.spaceId))) {
-    return new NextResponse("Kein Zugriff", { status: 403 });
+    return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
   }
 
   // Nur der PDF-Zweig braucht eine Bremse: er beschäftigt den gemeinsam
@@ -57,9 +63,10 @@ export async function GET(
       RATE_LIMITS.exportPdf.fenster,
     ))
   ) {
-    return new NextResponse("Zu viele PDF-Exporte. Bitte kurz warten.", {
-      status: 429,
-    });
+    return NextResponse.json(
+      { error: "Zu viele PDF-Exporte. Bitte kurz warten." },
+      { status: 429 },
+    );
   }
 
   const safe =
@@ -106,7 +113,7 @@ export async function GET(
         : "PDF-Dienst nicht konfiguriert (GOTENBERG_URL). Nutze die Druckansicht: /p/" +
           id +
           "/print";
-      return new NextResponse(hint, { status: 501 });
+      return NextResponse.json({ error: hint }, { status: 501 });
     }
     return new NextResponse(new Uint8Array(pdf), {
       headers: {
@@ -116,5 +123,5 @@ export async function GET(
     });
   }
 
-  return new NextResponse("Unbekanntes Format", { status: 400 });
+  return NextResponse.json({ error: "Unbekanntes Format" }, { status: 400 });
 }

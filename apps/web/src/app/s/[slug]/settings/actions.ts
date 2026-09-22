@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { prisma, Prisma } from "@dokunc/db";
+import { prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str } from "@/lib/form";
 import { spaceSettingsSchema } from "@/lib/space-settings";
@@ -10,6 +10,7 @@ import { audit } from "@/lib/audit";
 import { deleteSpaceWithUploads } from "@/lib/file-access";
 import { revokeCollabAccess } from "@/lib/collab-sync";
 import { log } from "@/lib/log";
+import { isSerializationConflict } from "@/lib/concurrent-change";
 
 export type SettingsState = { error?: string; success?: string } | undefined;
 
@@ -129,12 +130,16 @@ export async function leaveSpaceAction(
           "Du bist der letzte Owner. Ernenne zuerst eine andere Person zum Owner oder lösche den Space.",
       };
     }
-    // Serialisierungskonflikt (P2034): eine parallele Aenderung am selben
-    // Space hat gewonnen. Ein neuer Versuch sieht den aktuellen Stand.
-    if (
-      e instanceof Prisma.PrismaClientKnownRequestError &&
-      e.code === "P2034"
-    ) {
+    // Serialisierungskonflikt: eine parallele Aenderung am selben Space
+    // hat gewonnen. Ein neuer Versuch sieht den aktuellen Stand.
+    //
+    // Nicht nur P2034: mit dem pg-Adapter faellt der Konflikt meist erst
+    // beim COMMIT auf, und Prisma 7 reicht ihn dann unuebersetzt als
+    // DriverAdapterError durch. Die blosse P2034-Pruefung liess genau
+    // diesen Regelfall als 500-Seite nach aussen — traten zwei Owner
+    // gleichzeitig aus, sah der Verlierer einen Absturz statt dieses
+    // Satzes. Die Daten blieben dabei richtig.
+    if (isSerializationConflict(e)) {
       return {
         error:
           "Der Space wurde gleichzeitig geändert. Bitte noch einmal versuchen.",

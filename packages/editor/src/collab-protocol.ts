@@ -83,3 +83,44 @@ export type DocResetMessage = { pageId: string; nonce: string };
 export type AccessRevokedMessage = { userId: string; spaceId: string };
 /** Nutzlast auf PAGE_ACCESS_CHANNEL. */
 export type PageAccessMessage = { pageId: string };
+
+/*
+ * Pruefer fuer die Nutzlasten.
+ *
+ * Auf den Kanaelen kommt blosser Text an, und JSON.parse liefert, was
+ * immer darin steht. Ein Cast auf die Typen oben behauptete die Form nur:
+ * eine pageId als Zahl oder eine fehlende nonce liefe unbemerkt weiter
+ * bis in die Datenbankabfrage oder den Schluessel des Nonce-Locks. Genau
+ * das passiert, wenn bei einem rollierenden Deploy alte und neue Fassung
+ * nebeneinander senden. Die Pruefer stehen neben den Typen, damit ein
+ * neues Feld an beiden Stellen zugleich auffaellt.
+ *
+ * Zusaetzliche Felder stoeren nicht: eine neuere Web-App darf mehr
+ * mitschicken, als ein aelterer Collab-Server kennt.
+ */
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Eine leere ID trifft keine Seite und keine Person — also ungueltig. */
+function isId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+/** Hat `value` die Form einer Nachricht auf DOC_RESET_CHANNEL? */
+export function isDocResetMessage(value: unknown): value is DocResetMessage {
+  return isRecord(value) && isId(value.pageId) && isId(value.nonce);
+}
+
+/** Hat `value` die Form einer Nachricht auf ACCESS_REVOKED_CHANNEL? */
+export function isAccessRevokedMessage(
+  value: unknown,
+): value is AccessRevokedMessage {
+  return isRecord(value) && isId(value.userId) && isId(value.spaceId);
+}
+
+/** Hat `value` die Form einer Nachricht auf PAGE_ACCESS_CHANNEL? */
+export function isPageAccessMessage(value: unknown): value is PageAccessMessage {
+  return isRecord(value) && isId(value.pageId);
+}

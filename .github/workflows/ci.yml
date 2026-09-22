@@ -55,6 +55,12 @@ jobs:
       - name: Typecheck collab server
         run: pnpm --filter @dokunc/collab build
 
+      # Die Pakete sah bisher nur tsc der Apps, und nur soweit diese sie
+      # importieren. Ein Fehler in einer Datei, die keine App einbindet
+      # (etwa prisma.config.ts), fiel so nirgends auf.
+      - name: Typecheck Pakete
+        run: pnpm typecheck
+
       - name: Build web
         run: pnpm --filter @dokunc/web build
         env:

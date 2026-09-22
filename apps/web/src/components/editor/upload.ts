@@ -39,9 +39,10 @@ export { IMAGE_ACCEPT } from "@/lib/image-types";
  * (z. B. "Datei zu gross (max. 50 MB)"), damit der Aufrufer sie zeigen kann.
  *
  * Exportiert, weil es mehr als einen Upload-Weg gibt: das Titelbild
- * braucht nur die fertige URL einer einzelnen Datei und hatte dafuer
- * eine zweite, eigene Fassung derselben Anfrage. Eine Fassung, damit
- * Feldnamen und Fehlerbehandlung nicht auseinanderlaufen.
+ * (`pickCover` im CollaborativeEditor) braucht nur die fertige URL einer
+ * einzelnen Datei und hatte dafuer eine zweite, eigene Fassung derselben
+ * Anfrage. Jetzt laufen beide hierueber — eine Fassung, damit Feldnamen
+ * und Fehlerbehandlung nicht auseinanderlaufen.
  */
 export async function uploadFile(
   file: File,
@@ -50,6 +51,7 @@ export async function uploadFile(
 ): Promise<UploadResult> {
   const body = new FormData();
   body.set("file", file);
+  // Space und Seite entscheiden, wer die Datei spaeter sehen darf.
   body.set("spaceId", ctx.spaceId);
   body.set("pageId", ctx.pageId);
   // Nur setzen, wenn der Aufrufer sich festlegt: ein leeres Feld liesse
@@ -57,6 +59,10 @@ export async function uploadFile(
   if (kind) body.set("kind", kind);
   const res = await fetch("/api/upload", { method: "POST", body });
   if (!res.ok) {
+    // Die Route begruendet die Ablehnung (zu gross — mit der tatsaechlich
+    // geltenden Grenze —, falscher Typ, kein Schreibrecht, zu viele
+    // Uploads). Bliebe nur der Statuscode uebrig, koennte der Aufrufer
+    // der Person nur pauschal raten, woran es lag.
     let message = "Upload fehlgeschlagen.";
     try {
       const data = (await res.json()) as { error?: string };

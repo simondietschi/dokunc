@@ -29,6 +29,9 @@ import {
   DOC_RESET_CHANNEL,
   ACCESS_REVOKED_CHANNEL,
   PAGE_ACCESS_CHANNEL,
+  isDocResetMessage,
+  isAccessRevokedMessage,
+  isPageAccessMessage,
   extractWikiLinkIds,
   extractMentionIds,
   chunkText,
@@ -38,6 +41,11 @@ import { startMailDispatcher } from "./mail-dispatcher";
 const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
   base: { app: "dokunc-collab" },
+  // ioredis haengt an Fehler den Befehl samt Argumenten an; bei einem
+  // gescheiterten AUTH steht dort das Passwort aus REDIS_URL. jose haengt
+  // an Claim-Fehler den Inhalt des Tokens an. Dieselbe Schwaerzung wie in
+  // apps/web/src/lib/log.ts (dort mit Begruendung und Test).
+  redact: ["*.password", "*.passwordHash", "err.command.args", "err.payload"],
 });
 
 const PORT = Number(process.env.COLLAB_PORT ?? 3001);
@@ -65,7 +73,7 @@ const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   maxRetriesPerRequest: 2,
   lazyConnect: true,
 });
-redis.on("error", (e: Error) => log.warn({ err: e.message }, "redis"));
+redis.on("error", (e: Error) => log.warn({ err: e }, "redis"));
 
 /**
  * Throttle für History-Snapshots — multi-instanz- und neustartfest.
@@ -246,6 +254,19 @@ const server = new Server({
     const pageId = data.documentName;
     const state = Buffer.from(Y.encodeStateAsUpdate(data.document));
 
+    // Der Yjs-Zustand zuerst und für sich. Er ist das Einzige, woraus
+    // onLoadDocument das Dokument wieder aufbaut; alles Weitere (Inhalt
+    // für Suche und Export, Erwähnungen) lässt sich aus ihm neu ableiten.
+    // Hinge er an den Schritten danach, ginge bei deren Fehler der Text
+    // verloren: Hocuspocus behält das Dokument dann nur im Speicher, und
+    // war das der Lauf beim Trennen der letzten Verbindung, stösst nichts
+    // einen weiteren an — der nächste Neustart verwirft ihn.
+    await prisma.collabDocument.upsert({
+      where: { pageId },
+      create: { pageId, state },
+      update: { state },
+    });
+
     const json = TiptapTransformer.fromYdoc(data.document, COLLAB_FIELD);
     const textContent = extractText(json);
     const editorId =
@@ -257,12 +278,29 @@ const server = new Server({
       select: { content: true, spaceId: true, title: true },
     });
 
+    // Neue Erwähnungen werden gegen genau diesen alten Stand bestimmt, und
+    // ihre Zeilen entstehen in DERSELBEN Transaktion, die ihn überschreibt.
+    // Liefen sie erst danach, wäre die Grundlage des Diffs schon weg: endet
+    // der Prozess dazwischen oder scheitert die Ermittlung, fände der
+    // nächste Lauf dieselbe Erwähnung nicht mehr als neu, und die
+    // Erwähnten bekämen dauerhaft weder Glocke noch Mail. Deshalb darf die
+    // Ermittlung hier den Rest des Speicherlaufs kippen, wie es das Lesen
+    // von `before` schon tut: der Yjs-Zustand steht oben schon fest,
+    // Page.content bleibt auf dem alten Stand, und der nächste Lauf
+    // rechnet gegen genau diesen noch einmal. Die Mail verschickt der
+    // Dispatcher aus diesen Zeilen, also erst nach dem Commit und nur
+    // einmal.
+    const mentioned = before
+      ? await newMentionRecipients(
+          pageId,
+          before.spaceId,
+          before.content,
+          json,
+          editorId,
+        )
+      : [];
+
     await prisma.$transaction([
-      prisma.collabDocument.upsert({
-        where: { pageId },
-        create: { pageId, state },
-        update: { state },
-      }),
       prisma.page.update({
         where: { id: pageId },
         data: {
@@ -271,26 +309,39 @@ const server = new Server({
           ...(editorId ? { lastEditedById: editorId } : {}),
         },
       }),
+      ...(mentioned.length > 0
+        ? [
+            prisma.notification.createMany({
+              data: mentioned.map((userId) => ({
+                userId,
+                actorId: editorId,
+                type: "MENTION" as const,
+                pageId,
+              })),
+            }),
+          ]
+        : []),
     ]);
 
-    // Die drei Folgeschritte dürfen den Speicherlauf nicht kippen, also
+    // Glocke der erwähnten Personen sofort aktualisieren — erst nach dem
+    // Commit, sonst holte sie eine Zeile ab, die es noch nicht gibt.
+    await Promise.all(
+      mentioned.map((userId) =>
+        redis
+          .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
+          .catch(() => undefined),
+      ),
+    );
+
+    // Die beiden Folgeschritte dürfen den Speicherlauf nicht kippen, also
     // wird ihr Fehler nur gemeldet. Dann muss die Meldung aber tragen:
     // ohne pageId und editorId liesse sich nachträglich nicht sagen,
-    // welcher Seite die Suche fehlt oder wer keine Benachrichtigung
-    // bekommen hat, und `String(e)` warf den Stack weg — der Logger
-    // serialisiert einen Error unter `err` samt Stack selbst.
+    // welcher Seite die Suche oder die Backlinks fehlen, und `String(e)`
+    // warf den Stack weg — der Logger serialisiert einen Error unter
+    // `err` samt Stack selbst.
     if (before) {
       await syncWikiLinks(pageId, before.spaceId, json).catch((e) =>
         log.warn({ err: e, pageId, editorId }, "wikiLink sync fehlgeschlagen"),
-      );
-      await notifyNewMentions(
-        pageId,
-        before.spaceId,
-        before.content,
-        json,
-        editorId,
-      ).catch((e) =>
-        log.warn({ err: e, pageId, editorId }, "mention notify fehlgeschlagen"),
       );
       await indexChunks(pageId, textContent).catch((e) =>
         log.warn({ err: e, pageId, editorId }, "chunk indexing fehlgeschlagen"),
@@ -356,27 +407,31 @@ async function syncWikiLinks(
 }
 
 /**
- * Erzeugt MENTION-Benachrichtigungen für Nutzer, die im Vergleich zum
- * vorherigen Stand NEU erwähnt wurden — und die den Space betreten und
- * diese Seite auch öffnen dürfen.
+ * Bestimmt, wer eine MENTION-Benachrichtigung bekommt: Nutzer, die im
+ * Vergleich zum vorherigen Stand NEU erwähnt wurden, die den Space
+ * betreten und diese Seite auch öffnen dürfen und zu dieser Seite noch
+ * keine ungelesene Erwähnung haben.
+ *
+ * Liest nur. Die Zeilen legt `onStoreDocument` in derselben Transaktion
+ * an, die den Vergleichsstand überschreibt (Begründung dort).
  *
  * Die Mail dazu verschickt der Dispatcher (siehe ./mail-dispatcher):
  * er kennt das Sammelfenster, den Tagesdigest und
- * `User.emailNotifications`. Hier wird nur die Zeile angelegt — zwei
- * Versandwege nebeneinander hiessen zwei Mails pro Erwähnung.
+ * `User.emailNotifications`. Beim Speichern entsteht nur die Zeile —
+ * zwei Versandwege nebeneinander hiessen zwei Mails pro Erwähnung.
  */
-async function notifyNewMentions(
+async function newMentionRecipients(
   pageId: string,
   spaceId: string,
   oldContent: unknown,
   newContent: unknown,
   actorId: string | undefined,
-): Promise<void> {
+): Promise<string[]> {
   const previous = new Set(extractMentionIds(oldContent));
   const added = extractMentionIds(newContent).filter(
     (id) => !previous.has(id) && id !== actorId,
   );
-  if (added.length === 0) return;
+  if (added.length === 0) return [];
 
   // Zugang zum Space über die eigene Mitgliedschaft ODER eine Gruppe.
   const candidates = await prisma.user.findMany({
@@ -404,41 +459,21 @@ async function notifyNewMentions(
       reachable.push(candidate.id);
     }
   }
+  if (reachable.length === 0) return [];
 
-  const notified: string[] = [];
-  for (const userId of reachable) {
-    // Jede Person einzeln absichern: der Vergleichsstand dieses Diffs
-    // ist beim Speichern bereits überschrieben worden, ein späterer Lauf
-    // fände dieselbe Erwähnung also nicht mehr als neu. Bräche die
-    // Schleife bei der dritten von fünf Personen ab, bekämen die
-    // übrigen dauerhaft weder Glocke noch Mail.
-    try {
-      const exists = await prisma.notification.findFirst({
-        where: { userId, pageId, type: "MENTION", readAt: null },
-        select: { id: true },
-      });
-      if (!exists) {
-        await prisma.notification.create({
-          data: { userId, actorId, type: "MENTION", pageId },
-        });
-        notified.push(userId);
-      }
-    } catch (e) {
-      log.warn(
-        { err: e, pageId, userId },
-        "Erwähnung konnte nicht angelegt werden",
-      );
-    }
-  }
-
-  // Glocke der erwähnten Person sofort aktualisieren.
-  await Promise.all(
-    notified.map((userId) =>
-      redis
-        .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
-        .catch(() => undefined),
-    ),
-  );
+  // Eine noch ungelesene Erwähnung auf dieser Seite genügt: die Glocke
+  // führt schon dorthin, eine zweite Zeile hiesse eine zweite Mail.
+  const open = await prisma.notification.findMany({
+    where: {
+      userId: { in: reachable },
+      pageId,
+      type: "MENTION",
+      readAt: null,
+    },
+    select: { userId: true },
+  });
+  const alreadyOpen = new Set(open.map((n) => n.userId));
+  return reachable.filter((userId) => !alreadyOpen.has(userId));
 }
 
 /** Chunk-Größe für die KI-Indexierung (Zeichen). */
@@ -850,6 +885,40 @@ async function enforceRevocations(): Promise<void> {
 }
 
 /**
+ * Eine Nachricht der Web-App lesen und ihre Form prüfen.
+ *
+ * Auf dem Kanal kommt nur Text an. Ein Cast auf den erwarteten Typ
+ * behauptete die Form lediglich; die Prüfer aus dem gemeinsamen Paket
+ * stehen neben den Typen, die auch die Web-App beim Senden verwendet.
+ * Verworfen wird mit Log-Eintrag: still verworfen sähe eine Nachricht
+ * einer abweichenden Fassung (rollierender Deploy) genauso aus wie eine,
+ * die nie gesendet wurde — und Wiederherstellung oder Zugriffsentzug
+ * blieben ohne Spur liegen.
+ */
+function readMessage<T>(
+  channel: string,
+  raw: string,
+  isValid: (value: unknown) => value is T,
+): T | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch (e) {
+    log.warn({ err: e, channel }, "Redis-Nachricht verworfen: kein JSON");
+    return null;
+  }
+  if (!isValid(value)) {
+    // Gekürzt: wer auf dem Kanal senden kann, bestimmt die Länge.
+    log.warn(
+      { channel, raw: raw.slice(0, 200) },
+      "Redis-Nachricht verworfen: unerwartete Form",
+    );
+    return null;
+  }
+  return value;
+}
+
+/**
  * Auf Wünsche der Web-App hören: Dokument neu aufbauen (Wiederherstellen
  * einer Version) und Verbindungen nach einem Zugriffsentzug trennen.
  * Der Nonce-Lock stellt sicher, dass bei mehreren Instanzen GENAU EINE
@@ -858,7 +927,7 @@ async function enforceRevocations(): Promise<void> {
  */
 function startDocResetListener(): void {
   const subscriber = redis.duplicate();
-  subscriber.on("error", (e: Error) => log.warn({ err: e.message }, "redis-sub"));
+  subscriber.on("error", (e: Error) => log.warn({ err: e }, "redis-sub"));
   // Scheiterte das Abonnieren einmal, liefe der Prozess dauerhaft taub
   // weiter: keine Wiederherstellung erreichte mehr ein offenes Dokument,
   // und der seitenweise Zugriffsentzug bliebe bis zur nächsten
@@ -879,8 +948,9 @@ function startDocResetListener(): void {
   subscriber.on("message", async (channel: string, raw: string) => {
     try {
       if (channel === PAGE_ACCESS_CHANNEL) {
-        const { pageId } = JSON.parse(raw) as { pageId?: string };
-        if (!pageId) return;
+        const message = readMessage(channel, raw, isPageAccessMessage);
+        if (!message) return;
+        const { pageId } = message;
         const closed = await enforcePageAccess(pageId);
         if (closed > 0) {
           log.info({ pageId, closed }, "Verbindungen nach Zugriffsaenderung getrennt");
@@ -888,22 +958,18 @@ function startDocResetListener(): void {
         return;
       }
       if (channel === ACCESS_REVOKED_CHANNEL) {
-        const { userId, spaceId } = JSON.parse(raw) as {
-          userId?: string;
-          spaceId?: string;
-        };
-        if (!userId || !spaceId) return;
+        const message = readMessage(channel, raw, isAccessRevokedMessage);
+        if (!message) return;
+        const { userId, spaceId } = message;
         const closed = await disconnectUserFromSpace(userId, spaceId);
         if (closed > 0) {
           log.info({ userId, spaceId, closed }, "Collab-Verbindungen getrennt");
         }
         return;
       }
-      const { pageId, nonce } = JSON.parse(raw) as {
-        pageId?: string;
-        nonce?: string;
-      };
-      if (!pageId || !nonce) return;
+      const message = readMessage(channel, raw, isDocResetMessage);
+      if (!message) return;
+      const { pageId, nonce } = message;
       const won = await redis.set(
         `dokunc:doc-reset:${nonce}`,
         "1",
@@ -916,7 +982,10 @@ function startDocResetListener(): void {
         log.info({ pageId }, "Dokument aus der Datenbank neu aufgebaut");
       }
     } catch (e) {
-      log.warn({ err: String(e) }, "Redis-Nachricht konnte nicht verarbeitet werden");
+      log.warn(
+        { err: e, channel },
+        "Redis-Nachricht konnte nicht verarbeitet werden",
+      );
     }
   });
 }
@@ -930,7 +999,7 @@ server
     startDocResetListener();
     setInterval(() => {
       void enforceRevocations().catch((e) =>
-        log.warn({ err: String(e) }, "Rechteprüfung fehlgeschlagen"),
+        log.warn({ err: e }, "Rechteprüfung fehlgeschlagen"),
       );
     }, REVOCATION_INTERVAL_MS).unref();
   })

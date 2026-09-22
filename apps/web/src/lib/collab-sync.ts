@@ -52,7 +52,7 @@ export async function requestDocumentReset(pageId: string): Promise<boolean> {
     await r.publish(DOC_RESET_CHANNEL, JSON.stringify(message));
     return true;
   } catch (err) {
-    log.warn({ err: String(err), pageId }, "Doc-Reset konnte nicht gesendet werden");
+    log.warn({ err, pageId }, "Doc-Reset konnte nicht gesendet werden");
     return false;
   }
 }
@@ -72,7 +72,7 @@ export async function revokeCollabAccess(
     await r.publish(ACCESS_REVOKED_CHANNEL, JSON.stringify(message));
   } catch (err) {
     log.warn(
-      { err: String(err), userId, spaceId },
+      { err, userId, spaceId },
       "Zugriffsentzug konnte nicht gesendet werden",
     );
   }
@@ -95,7 +95,7 @@ export async function revokePageAccess(pageId: string): Promise<void> {
     await r.publish(PAGE_ACCESS_CHANNEL, JSON.stringify(message));
   } catch (err) {
     log.warn(
-      { err: String(err), pageId },
+      { err, pageId },
       "Seitenweiser Zugriffsentzug konnte nicht gesendet werden",
     );
   }

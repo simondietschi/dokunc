@@ -20,6 +20,16 @@ import {
   isDeletionReason,
 } from "@/lib/account-deletion";
 import {
+  isStatusRefusal,
+  statusRefusalMessage,
+  STATUS_REFUSAL_PARAM,
+} from "@/lib/account-status";
+import {
+  CONFLICT_MESSAGE,
+  CONFLICT_PARAM,
+  isConflictNotice,
+} from "@/lib/concurrent-change";
+import {
   resetUserTotpAction,
   toggleUserActiveAction,
   toggleUserAdminAction,
@@ -38,13 +48,21 @@ export default async function AdminPage({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const me = await requireAdmin();
-  // Eine abgelehnte Loeschung kommt als Kennung zurueck (siehe
-  // deleteUserAction). Nur bekannte Kennungen werden zu Text — die
-  // Adresszeile ist von aussen setzbar.
-  const abgelehnt = (await searchParams)["nicht-geloescht"];
+  // Eine abgelehnte Loeschung, Sperre, Freischaltung oder Aenderung der
+  // Adminrechte kommt als Kennung zurueck (siehe ./actions), ebenso eine
+  // Aenderung, die gegen eine gleichzeitige verloren hat. Nur bekannte
+  // Kennungen werden zu Text — die Adresszeile ist von aussen setzbar.
+  // Ein Erfolg leitet ohne Kennung hierher zurueck.
+  const params = await searchParams;
+  const abgelehnt = params["nicht-geloescht"];
+  const statusAbgelehnt = params[STATUS_REFUSAL_PARAM];
   const ablehnung = isDeletionReason(abgelehnt)
     ? adminDeletionMessage(abgelehnt)
-    : null;
+    : isStatusRefusal(statusAbgelehnt)
+      ? statusRefusalMessage(statusAbgelehnt)
+      : isConflictNotice(params[CONFLICT_PARAM])
+        ? CONFLICT_MESSAGE
+        : null;
 
   const [users, spaces] = await Promise.all([
     prisma.user.findMany({

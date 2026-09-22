@@ -43,7 +43,11 @@ services:
       # (empfohlen, z. B. für mehrere Instanzen) hat immer Vorrang:
       # APP_SECRET in .env setzen — openssl rand -base64 48
       APP_SECRET: ${APP_SECRET:-}
-      JWT_EXPIRES_IN: 7d
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # Abmeldung nach Untätigkeit, z. B. 12h. Leer = keine Grenze
+      # (Einzelheiten in .env.example).
+      SESSION_IDLE_TIMEOUT: ${SESSION_IDLE_TIMEOUT:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
       # Muss denselben Namen tragen wie SITE_ADDRESS oben: die App
       # nimmt nur Anfragen von hier an (Upload, Import, Collab-Ticket).
       APP_URL: ${APP_URL:-https://localhost:7891}

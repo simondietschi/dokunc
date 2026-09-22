@@ -194,7 +194,7 @@ export async function POST(
     if (e instanceof ImportError) {
       return NextResponse.json({ error: e.message }, { status: 400 });
     }
-    log.error({ err: String(e), spaceId }, "Import fehlgeschlagen");
+    log.error({ err: e, spaceId }, "Import fehlgeschlagen");
     return NextResponse.json(
       { error: "Import fehlgeschlagen. Bitte Datei prüfen und erneut versuchen." },
       { status: 500 },

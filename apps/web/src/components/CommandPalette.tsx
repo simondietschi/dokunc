@@ -32,11 +32,15 @@ import type { FavoritesResponse } from "@/app/api/favorites/route";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { pageTitle } from "@/lib/page-title";
 import { useBackdropClose, useModal } from "@/components/ui/use-modal";
-import { EVENT_OPEN_PALETTE } from "@/lib/browser-events";
+import {
+  EVENT_OPEN_PALETTE,
+  onBrowserEvent,
+  sendBrowserEvent,
+} from "@/lib/browser-events";
 
 /** Öffnet die Palette von beliebiger Stelle aus (Buttons, Hints). */
 function openPalette() {
-  window.dispatchEvent(new CustomEvent(EVENT_OPEN_PALETTE));
+  sendBrowserEvent(EVENT_OPEN_PALETTE);
 }
 
 type Item = {
@@ -94,14 +98,11 @@ export function CommandPalette() {
         setOpen((o) => !o);
       }
     }
-    function onOpen() {
-      setOpen(true);
-    }
     window.addEventListener("keydown", onKey);
-    window.addEventListener(EVENT_OPEN_PALETTE, onOpen);
+    const stopOpen = onBrowserEvent(EVENT_OPEN_PALETTE, () => setOpen(true));
     return () => {
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener(EVENT_OPEN_PALETTE, onOpen);
+      stopOpen();
     };
   }, [disabled]);
 

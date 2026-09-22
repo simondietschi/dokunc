@@ -68,7 +68,7 @@ export async function GET(req: Request) {
       nonce: flow.nonce,
     });
   } catch (e) {
-    log.error({ err: String(e) }, "OIDC-Rücksprung fehlgeschlagen");
+    log.error({ err: e }, "OIDC-Rücksprung fehlgeschlagen");
     return back("error");
   }
 

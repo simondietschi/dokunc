@@ -15,6 +15,8 @@
  * einer Funktion zu, nie beim Import.
  */
 
+import { EVENT_THEME_CHANGED, onBrowserEvent, sendBrowserEvent } from "./browser-events";
+
 /** Schluessel in localStorage. Auch das Inline-Skript liest genau den. */
 export const THEME_STORAGE_KEY = "theme";
 
@@ -37,9 +39,16 @@ export function isDarkTheme(): boolean {
  * sichtbar, auch wenn `localStorage` (privates Fenster, blockierte
  * Site-Daten) wirft. Geworfen wird hier wie vorher ungefangen — der
  * Klick hat dann gewirkt, nur ueberlebt er den Reload nicht.
+ *
+ * Das Ereignis geht zwischen Klasse und Speicher hinaus: es meldet, was
+ * sichtbar ist, und muss deshalb auch dann ankommen, wenn der Speicher
+ * danach wirft. Ohne das Ereignis erfuhr eine zweite Anzeige nichts vom
+ * Umschalten — wer ueber die Palette umschaltete, sah in der Sidebar
+ * weiter das alte Symbol, bis `ThemeToggle` neu montiert wurde.
  */
 export function setTheme(dark: boolean): void {
   document.documentElement.classList.toggle(THEME_DARK_CLASS, dark);
+  sendBrowserEvent(EVENT_THEME_CHANGED, { dark });
   localStorage.setItem(THEME_STORAGE_KEY, dark ? THEME_DARK : THEME_LIGHT);
 }
 
@@ -48,6 +57,15 @@ export function toggleTheme(): boolean {
   const next = !isDarkTheme();
   setTheme(next);
   return next;
+}
+
+/**
+ * Bei jedem Umschalten `onChange` aufrufen; gibt die Abmeldung zurueck.
+ * Die Form passt zu `useSyncExternalStore` (mit `isDarkTheme` als
+ * Snapshot): so folgt jede Anzeige dem Theme, gleich wer umschaltet.
+ */
+export function subscribeTheme(onChange: () => void): () => void {
+  return onBrowserEvent(EVENT_THEME_CHANGED, onChange);
 }
 
 /**

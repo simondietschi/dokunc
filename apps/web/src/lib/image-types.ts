@@ -37,3 +37,26 @@ export function isInlineImageType(mimeType: string): boolean {
  * Magic Bytes in /api/upload (sniffImageType).
  */
 export const IMAGE_ACCEPT = Object.keys(ALLOWED_IMAGE_TYPES).join(",");
+
+/**
+ * Schreibweise in Meldungen, wo die schlichte Grossschreibung der
+ * Endung falsch waere. Alle anderen Endungen erscheinen gross ("PNG").
+ */
+const IMAGE_TYPE_SPELLING: Record<string, string> = { webp: "WebP" };
+
+/**
+ * Die erlaubten Bildtypen fuer Meldungstexte, z. B. "PNG, JPG, GIF und
+ * WebP" — aus derselben Liste abgeleitet.
+ *
+ * Die Aufzaehlung stand in drei Meldungen ausgeschrieben (api/upload,
+ * Upload-Toast im Editor, Import). Kaeme ein Typ hinzu, nennte keine der
+ * drei ihn, und die Person erfuehre nie, dass er erlaubt ist. Endungen,
+ * die mehrere MIME-Typen teilen, erscheinen nur einmal.
+ */
+export const IMAGE_TYPE_NAMES = (() => {
+  const names = [...new Set(Object.values(ALLOWED_IMAGE_TYPES))].map(
+    (ext) => IMAGE_TYPE_SPELLING[ext] ?? ext.toUpperCase(),
+  );
+  if (names.length < 2) return names.join("");
+  return `${names.slice(0, -1).join(", ")} und ${names[names.length - 1]}`;
+})();

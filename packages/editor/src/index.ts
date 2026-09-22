@@ -31,8 +31,11 @@ import { Drawio } from "./drawio";
  * NodeView-Fabriken, die der Client (React) optional injiziert.
  * Server lässt sie weg — das Schema bleibt identisch, da NodeViews
  * nur das Rendering, nicht das Schema betreffen.
+ *
+ * Nicht exportiert, wie die Node-Definitionen unten: niemand ausserhalb
+ * des Pakets nennt den Typ, der Aufrufer gibt nur ein Objekt mit.
  */
-export type NodeViewFactories = {
+type NodeViewFactories = {
   attachment?: () => unknown;
   callout?: () => unknown;
   toggle?: () => unknown;
@@ -177,6 +180,9 @@ export {
   DOC_RESET_CHANNEL,
   ACCESS_REVOKED_CHANNEL,
   PAGE_ACCESS_CHANNEL,
+  isDocResetMessage,
+  isAccessRevokedMessage,
+  isPageAccessMessage,
 } from "./collab-protocol";
 export type {
   DocResetMessage,

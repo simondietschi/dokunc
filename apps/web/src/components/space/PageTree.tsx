@@ -24,7 +24,7 @@ import { cn } from "@/lib/cn";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { movePageAction } from "@/app/s/[slug]/move-actions";
 import { pageTitle } from "@/lib/page-title";
-import { EVENT_PAGE_RENAMED } from "@/lib/browser-events";
+import { EVENT_PAGE_RENAMED, onBrowserEvent } from "@/lib/browser-events";
 
 /**
  * Seitenbaum der Sidebar. Mit "managePages"-Recht lassen sich Seiten per
@@ -76,14 +76,9 @@ export function PageTree({
   );
 
   useEffect(() => {
-    const onRenamed = (e: Event) => {
-      const { pageId, title } = (
-        e as CustomEvent<{ pageId: string; title: string }>
-      ).detail;
+    return onBrowserEvent(EVENT_PAGE_RENAMED, ({ pageId, title }) => {
       setRenamed((prev) => new Map(prev).set(pageId, title));
-    };
-    window.addEventListener(EVENT_PAGE_RENAMED, onRenamed);
-    return () => window.removeEventListener(EVENT_PAGE_RENAMED, onRenamed);
+    });
   }, []);
 
   useEffect(() => {

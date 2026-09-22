@@ -1,11 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { prisma, Prisma } from "@dokunc/db";
 import { requireAdmin } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
 import { revokeCollabAccess } from "@/lib/collab-sync";
+import { RENAME_REFUSAL_PARAM, type RenameRefusal } from "@/lib/group-rename";
+import { log } from "@/lib/log";
 
 /**
  * Gruppenverwaltung.
@@ -68,18 +71,48 @@ export async function createGroupAction(
   return { success: `Gruppe „${name}" angelegt.` };
 }
 
+/**
+ * Nach getaner Arbeit zurueck auf die Gruppenseite, OHNE Kennung in der
+ * Adresszeile. Nur revalidatePath rendert mit denselben searchParams neu,
+ * und eine Ablehnung von vorhin ("Gruppe nicht umbenannt") stuende dann
+ * ueber einer Umbenennung, die gerade gelungen ist.
+ */
+function backToGroups(): never {
+  revalidatePath("/admin/groups");
+  redirect("/admin/groups");
+}
+
+/**
+ * Umbenennung ablehnen — sichtbar statt stillschweigend.
+ *
+ * Dasselbe Muster wie deleteUserAction im Admin-Bereich: ein Log-Eintrag
+ * und eine Kennung in der Adresszeile, die die Gruppenseite in bekannten
+ * Text uebersetzt (lib/group-rename).
+ */
+function refuseRename(
+  code: RenameRefusal,
+  groupId: string,
+  actorId: string,
+): never {
+  log.warn(
+    { groupId, reason: code, actorId },
+    "Umbenennung der Gruppe abgelehnt",
+  );
+  redirect(`/admin/groups?${RENAME_REFUSAL_PARAM}=${code}`);
+}
+
 export async function renameGroupAction(form: FormData) {
   const admin = await requireAdmin();
   const groupId = str(form, "groupId");
   const name = str(form, "name").slice(0, MAX_NAME);
-  if (name.length < 2) return;
+  if (name.length < 2) refuseRename("zu-kurz", groupId, admin.id);
   // Der eindeutige Name kann kollidieren; das ist kein Fehlerfall, der
   // die Seite kippen soll.
   const taken = await prisma.group.findFirst({
     where: { name, NOT: { id: groupId } },
     select: { id: true },
   });
-  if (taken) return;
+  if (taken) refuseRename("vergeben", groupId, admin.id);
 
   // updateMany statt update: die groupId kommt aus dem Formular und kann
   // leer oder laengst geloescht sein (eine zweite Verwaltung raeumt die
@@ -87,10 +120,29 @@ export async function renameGroupAction(form: FormData) {
   // P2025 und die Aktion endet in der Fehlerseite; ein Treffer weniger
   // ist hier aber kein Fehlerfall, sondern das stille Nichts, das auch
   // deleteGroupAction und addGroupMemberAction zurueckgeben.
-  const { count } = await prisma.group.updateMany({
-    where: { id: groupId },
-    data: { name, description: str(form, "description").slice(0, 200) || null },
-  });
+  //
+  // Die Pruefung auf den Namen oben entscheidet das Rennen nicht, wie bei
+  // createGroupAction: zwei gleichzeitige Umbenennungen auf denselben
+  // Namen sehen ihn beide als frei, und die zweite laeuft in den
+  // Unique-Fehler auf Group.name. Das ist dieselbe Ablehnung.
+  let count: number;
+  try {
+    ({ count } = await prisma.group.updateMany({
+      where: { id: groupId },
+      data: {
+        name,
+        description: str(form, "description").slice(0, 200) || null,
+      },
+    }));
+  } catch (e) {
+    if (
+      e instanceof Prisma.PrismaClientKnownRequestError &&
+      e.code === "P2002"
+    ) {
+      refuseRename("vergeben", groupId, admin.id);
+    }
+    throw e;
+  }
   if (count > 0) {
     await audit({
       action: "group.updated",
@@ -99,7 +151,7 @@ export async function renameGroupAction(form: FormData) {
       metadata: { name },
     });
   }
-  revalidatePath("/admin/groups");
+  backToGroups();
 }
 
 export async function deleteGroupAction(form: FormData) {
@@ -120,7 +172,7 @@ export async function deleteGroupAction(form: FormData) {
     targetId: group.id,
     metadata: { name: group.name },
   });
-  revalidatePath("/admin/groups");
+  backToGroups();
 }
 
 export async function addGroupMemberAction(form: FormData) {
@@ -144,7 +196,7 @@ export async function addGroupMemberAction(form: FormData) {
     targetId: groupId,
     metadata: { userId },
   });
-  revalidatePath("/admin/groups");
+  backToGroups();
 }
 
 export async function removeGroupMemberAction(form: FormData) {
@@ -181,5 +233,5 @@ export async function removeGroupMemberAction(form: FormData) {
       await revokeCollabAccess(userId, s.spaceId);
     }
   }
-  revalidatePath("/admin/groups");
+  backToGroups();
 }

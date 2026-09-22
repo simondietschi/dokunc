@@ -1,9 +1,15 @@
 import type { NextConfig } from "next";
 import { config as loadEnv } from "dotenv";
+import { fileURLToPath } from "node:url";
 import { contentSecurityPolicy } from "./src/lib/csp";
 
 // Monorepo: Root-.env laden, damit web dieselben Variablen wie collab/db nutzt.
-loadEnv({ path: new URL("../../.env", import.meta.url).pathname });
+// fileURLToPath statt `.pathname` (wie in apps/collab/src/env.ts):
+// `.pathname` liefert den prozentkodierten URL-Pfad. Liegt das
+// Repository in einem Verzeichnis mit Leerzeichen oder Umlaut, bekäme
+// dotenv `/home/u/Mein%20Wiki/.env`, fände die Datei nicht und meldete
+// das nicht.
+loadEnv({ path: fileURLToPath(new URL("../../.env", import.meta.url)) });
 
 const isProd = process.env.NODE_ENV === "production";
 

@@ -85,6 +85,16 @@ export function visiblePagesAcrossSpaces(
  *
  * Bewusst hier neben der Prisma-Fassung: die zwei Formulierungen
  * dürfen nie auseinanderlaufen, und nebeneinander fällt es auf.
+ *
+ * Der Ausdruck ist immer TRUE oder FALSE, nie NULL. Das ist keine
+ * Stilfrage: bei leerer Liste stand hier `p."spaceId" IN (NULL)`, und
+ * das ergibt in SQL NULL, nicht false. Solange der Baustein nur positiv
+ * im WHERE stand, fiel das nicht auf — NULL gilt dort als "nicht
+ * erfuellt". Verneint aber (`NOT …`) bleibt NULL NULL, und die Zeile
+ * faellt wieder heraus: subtreeHasHiddenPages zaehlte so eine
+ * geschuetzte Unterseite ohne Freigabe NIE als verborgen, und ein
+ * MEMBER konnte sie mitsamt der offenen Elternseite in den Papierkorb
+ * legen und endgueltig loeschen, obwohl er sie nicht einmal sehen darf.
  */
 export function visiblePageSql(
   userId: string,
@@ -92,9 +102,11 @@ export function visiblePageSql(
 ): Prisma.Sql {
   return Prisma.sql`(
     p."accessRootId" IS NULL
-    OR p."spaceId" IN (${
-      openSpaceIds.length ? Prisma.join(openSpaceIds) : Prisma.sql`NULL`
-    })
+    OR ${
+      openSpaceIds.length
+        ? Prisma.sql`p."spaceId" IN (${Prisma.join(openSpaceIds)})`
+        : Prisma.sql`false`
+    }
     OR EXISTS (
       SELECT 1 FROM "PageGrant" g
       WHERE g."pageId" = p."accessRootId"

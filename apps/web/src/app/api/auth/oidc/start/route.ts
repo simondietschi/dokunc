@@ -52,7 +52,7 @@ export async function GET(req: Request) {
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {
-    log.error({ err: String(e) }, "OIDC-Start fehlgeschlagen");
+    log.error({ err: e }, "OIDC-Start fehlgeschlagen");
     return NextResponse.redirect(new URL("/login?sso=error", req.url));
   }
 }

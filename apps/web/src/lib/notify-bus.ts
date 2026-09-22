@@ -39,7 +39,7 @@ export async function publishNotification(userIds: string[]): Promise<void> {
     );
   } catch (e) {
     // Ohne Redis bleibt die Glocke eben bis zum nächsten Aufruf still.
-    log.warn({ err: String(e) }, "Live-Benachrichtigung nicht zugestellt");
+    log.warn({ err: e }, "Live-Benachrichtigung nicht zugestellt");
   }
 }
 

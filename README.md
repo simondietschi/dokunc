@@ -167,7 +167,8 @@ auf Port 80 erreichbar sein, also `"127.0.0.1:80:80"` bzw. ohne
 alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs- und
 Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
 `ANTHROPIC_API_KEY` für die KI-Funktionen, `MAX_UPLOAD_MB` für das
-Upload-Limit — siehe `.env.example`.
+Upload-Limit, `SESSION_IDLE_TIMEOUT` für die Abmeldung nach Untätigkeit
+(empfohlen für geteilte Geräte) — siehe `.env.example`.
 
 **Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
 (Restore-Befehle gibt das Skript aus).

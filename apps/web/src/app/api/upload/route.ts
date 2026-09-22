@@ -14,6 +14,7 @@ import { declaredBodySize } from "@/lib/body-size";
 import { log } from "@/lib/log";
 import { stripImageMetadata } from "@/lib/image-metadata";
 import { RATE_LIMITS } from "@/lib/rate-limits";
+import { IMAGE_TYPE_NAMES } from "@/lib/image-types";
 import {
   UPLOAD_DIR,
   ALLOWED_IMAGE_TYPES,
@@ -194,7 +195,7 @@ export async function POST(req: Request) {
   const sniffed = sniffImageType(bytes);
   if (wantedKind === "IMAGE" && !sniffed) {
     return NextResponse.json(
-      { error: "Nur echte PNG-, JPG-, GIF- oder WebP-Bilder erlaubt" },
+      { error: `Nur echte Bilder erlaubt (${IMAGE_TYPE_NAMES})` },
       { status: 415 },
     );
   }

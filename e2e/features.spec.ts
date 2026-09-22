@@ -301,6 +301,11 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
   const feld = page.getByPlaceholder("Suchen oder springen…");
   await page.keyboard.press("ControlOrMeta+k");
   await expect(feld).toBeVisible();
+  // Erst wenn das Suchfeld den Fokus hat: useModal setzt ihn einen Frame
+  // nach dem Oeffnen. Ein Tab davor holt die Fokusfalle aufs erste
+  // Element, also ebenfalls ins Suchfeld, und der Test sahe dort einen
+  // Fehler, wo keiner ist.
+  await expect(feld).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(feld).not.toBeFocused();
   await expect(

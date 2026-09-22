@@ -12,7 +12,8 @@
  * das Anthropic-SDK und traegt die Prompt-Texte. Beides gehoert nicht
  * ins Client-Bundle — weder als Gewicht noch als Inhalt —, und der
  * "server-only"-Guard dort wuerde den Build brechen, sobald AiMenu davon
- * importierte. Hier stehen nur die Namen.
+ * importierte. Hier stehen nur die Namen und die Angaben, die zur
+ * Aktion selbst gehoeren (siehe `ASSIST_ACTION_DEFS`).
  */
 export const ASSIST_ACTIONS = [
   "improve",
@@ -23,6 +24,36 @@ export const ASSIST_ACTIONS = [
 ] as const;
 
 export type AssistAction = (typeof ASSIST_ACTIONS)[number];
+
+/**
+ * Wohin das Ergebnis einer Aktion im Dokument kommt:
+ * - "replace": ersetzt die Auswahl,
+ * - "below": als Hinweisblock unter die Auswahl,
+ * - "append": ans Ende des Dokuments.
+ */
+export type AssistPlacement = "replace" | "below" | "append";
+
+/**
+ * Was zur Aktion selbst gehoert und nicht bloss zu ihrer Darstellung
+ * oder ihrem Prompt: die Prompts bleiben serverseitig in `lib/ai.ts`,
+ * Beschriftung und Symbol stehen in `AiMenu.tsx`.
+ *
+ * Die Platzierung stand bisher als Namensregel im Menue
+ * (`action.startsWith("translate")` ersetzt die Auswahl). Eine neue
+ * Aktion "translate_fr" haette die Regel geerbt, eine "rewrite" nicht —
+ * ohne dass es beim Bauen auffiel. Als Record ueber `AssistAction`
+ * verlangt jetzt jede neue Aktion eine ausdrueckliche Angabe.
+ */
+export const ASSIST_ACTION_DEFS: Record<
+  AssistAction,
+  { placement: AssistPlacement }
+> = {
+  improve: { placement: "replace" },
+  summarize: { placement: "below" },
+  translate_en: { placement: "replace" },
+  translate_de: { placement: "replace" },
+  continue: { placement: "append" },
+};
 
 /**
  * Allowlist-Pruefung fuer die Aktion aus dem Request-Body.

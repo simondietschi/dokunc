@@ -19,11 +19,8 @@ import { buildInviteUrl, sendInvitationEmail } from "@/lib/mail";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
 import { log } from "@/lib/log";
-import {
-  canChangeRole,
-  canRemoveMember,
-  isSpaceRole,
-} from "@/lib/role-policy";
+import { isSpaceRole } from "@/lib/role-policy";
+import { changeMemberRole, removeSpaceMember } from "@/lib/member-changes";
 import { isGroupRole } from "@/lib/permissions";
 import { RATE_LIMITS } from "@/lib/rate-limits";
 
@@ -177,33 +174,31 @@ export async function changeRoleAction(form: FormData) {
   );
   const nextRole = str(form, "role");
   if (!isSpaceRole(nextRole)) return;
+  const memberId = str(form, "memberId");
 
-  const member = await prisma.spaceMember.findFirst({
-    where: { id: str(form, "memberId"), spaceId: space.id },
-    select: { id: true, role: true, userId: true },
-  });
-  if (!member) return;
-
-  // Nur aktive Konten zaehlen: ein deaktiviertes OWNER-Konto kann
-  // niemanden mehr befoerdern, wuerde als Zaehler aber den letzten
-  // aktiven Eigentuemer freigeben.
-  const ownerCount = await prisma.spaceMember.count({
-    where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
-  });
-  const verdict = canChangeRole({
-    actorRole,
-    isSelf: member.userId === user.id,
-    currentRole: member.role,
+  // Mitglied lesen, Owner zaehlen, Regel pruefen und schreiben in EINER
+  // serialisierbaren Transaktion (lib/member-changes) — sonst zaehlen zwei
+  // Eigentuemer, die einander gleichzeitig herabstufen, beide zwei, und
+  // der Space bleibt ohne Eigentuemer zurueck.
+  const result = await changeMemberRole(
+    { spaceId: space.id, actorId: user.id, actorRole },
+    memberId,
     nextRole,
-    ownerCount,
-  });
-  if (!verdict.allowed) return;
-  if (member.role === nextRole) return;
+  );
+  if (result.status === "gleichzeitig") {
+    // Die Mitgliederseite hat fuer diese Action keinen Meldeplatz; der
+    // Grund steht deshalb im Log, und die Seite zeigt danach den Stand,
+    // der gewonnen hat.
+    log.warn(
+      { spaceId: space.id, actorId: user.id, memberId, nextRole },
+      "Rollenwechsel verworfen: gleichzeitige Änderung am Space",
+    );
+    revalidatePath(`/s/${space.slug}/members`);
+    return;
+  }
+  if (result.status !== "erledigt") return;
+  const { member } = result;
 
-  await prisma.spaceMember.update({
-    where: { id: member.id },
-    data: { role: nextRole },
-  });
   await audit({
     action: "member.role_changed",
     actorId: user.id,
@@ -223,24 +218,24 @@ export async function removeMemberAction(form: FormData) {
     form,
     "manageSpace",
   );
-  const member = await prisma.spaceMember.findFirst({
-    where: { id: str(form, "memberId"), spaceId: space.id },
-    select: { id: true, role: true, userId: true },
-  });
-  if (!member) return;
+  const memberId = str(form, "memberId");
+  // Wie in changeRoleAction: Zaehlen und Loeschen in EINER
+  // serialisierbaren Transaktion (lib/member-changes).
+  const result = await removeSpaceMember(
+    { spaceId: space.id, actorId: user.id, actorRole },
+    memberId,
+  );
+  if (result.status === "gleichzeitig") {
+    log.warn(
+      { spaceId: space.id, actorId: user.id, memberId },
+      "Entfernen verworfen: gleichzeitige Änderung am Space",
+    );
+    revalidatePath(`/s/${space.slug}/members`);
+    return;
+  }
+  if (result.status !== "erledigt") return;
+  const { member } = result;
 
-  const ownerCount = await prisma.spaceMember.count({
-    where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
-  });
-  const verdict = canRemoveMember({
-    actorRole,
-    isSelf: member.userId === user.id,
-    targetRole: member.role,
-    ownerCount,
-  });
-  if (!verdict.allowed) return;
-
-  await prisma.spaceMember.delete({ where: { id: member.id } });
   await audit({
     action: "member.removed",
     actorId: user.id,

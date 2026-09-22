@@ -95,7 +95,7 @@ async function embed(texts: string[]): Promise<number[][] | null> {
     }
     return parseEmbeddings(await res.json(), texts.length);
   } catch (e) {
-    log.warn({ err: String(e) }, "voyage nicht erreichbar");
+    log.warn({ err: e }, "voyage nicht erreichbar");
     return null;
   }
 }

@@ -15,7 +15,11 @@ import {
 import { cn } from "@/lib/cn";
 import { useToast } from "@/components/ui/Toast";
 import { textToBlocks, textToInline } from "@/lib/editor-text";
-import { ASSIST_ACTIONS, type AssistAction } from "@/lib/ai-actions";
+import {
+  ASSIST_ACTIONS,
+  ASSIST_ACTION_DEFS,
+  type AssistAction,
+} from "@/lib/ai-actions";
 
 /**
  * Darstellung je Aktion. Ein Record ueber `AssistAction`: kommt in
@@ -129,7 +133,10 @@ export function AiMenu({ editor }: { editor: Editor }) {
       const mappedTo = mapping.map(to, -1);
       const chain = editor.chain().focus();
       const blocks = textToBlocks(data.result);
-      if (action === "improve" || action.startsWith("translate")) {
+      // Wohin das Ergebnis kommt, steht an der Aktion selbst
+      // (lib/ai-actions), nicht in einer Namensregel hier.
+      const { placement } = ASSIST_ACTION_DEFS[action];
+      if (placement === "replace") {
         // Auswahl durch Ergebnis ersetzen — innerhalb eines Absatzes
         // inline, sonst als Absätze.
         const sameBlock = editor.state.doc
@@ -143,8 +150,8 @@ export function AiMenu({ editor }: { editor: Editor }) {
               : blocks,
           )
           .run();
-      } else if (action === "summarize") {
-        // Zusammenfassung unterhalb der Auswahl einfügen.
+      } else if (placement === "below") {
+        // Als Hinweisblock unterhalb der Auswahl einfügen (Zusammenfassen).
         const $to = editor.state.doc.resolve(mappedTo);
         const after = $to.depth > 0 ? $to.after(1) : to;
         chain
@@ -153,7 +160,7 @@ export function AiMenu({ editor }: { editor: Editor }) {
           ])
           .run();
       } else {
-        // Weiterschreiben: ans Dokumentende anfügen.
+        // Ans Dokumentende anfügen (Weiterschreiben).
         chain.insertContentAt(editor.state.doc.content.size, blocks).run();
       }
     } catch {

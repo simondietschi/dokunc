@@ -6,7 +6,8 @@ import { authorizeAction } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { str } from "@/lib/form";
 import { publishNotification } from "@/lib/notify-bus";
-import { filterByPageAccess, visiblePageWhere } from "@/lib/page-access";
+import { filterByPageAccess } from "@/lib/page-access";
+import { findLivePage, scopeOf, scopeWhere } from "@/lib/page-guards";
 
 /** Client-generierte Thread-IDs (crypto.randomUUID) validieren. */
 function isValidThreadId(id: string): boolean {
@@ -31,15 +32,7 @@ export async function createThreadAction(form: FormData) {
   if (!body || body.length > MAX_COMMENT_LENGTH) return;
   if (!isValidThreadId(threadId)) return;
 
-  const page = await prisma.page.findFirst({
-    where: {
-      id: pageId,
-      spaceId: space.id,
-      deletedAt: null,
-      ...visiblePageWhere(user.id, access.role),
-    },
-    select: { id: true },
-  });
+  const page = await findLivePage(scopeOf(access), pageId);
   if (!page) return;
 
   // Die Thread-ID kommt vom Client (sie wird zeitgleich als Mark im
@@ -189,7 +182,7 @@ export async function replyAction(form: FormData) {
     where: {
       id: threadId,
       parentId: null,
-      page: { spaceId: space.id, ...visiblePageWhere(user.id, access.role) },
+      page: scopeWhere(scopeOf(access)),
     },
     include: {
       replies: { select: { authorId: true } },
@@ -250,7 +243,7 @@ export async function resolveThreadAction(form: FormData) {
     where: {
       id: threadId,
       parentId: null,
-      page: { spaceId: space.id, ...visiblePageWhere(user.id, role) },
+      page: scopeWhere(scopeOf({ space, user, role })),
     },
     select: { id: true, pageId: true, resolvedAt: true, authorId: true },
   });
@@ -274,7 +267,7 @@ export async function deleteCommentAction(form: FormData) {
   const comment = await prisma.comment.findFirst({
     where: {
       id: commentId,
-      page: { spaceId: space.id, ...visiblePageWhere(user.id, role) },
+      page: scopeWhere(scopeOf({ space, user, role })),
     },
     select: { id: true, pageId: true, authorId: true },
   });
@@ -304,7 +297,7 @@ export async function editCommentAction(form: FormData) {
     where: {
       id: str(form, "commentId"),
       authorId: user.id,
-      page: { spaceId: space.id, ...visiblePageWhere(user.id, access.role) },
+      page: scopeWhere(scopeOf(access)),
     },
     select: { id: true, pageId: true },
   });
@@ -322,15 +315,7 @@ export async function toggleSubscriptionAction(form: FormData) {
   const access = await authorizeAction(form, "read");
   const { space, user } = access;
   const pageId = str(form, "pageId");
-  const page = await prisma.page.findFirst({
-    where: {
-      id: pageId,
-      spaceId: space.id,
-      deletedAt: null,
-      ...visiblePageWhere(user.id, access.role),
-    },
-    select: { id: true },
-  });
+  const page = await findLivePage(scopeOf(access), pageId);
   if (!page) return;
 
   // Der Knopf hat keine pending-Sperre: zwei schnelle Klicks schicken

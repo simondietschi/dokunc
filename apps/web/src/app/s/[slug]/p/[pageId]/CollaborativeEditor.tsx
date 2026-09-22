@@ -65,6 +65,7 @@ import {
   IMAGE_ACCEPT,
   pickAndUpload,
   uploadAndInsert,
+  uploadFile,
 } from "@/components/editor/upload";
 import {
   createSlashCommands,
@@ -78,6 +79,7 @@ import { caretColorFor } from "@/lib/caret-color";
 import { looksLikeMarkdown, markdownToHtml } from "@/lib/markdown-paste";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/cn";
+import { IMAGE_TYPE_NAMES } from "@/lib/image-types";
 import { toggleSubscriptionAction } from "./comments/actions";
 import {
   renamePageAction,
@@ -85,42 +87,14 @@ import {
   setPageIconAction,
 } from "../../actions";
 import { DEFAULT_PAGE_TITLE, EMPTY_PAGE_TITLE } from "@/lib/page-title";
-import { EVENT_FOCUS_COMMENT_THREAD, EVENT_PAGE_RENAMED, EVENT_REMOVE_COMMENT_MARK, EVENT_SCROLL_TO_COMMENT_MARK } from "@/lib/browser-events";
-
-/**
- * Titelbild hochladen. Der Rest der Dateiwege laeuft ueber
- * `components/editor/upload` (mehrere Dateien, Fehler pro Datei); das
- * Cover braucht nur die fertige URL einer einzelnen Datei.
- */
-async function uploadCoverImage(
-  file: File,
-  spaceId: string,
-  pageId: string,
-): Promise<string> {
-  const body = new FormData();
-  body.set("file", file);
-  // Space und Seite entscheiden, wer die Datei spaeter sehen darf.
-  body.set("spaceId", spaceId);
-  body.set("pageId", pageId);
-  body.set("kind", "image");
-  const res = await fetch("/api/upload", { method: "POST", body });
-  if (!res.ok) {
-    // Die Route begruendet die Ablehnung (zu gross — mit der tatsaechlich
-    // geltenden Grenze —, falscher Typ, kein Schreibrecht, zu viele
-    // Uploads). Bliebe nur der Statuscode uebrig, koennte der Aufrufer
-    // der Person nur pauschal raten, woran es lag.
-    let message = "Upload fehlgeschlagen.";
-    try {
-      const data = (await res.json()) as { error?: string };
-      if (data.error) message = data.error;
-    } catch {
-      /* keine JSON-Antwort */
-    }
-    throw new Error(message);
-  }
-  const { url } = (await res.json()) as { url: string };
-  return url;
-}
+import {
+  EVENT_FOCUS_COMMENT_THREAD,
+  EVENT_PAGE_RENAMED,
+  EVENT_REMOVE_COMMENT_MARK,
+  EVENT_SCROLL_TO_COMMENT_MARK,
+  onBrowserEvent,
+  sendBrowserEvent,
+} from "@/lib/browser-events";
 
 /**
  * Setzt HTML an der aktuellen Auswahl ein.
@@ -312,7 +286,7 @@ export function CollaborativeEditor({
         description:
           reason instanceof Error && reason.message
             ? reason.message
-            : "Erlaubt sind PNG, JPG, GIF und WebP.",
+            : `Erlaubt sind ${IMAGE_TYPE_NAMES}.`,
         variant: "error",
       });
     },
@@ -323,11 +297,10 @@ export function CollaborativeEditor({
    * ueber revalidatePath ohnehin nach. */
   const announceTitle = useCallback(
     (value: string) => {
-      window.dispatchEvent(
-        new CustomEvent(EVENT_PAGE_RENAMED, {
-          detail: { pageId, title: value || DEFAULT_PAGE_TITLE },
-        }),
-      );
+      sendBrowserEvent(EVENT_PAGE_RENAMED, {
+        pageId,
+        title: value || DEFAULT_PAGE_TITLE,
+      });
     },
     [pageId],
   );
@@ -413,7 +386,12 @@ export function CollaborativeEditor({
       const file = input.files?.[0];
       if (!file) return;
       try {
-        void saveCover(await uploadCoverImage(file, spaceId, pageId));
+        // Derselbe Weg wie Bilder im Text (components/editor/upload): eine
+        // Fassung der Anfrage an /api/upload, nicht zwei. "image" erzwingt
+        // die strenge Bildpruefung — ein Titelbild darf kein Anhang werden.
+        // Wirft mit der Begruendung der Route, die onUploadError zeigt.
+        const { url } = await uploadFile(file, { spaceId, pageId }, "image");
+        void saveCover(url);
       } catch (e) {
         onUploadError(e);
       }
@@ -595,9 +573,7 @@ export function CollaborativeEditor({
           .find((m) => m.type.name === "commentMark");
         const id = mark?.attrs.commentId;
         if (typeof id !== "string" || !id) return false;
-        window.dispatchEvent(
-          new CustomEvent(EVENT_FOCUS_COMMENT_THREAD, { detail: { id } }),
-        );
+        sendBrowserEvent(EVENT_FOCUS_COMMENT_THREAD, { id });
         return false;
       },
       // Dateien per Einfuegen: hochladen, dann als Bild oder Anhang
@@ -684,8 +660,7 @@ export function CollaborativeEditor({
   // (Thread verworfen oder aufgelöst).
   useEffect(() => {
     if (!editor) return;
-    const onRemove = (e: Event) => {
-      const { id } = (e as CustomEvent<{ id: string }>).detail;
+    return onBrowserEvent(EVENT_REMOVE_COMMENT_MARK, ({ id }) => {
       if (editor.isDestroyed) return;
       const { state } = editor;
       const markType = state.schema.marks.commentMark;
@@ -699,10 +674,7 @@ export function CollaborativeEditor({
         }
       });
       if (tr.docChanged) editor.view.dispatch(tr);
-    };
-    window.addEventListener(EVENT_REMOVE_COMMENT_MARK, onRemove);
-    return () =>
-      window.removeEventListener(EVENT_REMOVE_COMMENT_MARK, onRemove);
+    });
   }, [editor]);
 
   // Verwaiste Kommentar-Markierungen aufräumen: ein abgebrochener Entwurf
@@ -748,8 +720,7 @@ export function CollaborativeEditor({
 
   // Vom CommentsPanel angestossen: zur markierten Textstelle scrollen.
   useEffect(() => {
-    const onScrollTo = (e: Event) => {
-      const { id } = (e as CustomEvent<{ id: string }>).detail;
+    return onBrowserEvent(EVENT_SCROLL_TO_COMMENT_MARK, ({ id }) => {
       const el = document.querySelector(`[data-comment-id="${CSS.escape(id)}"]`);
       if (!el) return;
       el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -758,10 +729,7 @@ export function CollaborativeEditor({
         () => el.classList.remove("dk-comment-anchor--active"),
         1600,
       );
-    };
-    window.addEventListener(EVENT_SCROLL_TO_COMMENT_MARK, onScrollTo);
-    return () =>
-      window.removeEventListener(EVENT_SCROLL_TO_COMMENT_MARK, onScrollTo);
+    });
   }, []);
 
   useEffect(() => {

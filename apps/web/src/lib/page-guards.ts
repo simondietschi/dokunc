@@ -7,6 +7,7 @@ import {
   visiblePageWhere,
 } from "./page-access";
 import { insertAt, positionUpdates } from "./page-move";
+import { lockSiblingOrder, nextSiblingPosition } from "./page-position";
 import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
 
 /**
@@ -30,20 +31,98 @@ export type PageScope = {
   role: SpaceRole;
 };
 
-/** Space-Bindung und Sichtbarkeit in einer Bedingung. */
-function scopeWhere(scope: PageScope): Prisma.PageWhereInput {
+/**
+ * Der Kontext aus dem Ergebnis von `authorizeAction`. Als eigener
+ * Schritt, damit keine Aktion versehentlich nur die Hälfte mitgibt und
+ * damit an geschützten Seiten vorbeiliefe.
+ */
+export function scopeOf(access: {
+  space: { id: string };
+  user: { id: string };
+  role: SpaceRole;
+}): PageScope {
+  return { spaceId: access.space.id, userId: access.user.id, role: access.role };
+}
+
+/**
+ * Space-Bindung und Sichtbarkeit in einer Bedingung.
+ *
+ * Exportiert für die Abfragen, die mehr als eine einzelne Seite treffen
+ * (beim Duplizieren der Unterbaum und seine Inhalte): auch sie beziehen
+ * die Regel von hier. Jede eigene Fassung war bisher die Stelle, an der
+ * der Sichtbarkeitsteil irgendwann fehlte.
+ */
+export function scopeWhere(scope: PageScope): Prisma.PageWhereInput {
   return {
     spaceId: scope.spaceId,
     ...visiblePageWhere(scope.userId, scope.role),
   };
 }
 
+/**
+ * Dieselbe Sichtbarkeit als SQL-Baustein für Rohabfragen (Seitentabelle
+ * unter dem Alias `p`). Die Space-Bindung gehört dort in die Abfrage
+ * selbst; hier steht nur, was die Person sehen darf — für die Verwaltung
+ * der ganze Space.
+ */
+export function scopeVisibleSql(scope: PageScope): Prisma.Sql {
+  return visiblePageSql(
+    scope.userId,
+    seesEverything(scope.role) ? [scope.spaceId] : [],
+  );
+}
+
+/**
+ * Einschränkung nach Seitenart: `isTemplate: true` nur Vorlagen,
+ * `false` keine Vorlagen, ohne Angabe beides.
+ */
+export type LivePageFilter = { isTemplate?: boolean };
+
+/**
+ * Bedingung für genau eine Seite aus Nutzerhand: im Space, sichtbar,
+ * nicht im Papierkorb. Exportiert für Schreibzugriffe, die dieselbe
+ * Bindung brauchen, aber keine Seite laden (etwa `updateMany`).
+ */
+export function livePageWhere(
+  scope: PageScope,
+  pageId: string,
+  filter: LivePageFilter = {},
+): Prisma.PageWhereInput {
+  return {
+    id: pageId,
+    ...scopeWhere(scope),
+    deletedAt: null,
+    ...(filter.isTemplate === undefined
+      ? {}
+      : { isTemplate: filter.isTemplate }),
+  };
+}
+
 /** Seite im Space, sichtbar, nicht im Papierkorb. */
-export async function findLivePage(scope: PageScope, pageId: string) {
+export async function findLivePage(
+  scope: PageScope,
+  pageId: string,
+  filter: LivePageFilter = {},
+) {
+  return selectLivePage(scope, pageId, { id: true, title: true }, filter);
+}
+
+/**
+ * Wie `findLivePage`, aber mit den Feldern, die der Aufrufer braucht
+ * (Inhalt, Position …). Dieselbe Bindung in derselben Abfrage: ein
+ * zweiter Schritt, der die Daten erst nach der Prüfung lädt, sähe einen
+ * späteren Stand als die Prüfung.
+ */
+export async function selectLivePage<S extends Prisma.PageSelect>(
+  scope: PageScope,
+  pageId: string,
+  select: S,
+  filter: LivePageFilter = {},
+): Promise<Prisma.PageGetPayload<{ select: S }> | null> {
   if (!pageId) return null;
   return prisma.page.findFirst({
-    where: { id: pageId, ...scopeWhere(scope), deletedAt: null },
-    select: { id: true, title: true },
+    where: livePageWhere(scope, pageId, filter),
+    select,
   });
 }
 
@@ -83,13 +162,16 @@ export async function findRestorableVersion(
  * Space liegt, null wenn kein Elternteil gewünscht ist, und wirft bei
  * einer fremden ID — sonst entstünden Seiten, deren Elternteil in einem
  * anderen Space hängt und die im Baum nirgends auftauchen.
+ *
+ * Aus demselben Grund keine Vorlage: Vorlagen stehen nicht im Seitenbaum,
+ * eine Seite darunter wäre ebenso unauffindbar.
  */
 export async function resolveParentId(
   scope: PageScope,
   parentId: string | null,
 ): Promise<string | null> {
   if (!parentId) return null;
-  const parent = await findLivePage(scope, parentId);
+  const parent = await findLivePage(scope, parentId, { isTemplate: false });
   if (!parent) throw new Error("Elternseite gehört nicht zu diesem Space");
   return parent.id;
 }
@@ -198,14 +280,26 @@ export async function trashPageTree(
  * und Verschieben durcheinandergeraten. Wer nur den ersten Schritt
  * aufriefe, bekäme genau diesen halben Zustand.
  *
- * Optional im Client einer laufenden Transaktion: die Schritte müssen
- * gemeinsam gelten.
+ * Nur im Client einer laufenden Transaktion: die Schritte müssen
+ * gemeinsam gelten, und die Sperre der Geschwisterreihe (siehe unten)
+ * hält nur innerhalb einer Transaktion.
  */
 export async function restorePageTree(
   spaceId: string,
   pageId: string,
-  tx: Pick<typeof prisma, "$executeRaw"> = prisma,
+  tx: Pick<typeof prisma, "$executeRaw" | "$queryRaw" | "page">,
 ): Promise<void> {
+  // Die Sperre der obersten Geschwisterreihe ZUERST, vor jeder
+  // Zeilensperre. detachLiveChildren (endgültiges Löschen) nimmt sie
+  // ebenfalls als Erstes und sperrt danach Zeilen im selben Unterbaum.
+  // Holte diese Funktion sie erst nach dem UPDATE unten, stünden sich
+  // beide in umgekehrter Reihenfolge gegenüber: Wiederherstellen hält
+  // die Zeile und wartet auf die Sperre, Löschen hält die Sperre und
+  // wartet auf die Zeile — Postgres bricht dann eine der beiden mit
+  // einem Deadlock ab. Gebraucht wird sie nur, wenn die Seite an die
+  // oberste Ebene wandert; genommen wird sie immer, damit die
+  // Reihenfolge nicht vom Datenstand abhängt.
+  await lockSiblingOrder(tx, spaceId, null);
   await tx.$executeRaw`
     WITH RECURSIVE sub AS (
       SELECT id FROM "Page" WHERE id = ${pageId} AND "spaceId" = ${spaceId}
@@ -216,19 +310,30 @@ export async function restorePageTree(
     UPDATE "Page" SET "deletedAt" = NULL
     WHERE id IN (SELECT id FROM sub) AND "deletedAt" IS NOT NULL
   `;
-  await tx.$executeRaw`
-    WITH base AS (
-      SELECT coalesce(max(position), -1) AS pos FROM "Page"
-      WHERE "spaceId" = ${spaceId} AND "parentId" IS NULL
-        AND "deletedAt" IS NULL AND id <> ${pageId}
-    )
-    UPDATE "Page" p SET "parentId" = NULL, position = (SELECT pos FROM base) + 1
+
+  // Nur die oberste Seite kann noch an einem gelöschten Elternteil
+  // hängen; alles darunter ist eben mit ihr zurückgekommen.
+  const [stranded] = await tx.$queryRaw<{ isTemplate: boolean }[]>`
+    SELECT p."isTemplate" FROM "Page" p
+    JOIN "Page" parent ON parent.id = p."parentId"
     WHERE p.id = ${pageId} AND p."spaceId" = ${spaceId}
-      AND p."parentId" IS NOT NULL
-      AND EXISTS (
-        SELECT 1 FROM "Page" parent
-        WHERE parent.id = p."parentId" AND parent."deletedAt" IS NOT NULL
-      )
+      AND parent."deletedAt" IS NOT NULL
+  `;
+  if (!stranded) return;
+
+  // Ans Ende der obersten Ebene, nach derselben Regel wie jede neu
+  // angelegte Seite: Vorlagen zählen dort nicht mit, und die Sperre der
+  // Geschwisterreihe gilt auch hier. Eine eigene Rechnung an dieser
+  // Stelle zählte die Vorlagen mit und lief ohne Sperre.
+  const position = await nextSiblingPosition(
+    tx,
+    spaceId,
+    null,
+    stranded.isTemplate,
+  );
+  await tx.$executeRaw`
+    UPDATE "Page" SET "parentId" = NULL, position = ${position}
+    WHERE id = ${pageId} AND "spaceId" = ${spaceId}
   `;
 }
 
@@ -250,8 +355,14 @@ export async function restorePageTree(
 export async function detachLiveChildren(
   spaceId: string,
   pageId: string,
-  tx: Pick<typeof prisma, "$queryRaw"> = prisma,
+  // Ohne Vorgabe: die Sperre aus nextSiblingPosition hält nur innerhalb
+  // einer Transaktion.
+  tx: Pick<typeof prisma, "$queryRaw" | "$executeRaw" | "page">,
 ): Promise<{ id: string }[]> {
+  // Die erste freie Position auf oberster Ebene nach derselben Regel wie
+  // beim Anlegen (Vorlagen zählen nicht mit) und unter derselben Sperre;
+  // die abgehängten Äste reihen sich von dort an hintereinander ein.
+  const first = await nextSiblingPosition(tx, spaceId, null);
   return tx.$queryRaw<{ id: string }[]>`
     WITH RECURSIVE sub AS (
       SELECT id FROM "Page"
@@ -260,10 +371,6 @@ export async function detachLiveChildren(
       UNION ALL
       SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
       WHERE p."spaceId" = ${spaceId} AND p."deletedAt" IS NOT NULL
-    ), base AS (
-      SELECT coalesce(max(position), -1) AS pos FROM "Page"
-      WHERE "spaceId" = ${spaceId} AND "parentId" IS NULL
-        AND "deletedAt" IS NULL
     ), orphan AS (
       SELECT p.id, row_number() OVER (ORDER BY p.position, p.title) AS n
       FROM "Page" p
@@ -271,7 +378,7 @@ export async function detachLiveChildren(
         AND p."parentId" IN (SELECT id FROM sub)
     )
     UPDATE "Page" SET "parentId" = NULL,
-      position = (SELECT pos FROM base) + orphan.n
+      position = ${first - 1}::int + orphan.n
     FROM orphan WHERE "Page".id = orphan.id
     RETURNING "Page".id
   `;

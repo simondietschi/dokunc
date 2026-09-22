@@ -56,6 +56,12 @@ export async function lockSiblingOrder(
  * bleiben. Ohne die Unterscheidung zaehlt eine Seite auf oberster Ebene
  * die Vorlagen mit und beginnt in einem Space, in dem es nur Vorlagen
  * gibt, bei 1 statt 0.
+ *
+ * Auch Seiten, die nachtraeglich an die oberste Ebene rutschen, holen
+ * ihre Position hier: das Wiederherstellen unter einem noch geloeschten
+ * Elternteil und das Abhaengen lebender Kinder vor dem endgueltigen
+ * Loeschen (`restorePageTree`, `detachLiveChildren` in lib/page-guards).
+ * Die Regel steht damit an genau einer Stelle.
  */
 export async function nextSiblingPosition(
   tx: PositionTx,

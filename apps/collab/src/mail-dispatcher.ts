@@ -118,7 +118,7 @@ export function startMailDispatcher(opts: {
       return res === "OK";
     } catch (e) {
       // Ohne Redis lieber aussetzen als doppelt versenden.
-      log.warn({ err: String(e) }, "Redis nicht erreichbar, Lauf übersprungen");
+      log.warn({ err: e }, "Redis nicht erreichbar, Lauf übersprungen");
       return false;
     }
   }
@@ -138,7 +138,7 @@ export function startMailDispatcher(opts: {
         log.warn("Lock während des Laufs verloren, Überlappung möglich");
       }
     } catch (e) {
-      log.warn({ err: String(e) }, "Lock konnte nicht verlängert werden");
+      log.warn({ err: e }, "Lock konnte nicht verlängert werden");
     }
   }
 
@@ -146,7 +146,7 @@ export function startMailDispatcher(opts: {
     try {
       await redis.eval(RELEASE_SCRIPT, 1, LOCK_KEY, token);
     } catch (e) {
-      log.warn({ err: String(e) }, "Lock konnte nicht freigegeben werden");
+      log.warn({ err: e }, "Lock konnte nicht freigegeben werden");
     }
   }
 
@@ -161,7 +161,7 @@ export function startMailDispatcher(opts: {
       // unbemerkt, dass Nutzer mit Modus DAILY überhaupt keine Mail
       // mehr bekommen: jeder Lauf hielte den Digest still für erledigt.
       log.warn(
-        { err: String(e) },
+        { err: e },
         "Digest-Marker nicht lesbar, Tagesdigest ausgesetzt",
       );
       return false;
@@ -172,7 +172,7 @@ export function startMailDispatcher(opts: {
     try {
       await redis.set(utcDayKey(now), "1", "PX", DIGEST_MARKER_TTL_MS);
     } catch (e) {
-      log.warn({ err: String(e) }, "Digest-Marker konnte nicht gesetzt werden");
+      log.warn({ err: e }, "Digest-Marker konnte nicht gesetzt werden");
     }
   }
 
@@ -415,7 +415,7 @@ export function startMailDispatcher(opts: {
         lastError = e;
         const permanent = isPermanentSmtpError(e);
         log.warn(
-          { userId: batch.userId, attempt, permanent, err: String(e) },
+          { userId: batch.userId, attempt, permanent, err: e },
           "Mail-Versand fehlgeschlagen",
         );
         // Eine dauerhafte Ablehnung wiederholt sich unverändert; weitere
@@ -428,14 +428,14 @@ export function startMailDispatcher(opts: {
         {
           userId: batch.userId,
           count: batch.notificationIds.length,
-          err: String(lastError),
+          err: lastError,
         },
         "Mail dauerhaft abgelehnt, kein weiterer Versuch (Einträge bleiben in der App)",
       );
       return "permanent";
     }
     log.error(
-      { userId: batch.userId, count: batch.notificationIds.length, err: String(lastError) },
+      { userId: batch.userId, count: batch.notificationIds.length, err: lastError },
       "Mail nach mehreren Versuchen nicht zugestellt, Einträge bleiben offen",
     );
     return "retry";
@@ -545,7 +545,7 @@ export function startMailDispatcher(opts: {
         await runOnce();
       }
     } catch (e) {
-      log.error({ err: String(e) }, "Mail-Dispatcher-Lauf fehlgeschlagen");
+      log.error({ err: e }, "Mail-Dispatcher-Lauf fehlgeschlagen");
     } finally {
       if (heartbeat) clearInterval(heartbeat);
       if (locked) await releaseLock(token);

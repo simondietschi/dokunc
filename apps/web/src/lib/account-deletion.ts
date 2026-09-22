@@ -1,5 +1,5 @@
 import "server-only";
-import { prisma } from "@dokunc/db";
+import { prisma, type Prisma } from "@dokunc/db";
 import { requireUser } from "./current-user";
 
 /**
@@ -23,6 +23,15 @@ import { requireUser } from "./current-user";
  * deshalb entscheidet dort die Kennung ueber die Formulierung.
  */
 export type DeletionReason = "letzter-admin" | "verwaiste-spaces";
+
+/**
+ * Frist der Lösch-Transaktion. Das Löschen eines Kontos zieht Kaskaden
+ * und SetNull über Versionen, Kommentare, Benachrichtigungen und das
+ * Protokoll nach; auf einer grossen Instanz dauert das länger als die
+ * 5 Sekunden, die Prisma einer Transaktion sonst lässt. Liefe die Frist
+ * ab, sähe die Person eine Fehlerseite, obwohl nichts gelöscht wurde.
+ */
+export const ACCOUNT_DELETE_TIMEOUT_MS = 30_000;
 
 export type DeletionCheck =
   | { allowed: true }
@@ -60,8 +69,17 @@ export function canDeleteUser(input: {
 /**
  * Spaces, in denen diese Person der einzige Eigentümer ist.
  * Gemeinsame Grundlage für Konto-Löschung im Konto und im Admin-Bereich.
+ *
+ * `db` ist die Transaktion, in der danach gelöscht wird. Ausserhalb
+ * gezählt, sähe die Löschung einen älteren Stand als ihre Prüfung: tritt
+ * dazwischen der einzige Mit-Eigentümer aus, bleibt der Space ohne
+ * Eigentümer zurück. In derselben Transaktion mit Serializable bricht
+ * Postgres einen der beiden Schritte stattdessen ab.
  */
-export async function orphanedSpacesFor(userId: string): Promise<string[]> {
+export async function orphanedSpacesFor(
+  userId: string,
+  db: Pick<Prisma.TransactionClient, "spaceMember"> = prisma,
+): Promise<string[]> {
   // Die Schranke bleibt, obwohl der Export kein Endpunkt mehr ist: die
   // Antwort verrät zu einer beliebigen userId, welche Spaces ihr allein
   // gehören — Space-Namen inklusive. Sie kostet wenig und hält fest,
@@ -71,7 +89,7 @@ export async function orphanedSpacesFor(userId: string): Promise<string[]> {
     throw new Error("Nicht berechtigt.");
   }
 
-  const owned = await prisma.spaceMember.findMany({
+  const owned = await db.spaceMember.findMany({
     where: { userId, role: "OWNER" },
     select: { spaceId: true, space: { select: { name: true } } },
   });
@@ -79,7 +97,7 @@ export async function orphanedSpacesFor(userId: string): Promise<string[]> {
 
   // Nur aktive Konten zählen: ein deaktivierter Mit-Eigentümer kann den
   // Space nicht übernehmen, der Space wäre also trotzdem verwaist.
-  const counts = await prisma.spaceMember.groupBy({
+  const counts = await db.spaceMember.groupBy({
     by: ["spaceId"],
     where: {
       spaceId: { in: owned.map((o) => o.spaceId) },

@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { Prisma, prisma, type SpaceRole } from "@dokunc/db";
+import { Prisma, prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str, strOrNull } from "@/lib/form";
 import { getBuiltinTemplate } from "@/lib/builtin-templates";
@@ -12,12 +12,16 @@ import {
   placeCopyAfter,
 } from "@/lib/page-copy";
 import { extractText } from "@/lib/page-text";
+import { refreshAccessRoots } from "@/lib/page-access";
 import {
-  refreshAccessRoots,
-  seesEverything,
-  visiblePageSql,
-  visiblePageWhere,
-} from "@/lib/page-access";
+  findLivePage,
+  livePageWhere,
+  scopeOf,
+  scopeVisibleSql,
+  scopeWhere,
+  selectLivePage,
+  type PageScope,
+} from "@/lib/page-guards";
 import { lockSiblingOrder, nextSiblingPosition } from "@/lib/page-position";
 
 /**
@@ -29,28 +33,14 @@ import { lockSiblingOrder, nextSiblingPosition } from "@/lib/page-position";
  * MEMBER) über eine geratene oder aus einem alten Link bekannte ID den
  * Inhalt einer geschützten Seite, die er selbst nicht öffnen darf.
  *
+ * Beide Hälften kommen aus `lib/page-guards` und werden hier nicht neu
+ * ausformuliert: eine eigene Fassung dieser Bedingung war genau die
+ * Stelle, an der der Sichtbarkeitsteil gefehlt hat.
+ *
  * Und jede neu angelegte Seite mit Elternteil zieht `refreshAccessRoots`
  * nach: ohne das steht die Kopie mit accessRootId null unter einer
  * geschützten Seite und ist damit für den ganzen Space sichtbar.
  */
-
-type Scope = { spaceId: string; userId: string; role: SpaceRole };
-
-function scopeOf(access: {
-  space: { id: string };
-  user: { id: string };
-  role: SpaceRole;
-}): Scope {
-  return { spaceId: access.space.id, userId: access.user.id, role: access.role };
-}
-
-/** Space-Bindung und Sichtbarkeit in einer Bedingung. */
-function scopeWhere(scope: Scope) {
-  return {
-    spaceId: scope.spaceId,
-    ...visiblePageWhere(scope.userId, scope.role),
-  };
-}
 
 /** Prisma-taugliches JSON aus einem (bereinigten) Inhalt. */
 function jsonInput(content: unknown): Prisma.InputJsonValue | undefined {
@@ -64,17 +54,9 @@ function jsonInput(content: unknown): Prisma.InputJsonValue | undefined {
  * die handelnde Person sichtbar ist. Ohne den zweiten Teil hängt jemand
  * Seiten unter eine geschützte Seite, die er gar nicht öffnen darf.
  */
-async function resolveParent(scope: Scope, requested: string | null) {
+async function resolveParent(scope: PageScope, requested: string | null) {
   if (!requested) return null;
-  const parent = await prisma.page.findFirst({
-    where: {
-      id: requested,
-      ...scopeWhere(scope),
-      deletedAt: null,
-      isTemplate: false,
-    },
-    select: { id: true },
-  });
+  const parent = await findLivePage(scope, requested, { isTemplate: false });
   return parent?.id ?? null;
 }
 
@@ -98,13 +80,9 @@ export async function createTemplateAction(form: FormData) {
 export async function saveAsTemplateAction(form: FormData) {
   const access = await authorizeAction(form, "managePages");
   const { space, user } = access;
-  const source = await prisma.page.findFirst({
-    where: {
-      id: str(form, "pageId"),
-      ...scopeWhere(scopeOf(access)),
-      deletedAt: null,
-    },
-    select: { title: true, content: true },
+  const source = await selectLivePage(scopeOf(access), str(form, "pageId"), {
+    title: true,
+    content: true,
   });
   if (!source) throw new Error("Seite nicht gefunden");
 
@@ -138,15 +116,12 @@ export async function createFromTemplateAction(form: FormData) {
   let title: string;
   let content: unknown;
   if (templateId) {
-    const template = await prisma.page.findFirst({
-      where: {
-        id: templateId,
-        ...scopeWhere(scope),
-        isTemplate: true,
-        deletedAt: null,
-      },
-      select: { title: true, content: true },
-    });
+    const template = await selectLivePage(
+      scope,
+      templateId,
+      { title: true, content: true },
+      { isTemplate: true },
+    );
     if (!template) throw new Error("Vorlage nicht gefunden");
     title = template.title;
     content = stripCommentMarks(template.content);
@@ -218,19 +193,18 @@ export async function duplicatePageAction(form: FormData) {
   const pageId = str(form, "pageId");
   const withChildren = str(form, "withChildren") === "1";
 
-  const original = await prisma.page.findFirst({
-    where: { id: pageId, ...scopeWhere(scope), deletedAt: null },
-    select: { id: true, parentId: true, position: true, isTemplate: true },
+  const original = await selectLivePage(scope, pageId, {
+    id: true,
+    parentId: true,
+    position: true,
+    isTemplate: true,
   });
   if (!original) throw new Error("Seite nicht gefunden");
 
   // Dieselbe Sichtbarkeitsregel als SQL-Baustein: der Lauf durch den
   // Unterbaum muss an einer geschützten Seite anhalten, sonst wandert
   // ihr Inhalt über die Kopie an den ganzen Space.
-  const sichtbar = visiblePageSql(
-    user.id,
-    seesEverything(access.role) ? [space.id] : [],
-  );
+  const sichtbar = scopeVisibleSql(scope);
 
   // Unterbaum (nur dieser Space, nicht gelöscht, nur Sichtbares) per
   // rekursiver CTE — die Baumstruktur wird in reiner Logik geplant,
@@ -344,12 +318,9 @@ export async function deleteTemplateAction(form: FormData) {
   const access = await authorizeAction(form, "managePages");
   const { space } = access;
   await prisma.page.updateMany({
-    where: {
-      id: str(form, "pageId"),
-      ...scopeWhere(scopeOf(access)),
+    where: livePageWhere(scopeOf(access), str(form, "pageId"), {
       isTemplate: true,
-      deletedAt: null,
-    },
+    }),
     data: { deletedAt: new Date() },
   });
   revalidatePath(`/s/${space.slug}`, "layout");
