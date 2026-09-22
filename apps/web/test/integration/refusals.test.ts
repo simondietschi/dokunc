@@ -210,25 +210,43 @@ describe("toggleUserAdminAction", () => {
   });
 
   it("vergibt und entzieht Adminrechte und leitet ohne Kennung zurueck", async () => {
-    const hin = await umleitung(
-      toggleUserAdminAction(formular({ userId: plain.id })),
-    );
-    expect(hin).toBe("/admin");
+    // Ein zweites aktives Admin-Konto fuer die Dauer des Falls. Ohne es
+    // haengt das Ergebnis an der Datenbank: ist plain nach dem Vergeben
+    // der einzige aktive Admin (so in der frischen Datenbank der CI),
+    // lehnt das Entziehen zu Recht ab.
+    const helfer = await prisma.user.create({
+      data: {
+        email: `${TAG}-helfer@example.test`,
+        name: "Helfer",
+        passwordHash: "x",
+        isAdmin: true,
+      },
+      select: { id: true },
+    });
     try {
+      const hin = await umleitung(
+        toggleUserAdminAction(formular({ userId: plain.id })),
+      );
+      expect(hin).toBe("/admin");
       expect(
         (await prisma.user.findUnique({ where: { id: plain.id } }))?.isAdmin,
       ).toBe(true);
-    } finally {
-      // Sofort zurueck: ein weiteres aktives Admin-Konto veraenderte den
-      // instanzweiten Zaehler.
       const zurueck = await umleitung(
         toggleUserAdminAction(formular({ userId: plain.id })),
       );
       expect(zurueck).toBe("/admin");
+      expect(
+        (await prisma.user.findUnique({ where: { id: plain.id } }))?.isAdmin,
+      ).toBe(false);
+    } finally {
+      // Beide Konten zurueck auf den Ausgangsstand: jedes weitere aktive
+      // Admin-Konto veraenderte den instanzweiten Zaehler.
+      await prisma.user.update({
+        where: { id: plain.id },
+        data: { isAdmin: false },
+      });
+      await prisma.user.delete({ where: { id: helfer.id } });
     }
-    expect(
-      (await prisma.user.findUnique({ where: { id: plain.id } }))?.isAdmin,
-    ).toBe(false);
   });
 });
 
@@ -385,6 +403,26 @@ describe("Gleichzeitig", () => {
 
   /** Der unterlegene Versuch endet sichtbar, nie als Fehlerseite. */
   const SICHTBAR = /^\/admin\?(gleichzeitig-geaendert=1|status-unveraendert=letzter-admin(-rechte)?)$/;
+
+  it("entzieht dem letzten aktiven Admin die Rechte nicht", async () => {
+    const [a, b] = await zweiAdmins("letzter");
+    try {
+      // b ruht: a ist damit der einzige aktive Admin der Instanz.
+      await prisma.user.update({
+        where: { id: b.id },
+        data: { isActive: false },
+      });
+      const ziel = await umleitung(
+        toggleUserAdminAction(formular({ userId: a.id })),
+      );
+      expect(ziel).toBe("/admin?status-unveraendert=letzter-admin-rechte");
+      expect(
+        (await prisma.user.findUnique({ where: { id: a.id } }))?.isAdmin,
+      ).toBe(true);
+    } finally {
+      await prisma.user.deleteMany({ where: { id: { in: [a.id, b.id] } } });
+    }
+  });
 
   it("sperren sich die letzten beiden Admins gegenseitig, bleibt einer aktiv", async () => {
     const [a, b] = await zweiAdmins("sperren");
