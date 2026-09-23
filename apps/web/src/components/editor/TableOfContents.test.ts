@@ -44,12 +44,36 @@ function fakeMatchMedia(matches: boolean) {
   };
 }
 
+/**
+ * Eigener Speicher statt des globalen localStorage. Node bringt ab
+ * Version 25 ein eigenes mit, das ohne --localstorage-file undefined
+ * ist, und happy-dom ersetzt es dann nicht: unter Node 22 lief der Test,
+ * unter Node 26 (CI, Image) scheiterte schon localStorage.clear().
+ */
+function speicher(): Storage {
+  const werte = new Map<string, string>();
+  return {
+    get length() {
+      return werte.size;
+    },
+    clear: () => werte.clear(),
+    getItem: (k: string) => werte.get(k) ?? null,
+    key: (i: number) => [...werte.keys()][i] ?? null,
+    removeItem: (k: string) => {
+      werte.delete(k);
+    },
+    setItem: (k: string, v: string) => {
+      werte.set(k, String(v));
+    },
+  };
+}
+
 let root: Root | null = null;
 let editor: Editor | null = null;
 let scroller: HTMLDivElement;
 
 beforeEach(() => {
-  localStorage.clear();
+  vi.stubGlobal("localStorage", speicher());
   history.replaceState(null, "", "/s/x/p/y");
   // Der scrollbare Vorfahre, wie im Space-Layout <main>.
   scroller = document.createElement("div");
@@ -64,6 +88,7 @@ afterEach(() => {
   root = null;
   editor = null;
   document.body.innerHTML = "";
+  vi.unstubAllGlobals();
 });
 
 /** Ein paar Frames laufen lassen (Einsammeln und Sprung warten je einen). */
