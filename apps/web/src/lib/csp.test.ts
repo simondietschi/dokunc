@@ -1,5 +1,19 @@
-import { describe, expect, it } from "vitest";
-import { collabOrigin, contentSecurityPolicy, createNonce } from "./csp";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  collabOrigin,
+  contentSecurityPolicy,
+  createNonce,
+  cspMode,
+  devServerSocket,
+} from "./csp";
+
+// collabOrigin() und damit connect-src lesen NEXT_PUBLIC_COLLAB_URL aus
+// der Umgebung, wenn kein Wert uebergeben wird. Die Root-.env setzt sie
+// fuer die Entwicklung; ohne den Stub hinge das Ergebnis daran, ob die
+// Shell sie geladen hat, und "nichts konfiguriert" liesse sich gar nicht
+// pruefen. Tests, die eine Adresse brauchen, uebergeben sie ausdruecklich.
+beforeEach(() => vi.stubEnv("NEXT_PUBLIC_COLLAB_URL", ""));
+afterEach(() => vi.unstubAllEnvs());
 
 /** Holt eine Direktive aus dem zusammengesetzten Header-Wert. */
 function direktive(csp: string, name: string): string {
@@ -12,8 +26,8 @@ function direktive(csp: string, name: string): string {
 
 describe("contentSecurityPolicy()", () => {
   it("erlaubt ohne Nonce weiterhin Inline-Skripte", () => {
-    // Das ist der Stand fuer /api und die Entwicklung: dort laeuft keine
-    // Middleware, die eine Nonce vergeben koennte.
+    // Das ist der Stand fuer /api: dort laeuft keine Middleware, die
+    // eine Nonce vergeben koennte.
     expect(direktive(contentSecurityPolicy(), "script-src")).toBe(
       "script-src 'self' 'unsafe-inline'",
     );
@@ -46,6 +60,103 @@ describe("contentSecurityPolicy()", () => {
     expect(direktive(contentSecurityPolicy(), "frame-ancestors")).toBe(
       "frame-ancestors 'none'",
     );
+  });
+});
+
+describe("cspMode()", () => {
+  it("lockert nur bei ausdruecklichem development", () => {
+    expect(cspMode("development")).toBe("development");
+  });
+
+  it("waehlt fuer alles andere die strenge Fassung", () => {
+    // Der Kern von B148: frueher hing die CSP an "production", und eine
+    // Instanz mit test, staging oder ganz ohne NODE_ENV lief ohne. Jetzt
+    // muss die Lockerung ausdruecklich verlangt werden; ein vergessener
+    // oder vertippter Wert faellt auf die sichere Seite.
+    for (const wert of ["production", "test", undefined, "", "staging", "dev"]) {
+      expect(cspMode(wert), String(wert)).toBe("strict");
+    }
+  });
+});
+
+describe("contentSecurityPolicy() je Fassung", () => {
+  it("liefert ohne Angabe die strenge Fassung", () => {
+    expect(contentSecurityPolicy("n")).toBe(
+      contentSecurityPolicy("n", { mode: "strict" }),
+    );
+    expect(contentSecurityPolicy()).toBe(
+      contentSecurityPolicy(undefined, { mode: "strict" }),
+    );
+  });
+
+  it("gibt streng weder eval noch einen Dev-Socket frei", () => {
+    // Auch dann nicht, wenn die Middleware einen Dev-Server mitgibt: das
+    // tut sie in jedem Modus, entscheiden soll allein die Fassung.
+    for (const nonce of ["n", undefined]) {
+      const csp = contentSecurityPolicy(nonce, {
+        mode: "strict",
+        devServer: "http://localhost:3000",
+      });
+      expect(csp).not.toContain("unsafe-eval");
+      expect(direktive(csp, "connect-src")).toBe("connect-src 'self'");
+    }
+  });
+
+  it("gibt in der Entwicklung eval und genau den Dev-Server frei", () => {
+    const csp = contentSecurityPolicy("n", {
+      mode: "development",
+      devServer: "http://localhost:3100",
+    });
+    expect(direktive(csp, "script-src")).toBe(
+      "script-src 'self' 'nonce-n' 'strict-dynamic' 'unsafe-eval'",
+    );
+    expect(direktive(csp, "connect-src")).toBe(
+      "connect-src 'self' ws://localhost:3100",
+    );
+    // Nie das blanke Schema: das gaebe jeden Host frei.
+    expect(csp.split(/[ ;]+/)).not.toContain("ws:");
+  });
+
+  it("aendert in der Entwicklung nur script-src und connect-src", () => {
+    // Nonce, strict-dynamic und alle Ziele bleiben, damit ein Verstoss
+    // gegen die Richtlinie schon unter next dev auffaellt.
+    const streng = contentSecurityPolicy("n").split("; ");
+    const dev = contentSecurityPolicy("n", {
+      mode: "development",
+      devServer: "http://localhost:3100",
+    }).split("; ");
+    const ohne = (d: string[]) =>
+      d.filter((x) => !/^(script|connect)-src /.test(x));
+    expect(ohne(dev)).toEqual(ohne(streng));
+    expect(direktive(dev.join("; "), "script-src")).toContain("'nonce-n'");
+  });
+
+  it("gibt ohne Dev-Server auch in der Entwicklung keinen Socket frei", () => {
+    // Ohne Ursprung gibt es keinen Host, den die Fassung freigeben
+    // koennte. Sie raet dann nicht und greift auch nicht zum blanken
+    // Schema, sondern laesst connect-src bei 'self'.
+    const csp = contentSecurityPolicy(undefined, { mode: "development" });
+    expect(direktive(csp, "script-src")).toBe(
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+    );
+    expect(direktive(csp, "connect-src")).toBe("connect-src 'self'");
+  });
+});
+
+describe("devServerSocket()", () => {
+  it("leitet ws bzw. wss aus dem Ursprung der Seite ab", () => {
+    expect(devServerSocket("http://localhost:3000")).toEqual([
+      "ws://localhost:3000",
+    ]);
+    expect(devServerSocket("https://dev.example.com/login?x=1")).toEqual([
+      "wss://dev.example.com",
+    ]);
+  });
+
+  it("gibt bei fehlender oder unbrauchbarer Adresse nichts frei", () => {
+    for (const wert of [undefined, "", "kein-url", "ftp://localhost:21"]) {
+      expect(devServerSocket(wert), String(wert)).toEqual([]);
+    }
   });
 });
 

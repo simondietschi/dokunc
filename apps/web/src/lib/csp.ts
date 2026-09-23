@@ -13,10 +13,56 @@
  * Bootstrap-Skripte weiter. `strict-dynamic` laesst zu, was ein so
  * freigegebenes Skript selbst nachlaedt — die Chunk-Dateien.
  *
- * Ohne Nonce (Entwicklung, /api) bleibt es bei der alten Zeichenkette:
- * dort laeuft keine Middleware, und in der Entwicklung laedt Next
- * Ressourcen nach, die 'self' nicht abdeckt.
+ * Ohne Nonce (/api) bleibt es bei der alten Zeichenkette: dort laeuft
+ * keine Middleware, die eine vergeben koennte. next.config.ts setzt sie
+ * dort immer in der strengen Fassung, auch unter `next dev`.
  */
+
+/**
+ * Welche Fassung der Richtlinie gilt.
+ *
+ * `strict` ist die Vorgabe fuer alles, was nicht ausdruecklich die
+ * Entwicklung ist: production, test, ein nicht gesetztes NODE_ENV und
+ * jeder eigene Wert wie "staging". Frueher hing die CSP an
+ * `NODE_ENV === "production"` und fehlte, sobald die Variable etwas
+ * anderes sagte: unter /api in jedem Build aus einer Shell mit etwa
+ * NODE_ENV=test oder staging, in der Entwicklung ganz. Umgekehrt herum
+ * gefragt faellt ein vergessener oder vertippter Wert auf die sichere
+ * Seite.
+ *
+ * `development` gibt nur frei, was `next dev` braucht (siehe
+ * `contentSecurityPolicy`), und nichts, was eine ausgelieferte Instanz
+ * beruehren koennte. Verlangt wird sie nur von der Middleware fuer die
+ * Dokumente; /api braucht Fast Refresh nicht und bleibt streng.
+ */
+export type CspMode = "strict" | "development";
+
+/**
+ * Leitet die Fassung aus NODE_ENV ab.
+ *
+ * Im Bundle (Middleware) setzt Next NODE_ENV beim Bauen fest ein:
+ * "development" nur unter `next dev`, sonst "production". Dort ist diese
+ * Abfrage also gleichbedeutend mit "laeuft unter next dev".
+ * next.config.ts, das zur Laufzeit gelesen wird, fragt NODE_ENV nicht:
+ * /api bekommt dort immer die strenge Fassung, und ob Server Actions
+ * localhost annehmen, entscheidet die Phase — siehe dort.
+ */
+export function cspMode(
+  nodeEnv: string | undefined = process.env.NODE_ENV,
+): CspMode {
+  return nodeEnv === "development" ? "development" : "strict";
+}
+
+export type CspOptions = {
+  /** Fassung der Richtlinie. Ohne Angabe die strenge. */
+  mode?: CspMode;
+  /**
+   * Ursprung des Dev-Servers, etwa `http://localhost:3000`. Nur im
+   * Entwicklungsmodus gelesen: daraus entsteht die Freigabe fuer den
+   * HMR-WebSocket.
+   */
+  devServer?: string;
+};
 
 /**
  * Erlaubtes Ziel für den Collab-WebSocket in connect-src.
@@ -42,22 +88,66 @@ export function collabOrigin(
 }
 
 /**
+ * WebSocket-Ursprung des Dev-Servers (Hot Module Replacement).
+ *
+ * `next dev` haelt eine WebSocket-Verbindung zu `/_next/hmr` auf
+ * demselben Host und Port wie die Seite. Chromium rechnet sie nach CSP
+ * Level 3 schon zu 'self'; ein Browser, der 'self' noch nach Level 2 nur
+ * fuer das Schema der Seite (http/https) gelten laesst, blockierte die
+ * Aktualisierung aber still. Deshalb steht der Ursprung ausdruecklich
+ * da — genau dieser eine Host, nicht das blanke Schema `ws:`, aus
+ * demselben Grund wie bei `collabOrigin`.
+ */
+export function devServerSocket(origin: string | undefined): string[] {
+  if (!origin) return [];
+  try {
+    const url = new URL(origin);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+    return [`${url.protocol === "https:" ? "wss" : "ws"}://${url.host}`];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Die Richtlinie als Header-Wert.
  *
  * `style-src 'unsafe-inline'` bleibt: Next und Tailwind setzen zur
  * Laufzeit Stile direkt am Element, und eine Nonce erreicht sie nicht.
  * Das ist die deutlich kleinere Flaeche — ein Stil fuehrt keinen Code
  * aus.
+ *
+ * Im Entwicklungsmodus kommen genau zwei Freigaben dazu, beide nur fuer
+ * `next dev`: `'unsafe-eval'` und der WebSocket des Dev-Servers fuer
+ * HMR. Ohne eval meldet React in der Entwicklung bei jedem Aufruf einen
+ * Verstoss (es bildet damit Aufrufstapel des Servers nach), und Fast
+ * Refresh faellt bei jeder Aenderung auf ein volles Neuladen zurueck,
+ * womit der Zustand der Seite verloren geht. Alles andere — Nonce,
+ * `strict-dynamic`, die Ziele — bleibt gleich, damit ein Fehler gegen
+ * die Richtlinie schon in der Entwicklung auffaellt und nicht erst in
+ * Produktion.
  */
-export function contentSecurityPolicy(nonce?: string): string {
+export function contentSecurityPolicy(
+  nonce?: string,
+  options: CspOptions = {},
+): string {
+  const dev = options.mode === "development";
+  const script = nonce
+    ? ["script-src", "'self'", `'nonce-${nonce}'`, "'strict-dynamic'"]
+    : ["script-src", "'self'", "'unsafe-inline'"];
+  if (dev) script.push("'unsafe-eval'");
+  const connect = [
+    "connect-src",
+    "'self'",
+    ...collabOrigin(),
+    ...(dev ? devServerSocket(options.devServer) : []),
+  ];
   return [
     "default-src 'self'",
     "img-src 'self' data: blob:",
     "style-src 'self' 'unsafe-inline'",
-    nonce
-      ? `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`
-      : "script-src 'self' 'unsafe-inline'",
-    ["connect-src", "'self'", ...collabOrigin()].join(" "),
+    script.join(" "),
+    connect.join(" "),
     "frame-src https://www.youtube-nocookie.com https://www.youtube.com https://embed.diagrams.net",
     "font-src 'self' data:",
     "object-src 'none'",

@@ -34,6 +34,10 @@ test("jede Antwort traegt eine eigene Nonce statt 'unsafe-inline'", async ({
   const script = scriptSrc(csp!);
   expect(script).toMatch(/'nonce-[0-9a-f]{32}'/);
   expect(script).not.toContain("unsafe-inline");
+  // Die gelockerte Fassung (eval, Dev-Socket) gehoert allein zu next dev.
+  // Der E2E-Lauf steht auf next start (playwright.config.ts) und muss die
+  // strenge zeigen.
+  expect(csp).not.toContain("unsafe-eval");
 
   // Eine wiederverwendete Nonce waere so gut wie keine: wer sie einmal
   // aus dem HTML liest, koennte sie in den naechsten Angriff schreiben.
@@ -43,6 +47,27 @@ test("jede Antwort traegt eine eigene Nonce statt 'unsafe-inline'", async ({
     scriptSrc(zweite!.headers()["content-security-policy"]!),
   );
   expect(zweiteNonce).not.toBe(nonce(script));
+});
+
+test("Dokumente und /api tragen die Grundhaertung und eine CSP", async ({
+  request,
+}) => {
+  // Die Grundhaertung kommt aus next.config.ts, fuer beide Pfade. Die CSP
+  // kommt fuer Dokumente aus der Middleware, fuer /api aus next.config.ts
+  // — zwei Quellen, die frueher je fuer sich an NODE_ENV hingen.
+  for (const pfad of ["/login", "/api/health"]) {
+    const h = (await request.get(pfad)).headers();
+    expect(h["x-frame-options"], pfad).toBe("DENY");
+    expect(h["x-content-type-options"], pfad).toBe("nosniff");
+    expect(h["referrer-policy"], pfad).toBe("strict-origin-when-cross-origin");
+    expect(h["permissions-policy"], pfad).toBe(
+      "camera=(), microphone=(), geolocation=()",
+    );
+    expect(h["content-security-policy"], pfad).toContain(
+      "frame-ancestors 'none'",
+    );
+    expect(h["content-security-policy"], pfad).not.toContain("unsafe-eval");
+  }
 });
 
 test("unter der Nonce-Richtlinie blockiert der Browser nichts", async ({

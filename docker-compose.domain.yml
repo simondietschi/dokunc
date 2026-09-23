@@ -1,0 +1,32 @@
+# Zusatz für den Betrieb unter eigener Domain (s. README, "Eigene Domain /
+# Produktionsbetrieb"). Nicht von Hand aufrufen, sondern in der .env
+# einbinden — dann liest docker compose ihn bei jedem Befehl mit (up,
+# down, logs, ebenso scripts/backup.sh):
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.domain.yml
+#
+# COMPOSE_FILE ersetzt die Standardliste: eine docker-compose.override.yml
+# liest docker compose dann nicht mehr von selbst, ihre Anpassungen
+# fielen still weg. Wer eine nutzt, hängt sie ans Ende der Liste
+# (…:docker-compose.domain.yml:docker-compose.override.yml). Der Trenner
+# ist unter Linux und macOS `:`, unter Windows `;` (änderbar über
+# COMPOSE_PATH_SEPARATOR).
+#
+# Veröffentlicht zusätzlich Port 80 des Proxys. Caddy nutzt ihn für den
+# Let's-Encrypt-Nachweis (HTTP-01) und leitet dort alle übrigen Aufrufe
+# auf HTTPS um. Nicht in docker-compose.yml selbst, weil der Schnellstart
+# ohne .env sonst an jedem Host scheiterte, auf dem Port 80 schon belegt
+# ist — und weil die Umleitung dort auf :443 zeigte, wo niemand zuhört.
+#
+# Dieselbe Bindeadresse wie für 443 (APP_BIND), mit derselben sicheren
+# Vorgabe: ohne APP_BIND=0.0.0.0 erreicht auch Port 80 nur den Server
+# selbst, und Let's Encrypt kann das Zertifikat nicht ausstellen. Wie bei
+# 443 heisst 0.0.0.0 nur IPv4; für IPv6 kommt docker-compose.ipv6.yml
+# dazu.
+services:
+  proxy:
+    ports:
+      - target: 80
+        published: "80"
+        host_ip: "${APP_BIND:-127.0.0.1}"
+        protocol: tcp

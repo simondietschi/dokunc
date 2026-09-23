@@ -3,7 +3,15 @@
 ############################
 # Base
 ############################
-FROM node:26-bookworm-slim AS base
+# Debian 13 (trixie) statt 12 (bookworm): bookworm bekommt seit
+# 2026-07-12 Korrekturen nur noch ueber Debian LTS, und openssl und
+# ca-certificates unten kommen per apt genau aus diesem Release. Alle
+# weiteren Stufen bauen auf dieser auf, eine Zeile stellt also alle um.
+# Unter trixie geprueft: beide Paketnamen gelten unveraendert (OpenSSL
+# 3.5, libssl3t64 steckt schon im Basis-Image), und die Schema-Engine der
+# Prisma-CLI (migrate deploy im CMD) waehlt ihr Binary nach der
+# OpenSSL-Hauptversion — wie unter bookworm debian-openssl-3.0.x.
+FROM node:26-trixie-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 # pnpm fest im Image installieren, in der in package.json gepinnten

@@ -16,8 +16,8 @@
  *   genügte sonst, womit die APP_URL-Zeile nichts mehr entschiede. Das
  *   trug nur, solange ein vorgelagerter Proxy den Host festnagelt. Next
  *   hält es für Server Actions längst so (next.config.ts,
- *   `allowedOrigins: isProd ? appUrlHost() : …`): die Route-Handler
- *   waren damit lockerer als die Actions daneben.
+ *   `allowedOrigins`, ausserhalb von next dev nur appUrlHost()): die
+ *   Route-Handler waren damit lockerer als die Actions daneben.
  * - IST SIE NICHT GESETZT (Entwicklung, `next dev` auf localhost:3000),
  *   bleibt der Host-Header die einzige Quelle. Sonst schlüge dort jeder
  *   Upload fehl.

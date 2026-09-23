@@ -27,3 +27,6 @@ playwright-report/
 # TypeScript incremental build info
 *.tsbuildinfo
 dump.rdb
+
+# Eigene Compose-Anpassungen des Betreibers (s. README zu COMPOSE_FILE)
+docker-compose.override.yml

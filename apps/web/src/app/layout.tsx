@@ -33,8 +33,8 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Die Nonce dieser Antwort, gesetzt von src/middleware.ts. In der
-  // Entwicklung gibt es keine — dort laeuft auch keine CSP.
+  // Die Nonce dieser Antwort, gesetzt von src/middleware.ts — in jedem
+  // Modus, in der Entwicklung mit der gelockerten CSP (lib/csp.ts).
   const nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
   return (
     <html

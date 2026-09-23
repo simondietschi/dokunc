@@ -1,5 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { NONCE_HEADER, contentSecurityPolicy, createNonce } from "@/lib/csp";
+import {
+  NONCE_HEADER,
+  contentSecurityPolicy,
+  createNonce,
+  cspMode,
+} from "@/lib/csp";
 
 /**
  * Setzt die CSP der Dokumente pro Antwort, mit frischer Nonce.
@@ -10,17 +15,21 @@ import { NONCE_HEADER, contentSecurityPolicy, createNonce } from "@/lib/csp";
  * eigenen Skript-Tags — deshalb steht der Wert hier zweimal, einmal auf
  * den weitergereichten Anfrage-Headern und einmal auf der Antwort.
  *
- * Nur in Produktion: in der Entwicklung laedt Next Ressourcen nach, die
- * 'self' nicht abdeckt, und der Collab-WS liegt auf einem eigenen Port.
- * Das war schon bisher die Bedingung fuer die CSP.
+ * In jedem Modus, auch in der Entwicklung: dort nur in der gelockerten
+ * Fassung (siehe lib/csp.ts), die Fast Refresh und HMR zulaesst. Bisher
+ * lief die Entwicklung ganz ohne CSP, und ein Verstoss — etwa ein neues
+ * Inline-Skript ohne Nonce — fiel erst im Build auf.
  */
-const IS_PROD = process.env.NODE_ENV === "production";
-
 export function middleware(request: NextRequest) {
-  if (!IS_PROD) return NextResponse.next();
-
+  // Zur Anfragezeit statt beim Laden des Moduls: Next setzt NODE_ENV im
+  // Bundle ohnehin fest ein, aber so lassen sich beide Fassungen im
+  // Unit-Test pruefen, ohne das Modul neu zu laden.
+  const mode = cspMode();
   const nonce = createNonce();
-  const csp = contentSecurityPolicy(nonce);
+  const csp = contentSecurityPolicy(nonce, {
+    mode,
+    devServer: request.nextUrl.origin,
+  });
 
   const headers = new Headers(request.headers);
   headers.set(NONCE_HEADER, nonce);
@@ -36,9 +45,9 @@ export const config = {
     /*
      * Alles ausser: den ausgelieferten Dateien (_next/static, _next/image,
      * favicon) und /api. Die statischen Dateien brauchen keine
-     * Skript-Richtlinie, und fuer /api setzt next.config.ts weiterhin die
-     * Fassung ohne Nonce — dort entstehen keine Dokumente mit
-     * Inline-Skripten.
+     * Skript-Richtlinie, und fuer /api setzt next.config.ts die strenge
+     * Fassung ohne Nonce, auch unter next dev — dort entstehen keine
+     * Dokumente mit Inline-Skripten, und Fast Refresh laeuft dort nicht.
      */
     "/((?!api|_next/static|_next/image|favicon.ico).*)",
   ],
