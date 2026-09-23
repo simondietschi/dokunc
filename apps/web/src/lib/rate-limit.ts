@@ -128,6 +128,47 @@ export async function resetLimit(key: string): Promise<void> {
 }
 
 /**
+ * Zieht genau einen Versuch ab, aber nur von einem laufenden Zaehler
+ * ueber null. In EINEM Schritt auf dem Server: ein getrenntes GET und
+ * DECR liesse zwei gleichzeitige Rueckgaben beide durch, und ein DECR
+ * auf einen abgelaufenen Schluessel legte ihn mit -1 und OHNE Ablauf neu
+ * an — ein dauerhaftes Guthaben an der Bremse vorbei. DECR selbst laesst
+ * den Ablauf des Fensters stehen.
+ */
+const RELEASE_SCRIPT = `
+local n = tonumber(redis.call('GET', KEYS[1]))
+if n and n > 0 then return redis.call('DECR', KEYS[1]) end
+return 0
+`;
+
+/**
+ * Gibt einen gezaehlten Versuch zurueck, ohne das Fenster zu beenden.
+ *
+ * Fuer den Fall, dass ein Versuch zwar gezaehlt wurde, die gebremste
+ * Wirkung aber nie eintrat (etwa eine Mail, die der Versand abgelehnt
+ * hat). Anders als `resetLimit` bleiben die uebrigen Versuche im
+ * Fenster gezaehlt: ein Rueckgabeweg, der den ganzen Zaehler loeschte,
+ * oeffnete nach jedem Fehlschlag wieder die volle Zahl.
+ *
+ * Der Weg folgt dem von `rateLimit`: ist Redis da, zaehlt nur Redis;
+ * sonst die prozesslokale Karte. Beides anzufassen gaebe nach einem
+ * kurzen Ausfall einen Versuch doppelt zurueck.
+ */
+export async function releaseLimit(key: string): Promise<void> {
+  const r = client();
+  if (r) {
+    try {
+      await r.eval(RELEASE_SCRIPT, 1, `dokunc:rl:${key}`);
+      return;
+    } catch (e) {
+      redisFailed("releaseLimit", e);
+    }
+  }
+  const entry = mem.get(key);
+  if (entry && entry.n > 0) entry.n -= 1;
+}
+
+/**
  * Stabiler Schlüssel aus der Client-IP (für anonyme Endpunkte).
  *
  * Ist keine vertrauenswürdige IP ableitbar (kein Proxy konfiguriert

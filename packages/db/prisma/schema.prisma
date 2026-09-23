@@ -506,6 +506,13 @@ model TotpRecoveryCode {
   userId    String
   codeHash  String
   usedAt    DateTime?
+  /// Gesetzt, solange ein neu ausgegebener Code noch nicht bestaetigt
+  /// ist: bis dahin loest er nichts ein, und die bisherigen Codes gelten
+  /// weiter. NULL heisst aktiv — so bleiben die vor dieser Spalte
+  /// angelegten Codes ohne Datenmigration gueltig. Der Wert ist zugleich
+  /// die Frist und die Kennung des Satzes (ein Satz entsteht mit EINEM
+  /// Zeitstempel), siehe lib/totp-store.ts.
+  pendingUntil DateTime?
   createdAt DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

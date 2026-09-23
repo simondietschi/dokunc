@@ -9,8 +9,12 @@ import {
   verifyToken,
   normalizeEmail,
 } from "@/lib/invitations";
-import { buildResetUrl, sendPasswordResetEmail } from "@/lib/mail";
-import { rateLimit, clientKey } from "@/lib/rate-limit";
+import {
+  buildResetUrl,
+  isTransientMailError,
+  sendPasswordResetEmail,
+} from "@/lib/mail";
+import { rateLimit, releaseLimit, clientKey } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
 import { audit } from "@/lib/audit";
 import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
@@ -29,6 +33,28 @@ const RESET_TTL_MS = 60 * 60 * 1000;
  */
 const RESET_ACCOUNT_ATTEMPTS = 3;
 const RESET_ACCOUNT_WINDOW_SEC = 3600;
+
+/**
+ * Fehlermeldung des Mailversands ohne die Adresse.
+ *
+ * SMTP-Server wiederholen den Empfaenger gern in ihrer Antwort
+ * ("550 5.1.1 <name@example.org>: Recipient address rejected"), und
+ * nodemailer reicht die Antwort in die Meldung durch. Ins Log gehoert
+ * der Grund, nicht die Adresse: diese Zeile entsteht nur fuer Konten,
+ * die es gibt, und machte das Log sonst zur Liste der Adressen, die
+ * jemand ausprobiert hat. Nur die Meldung und nicht das Fehlerobjekt:
+ * dessen Zusatzfelder (response, rejected) tragen die Adresse erneut.
+ */
+function mailErrorWithoutAddress(e: unknown, email: string): string {
+  const text = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+  // Ohne Beachtung der Grossschreibung: manche Server geben den
+  // Empfaenger so zurueck, wie sie ihn intern fuehren.
+  const pattern = new RegExp(
+    email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+    "gi",
+  );
+  return text.replace(pattern, "[adresse]");
+}
 
 export async function requestResetAction(
   _prev: ResetState,
@@ -51,53 +77,141 @@ export async function requestResetAction(
   const user = await prisma.user.findUnique({ where: { email } });
   // Existenz nie preisgeben — immer generische Bestätigung. Die Bremse
   // pro Konto läuft deshalb innerhalb dieses Zweigs.
+  const accountKey = `reset:account:${email}`;
   if (
     user &&
     (await rateLimit(
-      `reset:account:${email}`,
+      accountKey,
       RESET_ACCOUNT_ATTEMPTS,
       RESET_ACCOUNT_WINDOW_SEC,
     ))
   ) {
-    const { token, tokenHash } = generateInviteToken();
-    const reset = await prisma.passwordResetToken.create({
-      data: {
-        userId: user.id,
-        tokenHash,
-        expiresAt: new Date(Date.now() + RESET_TTL_MS),
-      },
-    });
-    try {
-      await sendPasswordResetEmail({
-        to: email,
-        resetUrl: buildResetUrl(reset.id, token),
-      });
-      // Ein neuer Link entwertet den vorherigen: sonst sammelten sich
-      // gleichzeitig gültige Zugänge zu demselben Konto an. Das
-      // geschieht erst NACH dem Versand — sonst stünde die Person nach
-      // einem Ausfall des Mailversands ganz ohne gültigen Link da, mit
-      // aufgebrauchter Bremse und einer Bestätigung im Browser.
-      await prisma.passwordResetToken.updateMany({
-        where: { userId: user.id, usedAt: null, id: { not: reset.id } },
-        data: { usedAt: new Date() },
-      });
-    } catch (e) {
-      // Der eben erzeugte Link ist nie angekommen und wird sofort
-      // entwertet; der zuletzt verschickte bleibt gültig.
-      await prisma.passwordResetToken.update({
-        where: { id: reset.id },
-        data: { usedAt: new Date() },
-      });
-      // Die Antwort bleibt der Geheimhaltung wegen { sent: true }. Damit
-      // sich der Fall im Betrieb überhaupt wiederfinden lässt, trägt die
-      // Meldung Konto und Token — die Adresse bewusst nicht.
-      log.error(
-        { err: String(e), userId: user.id, resetId: reset.id },
-        "reset mail failed",
-      );
-    }
+    await sendResetLink(user.id, email, accountKey);
   }
+  // Bewusst auch nach einem gescheiterten Versand { sent: true }: eine
+  // eigene Antwort gäbe es nur für Konten, die es gibt, und machte das
+  // Formular zur Abfrage, welche Adressen hier ein Konto haben. Der
+  // Fehler steht stattdessen im Log (`resetMailFailed`).
   return { sent: true };
+}
+
+/** Neuen Link anlegen, verschicken und danach die älteren entwerten. */
+async function sendResetLink(
+  userId: string,
+  email: string,
+  accountKey: string,
+): Promise<void> {
+  const { token, tokenHash } = generateInviteToken();
+  const reset = await prisma.passwordResetToken.create({
+    data: {
+      userId,
+      tokenHash,
+      expiresAt: new Date(Date.now() + RESET_TTL_MS),
+    },
+  });
+  let delivered: boolean;
+  try {
+    delivered = await sendPasswordResetEmail({
+      to: email,
+      resetUrl: buildResetUrl(reset.id, token),
+    });
+  } catch (e) {
+    await resetMailFailed({
+      reason: mailErrorWithoutAddress(e, email),
+      userId,
+      resetId: reset.id,
+      releaseKey: isTransientMailError(e) ? accountKey : null,
+    });
+    return;
+  }
+  if (!delivered) {
+    // Produktion ohne SMTP: der Link steht bewusst nicht im Log und ging
+    // damit nirgendwohin. Das ist ein gescheiterter Versand wie jeder
+    // andere — sonst entwertete er die älteren Links, von denen einer
+    // vielleicht noch vor dem Abschalten von SMTP angekommen ist. Die
+    // Bremse bleibt verbraucht: ein fehlendes SMTP vergeht nicht von
+    // selbst, und jede weitere Anfrage legte nur noch einen toten
+    // Eintrag an.
+    await resetMailFailed({
+      reason: "SMTP nicht eingerichtet",
+      userId,
+      resetId: reset.id,
+      releaseKey: null,
+    });
+    return;
+  }
+  // Ein neuer Link entwertet den vorherigen: sonst sammelten sich
+  // gleichzeitig gültige Zugänge zu demselben Konto an. Das geschieht
+  // erst NACH dem Versand — sonst stünde die Person nach einem Ausfall
+  // des Mailversands ganz ohne gültigen Link da, mit aufgebrauchter
+  // Bremse und einer Bestätigung im Browser.
+  try {
+    await prisma.passwordResetToken.updateMany({
+      where: { userId, usedAt: null, id: { not: reset.id } },
+      data: { usedAt: new Date() },
+    });
+  } catch (e) {
+    // Die Mail ist draussen, nur das Entwerten der älteren Links
+    // scheiterte. Der neue Link bleibt deshalb gültig (die Person hat
+    // ihn in der Hand), und die Bremse bleibt verbraucht: es ging eine
+    // Mail hinaus.
+    log.error({ err: String(e), userId }, "reset: older links not invalidated");
+  }
+}
+
+/**
+ * Aufräumen nach einem Versand, der gescheitert ist.
+ *
+ * Nach aussen ändert sich nichts: dieselbe Antwort wie beim Erfolg.
+ * Innen drei Dinge, in dieser Reihenfolge, damit die Meldung
+ * auch dann im Log steht, wenn die Datenbank danach streikt:
+ * - Log mit Konto und Reset-Eintrag, ohne Adresse und ohne Token.
+ * - Nur bei einem vorübergehenden Fehler (`releaseKey`, siehe
+ *   `isTransientMailError`) den Platz der Bremse pro KONTO zurückgeben:
+ *   sonst hinge nach einem SMTP-Ausfall jeder neue Versuch bis zu einer
+ *   Stunde an der Bremse. Eine dauerhafte Ablehnung (5xx, abgewiesener
+ *   Empfänger) gibt nichts zurück: für eine Adresse, die der Server
+ *   immer abweist, griffe die Bremse sonst nie, und jede Anfrage legte
+ *   einen Eintrag an und löste einen SMTP-Versuch aus. Die Bremse pro IP
+ *   bleibt immer verbraucht: sie begrenzt, wie oft jemand das Formular
+ *   überhaupt abschicken kann.
+ * - Den eben erzeugten Link entwerten; der zuletzt verschickte bleibt
+ *   gültig.
+ *
+ * Ein Fehler heisst nicht sicher, dass keine Mail ankam: läuft etwa die
+ * Zeit ab, nachdem der Server die Mail schon angenommen hat, wirft
+ * nodemailer trotzdem (ETIMEDOUT, also vorübergehend). Dann kommt ein
+ * Link an, der hier schon entwertet ist, und der Platz der Bremse ist
+ * zurückgegeben, obwohl eine Mail hinausging. Die Person fordert einen
+ * neuen Link an; das ist der Preis dafür, dass kein Link gültig bleibt,
+ * von dem niemand weiss, ob er ankam.
+ */
+async function resetMailFailed(opts: {
+  reason: string;
+  userId: string;
+  resetId: string;
+  releaseKey: string | null;
+}): Promise<void> {
+  const { reason, userId, resetId, releaseKey } = opts;
+  log.error(
+    { err: reason, userId, resetId, released: releaseKey !== null },
+    "reset mail failed",
+  );
+  if (releaseKey) await releaseLimit(releaseKey);
+  try {
+    await prisma.passwordResetToken.update({
+      where: { id: resetId },
+      data: { usedAt: new Date() },
+    });
+  } catch (err) {
+    // Nicht bis in die Antwort durchreichen: ein Fehler hier träfe nur
+    // bestehende Konten und verriete sie. Sein Token steht nirgends im
+    // Log, benutzen kann den Link nur, wer die Mail doch bekam.
+    log.error(
+      { err: String(err), userId, resetId },
+      "reset: link not voided",
+    );
+  }
 }
 
 const pwSchema = z.object({

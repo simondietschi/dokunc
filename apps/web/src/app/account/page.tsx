@@ -4,6 +4,7 @@ import { ArrowLeft, Download, LogOut, Monitor } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { isMailConfigured } from "@dokunc/mail";
 import { requireUser } from "@/lib/current-user";
+import { countActiveRecoveryCodes } from "@/lib/totp-store";
 import { describeDevice } from "@/lib/user-agent";
 import { Button } from "@/components/ui/Button";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
@@ -27,10 +28,10 @@ export default async function AccountPage() {
     where: { id: user.id },
     select: { emailNotifications: true, totpEnabledAt: true },
   });
+  // Nur bestätigte Codes zählen: ein ausstehender Satz hilft im Notfall
+  // nicht, und die Zahl soll genau das sagen.
   const unusedCodes = prefs?.totpEnabledAt
-    ? await prisma.totpRecoveryCode.count({
-        where: { userId: user.id, usedAt: null },
-      })
+    ? await countActiveRecoveryCodes(user.id)
     : 0;
 
   const sessions = await prisma.session.findMany({

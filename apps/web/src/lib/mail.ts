@@ -30,16 +30,51 @@ import { log } from "./log";
  * warn liegt über dem Vorgabe-Level info, die Zeile erschiene also im
  * Normalbetrieb. Ohne SMTP zu laufen ist ausdrücklich vorgesehen, darum
  * hängt das an NODE_ENV und nicht an der SMTP-Konfiguration.
+ *
+ * Die Empfängeradresse steht in keiner der beiden Zeilen. Beim Reset
+ * entsteht die Zeile nur für Konten, die es gibt; mit Adresse machte sie
+ * das Log zur Liste der Adressen, die jemand am Formular ausprobiert hat.
+ * Zum Weiterkommen braucht die Entwicklung nur den Link, und die
+ * E2E-Tests lesen dieses Log gar nicht. In der Produktion nennt `link`
+ * stattdessen den Pfad des Links (Reset- bzw. Einladungs-ID) — ohne das
+ * Token in der Query, das ihn benutzbar machte.
+ *
+ * Liefert, ob der Link irgendwo angekommen ist, also ob er im Log steht.
  */
-function logMissingSmtp(what: string, to: string, url: string): void {
+function logMissingSmtp(what: string, url: string): boolean {
   if (process.env.NODE_ENV === "production") {
     log.warn(
-      { to },
+      { link: new URL(url).pathname },
       `SMTP fehlt — ${what} konnte nicht zugestellt werden (Link nicht im Log)`,
     );
-    return;
+    return false;
   }
-  log.warn({ to, url }, `SMTP fehlt — ${what} nur im Log`);
+  log.warn({ url }, `SMTP fehlt — ${what} nur im Log`);
+  return true;
+}
+
+/**
+ * Ist dieser Fehler des Mailversands vorübergehend?
+ *
+ * Wer einen Versuch nach einem Fehlschlag wieder zulassen will, darf das
+ * nur bei Fehlern, die von selbst vergehen. Vorübergehend sind:
+ * - Verbindungsfehler ohne Serverantwort (ECONNECTION, ETIMEDOUT,
+ *   ESOCKET). Dieselben drei stuft nodemailer selbst als vorübergehend
+ *   ein und loggt sie nur als Warnung.
+ * - Antworten mit 4xx: SMTP sagt damit ausdrücklich "später noch einmal".
+ * Nicht dazu gehören 5xx (dauerhaft abgelehnt) und alles mit EENVELOPE,
+ * auch mit 4xx: das betrifft den Empfänger selbst. Eine Adresse, die der
+ * Server immer wieder abweist, käme sonst an jeder Bremse pro Empfänger
+ * vorbei. Alles Unbekannte zählt ebenfalls als dauerhaft.
+ */
+export function isTransientMailError(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const { code, responseCode } = e as { code?: unknown; responseCode?: unknown };
+  if (code === "EENVELOPE") return false;
+  if (typeof responseCode === "number") {
+    return responseCode >= 400 && responseCode < 500;
+  }
+  return code === "ECONNECTION" || code === "ETIMEDOUT" || code === "ESOCKET";
 }
 
 export function buildInviteUrl(invitationId: string, token: string): string {
@@ -54,10 +89,15 @@ export function buildResetUrl(resetId: string, token: string): string {
   return u.toString();
 }
 
+/**
+ * Liefert, ob der Link jemanden erreicht hat: per SMTP oder, ausserhalb
+ * der Produktion, im Log. false heisst: Produktion ohne SMTP, der Link
+ * ging nirgendwohin. Fehler des Transports werden geworfen.
+ */
 export async function sendPasswordResetEmail(opts: {
   to: string;
   resetUrl: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const subject = "Passwort zurücksetzen — dokunc";
   const text = `Setze dein Passwort zurück:\n${opts.resetUrl}\n\nDer Link ist 1 Stunde gültig. Wenn du das nicht warst, ignoriere diese E-Mail.`;
   const html = mailLayout({
@@ -68,16 +108,17 @@ export async function sendPasswordResetEmail(opts: {
       <p style="color:#999;font-size:12px">Gültig für 1 Stunde. Nicht angefordert? E-Mail ignorieren.</p>`,
   });
   const sent = await sendMail({ to: opts.to, subject, text, html });
-  if (!sent) logMissingSmtp("Reset-Link", opts.to, opts.resetUrl);
+  return sent || logMissingSmtp("Reset-Link", opts.resetUrl);
 }
 
+/** Rückgabe wie bei `sendPasswordResetEmail`. */
 export async function sendInvitationEmail(opts: {
   to: string;
   spaceName: string;
   inviterName: string;
   role: string;
   inviteUrl: string;
-}): Promise<void> {
+}): Promise<boolean> {
   const subject = `Einladung zu „${opts.spaceName}" auf dokunc`;
   const text = `${opts.inviterName} lädt dich als ${opts.role} in den Space „${opts.spaceName}" ein.\n\nEinladung annehmen:\n${opts.inviteUrl}\n\nDer Link ist 7 Tage gültig.`;
   const html = mailLayout({
@@ -94,5 +135,5 @@ export async function sendInvitationEmail(opts: {
   });
 
   const sent = await sendMail({ to: opts.to, subject, text, html });
-  if (!sent) logMissingSmtp("Einladungslink", opts.to, opts.inviteUrl);
+  return sent || logMissingSmtp("Einladungslink", opts.inviteUrl);
 }

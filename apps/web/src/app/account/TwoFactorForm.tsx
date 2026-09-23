@@ -11,8 +11,10 @@ import {
 } from "lucide-react";
 import {
   cancelTotpSetupAction,
+  confirmRecoveryCodesAction,
   confirmTotpAction,
   disableTotpAction,
+  discardRecoveryCodesAction,
   regenerateRecoveryCodesAction,
   startTotpSetupAction,
   type TotpState,
@@ -103,25 +105,116 @@ function RecoveryCodes({ codes }: { codes: string[] }) {
   );
 }
 
-type Setup = NonNullable<NonNullable<TotpState>["setup"]>;
+/** Frisch ausgegebene Codes, die noch auf ihre Bestätigung warten. */
+type PendingCodes = { codes: string[]; minutes: number };
 
-/** Schritt 2 der Einrichtung: QR zeigen, Code prüfen. */
-function SetupSteps({
-  setup,
+/** Ersatzwert, falls die Aktion keine Frist mitschickt. */
+const FALLBACK_MINUTES = 30;
+
+/**
+ * Codes zeigen und einen davon zurück eintippen lassen.
+ *
+ * Erst das Eintippen macht die Codes gültig (bei der Einrichtung auch
+ * den zweiten Faktor). Es beweist, dass die Liste die Person erreicht
+ * hat — ging die Antwort unterwegs verloren, bleibt alles, wie es war,
+ * statt ein Konto ohne brauchbaren Wiederherstellungscode zu hinterlassen.
+ *
+ * Exportiert nur fuer den Integrationstest, der prueft, welche Felder
+ * das Formular mitschickt (totp-actions.test.ts).
+ */
+export function ConfirmCodes({
+  pending,
+  renewing,
   onConfirmed,
   onCancel,
 }: {
+  pending: PendingCodes;
+  renewing: boolean;
+  onConfirmed: (message: string) => void;
+  onCancel: () => void;
+}) {
+  const [state, action, busy] = useActionState<TotpState, FormData>(
+    async (prev, form) => {
+      const next = await confirmRecoveryCodesAction(prev, form);
+      // Nach der Bestätigung verschwinden Liste und Formular; die Meldung
+      // muss deshalb oben liegen.
+      if (next?.confirmed) {
+        onConfirmed(next.success ?? "Gespeichert.");
+      }
+      return next;
+    },
+    undefined,
+  );
+
+  return (
+    <div className="space-y-4">
+      <RecoveryCodes codes={pending.codes} />
+      <form action={action} className="space-y-3">
+        {/* Nur für den Text der Meldung: sie soll den Knopf nennen, den
+            diese Ansicht wirklich hat. Geprüft wird damit nichts. */}
+        <input type="hidden" name="mode" value={renewing ? "renew" : "setup"} />
+        <p className="text-[12.5px] text-muted">
+          {renewing
+            ? "Die bisherigen Codes gelten weiter, bis du hier einen der neuen eintippst. "
+            : "Der zweite Faktor wird erst aktiv, wenn du hier einen der Codes eintippst — so ist sicher, dass du sie hast. "}
+          Ohne Bestätigung verfallen die neuen Codes nach {pending.minutes}{" "}
+          Minuten.
+        </p>
+        <Field label="Einer der Codes zur Bestätigung">
+          <Input
+            name="code"
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="xxxxxxxxxx-xxxxxxxxxx"
+            required
+            className="font-mono"
+          />
+        </Field>
+        <Status state={state} />
+        <div className="flex gap-2">
+          <Button type="submit" disabled={busy}>
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : renewing ? (
+              "Bestätigen"
+            ) : (
+              "Aktivieren"
+            )}
+          </Button>
+          <Button type="button" variant="ghost" onClick={onCancel}>
+            {renewing ? "Verwerfen" : "Abbrechen"}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+type Setup = NonNullable<NonNullable<TotpState>["setup"]>;
+
+/**
+ * Schritt 2 der Einrichtung: QR zeigen, Code prüfen. Scharf ist danach
+ * noch nichts — erst folgen die Wiederherstellungscodes (`ConfirmCodes`).
+ */
+function SetupSteps({
+  setup,
+  onCodes,
+  onCancel,
+}: {
   setup: Setup;
-  onConfirmed: (codes: string[], message: string) => void;
+  onCodes: (pending: PendingCodes) => void;
   onCancel: () => void;
 }) {
   const [state, action, pending] = useActionState<TotpState, FormData>(
     async (prev, form) => {
       const next = await confirmTotpAction(prev, form);
-      // Nach dem Aktivieren rendert die Seite den anderen Zweig; Codes
-      // und Meldung müssen deshalb oben liegen.
+      // Die Codes wandern nach oben: an ihrer Stelle verschwindet dieser
+      // Schritt mitsamt seinem Zustand.
       if (next?.recoveryCodes) {
-        onConfirmed(next.recoveryCodes, next.success ?? "Zwei-Faktor ist aktiv.");
+        onCodes({
+          codes: next.recoveryCodes,
+          minutes: next.confirmMinutes ?? FALLBACK_MINUTES,
+        });
       }
       return next;
     },
@@ -162,6 +255,10 @@ function SetupSteps({
         </li>
         <li>
           <p className="font-medium">2. Code eintragen</p>
+          <p className="mt-0.5 text-muted">
+            Danach bekommst du Wiederherstellungscodes. Aktiv ist der
+            zweite Faktor erst, wenn du einen davon bestätigt hast.
+          </p>
         </li>
       </ol>
 
@@ -182,7 +279,7 @@ function SetupSteps({
             {pending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
-              "Aktivieren"
+              "Weiter"
             )}
           </Button>
           <Button
@@ -218,13 +315,22 @@ function PasswordGate({
   submitLabel: string;
   danger?: boolean;
   action: (prev: TotpState, form: FormData) => Promise<TotpState>;
-  onCodes?: (codes: string[]) => void;
+  onCodes?: (pending: PendingCodes) => void;
   onDone?: (message: string) => void;
 }) {
+  const [armed, setArmed] = useState(false);
   const [state, formAction, pending] = useActionState<TotpState, FormData>(
     async (prev, form) => {
       const next = await action(prev, form);
-      if (next?.recoveryCodes) onCodes?.(next.recoveryCodes);
+      if (next?.recoveryCodes) {
+        onCodes?.({
+          codes: next.recoveryCodes,
+          minutes: next.confirmMinutes ?? FALLBACK_MINUTES,
+        });
+        // Weiter geht es in der Bestätigung oben; das Passwortfeld hat
+        // seinen Dienst getan.
+        setArmed(false);
+      }
       // Die Meldung wandert nach oben: nach dem Abschalten verschwindet
       // dieses Formular mitsamt seinem Zustand.
       if (next?.success) onDone?.(next.success);
@@ -232,7 +338,6 @@ function PasswordGate({
     },
     undefined,
   );
-  const [armed, setArmed] = useState(false);
 
   if (!armed) {
     return (
@@ -309,9 +414,11 @@ export function TwoFactorForm({
     },
     undefined,
   );
-  // Die Codes überleben das Neuladen der Seite nach dem Aktivieren
-  // bewusst im Client-State: ein zweites Mal gibt es sie nie.
-  const [codes, setCodes] = useState<string[] | null>(null);
+  // Ausgegebene, noch nicht bestätigte Codes. Sie liegen hier oben,
+  // weil der Schritt, der sie geholt hat (Einrichtung oder Passwortfeld),
+  // an ihrer Stelle verschwindet — ein zweites Mal gibt es den Klartext
+  // nie.
+  const [pending, setPending] = useState<PendingCodes | null>(null);
   // Dasselbe für die Erfolgsmeldung: sie überlebt den Zweigwechsel nur
   // hier oben.
   const [notice, setNotice] = useState<string | null>(null);
@@ -344,10 +451,25 @@ export function TwoFactorForm({
         </p>
       )}
 
-      {codes && <RecoveryCodes codes={codes} />}
-
       {enabled ? (
         <div className="space-y-4">
+          {pending && (
+            <ConfirmCodes
+              pending={pending}
+              renewing
+              onConfirmed={(message) => {
+                setPending(null);
+                setNotice(message);
+              }}
+              onCancel={() => {
+                // Serverseitig verwerfen: sonst bliebe der Satz bis zum
+                // Ende der Frist bestätigbar, obwohl ihn niemand mehr
+                // vor sich hat.
+                void discardRecoveryCodesAction();
+                setPending(null);
+              }}
+            />
+          )}
           {enabledAt && (
             <p className="text-[12.5px] text-faint">
               Aktiv seit {enabledAt} · {unusedCodes}{" "}
@@ -362,14 +484,21 @@ export function TwoFactorForm({
               dich ein verlorenes Telefon aus.
             </p>
           )}
-          <PasswordGate
-            label="Neue Wiederherstellungscodes"
-            hint="Die bisherigen Codes verfallen dabei."
-            submitLabel="Codes erneuern"
-            action={regenerateRecoveryCodesAction}
-            onCodes={setCodes}
-            onDone={setNotice}
-          />
+          {/* Während ein neuer Satz auf Bestätigung wartet, kein zweiter
+              Knopf dafür: ein weiterer Satz ersetzte den angezeigten. */}
+          {!pending && (
+            <PasswordGate
+              label="Neue Wiederherstellungscodes"
+              hint="Die bisherigen Codes gelten weiter, bis du einen der neuen bestätigst."
+              submitLabel="Codes erneuern"
+              action={regenerateRecoveryCodesAction}
+              onCodes={(next) => {
+                setNotice(null);
+                setPending(next);
+              }}
+              onDone={setNotice}
+            />
+          )}
           <PasswordGate
             label="Zwei-Faktor abschalten"
             hint="Danach genügt wieder das Passwort allein."
@@ -380,20 +509,33 @@ export function TwoFactorForm({
               // Ohne zweiten Faktor sind auch die Codes hinfällig — und
               // das abgeschlossene Einrichtungsgeheimnis erst recht,
               // sonst stünde es nach dem Abschalten wieder da.
-              setCodes(null);
+              setPending(null);
               setSetup(null);
               setNotice(message);
             }}
           />
         </div>
-      ) : setup ? (
-        <SetupSteps
-          setup={setup}
-          onConfirmed={(next, message) => {
-            setCodes(next);
+      ) : pending ? (
+        <ConfirmCodes
+          pending={pending}
+          renewing={false}
+          onConfirmed={(message) => {
+            setPending(null);
             setSetup(null);
             setNotice(message);
           }}
+          onCancel={() => {
+            // Geheimnis und ausgegebene Codes serverseitig wegräumen; der
+            // Faktor war nie scharf, das Konto bleibt beim Passwort.
+            void cancelTotpSetupAction();
+            setPending(null);
+            setSetup(null);
+          }}
+        />
+      ) : setup ? (
+        <SetupSteps
+          setup={setup}
+          onCodes={setPending}
           onCancel={() => setSetup(null)}
         />
       ) : (
