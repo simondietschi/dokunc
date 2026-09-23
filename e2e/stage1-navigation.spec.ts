@@ -135,8 +135,20 @@ test("Seite verschieben (Dialog + Drag and Drop), Brotkrumen, Inhaltsverzeichnis
   await expect(toc).toContainText("Abschnitt Eins");
   await expect(toc).toContainText("Abschnitt Zwei");
   await expect(toc).toContainText("Abschnitt Drei");
-  // Klick springt zur Ueberschrift (Cursor steht danach in der Ueberschrift).
-  await toc.getByRole("button", { name: "Abschnitt Drei" }).click();
+  // Jeder Eintrag ist ein echter Link auf den Anker der Ueberschrift
+  // (kopieren, neuer Tab) ...
+  const drei = toc.getByRole("link", { name: "Abschnitt Drei" });
+  await expect(drei).toHaveAttribute("href", "#abschnitt-drei");
+  // ... und die ids stimmen schon im laufenden Editor, direkt nach dem
+  // Tippen. Die Eingaberegel macht die Ueberschrift aus der noch leeren
+  // Zeile; frueher blieb die id auf diesem Stand stehen ("abschnitt").
+  await expect(page.locator("h1#abschnitt-eins")).toHaveCount(1);
+  await expect(page.locator("h2#abschnitt-zwei")).toHaveCount(1);
+  await expect(page.locator("h3#abschnitt-drei")).toHaveCount(1);
+  await expect(page.locator(".ProseMirror #abschnitt")).toHaveCount(0);
+  // ... der schlichte Klick springt aber selbst zur Ueberschrift (Cursor
+  // steht danach in ihr) und haengt keinen Anker an die Adresse.
+  await drei.click();
   await expect
     .poll(
       () =>
@@ -148,6 +160,24 @@ test("Seite verschieben (Dialog + Drag and Drop), Brotkrumen, Inhaltsverzeichnis
       { timeout: 5_000 },
     )
     .toBe("Abschnitt Drei");
+  expect(new URL(page.url()).hash).toBe("");
+
+  // Genau ein Verzeichnis bei jeder Breite. Frueher stand ab 1400px
+  // Viewport ein zweites ("Gliederung", fest am rechten Rand) daneben:
+  // bei 1450px neben dem Block ueber dem Text, ab gut 1520px neben dem
+  // Panel. Der Block ist oben (bei 1280px) aufgeklappt worden, die Wahl
+  // gilt fuer alle Breiten. Ohne Wahl: siehe den naechsten Test.
+  const sichtbar = page
+    .getByRole("navigation", { name: /Inhaltsverzeichnis|Gliederung/ })
+    .filter({ visible: true });
+  for (const width of [1280, 1450, 1600]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect(sichtbar, `bei ${width}px`).toHaveCount(1);
+  }
+  // Breit steht das Panel neben dem Text, der Block darueber ist weg.
+  await expect(tocToggle).toBeHidden();
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await expect(tocToggle).toBeVisible();
 
   // --- Drag and Drop: Kind hinter die Elternseite auf die oberste Ebene ---
   const parentRow = page.locator(`aside [data-page-id="${parentId}"]`);
@@ -190,4 +220,83 @@ test("Seite verschieben (Dialog + Drag and Drop), Brotkrumen, Inhaltsverzeichnis
   // Seitenbaum-API nur fuer Angemeldete (request-Fixture hat keine Session).
   const anon = await request.get("/api/spaces/x/pages");
   expect(anon.status()).toBe(401);
+});
+
+test("Inhaltsverzeichnis: ohne Vorliebe offen, Anker aus geteilter Adresse", async ({
+  page,
+  browser,
+  baseURL,
+}) => {
+  await login(page);
+  await openSpace(page);
+  await createPage(page, `Nav Anker ${Date.now()}`);
+
+  // Drei Ueberschriften mit so viel Text dazwischen, dass die dritte
+  // beim Laden weit unter dem sichtbaren Bereich liegt.
+  const editor = page.locator(".ProseMirror");
+  await editor.click();
+  const zeilen = async (n: number) => {
+    for (let i = 1; i <= n; i++) {
+      await page.keyboard.type(`Zeile ${i}`);
+      await page.keyboard.press("Enter");
+    }
+  };
+  await page.keyboard.type("# Abschnitt Eins");
+  await page.keyboard.press("Enter");
+  await zeilen(20);
+  await page.keyboard.type("## Abschnitt Zwei");
+  await page.keyboard.press("Enter");
+  await zeilen(20);
+  await page.keyboard.type("### Abschnitt Drei");
+  await page.keyboard.press("Enter");
+  await zeilen(20);
+  await expect(page.locator("h3#abschnitt-drei")).toHaveCount(1);
+  const url = page.url().split("#")[0];
+
+  // Frischer Kontext: nichts im Speicher, also keine gespeicherte Wahl
+  // fuer den Block. 1450px ist breiter als die alte Schwelle (1400px)
+  // und schmaler als das Panel neben dem Text.
+  const frisch = await browser.newContext({
+    baseURL,
+    viewport: { width: 1450, height: 900 },
+  });
+  try {
+    const tab = await frisch.newPage();
+    await login(tab);
+    // Wie ein geteilter Link: die Adresse traegt den Anker.
+    await tab.goto(`${url}#abschnitt-drei`);
+    await waitForLive(tab);
+
+    // Der Inhalt kommt erst nach dem Laden (Collab-Abgleich); der Sprung
+    // des Browsers ging deshalb ins Leere, das Verzeichnis holt ihn nach.
+    const ziel = tab.locator("h3#abschnitt-drei");
+    await expect(ziel).toBeInViewport();
+    // ... mit Abstand zum Sticky-Kopf: an ihrer Oberkante liegt die
+    // Ueberschrift selbst, nicht Kopfzeile oder Werkzeugleiste.
+    await expect
+      .poll(() =>
+        ziel.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          const oben = document.elementFromPoint(r.left + 4, r.top + 4);
+          return !!oben && el.contains(oben);
+        }),
+      )
+      .toBe(true);
+    expect(new URL(tab.url()).hash).toBe("#abschnitt-drei");
+
+    // Ohne je umzuschalten: genau ein sichtbares Verzeichnis, mit der
+    // ganzen Liste. Frueher stand ab 1400px die "Gliederung" immer offen
+    // daneben; der Block darf dort nicht nur als Umschalter erscheinen.
+    const sichtbar = tab
+      .getByRole("navigation", { name: /Inhaltsverzeichnis|Gliederung/ })
+      .filter({ visible: true });
+    await expect(sichtbar).toHaveCount(1);
+    await expect(sichtbar).toContainText("Abschnitt Drei");
+    await expect(tab.getByRole("button", { name: /^Inhalt/ })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  } finally {
+    await frisch.close();
+  }
 });

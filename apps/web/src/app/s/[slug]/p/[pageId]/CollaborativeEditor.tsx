@@ -35,7 +35,6 @@ import { TableOfContents } from "@/components/editor/TableOfContents";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { AttachmentView } from "@/components/editor/AttachmentView";
 import { BlockHandle } from "@/components/editor/BlockHandle";
-import { Outline } from "@/components/editor/Outline";
 import { PageCover, PageIcon } from "@/components/editor/PageChrome";
 import { ShareDialog, type ShareRow } from "./ShareDialog";
 import {
@@ -76,6 +75,12 @@ import { SelectionMenu } from "@/components/editor/SelectionMenu";
 import { PromptDialog } from "@/components/ui/PromptDialog";
 import { useToast } from "@/components/ui/Toast";
 import { caretColorFor } from "@/lib/caret-color";
+import {
+  statusHandlers,
+  statusLabel,
+  visibleStatus,
+  type EditorStatus,
+} from "@/lib/editor-status";
 import { looksLikeMarkdown, markdownToHtml } from "@/lib/markdown-paste";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/cn";
@@ -254,9 +259,7 @@ export function CollaborativeEditor({
   // Vor dem Sync ist das Yjs-Dokument noch leer bzw. unvollstaendig —
   // wer da schon tippt, schreibt in ein Dokument, dessen Inhalt gleich
   // erst eintrifft, und der Text landet an der falschen Stelle.
-  const [status, setStatus] = useState<
-    "connecting" | "connected" | "offline" | "unauthorized"
-  >("connecting");
+  const [status, setStatus] = useState<EditorStatus>("connecting");
   const [peers, setPeers] = useState<Peer[]>([]);
   const [titleValue, setTitleValue] = useState(title);
   const [prompt, setPrompt] = useState<PromptRequest | null>(null);
@@ -431,10 +434,11 @@ export function CollaborativeEditor({
         ? null
         : new IndexeddbPersistence(`dokunc:${pageId}`, ydoc);
     // Die Status-Callbacks gehoeren in den Konstruktor: der Provider
-    // verbindet sofort, ein spaeter registrierter Listener koennte das
-    // "authenticated"-Ereignis verpassen. "Live" erst nach erfolgreicher
-    // Server-Authentifizierung: Socket-Open allein heisst noch nicht,
-    // dass wir schreiben duerfen.
+    // verbindet sofort, ein spaeter registrierter Listener koennte den
+    // ersten Sync oder eine Ablehnung verpassen. Was sie mit dem Status tun
+    // ("Live" erst nach dem Erst-Sync, eine Ablehnung ueberdauert das
+    // Trennen), steht in lib/editor-status (statusHandlers, dort
+    // getestet).
     const provider = new HocuspocusProvider({
       url: collabUrl,
       name: pageId,
@@ -443,22 +447,7 @@ export function CollaborativeEditor({
       // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
       // HTML gelangt nichts Wiederverwendbares.
       token: () => fetchCollabTicket(pageId),
-      // Erst der abgeschlossene Erst-Sync macht das Dokument bedienbar
-      // (onAuthenticated allein kommt vor den Inhalten).
-      onSynced: () => setStatus("connected"),
-      // Abgelehnte Authentifizierung ist kein Netzproblem: als "offline"
-      // versprach die Anzeige, die Aenderungen wuerden spaeter uebertragen,
-      // waehrend der Server die Verbindung dauerhaft verweigert.
-      onAuthenticationFailed: () => setStatus("unauthorized"),
-      // Nach der Ablehnung meldet der Provider noch ein Trennen; ohne den
-      // Vorrang von "unauthorized" stuende dort gleich wieder "Verbinde…".
-      onStatus: ({ status }) => {
-        if (status !== "connected") {
-          setStatus((s) => (s === "unauthorized" ? s : "connecting"));
-        }
-      },
-      onDisconnect: () =>
-        setStatus((s) => (s === "unauthorized" ? s : "connecting")),
+      ...statusHandlers(setStatus),
     });
     setConn({ ydoc, provider });
     return () => {
@@ -751,37 +740,17 @@ export function CollaborativeEditor({
     return () => aw.off("change", sync);
   }, [conn]);
 
-  // Ohne Netz ist "Verbinde…" irreführend; das Gerät versucht es gar
-  // nicht erst. Der lokale Puffer trägt in dieser Zeit weiter.
-  // "unauthorized" bleibt stehen, auch wenn das Gerät offline ist: der
-  // Grund ist der ernstere und der einzige, gegen den die Person selbst
-  // etwas tun kann.
-  const effectiveStatus =
-    status === "connected" || status === "unauthorized"
-      ? status
-      : online
-        ? status
-        : "offline";
+  // Was angezeigt wird, entscheidet lib/editor-status (dort getestet):
+  // ohne Netz "Offline" statt "Verbinde…", eine Ablehnung bleibt stehen.
+  // Der lokale Puffer traegt offline weiter.
+  const effectiveStatus = visibleStatus(status, online);
   const dot =
     effectiveStatus === "connected"
       ? "bg-emerald-500"
       : effectiveStatus === "connecting"
         ? "bg-amber-500"
         : "bg-danger";
-  const statusText =
-    effectiveStatus === "connected"
-      ? "Live"
-      : effectiveStatus === "unauthorized"
-        ? "Kein Zugriff"
-        : effectiveStatus === "offline"
-          ? "Offline"
-          : "Verbinde…";
-  const statusTitle =
-    effectiveStatus === "unauthorized"
-      ? "Der Server hat die Verbindung abgelehnt (Sitzung abgelaufen oder Zugriff entzogen). Bitte neu anmelden und die Seite neu laden — Änderungen werden nicht mehr übertragen."
-      : effectiveStatus === "offline"
-        ? "Ohne Verbindung. Änderungen werden auf diesem Gerät gesichert und später übertragen."
-        : undefined;
+  const { text: statusText, title: statusTitle } = statusLabel(effectiveStatus);
 
   return (
     <div>
@@ -950,7 +919,6 @@ export function CollaborativeEditor({
         />
       </div>
 
-      <Outline editor={editor} />
       {editable && griffBereit && <BlockHandle editor={editor} />}
 
       {/* Toolbar */}
@@ -960,9 +928,10 @@ export function CollaborativeEditor({
         </div>
       )}
 
-      {/* Canvas */}
+      {/* Canvas. Das Inhaltsverzeichnis ist das einzige der Seite: es
+          waehlt selbst zwischen Panel und Block ueber dem Text. */}
       <div className="mt-6 animate-[fade-in_0.4s_ease]">
-        <TableOfContents editor={editor}>
+        <TableOfContents editor={editor} synced={status === "connected"}>
           <EditorContent editor={editor} />
         </TableOfContents>
       </div>

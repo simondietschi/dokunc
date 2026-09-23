@@ -1,12 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { Excalidraw, exportToSvg } from "@excalidraw/excalidraw";
 import type { ExcalidrawImperativeAPI } from "@excalidraw/excalidraw/types";
 import "@excalidraw/excalidraw/index.css";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { FullscreenDialog } from "@/components/ui/FullscreenDialog";
+import { sceneSignature } from "@/lib/excalidraw-scene";
 
 type SceneData = {
   elements?: readonly unknown[];
@@ -23,6 +24,15 @@ function parseScene(data: string): SceneData | undefined {
   }
 }
 
+/**
+ * Alles, was Excalidraw selbst rendert, traegt die Klasse `excalidraw`:
+ * die Zeichenflaeche und auch die Fenster, die es an body haengt (Hilfe,
+ * Export, Bibliothek). Dort gehoert Escape dem Editor.
+ */
+function isExcalidrawSurface(el: Element): boolean {
+  return el.closest(".excalidraw") !== null;
+}
+
 export function ExcalidrawModal({
   initialData,
   onSave,
@@ -33,6 +43,10 @@ export function ExcalidrawModal({
   onCancel: () => void;
 }) {
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
+  // Stand direkt nach dem Laden der Szene, zum Vergleich beim
+  // Schliessen. Excalidraw meldet onChange erst, wenn die Szene geladen
+  // ist; die erste Meldung ist also der Ausgangsstand.
+  const ausgangRef = useRef<string | null>(null);
   const [saving, setSaving] = useState(false);
   const dark =
     typeof document !== "undefined" &&
@@ -72,29 +86,48 @@ export function ExcalidrawModal({
     }
   }
 
+  /** Wuerde "Abbrechen" jetzt etwas verwerfen? */
+  function hasUnsavedChanges(): boolean {
+    const api = apiRef.current;
+    // Noch nicht geladen: dann kann auch niemand etwas gezeichnet haben.
+    if (!api || ausgangRef.current === null) return false;
+    return (
+      sceneSignature(
+        api.getSceneElements(),
+        api.getAppState().viewBackgroundColor,
+      ) !== ausgangRef.current
+    );
+  }
+
   const scene = parseScene(initialData);
 
-  return createPortal(
-    <div className="fixed inset-0 z-[100] flex flex-col bg-canvas">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-line px-4">
-        <span className="text-sm font-semibold">Excalidraw</span>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onCancel}>
-            Abbrechen
-          </Button>
-          <Button size="sm" onClick={save} disabled={saving}>
-            {saving ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              "Übernehmen"
-            )}
-          </Button>
-        </div>
-      </div>
+  return (
+    <FullscreenDialog
+      title="Excalidraw-Zeichnung"
+      onCancel={onCancel}
+      hasUnsavedChanges={hasUnsavedChanges}
+      surface={isExcalidrawSurface}
+      actions={
+        <Button size="sm" onClick={save} disabled={saving}>
+          {saving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            "Übernehmen"
+          )}
+        </Button>
+      }
+    >
       <div className="min-h-0 flex-1">
         <Excalidraw
           excalidrawAPI={(api) => {
             apiRef.current = api;
+          }}
+          onChange={(elements, appState) => {
+            if (ausgangRef.current !== null) return;
+            ausgangRef.current = sceneSignature(
+              elements,
+              appState.viewBackgroundColor,
+            );
           }}
           initialData={
             scene
@@ -109,7 +142,6 @@ export function ExcalidrawModal({
           langCode="de-DE"
         />
       </div>
-    </div>,
-    document.body,
+    </FullscreenDialog>
   );
 }

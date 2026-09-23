@@ -33,6 +33,45 @@
 
 }
 
+/* ---- Stapelebenen ----
+   Die EINE Stelle fuer alles, was ueber der Seite liegt. Tailwind macht
+   daraus die Klassen z-modal, z-toast und z-skip-link; CSS in dieser
+   Datei liest dieselben Variablen. lib/layers.test.ts prueft Reihenfolge
+   und Abstand zur Seite.
+
+   Unter 70 liegt die Seite selbst, mit schlichten Zahlen an Ort und
+   Stelle: Werkzeugleiste und Baum 10, Seitenkopf 20, Menues und mobile
+   Kopfleiste 30, mobile Seitenleiste und Blockmenue 40, Vorschlagsliste
+   im Editor 60. Nichts davon darf ein Modal verdecken.
+
+   modal (70): jedes modale Fenster — Befehlspalette, Vorlagenauswahl,
+     Dialoge, "Verschieben nach", die Zeichenfenster Excalidraw und
+     draw.io. Bewusst EINE Ebene: untereinander liegen sie in
+     Oeffnungsreihenfolge. Jedes haengt sich beim Oeffnen per Portal ans
+     Ende von <body>, und bei gleichem z-index liegt das spaetere oben.
+     In genau dieser Reihenfolge fuehrt use-modal den Tastenstapel (nur
+     das oberste hoert auf Escape und Tab), sichtbar oben und bedienbar
+     ist also immer dasselbe Fenster. Feste Raenge je Art gingen nicht
+     auf: was aus einem Fenster heraus aufgeht, gehoert darueber — die
+     Rueckfrage eines Zeichenfensters ueber das Vollbild, ein Dialog aus
+     der Palette ueber die Palette, aber ebenso die Palette, die Strg+K
+     aus einem offenen Dialog heraus oeffnet, ueber den Dialog. Mit den
+     frueheren Einzelwerten (Palette und Vorlagen 50, Dialog 90,
+     Verschieben und Zeichenfenster 100) lag im letzten Fall das
+     bediente Fenster unsichtbar unter dem anderen, und eine Rueckfrage
+     aus dem Zeichenfenster waere unter dem Vollbild verschwunden.
+   toast (80): Meldungen liegen ueber allem, auch ueber offenen Modalen,
+     damit ein Fehler sichtbar ist, solange das Fenster noch offen ist.
+     Frueher teilte sich der Toast den Wert 100 mit drei Modalen und lag,
+     weil sein Portal schon beim Start an body haengt, unter ihnen.
+   skip-link (90): der Sprunglink ist das Erste, was die Tastatur
+     erreicht, und darf von nichts verdeckt werden. */
+@theme {
+  --z-index-modal: 70;
+  --z-index-toast: 80;
+  --z-index-skip-link: 90;
+}
+
 /* ---- Light ---- */
 :root {
   --canvas: #fcfcfd;
@@ -108,7 +147,7 @@
   position: fixed;
   top: 0.75rem;
   left: 0.75rem;
-  z-index: 200;
+  z-index: var(--z-index-skip-link);
   transform: translateY(calc(-100% - 1rem));
   border-radius: 10px;
   border: 1px solid var(--line-strong);
@@ -706,46 +745,6 @@
    Inhalt durchgehend im DOM. */
 .dk-toggle:not(.is-open) .dk-toggle-body {
   display: none;
-}
-
-/* ---- Gliederung ---- */
-.dk-outline {
-  display: none;
-}
-@media (min-width: 1400px) {
-  .dk-outline {
-    display: block;
-    position: fixed;
-    top: 7.5rem;
-    right: 2rem;
-    width: 13.5rem;
-    max-height: 65vh;
-    overflow-y: auto;
-    padding-left: 0.9rem;
-    border-left: 1px solid var(--line);
-  }
-}
-.dk-outline-title {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--faint);
-  margin-bottom: 0.5rem;
-}
-.dk-outline li {
-  margin: 0.15rem 0;
-}
-.dk-outline a {
-  display: block;
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--muted);
-  text-decoration: none;
-  transition: color 0.15s ease;
-}
-.dk-outline a:hover {
-  color: var(--ink);
 }
 
 /* ---- Dateianhaenge ---- */

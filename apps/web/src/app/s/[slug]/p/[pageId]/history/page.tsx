@@ -1,13 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, RotateCcw, Clock, GitCompareArrows } from "lucide-react";
+import { ArrowLeft, Clock, GitCompareArrows } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { visiblePageWhere } from "@/lib/page-access";
 import { Avatar } from "@/components/ui/Avatar";
 import { restoreVersionAction } from "../../../actions";
+import { RestoreButton } from "./RestoreButton";
 
 export const metadata: Metadata = {
   title: "Versionsverlauf",
@@ -115,10 +116,9 @@ export default async function HistoryPage({
                   <form action={restoreVersionAction}>
                     <input type="hidden" name="slug" value={slug} />
                     <input type="hidden" name="versionId" value={v.id} />
-                    <button className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-subtle hover:text-ink">
-                      <RotateCcw className="h-3.5 w-3.5" />
+                    <RestoreButton className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-subtle hover:text-ink">
                       Wiederherstellen
-                    </button>
+                    </RestoreButton>
                   </form>
                 )}
               </div>

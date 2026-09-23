@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { escapeCloses, tabRedirect } from "@/lib/modal-keys";
 
 /**
  * Das Verhalten eines modalen Fensters an einer Stelle.
@@ -21,12 +22,20 @@ import { useEffect, useRef, useState } from "react";
  * Gemeinsam ist: Fokus hinein und beim Schliessen zurueck, Tab bleibt
  * drin, Escape schliesst, der Hintergrund scrollt nicht mit. Das Aussehen
  * ist es nicht — deshalb gibt der Haken nur Verhalten heraus und laesst
- * jedem Aufrufer sein eigenes Geruest.
+ * jedem Aufrufer sein eigenes Geruest. Die Zeichenfenster (Excalidraw,
+ * draw.io) laufen ueber `ui/FullscreenDialog` ebenfalls hier durch.
+ *
+ * Welche Taste was bewirkt, entscheidet lib/modal-keys (dort getestet);
+ * hier steht nur die Verdrahtung.
  */
 
-/** Was in einem Dialog den Fokus bekommen kann. */
+/**
+ * Was in einem Dialog den Fokus bekommen kann. Mit iframe: sonst kaeme
+ * die Fokusfalle nie in den draw.io-Editor, Tab sprang vom einzigen
+ * Knopf im Kopf wieder auf ihn selbst.
+ */
 export const FOCUSABLE =
-  'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+  'a[href],button:not([disabled]),iframe,textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
 /**
  * Offene Modale in Oeffnungsreihenfolge.
@@ -66,20 +75,39 @@ type Optionen = {
   panel: React.RefObject<HTMLElement | null>;
   /** Element, das beim Oeffnen den Fokus bekommt. Ohne Angabe das erste im Geruest. */
   initialFocus?: React.RefObject<HTMLElement | null>;
+  /**
+   * Eingebettete Flaeche mit eigener Tastaturbedienung, etwa ein
+   * Zeicheneditor: gehoert das Element dazu? Escape, das dort entsteht,
+   * schliesst nie (siehe `escapeCloses`). Und was die Flaeche selbst
+   * ausserhalb des Geruests an body haengt (Excalidraw seine Hilfe, den
+   * Export, die Bibliothek), zaehlt fuer die Fokusfalle als drin — sonst
+   * risse Tab den Fokus aus diesen Fenstern heraus.
+   */
+  surface?: (el: Element) => boolean;
 };
 
 /**
  * Gibt `mounted` zurueck: erst danach darf in ein Portal gerendert
  * werden, sonst weicht der erste Client-Baum vom Server ab.
  */
-export function useModal({ open, onClose, panel, initialFocus }: Optionen) {
+export function useModal({
+  open,
+  onClose,
+  panel,
+  initialFocus,
+  surface,
+}: Optionen) {
   const [mounted, setMounted] = useState(false);
   const onCloseRef = useRef(onClose);
+  const surfaceRef = useRef(surface);
 
   useEffect(() => setMounted(true), []);
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+  useEffect(() => {
+    surfaceRef.current = surface;
+  }, [surface]);
 
   // Fokus setzen, Hintergrund sperren, beides beim Schliessen zuruecknehmen.
   useEffect(() => {
@@ -95,10 +123,17 @@ export function useModal({ open, onClose, panel, initialFocus }: Optionen) {
     // Nach dem Paint, sonst greift der Fokus ins Leere.
     const raf = requestAnimationFrame(() => ziel?.focus());
 
+    const gehoertZurFlaeche = (el: Element | null) =>
+      !!el && (surfaceRef.current?.(el) ?? false);
+
+    // Der Zuhoerer haengt am document, nach dem von React: was der Inhalt
+    // in seinen eigenen Handlern mit der Taste macht (preventDefault),
+    // ist hier schon zu sehen.
     const onKey = (e: KeyboardEvent) => {
       // Nur das oberste Modal reagiert.
-      if (offen[offen.length - 1] !== id) return;
-      if (e.key === "Escape") {
+      const top = offen[offen.length - 1] === id;
+      const herkunft = e.target instanceof Element ? e.target : null;
+      if (escapeCloses(e, { top, fromSurface: gehoertZurFlaeche(herkunft) })) {
         e.preventDefault();
         onCloseRef.current();
         return;
@@ -111,13 +146,15 @@ export function useModal({ open, onClose, panel, initialFocus }: Optionen) {
       const erstes = elemente[0];
       const letztes = elemente[elemente.length - 1];
       const aktiv = document.activeElement;
-      const drin = panel.current.contains(aktiv);
-      if (e.shiftKey && (aktiv === erstes || !drin)) {
+      const richtung = tabRedirect(e, {
+        top,
+        inside: panel.current.contains(aktiv) || gehoertZurFlaeche(aktiv),
+        atFirst: aktiv === erstes,
+        atLast: aktiv === letztes,
+      });
+      if (richtung) {
         e.preventDefault();
-        letztes.focus();
-      } else if (!e.shiftKey && (aktiv === letztes || !drin)) {
-        e.preventDefault();
-        erstes.focus();
+        (richtung === "first" ? erstes : letztes).focus();
       }
     };
     document.addEventListener("keydown", onKey);

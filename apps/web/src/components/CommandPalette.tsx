@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
@@ -83,7 +84,7 @@ export function CommandPalette() {
   // mit der Taste nicht heraus, und eine Fokusfalle gab es nicht.
   // Ohne initialFocus: das erste fokussierbare Element im Geruest ist
   // das Suchfeld, und das traegt bereits autoFocus.
-  useModal({ open, onClose: close, panel: panelRef });
+  const { mounted } = useModal({ open, onClose: close, panel: panelRef });
   const onBackdrop = useBackdropClose(panelRef, close);
 
   // ⌘K / Ctrl+K global; Custom-Event für Buttons.
@@ -337,13 +338,19 @@ export function CommandPalette() {
     // greift, wenn der Fokus in der Liste steht.
   }
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
   let lastGroup: Item["group"] | null = null;
 
-  return (
+  // Per Portal ans Ende von <body>, wie jedes Modal: auf der gemeinsamen
+  // Ebene z-modal entscheidet die Reihenfolge im DOM, was oben liegt
+  // (siehe globals.css, Stapelebenen). An ihrem festen Platz im Layout
+  // stuende die Palette vor allen Portalen und laege damit unter jedem
+  // anderen offenen Modal, auch wenn sie zuletzt aufging (Strg+K aus
+  // einem Dialog heraus) und die Tasten bekommt.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
+      className="fixed inset-0 z-modal overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
       onMouseDown={onBackdrop}
       role="dialog"
       aria-modal="true"
@@ -516,7 +523,8 @@ export function CommandPalette() {
           </span>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

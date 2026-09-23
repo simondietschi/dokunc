@@ -19,7 +19,7 @@ import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
 import { PageAttachments } from "@/components/space/PageAttachments";
 import { pageTitle } from "@/lib/page-title";
-import { RESTORE_STALE_PARAM } from "@/lib/collab-sync";
+import { RESTORE_STALE_PARAM, readStaleRestore } from "@/lib/collab-sync";
 
 /**
  * Ab wann ein Kommentar als nachträglich geändert gilt.
@@ -79,11 +79,13 @@ export default async function PageView({
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
   const { slug, pageId } = await params;
-  // Gesetzt, wenn die Wiederherstellung den Collab-Server nicht erreicht
-  // hat (siehe restoreVersionAction). Der Stand steht dann zwar in der
-  // Datenbank, ein offener Editor wuerde ihn aber beim naechsten
-  // Speichern ueberschreiben.
-  const bitteNeuLaden = (await searchParams)[RESTORE_STALE_PARAM] === "1";
+  // Gesetzt, wenn der Collab-Server die Wiederherstellung nicht
+  // bestaetigt hat (siehe restoreVersionAction). Der Stand steht dann
+  // zwar in Page.content, ein noch offener Editor kann ihn aber beim
+  // naechsten Speichern ueberschreiben, und eine Kopie im Browser kann
+  // den alten Text wieder einbringen.
+  const { offen: uebernahmeOffen, versionId: offeneVersion } =
+    readStaleRestore((await searchParams)[RESTORE_STALE_PARAM]);
   const { space, role, user } = await loadSpace(slug);
 
   const page = await prisma.page.findFirst({
@@ -209,16 +211,56 @@ export default async function PageView({
 
   return (
     <div>
-      {bitteNeuLaden && (
-        <p
+      {uebernahmeOffen && (
+        <div
           role="alert"
           className="mx-auto mt-4 max-w-[760px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink"
         >
-          Der Stand ist gespeichert, aber die Mitteilung an den
-          Echtzeit-Server kam nicht durch. Wer diese Seite offen hat,
-          sollte sie neu laden — sonst überschreibt der alte Stand aus
-          dem geöffneten Editor den wiederhergestellten.
-        </p>
+          {/*
+            Neu laden allein hilft hier nicht: der Editor holt sein
+            Dokument vom Echtzeit-Server und bringt zusaetzlich die Kopie
+            aus dem Browser mit. Erst eine bestaetigte Wiederherstellung
+            tauscht den Inhalt auf dem Echtzeit-Server aus, und offene
+            Editoren wie Kopien im Browser bekommen die Loeschungen mit —
+            deshalb fuehren die Schritte zu einem zweiten Versuch.
+          */}
+          <p>
+            Die Version ist gespeichert, aber der Echtzeit-Server hat nicht
+            bestätigt, dass er sie in den Editor übernommen hat. Der Editor
+            unten kann deshalb noch den alten Inhalt zeigen oder alten und
+            wiederhergestellten Inhalt nebeneinander, und wer die Seite
+            noch bearbeitet, kann den alten Stand beim nächsten Speichern
+            zurückschreiben.
+          </p>
+          <ol className="mt-1.5 list-decimal pl-5">
+            <li>
+              Schließe diese Seite in deinen anderen Tabs und bitte alle,
+              die sie gerade bearbeiten, sie zu schließen. Was dort bis
+              dahin noch geschrieben wird, geht beim erneuten
+              Wiederherstellen verloren.
+            </li>
+            <li>
+              Stelle die Version von hier aus noch einmal wieder her:{" "}
+              <Link
+                href={
+                  offeneVersion
+                    ? `/s/${slug}/p/${page.id}/history/${offeneVersion}`
+                    : `/s/${slug}/p/${page.id}/history`
+                }
+                className="font-medium underline"
+              >
+                {offeneVersion ? "Version öffnen" : "Verlauf öffnen"}
+              </Link>
+              , dann „Wiederherstellen“.
+            </li>
+          </ol>
+          <p className="mt-1.5">
+            Erscheint dieser Hinweis danach wieder, ist der Echtzeit-Server
+            vermutlich nicht erreichbar oder gestört. Dann bitte die
+            Administration, ihn zu prüfen, und warte mit dem Bearbeiten
+            dieser Seite, bis die Wiederherstellung ohne Hinweis gelingt.
+          </p>
+        </div>
       )}
       <CollaborativeEditor
         key={page.id}

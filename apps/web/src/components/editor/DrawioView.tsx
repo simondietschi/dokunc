@@ -1,11 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import { Pencil, Network } from "lucide-react";
 import { toBase64 } from "@dokunc/editor";
-import { Button } from "@/components/ui/Button";
+import { FullscreenDialog } from "@/components/ui/FullscreenDialog";
 
 const DRAWIO_ORIGIN = "https://embed.diagrams.net";
 const DRAWIO_URL = `${DRAWIO_ORIGIN}/?embed=1&proto=json&spin=1&ui=min&noSaveBtn=1&saveAndExit=1`;
@@ -68,10 +67,12 @@ export function DrawioView({ node, updateAttributes, editor }: NodeViewProps) {
 
 /**
  * draw.io Embed-Protokoll (proto=json):
- *   init  -> wir senden {action:"load", xml}
+ *   init  -> wir senden {action:"load", xml, autosave:1}
+ *   autosave -> {xml} nach jeder Aenderung: merken, dass es etwas zu
+ *            verlieren gibt (Rueckfrage beim Abbrechen)
  *   save  -> wir fordern {action:"export", format:"xmlsvg"} an
  *   export-> data:image/svg+xml;base64,... (SVG enthält das XML) -> speichern
- *   exit  -> abbrechen
+ *   exit  -> abbrechen (fragt draw.io bei Aenderungen selbst nach)
  */
 function DrawioModal({
   xml,
@@ -84,6 +85,10 @@ function DrawioModal({
 }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
   const latestXml = useRef(xml);
+  // Hat draw.io eine Aenderung gemeldet? Der Editor laeuft in einem
+  // fremden iframe; ohne diese Meldung wuesste "Abbrechen" (und Escape
+  // im Kopf des Fensters) nicht, ob es etwas verwirft.
+  const changed = useRef(false);
 
   const post = useCallback((msg: object) => {
     frameRef.current?.contentWindow?.postMessage(
@@ -109,7 +114,16 @@ function DrawioModal({
 
       switch (msg.event) {
         case "init":
-          post({ action: "load", xml: latestXml.current, autosave: 0 });
+          post({ action: "load", xml: latestXml.current, autosave: 1 });
+          break;
+        case "autosave":
+          // Nur echte Abweichungen zaehlen. Liefert draw.io dasselbe
+          // Diagramm in anderer Schreibweise zurueck, wird einmal zu oft
+          // gefragt, nie einmal zu wenig.
+          if (typeof msg.xml === "string" && msg.xml !== xml) {
+            changed.current = true;
+            latestXml.current = msg.xml;
+          }
           break;
         case "save":
           if (msg.xml) latestXml.current = msg.xml;
@@ -131,29 +145,22 @@ function DrawioModal({
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [post, onSave, onCancel]);
+  }, [post, onSave, onCancel, xml]);
 
-  return createPortal(
-    <div className="fixed inset-0 z-[100] flex flex-col bg-canvas">
-      <div className="flex h-12 shrink-0 items-center justify-between border-b border-line px-4">
-        <span className="text-sm font-semibold">
-          draw.io{" "}
-          <span className="font-normal text-faint">
-            (embed.diagrams.net — Diagrammdaten bleiben lokal)
-          </span>
-        </span>
-        <Button variant="ghost" size="sm" onClick={onCancel}>
-          Abbrechen
-        </Button>
-      </div>
+  return (
+    <FullscreenDialog
+      title="draw.io-Diagramm"
+      description="embed.diagrams.net — Diagrammdaten bleiben lokal"
+      onCancel={onCancel}
+      hasUnsavedChanges={() => changed.current}
+    >
       <iframe
         ref={frameRef}
         src={DRAWIO_URL}
         title="draw.io Editor"
         className="min-h-0 flex-1 border-0"
       />
-    </div>,
-    document.body,
+    </FullscreenDialog>
   );
 }
 

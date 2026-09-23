@@ -42,7 +42,7 @@ export function Dialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[90] grid place-items-center p-4"
+      className="fixed inset-0 z-modal grid place-items-center p-4"
       onMouseDown={onBackdrop}
     >
       <div

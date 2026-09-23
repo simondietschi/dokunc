@@ -231,7 +231,7 @@ export function MovePageDialog({
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-start justify-center overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
+      className="fixed inset-0 z-modal flex items-start justify-center overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
       onMouseDown={onBackdrop}
       role="dialog"
       aria-modal="true"
