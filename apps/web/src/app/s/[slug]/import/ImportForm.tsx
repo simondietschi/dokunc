@@ -36,7 +36,19 @@ type Phase =
   | { kind: "uploading"; percent: number }
   | { kind: "processing" }
   | { kind: "done"; result: ImportResponse }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string; warnings: string[] };
+
+/**
+ * Hinweise aus einer Fehlerantwort. Die Route schickt bei einem Fehler,
+ * den die Person beheben kann, die bis dahin gesammelten Hinweise mit;
+ * scheitert jede Seite, nennen nur sie die Dateien und den Grund. Andere
+ * Fehlerantworten haben das Feld nicht.
+ */
+function warningsOf(data: { warnings?: unknown }): string[] {
+  return Array.isArray(data.warnings)
+    ? data.warnings.filter((w): w is string => typeof w === "string")
+    : [];
+}
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
@@ -100,6 +112,7 @@ export function ImportForm({
         setPhase({
           kind: "error",
           message: data.error ?? `Import fehlgeschlagen (HTTP ${res.status}).`,
+          warnings: warningsOf(data),
         });
         return;
       }
@@ -108,7 +121,11 @@ export function ImportForm({
       if (inputRef.current) inputRef.current.value = "";
       router.refresh();
     } catch {
-      setPhase({ kind: "error", message: "Upload fehlgeschlagen. Bitte erneut versuchen." });
+      setPhase({
+        kind: "error",
+        message: "Upload fehlgeschlagen. Bitte erneut versuchen.",
+        warnings: [],
+      });
     }
   }
 
@@ -209,9 +226,16 @@ export function ImportForm({
         </p>
       )}
       {phase.kind === "error" && (
-        <p role="alert" className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">
-          {phase.message}
-        </p>
+        <div className="space-y-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px]">
+          {/* Nur die Meldung wird angesagt, nicht die ganze Liste. */}
+          <p role="alert" className="text-danger">
+            {phase.message}
+          </p>
+          {phase.warnings.length > 0 && (
+            // Offen: hier stehen die Gruende, warum nichts importiert wurde.
+            <WarningList warnings={phase.warnings} open />
+          )}
+        </div>
       )}
       {phase.kind === "done" && <Result result={phase.result} slug={slug} />}
 
@@ -310,19 +334,25 @@ function Result({ result, slug }: { result: ImportResponse; slug: string }) {
         // Ging etwas schief, stehen hier die Gruende — dann von selbst
         // offen. Bei einem sauberen Import bleiben es Randnotizen und
         // der Block bleibt zu.
-        <details className="text-[12.5px]" open={failed > 0}>
-          <summary className="flex cursor-pointer items-center gap-1.5 text-muted">
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-            {result.warnings.length}{" "}
-            {result.warnings.length === 1 ? "Hinweis" : "Hinweise"}
-          </summary>
-          <ul className="mt-2 max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-muted">
-            {result.warnings.map((w, i) => (
-              <li key={i}>{w}</li>
-            ))}
-          </ul>
-        </details>
+        <WarningList warnings={result.warnings} open={failed > 0} />
       )}
     </div>
+  );
+}
+
+/** Aufklappbare Liste der Hinweise, beim Ergebnis wie beim Fehler. */
+function WarningList({ warnings, open }: { warnings: string[]; open: boolean }) {
+  return (
+    <details className="text-[12.5px]" open={open}>
+      <summary className="flex cursor-pointer items-center gap-1.5 text-muted">
+        <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+        {warnings.length} {warnings.length === 1 ? "Hinweis" : "Hinweise"}
+      </summary>
+      <ul className="mt-2 max-h-48 list-disc space-y-1 overflow-y-auto pl-5 text-muted">
+        {warnings.map((w, i) => (
+          <li key={i}>{w}</li>
+        ))}
+      </ul>
+    </details>
   );
 }

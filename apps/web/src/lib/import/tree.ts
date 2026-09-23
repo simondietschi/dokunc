@@ -46,7 +46,7 @@ function kindOf(path: string): ContentKind | null {
 
 function contentTitle(file: ImportFile, kind: ContentKind, format: ImportFormat): string | null {
   try {
-    const text = decodeText(file.data);
+    const text = decodeText(file.read());
     return kind === "markdown" ? markdownTitle(text) : htmlTitle(text, format);
   } catch {
     return null;
@@ -201,7 +201,7 @@ function buildConfluenceTree(
 
   // Hierarchie und Reihenfolge aus index.html.
   if (index) {
-    const entries = parseConfluenceIndex(decodeText(index.data));
+    const entries = parseConfluenceIndex(decodeText(index.read()));
     const place = (
       list: typeof entries,
       parent: ImportNode | null,
@@ -234,7 +234,7 @@ function buildConfluenceTree(
   const leftovers: ImportNode[] = [];
   for (const node of byKey.values()) {
     if (placed.has(node.key)) continue;
-    const crumbs = confluenceBreadcrumbs(decodeText(node.file!.data));
+    const crumbs = confluenceBreadcrumbs(decodeText(node.file!.read()));
     let parent: ImportNode | undefined;
     for (let i = crumbs.length - 1; i >= 0 && !parent; i--) {
       const target = resolveRelative(node.file!.path, crumbs[i]);
