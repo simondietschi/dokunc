@@ -98,26 +98,47 @@ export const fileAccessDeps: FileAccessDeps = {
 
 /**
  * Space endgueltig loeschen und dabei die Dateien seiner Anhaenge von der
- * Platte raeumen. Die Attachment-Zeilen fallen per Kaskade — die Bytes
+ * Platte raeumen. Die Attachment-Zeilen fielen per Kaskade — die Bytes
  * nicht: ohne diesen Schritt bleiben sie als verwaiste Dateien liegen.
- * Die Namen muessen VOR dem Loeschen gelesen werden.
  *
- * Zwei Luecken bleiben, und beide enden gleich: Bytes ohne Datensatz.
- * Ein Upload, der zwischen die Namensliste und das Loeschen faellt,
- * steht nicht in der Liste, seine Zeile faellt aber per Kaskade; und
- * endet der Prozess nach dem Loeschen, bevor `unlink` durch ist, bleibt
- * der Rest liegen. Beides laesst sich hier nicht schliessen: nach dem
- * Loeschen ist nicht mehr nachzulesen, welche Dateien zum Space
- * gehoerten. Dafuer braucht es einen Aufraeumjob, der Dateien ohne
- * Attachment-Zeile einsammelt — den gibt es noch nicht, `unlink` kommt
- * im ganzen Repository nur hier und in api/upload vor.
+ * Die Namen kommen aus demselben Zug, der die Zeilen loescht, nicht aus
+ * einer Liste davor. Mit der Liste davor fiel ein Upload, der zwischen
+ * Liste und Loeschen seine Zeile schrieb, durch: nicht in der Liste,
+ * Zeile per Kaskade weg, Bytes blieben liegen. Jetzt sperrt die
+ * Transaktion zuerst die Space-Zeile. Jede neue Attachment-Zeile braucht
+ * fuer ihren Fremdschluessel eine Schluesselsperre auf genau diese Zeile:
+ * eine, die schon schreibt, laesst die Sperre warten, bis sie committet
+ * ist, und steht danach im RETURNING; jede spaetere wartet, bis der
+ * Space weg ist, und scheitert dann am Fremdschluessel — api/upload und
+ * der Import entfernen ihre Datei in diesem Fall selbst.
+ *
+ * Die Zeitgrenze steht ausdruecklich da: auch ein Batch laeuft in Prisma
+ * als Transaktion mit Vorgabe 5 s (maxWait 2 s), und in diese Zeit
+ * faellt das Warten an der Sperre. Ein Import haelt die Schluesselsperre
+ * auf die Space-Zeile in Schritt 2 bis zu 60 s (lib/import/run.ts); mit
+ * der Vorgabe liefe das Loeschen dahinter ab und der Space bliebe stehen.
+ * 120 s decken diese 60 s und danach die Kaskade eines grossen Space;
+ * maxWait wie beim Import. Laeuft sie trotzdem ab, wird alles
+ * zurueckgerollt: Space, Zeilen und Dateien bleiben, die Person sieht
+ * einen Fehler und kann es erneut versuchen.
+ *
+ * Was bleibt: endet der Prozess nach dem Commit, bevor `unlink` durch
+ * ist, oder scheitert `unlink`, liegen die Bytes ohne Zeile da. Die
+ * sammelt der Aufraeumer ein (lib/upload-sweeper), sobald sie die
+ * Schonfrist hinter sich haben.
  */
 export async function deleteSpaceWithUploads(spaceId: string): Promise<void> {
-  const attachments = await prisma.attachment.findMany({
-    where: { spaceId },
-    select: { storedName: true },
-  });
-  await prisma.space.delete({ where: { id: spaceId } });
+  const [, attachments] = await prisma.$transaction(
+    [
+      prisma.$queryRaw`SELECT id FROM "Space" WHERE id = ${spaceId} FOR UPDATE`,
+      prisma.$queryRaw<{ storedName: string }[]>`
+        DELETE FROM "Attachment" WHERE "spaceId" = ${spaceId}
+        RETURNING "storedName"
+      `,
+      prisma.space.delete({ where: { id: spaceId } }),
+    ],
+    { timeout: 120_000, maxWait: 10_000 },
+  );
   await Promise.all(
     attachments.map(async (a) => {
       const full = uploadPath(a.storedName);

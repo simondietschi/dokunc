@@ -47,6 +47,13 @@ export default defineConfig({
       url: "http://localhost:3000/api/health",
       reuseExistingServer: !CI,
       timeout: 120_000,
+      // Der Upload-Aufraeumer soll waehrend der E2E-Laeufe nicht im
+      // Upload-Verzeichnis der Entwicklungsumgebung raeumen: globalSetup
+      // leert die Datenbank, danach saehe dort jede alte Datei verwaist
+      // aus. Playwright legt `env` ueber process.env, der Rest der
+      // Umgebung bleibt. Ein per reuseExistingServer wiederverwendeter
+      // Server behaelt seine eigene Einstellung.
+      env: { UPLOAD_SWEEP_INTERVAL_H: "0" },
     },
   ],
 });

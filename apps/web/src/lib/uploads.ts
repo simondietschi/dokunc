@@ -180,6 +180,33 @@ export function isSafeFilename(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && !name.includes("..");
 }
 
+/**
+ * Die Form, in der die App selbst Dateien ablegt: 32 Hex-Zeichen aus
+ * `randomBytes(16)` und eine Endung aus `safeExtension` oder
+ * ALLOWED_IMAGE_TYPES. So benennen api/upload und lib/import/files seit
+ * dem ersten Upload.
+ *
+ * Enger als `isSafeFilename`, und das mit Absicht: der Aufraeumer
+ * (lib/upload-sweeper) loescht nur, was in genau dieser Form vorliegt.
+ * Alles andere im Verzeichnis hat jemand anderes hingelegt — ein Backup,
+ * eine Notiz der Betreiberin —, und darueber weiss die Datenbank nichts.
+ */
+const STORED_NAME = /^[0-9a-f]{32}\.[a-z0-9]{1,8}$/;
+
+export function isStoredUploadName(name: string): boolean {
+  return STORED_NAME.test(name);
+}
+
+/**
+ * Das Upload-Verzeichnis als absoluter Pfad. Eine Stelle fuer alle, die
+ * darin lesen oder loeschen: `uploadPath` und der Aufraeumer muessen
+ * dasselbe Verzeichnis meinen, sonst raeumt er woanders als dort, wo
+ * die Dateien liegen.
+ */
+export function uploadDir(): string {
+  return path.resolve(UPLOAD_DIR);
+}
+
 /** MIME-Typ aus der Endung eines (gespeicherten) Dateinamens. */
 export function contentTypeForFile(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -189,7 +216,7 @@ export function contentTypeForFile(name: string): string {
 /** Absoluter Pfad im Upload-Verzeichnis oder null bei unsicherem Namen. */
 export function uploadPath(name: string): string | null {
   if (!isSafeFilename(name)) return null;
-  const base = path.resolve(UPLOAD_DIR);
+  const base = uploadDir();
   const full = path.resolve(base, name);
   // Defense in depth: aufgelöster Pfad muss im Upload-Verzeichnis liegen.
   if (full !== path.join(base, name) || !full.startsWith(base + path.sep)) {

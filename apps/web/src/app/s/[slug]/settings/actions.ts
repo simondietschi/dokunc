@@ -65,7 +65,9 @@ export async function updateSpaceAction(
 /**
  * Space endgueltig loeschen — nur OWNER, Bestaetigung durch Eintippen
  * des Namens. Uploads der Anhaenge werden best effort von der Platte
- * entfernt (die Datensaetze fallen per Kaskade).
+ * entfernt (die Datensaetze loescht deleteSpaceWithUploads im selben Zug
+ * wie den Space; was beim Entfernen liegen bleibt, faengt
+ * lib/upload-sweeper).
  */
 export async function deleteSpaceAction(
   _prev: SettingsState,
