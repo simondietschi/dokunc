@@ -214,7 +214,23 @@ test("Version wiederherstellen wirkt auch bei geoeffnetem Editor", async ({
     .getByRole("button", { name: "Wiederherstellen" })
     .first()
     .click();
-  await history.waitForURL("**/p/**");
+  // Auf die Seite selbst warten. Ein Muster wie "**/p/**" passt schon auf
+  // die Verlaufsadresse (/p/<id>/history), die Pruefungen darunter liefen
+  // dann noch auf der Verlaufsseite und waeren immer erfuellt. Die
+  // Action wartet bis zu gut fuenf Sekunden auf die Quittung.
+  await history.waitForURL((u) => u.pathname === `/s/${slug}/p/${pageId}`, {
+    timeout: 20_000,
+  });
+
+  // Der Collab-Server hat den Austausch quittiert: kein Merker in der
+  // Adresszeile, kein Warnhinweis. Ohne Quittung (Collab-Server taub,
+  // Austausch gescheitert) stuende beides da. Den Hinweis erst pruefen,
+  // wenn die Seite steht: vorher fehlt er auch dann, wenn er gleich kaeme.
+  expect(new URL(history.url()).searchParams.has("neu-laden")).toBe(false);
+  await expect(history.locator(".ProseMirror")).toBeVisible();
+  await expect(
+    history.getByText("Echtzeit-Server hat nicht bestätigt"),
+  ).toHaveCount(0);
 
   // Der zurueckgeholte Stand darf den spaeteren Text nicht mehr enthalten
   // — und der noch offene Tab darf ihn auch nicht zurueckschreiben.

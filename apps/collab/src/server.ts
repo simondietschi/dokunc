@@ -1,8 +1,11 @@
 // WICHTIG: env-Import zuerst — lädt .env bevor @dokunc/db o.ä. sie lesen.
 import "./env";
+import { randomUUID } from "node:crypto";
+import { STATUS_CODES } from "node:http";
+import type { Duplex } from "node:stream";
 import { Server, type Connection } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
-import { jwtVerify } from "jose";
+import { jwtVerify, type JWTPayload } from "jose";
 import { Redis } from "ioredis";
 import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
 import pino from "pino";
@@ -25,8 +28,11 @@ import {
   // Wiederherstellung wie Zugriffsentzug blieben stumm liegen.
   COLLAB_FIELD,
   COLLAB_AUDIENCE,
+  COLLAB_REJECT_REASON,
   NOTIFY_CHANNEL_PREFIX,
   DOC_RESET_CHANNEL,
+  DOC_RESET_ACK_PREFIX,
+  DOC_RESET_ACK_TTL_SEC,
   ACCESS_REVOKED_CHANNEL,
   PAGE_ACCESS_CHANNEL,
   isDocResetMessage,
@@ -35,8 +41,23 @@ import {
   extractWikiLinkIds,
   extractMentionIds,
   chunkText,
+  type DocResetMessage,
 } from "@dokunc/editor";
 import { startMailDispatcher } from "./mail-dispatcher";
+import { createDocResetHandler, type ResetContent } from "./doc-reset";
+import { resolveAppSecret } from "./secret";
+import { StoreWatch } from "./store-watch";
+import {
+  ATTEMPT_WINDOW_SEC,
+  AuthDeadlines,
+  SocketGate,
+  UNAUTHENTICATED_TIMEOUT_MS,
+  UserSlots,
+  clientAddress,
+  readConnectionLimits,
+  trustedProxyHops,
+} from "./limits";
+import { createAttemptLimiter, createTicketLedger } from "./redis-guards";
 
 const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
@@ -44,26 +65,27 @@ const log = pino({
   // ioredis haengt an Fehler den Befehl samt Argumenten an; bei einem
   // gescheiterten AUTH steht dort das Passwort aus REDIS_URL. jose haengt
   // an Claim-Fehler den Inhalt des Tokens an. Dieselbe Schwaerzung wie in
-  // apps/web/src/lib/log.ts (dort mit Begruendung und Test).
-  redact: ["*.password", "*.passwordHash", "err.command.args", "err.payload"],
+  // apps/web/src/lib/log.ts (dort mit Begruendung und Test); dazu die
+  // Ursache, weil verifyTicket den Fehler von jose als `cause` weiterreicht.
+  // Der heutige Serializer faltet sie nur in Meldung und Stack; der
+  // Eintrag haelt die Schwaerzung auch fuer einen, der sie als Objekt
+  // schreibt.
+  redact: [
+    "*.password",
+    "*.passwordHash",
+    "err.command.args",
+    "err.payload",
+    "err.cause.payload",
+  ],
 });
 
 const PORT = Number(process.env.COLLAB_PORT ?? 3001);
 
-function resolveAppSecret(): string {
-  const s = process.env.APP_SECRET;
-  if (process.env.NODE_ENV === "production") {
-    if (!s || s.length < 32) {
-      throw new Error(
-        "APP_SECRET fehlt oder ist zu kurz (min. 32 Zeichen).",
-      );
-    }
-    return s;
-  }
-  return s && s.length >= 32 ? s : "dev-only-insecure-secret-change-me-32+chars";
-}
-
-const SECRET = new TextEncoder().encode(resolveAppSecret());
+// Ohne eigenes APP_SECRET nur unter NODE_ENV=development (Begruendung in
+// ./secret).
+const SECRET = new TextEncoder().encode(
+  resolveAppSecret(process.env.APP_SECRET, process.env.NODE_ENV),
+);
 const extensions = richExtensions();
 
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
@@ -74,6 +96,53 @@ const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
   lazyConnect: true,
 });
 redis.on("error", (e: Error) => log.warn({ err: e }, "redis"));
+
+/*
+ * Grenzen fuer Verbindungen (Begruendung der Vorgaben in ./limits).
+ *
+ * Zwei Stufen, weil die Person erst mit dem Ticket bekannt ist und das
+ * Ticket erst nach dem Handshake als erste Nachricht kommt:
+ *
+ *  - vor dem Handshake (onUpgrade): Versuche je IP, offene Sockets der
+ *    Instanz und je IP. Abgewiesen wird mit HTTP-Status, der Provider im
+ *    Browser versucht es dann mit wachsendem Abstand erneut und holt
+ *    dafuer nicht einmal ein Ticket. Wer durchkommt, muss sich binnen
+ *    UNAUTHENTICATED_TIMEOUT_MS anmelden, sonst wird der Socket
+ *    geschlossen.
+ *  - bei der Anmeldung (onAuthenticate): Versuche je Person und
+ *    gleichzeitige Verbindungen je Person, dazu der Verbrauch des Tickets.
+ */
+const limits = readConnectionLimits(process.env, (detail, msg) =>
+  log.warn(detail, msg),
+);
+const proxyHops = trustedProxyHops(process.env.TRUSTED_PROXY_HOPS);
+const sockets = new SocketGate(
+  limits.maxConnections,
+  limits.maxConnectionsPerIp,
+);
+const authDeadlines = new AuthDeadlines(UNAUTHENTICATED_TIMEOUT_MS);
+
+/**
+ * Kopfzeile, ueber die onAuthenticate die Anmeldefrist seines Sockets
+ * findet. Hocuspocus reicht den rohen Socket nicht bis zur Anmeldung
+ * durch, wohl aber die Kopfzeilen der Upgrade-Anfrage; onUpgrade setzt
+ * dort eine zufaellige Kennung und ueberschreibt dabei, was ein Client
+ * selbst unter diesem Namen schickt.
+ */
+const UPGRADE_ID_HEADER = "x-dokunc-upgrade-id";
+const userSlots = new UserSlots(limits.maxConnectionsPerUser);
+const attemptConnection = createAttemptLimiter(redis, (err) =>
+  log.warn(
+    { err },
+    "Verbindungsbremse: Redis nicht erreichbar, zaehle im Prozess",
+  ),
+);
+const consumeTicket = createTicketLedger(redis, (err) =>
+  log.warn(
+    { err },
+    "Ticketverbrauch: Redis nicht erreichbar, merke im Prozess",
+  ),
+);
 
 /**
  * Throttle für History-Snapshots — multi-instanz- und neustartfest.
@@ -120,18 +189,72 @@ async function releaseSnapshot(pageId: string): Promise<void> {
   }
 }
 
-async function authorize(token: string | undefined, pageId: string) {
+/** Was ein gepruefter Ticket-Kopf zusichert. */
+type Ticket = {
+  userId: string;
+  tokenVersion: number;
+  sessionId: string;
+  /** Kennung des Tickets, ueber die es genau einmal eingeloest wird. */
+  jti: string;
+  /** Restlaufzeit (s): so lange muss der Verbrauch gemerkt bleiben. */
+  ttlSec: number;
+};
+
+/**
+ * Ticket pruefen, soweit das ohne Datenbank geht: Signatur, Audience,
+ * Ablauf, Seite.
+ *
+ * Getrennt von `checkTicketAccess`, weil dazwischen die Bremse je Person
+ * zaehlt. Erst nach der Signatur ist `sub` verlaesslich — zaehlte die
+ * Bremse vorher, koennte jeder mit erfundenen Tickets eine fremde
+ * Person aussperren. Und erst danach kosten Versuche Datenbankabfragen.
+ */
+async function verifyTicket(
+  token: string | undefined,
+  pageId: string,
+): Promise<Ticket> {
   if (!token) throw new Error("Kein Ticket");
-  const { payload } = await jwtVerify(token, SECRET, {
-    audience: COLLAB_AUDIENCE,
-  });
+  let payload: JWTPayload;
+  try {
+    ({ payload } = await jwtVerify(token, SECRET, {
+      audience: COLLAB_AUDIENCE,
+      // Ohne jti liesse sich das Ticket nicht einloesen, ohne exp waere
+      // unbegrenzt, wie lange der Verbrauch zu merken ist.
+      requiredClaims: ["sub", "exp", "jti"],
+    }));
+  } catch (e) {
+    // jose haengt an Claim-Fehler ein eigenes Feld `reason` ("missing",
+    // "check_failed"), und Hocuspocus schickt das `reason` des
+    // geworfenen Fehlers als Grund der Ablehnung an den Client. Dort
+    // gehoeren nur die vereinbarten Gruende hin (COLLAB_REJECT_REASON oder
+    // der Standard "permission-denied"). Die Meldung — ohne Tokeninhalt —
+    // bleibt fuer das Log, der Fehler von jose haengt als Ursache daran
+    // (ohne sein `payload` im Log, siehe Schwaerzung oben).
+    throw new Error(
+      `Ticket ungueltig: ${e instanceof Error ? e.message : String(e)}`,
+      { cause: e },
+    );
+  }
   // Ein Ticket gilt für genau eine Seite. Damit nützt ein abgefangenes
   // Ticket höchstens für das Dokument, für das es ausgestellt wurde.
   if (payload.pid !== pageId) throw new Error("Ticket gilt anderer Seite");
-  const userId = String(payload.sub);
-  const tokenVersion = Number(payload.tv ?? 0);
   const sessionId = String(payload.sid ?? "");
   if (!sessionId) throw new Error("Ticket ohne Sitzung");
+  return {
+    userId: String(payload.sub),
+    tokenVersion: Number(payload.tv ?? 0),
+    sessionId,
+    jti: String(payload.jti),
+    ttlSec: Number(payload.exp) - Math.floor(Date.now() / 1000),
+  };
+}
+
+/** Sitzung, Konto, Seite und Rolle eines Tickets gegen die Datenbank pruefen. */
+async function checkTicketAccess(
+  ticket: Ticket,
+  pageId: string,
+): Promise<{ readOnly: boolean }> {
+  const { userId, tokenVersion, sessionId } = ticket;
 
   // Widerruf gilt auch für den WebSocket: die Anmeldung muss noch
   // bestehen, das Konto aktiv und die Token-Version aktuell sein.
@@ -170,12 +293,100 @@ async function authorize(token: string | undefined, pageId: string) {
     throw new Error("Kein Zugriff auf diese Seite");
   }
 
-  const readOnly = role === "VIEWER";
-  return { userId, tokenVersion, sessionId, readOnly };
+  return { readOnly: role === "VIEWER" };
 }
 
+/**
+ * Ablehnung an einer Grenze, mit Grund fuer den Editor.
+ *
+ * Bewusst kein Error: Hocuspocus schreibt die Meldung jedes geworfenen
+ * Errors ungebremst auf stderr, und wer an einer Grenze abprallt,
+ * klopft wieder an. Gemeldet wird hier selbst, fuer die Bremse nur
+ * beim ersten Abprallen im Fenster. Den `reason` schickt Hocuspocus als
+ * Grund der Ablehnung an den Client (sonst "permission-denied").
+ *
+ * Den Socket schliesst die Ablehnung bewusst NICHT sofort: der Provider
+ * baut eine geschlossene, schon einmal offene Verbindung nach einer
+ * Sekunde neu auf, holt ein frisches Ticket und prallt wieder ab — eine
+ * Schleife im Sekundentakt gegen Ticket-Route und Datenbank. Offen
+ * gelassen schliesst ihn die Anmeldefrist aus onUpgrade nach
+ * UNAUTHENTICATED_TIMEOUT_MS (15 s), und der naechste Versuch kommt erst
+ * dann. (Ohne diese Frist taete es Hocuspocus erst nach 60 bis 120 s:
+ * sein Timeout von 60 s wird im selben Takt geprueft.)
+ */
+function limitRejection(reason: string): { reason: string } {
+  return { reason };
+}
+
+/**
+ * Aufgebaute Dokument-Verbindungen einer Person auf dieser Instanz.
+ * Gezaehlt aus dem Zustand von Hocuspocus statt mitgezaehlt: ein
+ * eigener Zaehler liefe bei jedem verpassten Trennen davon (siehe
+ * UserSlots).
+ */
+function establishedConnections(userId: string): number {
+  let n = 0;
+  for (const doc of server.hocuspocus.documents.values()) {
+    for (const connection of doc.getConnections()) {
+      const ctx = connection.context as { userId?: string } | null;
+      if (ctx?.userId === userId) n += 1;
+    }
+  }
+  return n;
+}
+
+/** Schluessel einer Anmeldung: ein Socket kann mehrere Dokumente tragen. */
+function slotKey(socketId: string, documentName: string): string {
+  return `${socketId}\0${documentName}`;
+}
+
+/**
+ * Upgrade-Anfrage mit HTTP-Status beantworten und den Socket schliessen.
+ *
+ * Der Browser zeigt den Status nicht an — fuer ihn ist es ein
+ * gescheiterter Verbindungsaufbau, den der Provider mit wachsendem
+ * Abstand wiederholt —, aber Proxy-Logs und Werkzeuge sehen den Grund.
+ * Erst nach dem Senden zerstoeren: ein sofortiges destroy() verwirft,
+ * was noch im Puffer liegt.
+ */
+function refuseUpgrade(
+  socket: Duplex,
+  status: number,
+  message: string,
+  retryAfterSec: number,
+): void {
+  if (!socket.writable) {
+    socket.destroy();
+    return;
+  }
+  socket.once("finish", () => socket.destroy());
+  socket.end(
+    `HTTP/1.1 ${status} ${STATUS_CODES[status]}\r\n` +
+      "Connection: close\r\n" +
+      "Content-Type: text/plain; charset=utf-8\r\n" +
+      `Content-Length: ${Buffer.byteLength(message)}\r\n` +
+      `Retry-After: ${retryAfterSec}\r\n` +
+      "\r\n" +
+      message,
+  );
+}
+
+/** Wer auf das Speichern eines Doc-Resets wartet (siehe ./store-watch). */
+const storeWatch = new StoreWatch();
+
+/**
+ * "Instanz voll" und "Adresse voll" hoechstens alle zehn Sekunden
+ * melden: wer an einer vollen Grenze steht, versucht es weiter, und das
+ * Log liefe mit.
+ */
+let lastFullLogAt = 0;
+let lastAddressFullLogAt = 0;
+
 // HA: mehrere Collab-Instanzen koordinieren Yjs-Dokumente + Awareness
-// über Redis Pub/Sub (eine Instanz "ownt" ein Dokument, andere proxen).
+// über Redis Pub/Sub. Jede Instanz, zu der Verbindungen bestehen, hält
+// das Dokument selbst im Speicher und abonniert dafür den Kanal
+// `<prefix>:<pageId>`; die Instanzen gleichen ihre Stände darüber ab.
+// Der Doc-Reset stützt sich darauf (siehe ./doc-reset).
 //
 // Die Extension dupliziert den bestehenden Client, statt REDIS_URL ein
 // zweites Mal auszuwerten. Würden hier nur Host und Port übergeben,
@@ -197,15 +408,183 @@ const haExtension = new HocuspocusRedis({
 const server = new Server({
   port: PORT,
   extensions: [haExtension],
+
+  /**
+   * Vor dem WebSocket-Handshake: Versuche je IP, offene Sockets der
+   * Instanz und je IP, dazu die Anmeldefrist. Wird hier abgewiesen, muss
+   * das Versprechen OHNE Fehler abgelehnt werden: Hocuspocus bricht das
+   * Upgrade dann still ab, einen echten Fehler wuerfe es dagegen aus
+   * seinem Upgrade-Handler weiter, und eine unbehandelte Ablehnung
+   * beendet den Prozess.
+   */
+  async onUpgrade({ request, socket }) {
+    const upgradeSocket = socket as Duplex;
+    // Was ein Client selbst unter diesem Namen schickt, gilt nie.
+    delete request.headers[UPGRADE_ID_HEADER];
+    try {
+      const ip = clientAddress(
+        request.headers["x-forwarded-for"],
+        request.socket.remoteAddress,
+        proxyHops,
+      );
+      const versuch = await attemptConnection(
+        `collab-ip:${ip}`,
+        limits.maxAttemptsPerIp,
+        ATTEMPT_WINDOW_SEC,
+      );
+      if (!versuch.allowed) {
+        if (versuch.firstRejection) {
+          log.warn(
+            { ip, grund: COLLAB_REJECT_REASON.rateLimited },
+            "Collab-Verbindung vor dem Handshake abgewiesen",
+          );
+        }
+        refuseUpgrade(
+          upgradeSocket,
+          429,
+          "Zu viele Verbindungsversuche",
+          ATTEMPT_WINDOW_SEC,
+        );
+        return Promise.reject();
+      }
+      // Belegen erst nach dem letzten await: zwischen Pruefen und
+      // Belegen kaeme sonst eine gleichzeitige Anfrage am selben Platz
+      // vorbei.
+      const platz = sockets.tryAcquire(ip);
+      if (!platz.ok && platz.grund === "instanz") {
+        if (Date.now() - lastFullLogAt > 10_000) {
+          lastFullLogAt = Date.now();
+          log.warn(
+            { ip, grenze: limits.maxConnections },
+            "Collab-Server voll, Verbindung abgewiesen",
+          );
+        }
+        refuseUpgrade(upgradeSocket, 503, "Collab-Server ausgelastet", 5);
+        return Promise.reject();
+      }
+      if (!platz.ok) {
+        if (Date.now() - lastAddressFullLogAt > 10_000) {
+          lastAddressFullLogAt = Date.now();
+          log.warn(
+            {
+              ip,
+              grund: COLLAB_REJECT_REASON.tooManyConnections,
+              grenze: limits.maxConnectionsPerIp,
+            },
+            "Collab-Verbindung vor dem Handshake abgewiesen",
+          );
+        }
+        refuseUpgrade(upgradeSocket, 429, "Zu viele offene Verbindungen", 10);
+        return Promise.reject();
+      }
+      // Hat der Client waehrend der Pruefung aufgegeben, ist "close"
+      // schon vorbei und kaeme fuer diesen Platz nie mehr: sofort
+      // freigeben, sonst fehlte er der Instanz bis zum Neustart.
+      if (upgradeSocket.destroyed) {
+        platz.release();
+        return Promise.reject();
+      }
+      // Anmeldefrist: wer bis dahin kein gueltiges Ticket gezeigt hat,
+      // gibt seinen Platz wieder her (UNAUTHENTICATED_TIMEOUT_MS).
+      // onAuthenticate beendet sie ueber die Kennung in den Kopfzeilen.
+      const upgradeId = randomUUID();
+      request.headers[UPGRADE_ID_HEADER] = upgradeId;
+      authDeadlines.start(upgradeId, () => upgradeSocket.destroy());
+      // "close" kommt fuer jeden Socket genau einmal, ob das Upgrade
+      // gelingt oder nicht; die Freigabe wirkt ohnehin nur einmal.
+      upgradeSocket.once("close", () => {
+        authDeadlines.settle(upgradeId);
+        platz.release();
+      });
+    } catch (e) {
+      // Ein Fehler in der Pruefung selbst soll niemanden aussperren und
+      // den Prozess nicht beenden (siehe oben): durchlassen und melden.
+      log.warn({ err: e }, "Verbindungsgrenze nicht geprueft");
+    }
+  },
+
   async onAuthenticate(data) {
-    const { userId, tokenVersion, sessionId, readOnly } = await authorize(
-      data.token,
-      data.documentName,
+    const pageId = data.documentName;
+    const ticket = await verifyTicket(data.token, pageId);
+
+    const versuch = await attemptConnection(
+      `collab-user:${ticket.userId}`,
+      limits.maxAttemptsPerUser,
+      ATTEMPT_WINDOW_SEC,
     );
-    data.connectionConfig.readOnly = readOnly;
+    if (!versuch.allowed) {
+      if (versuch.firstRejection) {
+        log.warn(
+          {
+            userId: ticket.userId,
+            pageId,
+            grund: COLLAB_REJECT_REASON.rateLimited,
+          },
+          "Collab-Verbindung abgewiesen",
+        );
+      }
+      throw limitRejection(COLLAB_REJECT_REASON.rateLimited);
+    }
+
+    const slot = slotKey(data.socketId, pageId);
+    if (
+      !userSlots.tryReserve(
+        slot,
+        ticket.userId,
+        establishedConnections(ticket.userId),
+      )
+    ) {
+      log.warn(
+        {
+          userId: ticket.userId,
+          pageId,
+          grund: COLLAB_REJECT_REASON.tooManyConnections,
+          grenze: limits.maxConnectionsPerUser,
+        },
+        "Collab-Verbindung abgewiesen",
+      );
+      throw limitRejection(COLLAB_REJECT_REASON.tooManyConnections);
+    }
+
+    try {
+      const { readOnly } = await checkTicketAccess(ticket, pageId);
+      // Verbraucht wird erst, wenn alles andere passt: eine Anmeldung,
+      // die an einer Grenze oder am Zugriff scheitert, hat nichts
+      // eingeloest. Zwei gleichzeitige Anmeldungen mit demselben Ticket
+      // entscheidet SET NX — genau eine kommt durch.
+      if (!(await consumeTicket(ticket.jti, ticket.ttlSec))) {
+        log.warn(
+          {
+            userId: ticket.userId,
+            pageId,
+            grund: COLLAB_REJECT_REASON.ticketUsed,
+          },
+          "Collab-Verbindung abgewiesen",
+        );
+        throw limitRejection(COLLAB_REJECT_REASON.ticketUsed);
+      }
+      data.connectionConfig.readOnly = readOnly;
+    } catch (e) {
+      userSlots.settle(slot);
+      throw e;
+    }
+    // Angemeldet: die Anmeldefrist des Sockets endet. Ab jetzt gilt nur
+    // noch das Leerlauf-Timeout von Hocuspocus.
+    const upgradeId = data.requestHeaders.get(UPGRADE_ID_HEADER);
+    if (upgradeId) authDeadlines.settle(upgradeId);
     // Token-Version und Sitzung wandern in den Kontext, damit die
     // wiederkehrende Prüfung sie ohne neues Ticket vergleichen kann.
-    return { userId, tokenVersion, sessionId };
+    return {
+      userId: ticket.userId,
+      tokenVersion: ticket.tokenVersion,
+      sessionId: ticket.sessionId,
+    };
+  },
+
+  // Die Verbindung steht und zaehlt ab jetzt ueber Hocuspocus selbst
+  // (establishedConnections); die Vormerkung aus onAuthenticate endet.
+  async connected(data) {
+    userSlots.settle(slotKey(data.socketId, data.documentName));
   },
 
   async onLoadDocument(data) {
@@ -252,6 +631,12 @@ const server = new Server({
 
   async onStoreDocument(data) {
     const pageId = data.documentName;
+    // Marke und Stand im selben synchronen Schritt: so weiss ein
+    // wartender Doc-Reset, ob dieser Lauf seinen Austausch traegt. Die
+    // Marke gehoert zu genau diesem Dokument, nicht zur Seite: ein nach
+    // dem Entladen neu geladenes Dokument traegt einen ungespeicherten
+    // Austausch nicht (siehe ./store-watch).
+    const marke = storeWatch.current(data.document);
     const state = Buffer.from(Y.encodeStateAsUpdate(data.document));
 
     // Der Yjs-Zustand zuerst und für sich. Er ist das Einzige, woraus
@@ -261,11 +646,17 @@ const server = new Server({
     // verloren: Hocuspocus behält das Dokument dann nur im Speicher, und
     // war das der Lauf beim Trennen der letzten Verbindung, stösst nichts
     // einen weiteren an — der nächste Neustart verwirft ihn.
-    await prisma.collabDocument.upsert({
-      where: { pageId },
-      create: { pageId, state },
-      update: { state },
-    });
+    try {
+      await prisma.collabDocument.upsert({
+        where: { pageId },
+        create: { pageId, state },
+        update: { state },
+      });
+    } catch (e) {
+      storeWatch.failed(data.document, marke, e);
+      throw e;
+    }
+    storeWatch.stored(data.document, marke);
 
     const json = TiptapTransformer.fromYdoc(data.document, COLLAB_FIELD);
     const textContent = extractText(json);
@@ -531,49 +922,142 @@ function extractText(node: unknown): string {
 }
 
 /**
- * Ersetzt den Inhalt eines Yjs-Dokuments durch den gespeicherten
- * `Page.content`.
+ * Inhalt fuer einen Doc-Reset.
  *
- * Ohne das bliebe ein geöffnetes Dokument im Speicher unverändert: die
- * Web-App schreibt beim Wiederherstellen nur `Page.content`, der nächste
- * `onStoreDocument` schriebe den alten Speicherstand zurück — die
- * Wiederherstellung wäre still verpufft. Über eine Direktverbindung
- * gesetzt, ziehen offene Editoren den Stand sofort nach.
- *
- * Es gibt bewusst NUR diesen einen Weg: ein zweiter, der das Dokument
- * stattdessen aus dem Speicher wirft, würde den hier frisch gesetzten
- * Inhalt gleich wieder wegräumen.
+ * Mit versionId (heutige Web-App) der Inhalt genau dieser Version.
+ * Frueher las der Server `Page.content` und brach ab, wenn inzwischen
+ * wieder ein CollabDocument da war: dann lag zwischen Wiederherstellen
+ * und Nachricht ein Speicherlauf, der `Page.content` mit dem alten Stand
+ * ueberschrieben hatte. Das war richtig erkannt, aber nicht zu beheben
+ * — der richtige Stand stand nirgends mehr, auch ein zweiter Versuch
+ * haette ihn nicht gefunden, und die Person sah trotzdem Erfolg. Die
+ * Version hat ihn noch.
  */
-async function resetDocument(pageId: string): Promise<boolean> {
-  const [page, gespeichert] = await Promise.all([
-    prisma.page.findUnique({
-      where: { id: pageId },
-      select: { content: true, deletedAt: true },
-    }),
-    prisma.collabDocument.findUnique({
-      where: { pageId },
-      select: { pageId: true },
-    }),
-  ]);
-  if (!page || page.deletedAt || !page.content) return false;
+async function loadResetContent(
+  message: DocResetMessage,
+): Promise<ResetContent> {
+  const { pageId, versionId } = message;
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { content: true, deletedAt: true },
+  });
+  if (!page || page.deletedAt) {
+    return { kind: "abbruch", outcome: "seite-fehlt" };
+  }
 
-  // Die Web-App löscht die CollabDocument-Zeile in derselben
-  // Transaktion, in der sie `Page.content` wiederherstellt. Ist hier
-  // wieder eine da, lag zwischen dieser Transaktion und dieser Nachricht
-  // ein Speicherlauf — und der hat `Page.content` mit dem alten
-  // Speicherstand überschrieben. Ein Reset darauf setzte das Dokument
-  // auf genau den Stand zurück, der die Wiederherstellung verdrängt hat;
-  // ohne diese Meldung bliebe das vollständig unsichtbar.
+  if (versionId) {
+    const version = await prisma.pageVersion.findFirst({
+      where: { id: versionId, pageId },
+      select: { content: true },
+    });
+    // Eine Version ohne Inhalt hat auch die Web-App nicht nach
+    // Page.content geschrieben; das laufende Dokument bleibt dann, wie es
+    // ist, und die Person bekommt den Hinweis.
+    if (!version?.content) {
+      return { kind: "abbruch", outcome: "version-fehlt" };
+    }
+    return { kind: "inhalt", content: version.content };
+  }
+
+  // Aeltere Web-App ohne versionId (nur waehrend eines rollierenden
+  // Deploys): der fruehere Weg. Jene Web-App loescht die
+  // CollabDocument-Zeile in derselben Transaktion, in der sie
+  // `Page.content` wiederherstellt; ist wieder eine da, hat ein
+  // Speicherlauf `Page.content` schon mit dem alten Stand ueberschrieben,
+  // und ein Reset darauf setzte das Dokument genau auf diesen zurueck.
+  // Gefragt wird, bevor der Austausch das Dokument laedt (das legt die
+  // Zeile wieder an; siehe ./doc-reset).
+  const gespeichert = await prisma.collabDocument.findUnique({
+    where: { pageId },
+    select: { pageId: true },
+  });
   if (gespeichert) {
     log.warn(
       { pageId },
       "Wiederherstellung nicht übernommen: Dokument wurde zwischenzeitlich gespeichert",
     );
-    return false;
+    return { kind: "abbruch", outcome: "ueberschrieben" };
   }
+  if (!page.content) return { kind: "abbruch", outcome: "seite-fehlt" };
+  return { kind: "inhalt", content: page.content };
+}
 
+/**
+ * Ersetzt den Inhalt eines Yjs-Dokuments auf seiner bestehenden Linie
+ * und wartet, bis der neue Stand gespeichert ist.
+ *
+ * Ohne das bliebe ein geöffnetes Dokument im Speicher unverändert: die
+ * Web-App schreibt beim Wiederherstellen nur `Page.content`, der nächste
+ * `onStoreDocument` schriebe den alten Speicherstand zurück — die
+ * Wiederherstellung wäre still verpufft. Über eine Direktverbindung
+ * gesetzt, ziehen offene Editoren den Stand sofort nach, und die
+ * HA-Erweiterung trägt ihn zu den anderen Instanzen.
+ *
+ * Hält diese Instanz das Dokument nicht, lädt `openDirectConnection` es
+ * über onLoadDocument aus CollabDocument — also die Linie, die auch jede
+ * Kopie im Browser trägt. Aufgerufen wird das nur, wenn keine andere
+ * Instanz es hält (siehe ./doc-reset). Gelöscht wird Eintrag für
+ * Eintrag dieser Linie; eine alte Kopie, die später verbindet, bekommt
+ * die Löschungen mit, statt den alten Inhalt zurückzubringen.
+ *
+ * Die Direktverbindung trägt die Person, die wiederhergestellt hat, als
+ * Kontext: der Speicherlauf danach liest daraus `lastContext.userId` und
+ * trägt sie als zuletzt bearbeitende Person und als Autor einer dabei
+ * entstehenden Version ein. Neue Erwähnungen findet dieser Lauf in der
+ * Regel nicht, weil `Page.content` schon den Inhalt der Version trägt.
+ * Hat ein Speicherlauf des offenen Dokuments ihn dazwischen mit dem
+ * alten Stand überschrieben, gelten Erwähnungen der Version, die dort
+ * fehlten, als neu — wie bei jeder Änderung, die sie wieder einfügt.
+ *
+ * Das Trennen stösst den Speicherlauf sofort an. Gewartet wird nicht auf
+ * das Trennen selbst, sondern auf den Speicherlauf genau dieses
+ * Dokuments, der den Austausch trägt (Begründung in ./store-watch).
+ * Scheitert er, wird das Dokument vorher entladen oder kommt er nicht
+ * bis `deadline`, wirft diese Funktion, und ./doc-reset versucht es
+ * erneut oder quittiert negativ. Halten Editoren das Dokument, bleibt es
+ * dabei mit dem neuen Inhalt im Speicher; hielt nur die Direktverbindung
+ * es, entlädt Hocuspocus es nach dem Trennen trotzdem, und CollabDocument
+ * behält den alten Stand.
+ *
+ * Eine Wiederholung, die ein ANDERES Dokument vor sich hat als der
+ * letzte Austausch (das alte wurde ungespeichert entladen und neu
+ * geladen), spielt zuerst den ganzen Stand des alten ein und tauscht
+ * erst dann aus. Ein Editor, der den ersten Austausch noch gesehen hat,
+ * trägt dessen Einträge in seiner Browser-Kopie. Ein zweiter Austausch
+ * ohne sie löschte sie nicht, und beim nächsten Verbinden stünde der
+ * wiederhergestellte Inhalt doppelt da. So löscht der zweite Austausch
+ * auch die Einträge des ersten, und jede Kopie wird mit ihm eins. Was
+ * jemand in der Zwischenzeit getippt hat, ersetzt die Wiederherstellung,
+ * wie bei jeder Wiederherstellung während einer Bearbeitung.
+ *
+ * `deadline` ist ein Zeitpunkt (Date.now), kein Zeitraum: das Laden
+ * zählt mit, die Restzeit fürs Speichern wird erst unmittelbar vor dem
+ * Warten berechnet. Die Quittung hängt nicht daran: ./doc-reset wartet
+ * ohnehin nur bis zur Frist und quittiert dann negativ, auch wenn diese
+ * Funktion noch lädt. Ist das Laden erst nach der Frist fertig, wird
+ * trotzdem ausgetauscht. Ohne Austausch schriebe der Speicherlauf beim
+ * Trennen den alten Stand nach CollabDocument, womöglich nachdem die
+ * Web-App es im Rückfall gelöscht hat; der nächste Start zeigte dann den
+ * alten Inhalt. Mit Austausch schreibt derselbe Lauf den
+ * wiederhergestellten, auf der bestehenden Linie.
+ */
+/**
+ * Das Dokument des letzten Austauschs je Doc-Reset, für die Wiederholung
+ * (siehe applyResetContent). Schlüssel ist die Nachricht: ./doc-reset
+ * reicht allen Versuchen dasselbe Objekt, und ist der Doc-Reset vorbei,
+ * gibt die WeakMap das alte Dokument mit der Nachricht frei. Sein Stand
+ * bleibt nach dem Entladen lesbar; Y.Doc.destroy() meldet nur ab.
+ */
+const letzterAustausch = new WeakMap<DocResetMessage, Y.Doc>();
+
+async function applyResetContent(
+  message: DocResetMessage,
+  content: unknown,
+  deadline: number,
+): Promise<void> {
+  const { pageId, actorId } = message;
   const seeded = TiptapTransformer.toYdoc(
-    page.content,
+    content,
     COLLAB_FIELD,
     extensions,
   );
@@ -590,18 +1074,89 @@ async function resetDocument(pageId: string): Promise<boolean> {
 
   // `server.hocuspocus` ist die Instanz mit den Dokumenten; `server` ist
   // nur der HTTP-/WebSocket-Aufsatz darum.
-  const connection = await server.hocuspocus.openDirectConnection(pageId);
+  const connection = await server.hocuspocus.openDirectConnection(
+    pageId,
+    actorId ? { userId: actorId } : {},
+  );
+  const dokument = connection.document;
+  let gespeichert: Promise<void> | undefined;
   try {
+    if (!dokument) throw new Error("Direktverbindung ohne Dokument");
+    const frueher = letzterAustausch.get(message);
     await connection.transact((doc: Y.Doc) => {
+      // In derselben Transaktion wie der Austausch: kein Speicherlauf und
+      // kein Editor sieht den alten Stand ohne die Löschungen danach.
+      if (frueher && frueher !== doc) {
+        Y.applyUpdate(doc, Y.encodeStateAsUpdate(frueher));
+      }
       const fragment = doc.getXmlFragment(COLLAB_FIELD);
       fragment.delete(0, fragment.length);
       fragment.insert(0, nodes);
     });
+    letzterAustausch.set(message, dokument);
+    gespeichert = storeWatch.expectStore(
+      dokument,
+      Math.max(0, deadline - Date.now()),
+    );
   } finally {
-    await connection.disconnect();
+    connection
+      .disconnect()
+      .catch((e: unknown) =>
+        log.warn(
+          { err: e, pageId },
+          "Direktverbindung nach Doc-Reset nicht sauber getrennt",
+        ),
+      );
   }
-  return true;
+  await gespeichert;
 }
+
+/**
+ * Ablauf des Doc-Resets (wer ausfuehrt, Wiederholungen, Quittung) steht
+ * in ./doc-reset; hier nur die Anbindung an Hocuspocus, Redis und die
+ * Datenbank.
+ */
+const handleDocReset = createDocResetHandler({
+  // Der Nonce-Lock stellt sicher, dass bei mehreren Instanzen GENAU EINE
+  // das Dokument ersetzt und quittiert — sonst fügten zwei Instanzen ihre
+  // Kopie ein und der Inhalt stünde doppelt da.
+  claim: async (nonce) =>
+    (await redis.set(
+      `dokunc:doc-reset:${nonce}`,
+      "1",
+      "PX",
+      60_000,
+      "NX",
+    )) === "OK",
+  isLoadedHere: (pageId) =>
+    server.hocuspocus.documents.has(pageId) ||
+    server.hocuspocus.loadingDocuments.has(pageId),
+  // Jede Instanz, die das Dokument hält, hat den Kanal der HA-Erweiterung
+  // abonniert. NUMSUB zählt die Abonnenten über alle Instanzen; gefragt
+  // wird nur, wenn diese Instanz das Dokument nicht hält.
+  isLoadedElsewhere: async (pageId) => {
+    const reply = (await redis.pubsub(
+      "NUMSUB",
+      `${haExtension.configuration.prefix}:${pageId}`,
+    )) as [string, number | string];
+    return Number(reply[1] ?? 0) > 0;
+  },
+  loadContent: loadResetContent,
+  applyContent: applyResetContent,
+  acknowledge: async (nonce, ack) => {
+    const key = `${DOC_RESET_ACK_PREFIX}${nonce}`;
+    const res = await redis
+      .multi()
+      .lpush(key, JSON.stringify(ack))
+      .expire(key, DOC_RESET_ACK_TTL_SEC)
+      .exec();
+    if (!res) throw new Error("redis: multi abgebrochen");
+    for (const [err] of res) if (err) throw err;
+  },
+  sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  now: Date.now,
+  log,
+});
 
 /**
  * Verbindung wirklich beenden.
@@ -920,10 +1475,8 @@ function readMessage<T>(
 
 /**
  * Auf Wünsche der Web-App hören: Dokument neu aufbauen (Wiederherstellen
- * einer Version) und Verbindungen nach einem Zugriffsentzug trennen.
- * Der Nonce-Lock stellt sicher, dass bei mehreren Instanzen GENAU EINE
- * das Dokument ersetzt — sonst fügten zwei Instanzen ihre Kopie ein und
- * der Inhalt stünde doppelt da.
+ * einer Version, mit Quittung) und Verbindungen nach einem
+ * Zugriffsentzug trennen.
  */
 function startDocResetListener(): void {
   const subscriber = redis.duplicate();
@@ -969,18 +1522,7 @@ function startDocResetListener(): void {
       }
       const message = readMessage(channel, raw, isDocResetMessage);
       if (!message) return;
-      const { pageId, nonce } = message;
-      const won = await redis.set(
-        `dokunc:doc-reset:${nonce}`,
-        "1",
-        "PX",
-        60_000,
-        "NX",
-      );
-      if (won !== "OK") return;
-      if (await resetDocument(pageId)) {
-        log.info({ pageId }, "Dokument aus der Datenbank neu aufgebaut");
-      }
+      await handleDocReset(message);
     } catch (e) {
       log.warn(
         { err: e, channel },

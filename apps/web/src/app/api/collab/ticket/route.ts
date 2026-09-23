@@ -45,6 +45,22 @@ export async function POST(req: Request) {
   }
 
   // Reconnects sind normal, massenhaftes Abholen nicht.
+  //
+  // Warum 120 je Minute (RATE_LIMITS.collabTicket) und nicht weniger:
+  // der Editor holt genau ein Ticket, wenn sein WebSocket aufgeht —
+  // bei jedem Seitenaufruf und nach jeder Unterbrechung, je Tab. Nach
+  // einem Neustart des Collab-Servers oder dem Aufwachen eines Laptops
+  // verbinden alle offenen Tabs zugleich neu; der Collab-Server laesst
+  // je Person bis zu 50 gleichzeitige Verbindungen zu, und ein
+  // wackliges Netz kann das im selben Fenster wiederholen. Scheitert der
+  // Abruf hier, zeigt der Editor "kein Zugriff" und versucht es erst
+  // wieder, wenn der Collab-Server den nie angemeldeten Socket schliesst:
+  // nach 15 s (UNAUTHENTICATED_TIMEOUT_MS in apps/collab/src/limits.ts;
+  // ohne diese Frist waeren es 60 bis 120 s, das Timeout von Hocuspocus,
+  // geprueft im selben Takt). Sparsamer wird es nicht durch eine
+  // kleinere Zahl: seit Tickets nur einmal gelten (jti) und der
+  // Collab-Server Versuche und Verbindungen je Person selbst begrenzt,
+  // kauft ein Konto mit mehr Tickets keine weiteren Verbindungen.
   if (!(await rateLimit(
       `collab-ticket:${user.id}`,
       RATE_LIMITS.collabTicket.versuche,

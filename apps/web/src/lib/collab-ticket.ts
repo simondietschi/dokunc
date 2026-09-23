@@ -1,4 +1,5 @@
 import "server-only";
+import { randomUUID } from "node:crypto";
 import { SignJWT } from "jose";
 // Die Audience ist ein Protokollwert: der Collab-Server verlangt genau
 // sie beim Pruefen des Tickets. Deshalb kommt sie aus dem gemeinsamen
@@ -16,8 +17,9 @@ import { getAppSecret } from "./secret";
  * hätte eine sieben Tage gültige Vollsitzung mitgenommen.
  *
  * Das Ticket ersetzt sie: eigene Audience (taugt nicht als Sitzung),
- * gebunden an genau eine Seite, gültig für zwei Minuten. Der Provider
- * holt vor jedem Verbindungsversuch ein frisches.
+ * gebunden an genau eine Seite, gültig für zwei Minuten und genau
+ * einmal einloesbar. Der Provider holt vor jedem Verbindungsversuch ein
+ * frisches.
  */
 export const COLLAB_TICKET_TTL_SEC = 120;
 
@@ -45,5 +47,9 @@ export async function issueCollabTicket(opts: {
     .setAudience(COLLAB_AUDIENCE)
     .setIssuedAt()
     .setExpirationTime(`${COLLAB_TICKET_TTL_SEC}s`)
+    // Ueber die jti loest der Collab-Server das Ticket bei der ersten
+    // erfolgreichen Anmeldung ein; ein abgefangenes Ticket oeffnet so
+    // keine zweite Verbindung. Ohne jti weist er das Ticket ab.
+    .setJti(randomUUID())
     .sign(secret());
 }

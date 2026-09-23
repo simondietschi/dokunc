@@ -6,6 +6,7 @@ import { prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str, strOrNull } from "@/lib/form";
 import { audit } from "@/lib/audit";
+import { log } from "@/lib/log";
 import { generateInviteToken } from "@/lib/invitations";
 import {
   RESTORE_STALE_PARAM,
@@ -264,23 +265,50 @@ export async function restoreVersionAction(form: FormData) {
   );
   if (!version) throw new Error("Version nicht gefunden");
 
-  await prisma.$transaction([
-    prisma.page.update({
-      where: { id: version.pageId },
-      data: {
-        title: version.title,
-        content: version.content ?? undefined,
-        textContent: version.textContent,
-      },
-    }),
-    // Yjs-Status verwerfen, damit der Collab-Server aus content neu seedet.
-    prisma.collabDocument.deleteMany({ where: { pageId: version.pageId } }),
-  ]);
-  // Ein geoeffnetes Dokument liegt im Speicher des Collab-Servers und
-  // ueberschriebe den wiederhergestellten Stand beim naechsten Speichern.
-  // Deshalb den Server bitten, es aus der Datenbank neu aufzubauen — die
-  // offenen Editoren ziehen live nach, niemand muss neu laden.
-  const zugestellt = await requestDocumentReset(version.pageId);
+  // Page.content fuer Suche, Export und den Fall, dass es noch gar kein
+  // Yjs-Dokument gibt (dann baut der Collab-Server es daraus). Das
+  // gespeicherte Yjs-Dokument (CollabDocument) bleibt stehen: der
+  // Collab-Server tauscht den Inhalt auf dieser bestehenden Linie aus.
+  // Ein aus Page.content frisch aufgebautes Dokument waere eine neue
+  // Linie; die Kopie, die jeder Editor im Browser haelt (y-indexeddb),
+  // kaeme beim naechsten Oeffnen mit ihren alten Eintraegen dazu, und der
+  // alte Text stuende wieder neben dem wiederhergestellten.
+  await prisma.page.update({
+    where: { id: version.pageId },
+    data: {
+      title: version.title,
+      content: version.content ?? undefined,
+      textContent: version.textContent,
+    },
+  });
+  // Den Collab-Server bitten, den Inhalt dieser Version ins Dokument zu
+  // setzen — offene Editoren ziehen live nach, niemand muss neu laden —,
+  // und auf seine Quittung warten (hoechstens wenige Sekunden). Er
+  // quittiert erst, wenn der neue Stand gespeichert ist. Die versionId
+  // geht mit, damit er auch dann den richtigen Stand hat, wenn ein
+  // Speicherlauf `Page.content` inzwischen schon ueberschrieben hat.
+  const bestaetigt = await requestDocumentReset(
+    version.pageId,
+    version.id,
+    user.id,
+  );
+  if (!bestaetigt) {
+    // Rueckfall auf den frueheren Weg: ohne gespeicherten Yjs-Stand baut
+    // der naechste Start das Dokument wenigstens aus dem
+    // wiederhergestellten Page.content. Das hilft nur, wenn keine Instanz
+    // das Dokument gerade haelt, und eine Kopie im Browser kann den alten
+    // Text dann wieder einbringen — genau das sagt der Hinweis. Scheitert
+    // schon das, bleibt es beim Hinweis: Page.content ist geschrieben, und
+    // ein Abbruch hier liesse die Wiederherstellung ohne Audit-Eintrag.
+    await prisma.collabDocument
+      .deleteMany({ where: { pageId: version.pageId } })
+      .catch((err: unknown) =>
+        log.warn(
+          { err, pageId: version.pageId },
+          "Yjs-Stand nach unbestaetigter Wiederherstellung nicht verworfen",
+        ),
+      );
+  }
   await audit({
     action: "page.version_restored",
     actorId: user.id,
@@ -292,12 +320,13 @@ export async function restoreVersionAction(form: FormData) {
     },
   });
   revalidatePath(`/s/${space.slug}/p/${version.pageId}`);
-  // Kam die Bitte nicht heraus, ist der Stand zwar geschrieben, aber ein
-  // offener Editor wuerde ihn beim naechsten Speichern ueberschreiben.
-  // Das gehoert gesagt, statt Erfolg zu melden und es geschehen zu
-  // lassen.
+  // Ohne Bestaetigung ist der Stand zwar in Page.content geschrieben, aber
+  // ein offener Editor oder eine alte Kopie kann ihn ueberschreiben oder
+  // den alten Text wieder einbringen. Das gehoert gesagt, statt Erfolg zu
+  // melden und es geschehen zu lassen. Die Version geht mit, damit der
+  // Hinweis direkt zu ihr fuehrt (erneut wiederherstellen).
   redirect(
-    `/s/${space.slug}/p/${version.pageId}${zugestellt ? "" : `?${RESTORE_STALE_PARAM}=1`}`,
+    `/s/${space.slug}/p/${version.pageId}${bestaetigt ? "" : `?${RESTORE_STALE_PARAM}=${encodeURIComponent(version.id)}`}`,
   );
 }
 

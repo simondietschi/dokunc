@@ -170,22 +170,30 @@ function walk(node: unknown, visit: (n: JsonNode) => void): void {
 // jemand koennte eine davon an richExtensions vorbei einbinden, womit
 // Client und Collab-Server verschiedene Schemata fahren.
 // Das Protokoll zwischen Web-App und Collab-Server (Feldname, Ticket-
-// Audience, Redis-Kanaele) steht in ./collab-protocol und geht von hier
-// nach aussen: beide Anwendungen importieren ohnehin dieses Paket, und
-// beide muessen dieselben Werte verwenden.
+// Audience, Redis-Kanaele, Quittung, Ablehnungsgruende) steht in
+// ./collab-protocol und geht von hier nach aussen: beide Anwendungen
+// importieren ohnehin dieses Paket, und beide muessen dieselben Werte
+// verwenden.
 export {
   COLLAB_FIELD,
   COLLAB_AUDIENCE,
+  COLLAB_REJECT_REASON,
   NOTIFY_CHANNEL_PREFIX,
   DOC_RESET_CHANNEL,
+  DOC_RESET_ACK_PREFIX,
+  DOC_RESET_ACK_TIMEOUT_MS,
+  DOC_RESET_ACK_TTL_SEC,
   ACCESS_REVOKED_CHANNEL,
   PAGE_ACCESS_CHANNEL,
   isDocResetMessage,
+  isDocResetAck,
   isAccessRevokedMessage,
   isPageAccessMessage,
 } from "./collab-protocol";
 export type {
   DocResetMessage,
+  DocResetAck,
+  DocResetOutcome,
   AccessRevokedMessage,
   PageAccessMessage,
 } from "./collab-protocol";

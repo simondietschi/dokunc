@@ -3,13 +3,19 @@ import {
   ACCESS_REVOKED_CHANNEL,
   COLLAB_AUDIENCE,
   COLLAB_FIELD,
+  COLLAB_REJECT_REASON,
+  DOC_RESET_ACK_PREFIX,
+  DOC_RESET_ACK_TIMEOUT_MS,
+  DOC_RESET_ACK_TTL_SEC,
   DOC_RESET_CHANNEL,
   NOTIFY_CHANNEL_PREFIX,
   PAGE_ACCESS_CHANNEL,
   isAccessRevokedMessage,
+  isDocResetAck,
   isDocResetMessage,
   isPageAccessMessage,
   type AccessRevokedMessage,
+  type DocResetAck,
   type DocResetMessage,
   type PageAccessMessage,
 } from "@dokunc/editor";
@@ -32,6 +38,26 @@ describe("Collab-Protokoll", () => {
     expect(DOC_RESET_CHANNEL).toBe("dokunc:doc-reset");
     expect(ACCESS_REVOKED_CHANNEL).toBe("dokunc:access-revoked");
     expect(PAGE_ACCESS_CHANNEL).toBe("dokunc:page-access");
+    expect(DOC_RESET_ACK_PREFIX).toBe("dokunc:doc-reset-ack:");
+    // Der Editor unterscheidet an diesen Gruenden "Grenze erreicht" von
+    // "kein Zugriff".
+    expect(COLLAB_REJECT_REASON).toEqual({
+      tooManyConnections: "too-many-connections",
+      rateLimited: "rate-limited",
+      ticketUsed: "ticket-used",
+    });
+  });
+
+  // Die Web-App wartet so lange auf die Quittung, der Collab-Server
+  // richtet seine Wiederholungen danach aus. Laenger als ein paar
+  // Sekunden darf die Weiterleitung nach dem Klick nicht haengen, und
+  // eine Quittung muss liegen bleiben, bis die Web-App sie abholt.
+  it("haelt das Warten auf die Quittung kurz und die Quittung laenger", () => {
+    expect(DOC_RESET_ACK_TIMEOUT_MS).toBeGreaterThanOrEqual(2_000);
+    expect(DOC_RESET_ACK_TIMEOUT_MS).toBeLessThanOrEqual(10_000);
+    expect(DOC_RESET_ACK_TTL_SEC * 1000).toBeGreaterThan(
+      DOC_RESET_ACK_TIMEOUT_MS,
+    );
   });
 });
 
@@ -62,7 +88,12 @@ describe("Pruefer fuer die Collab-Nachrichten", () => {
   ];
 
   describe("isDocResetMessage", () => {
-    const gueltig: DocResetMessage = { pageId: "p1", nonce: "n1" };
+    const gueltig: DocResetMessage = {
+      pageId: "p1",
+      nonce: "n1",
+      versionId: "v1",
+      actorId: "u1",
+    };
 
     it("laesst die gesendete Form durch", () => {
       expect(isDocResetMessage(wire(gueltig))).toBe(true);
@@ -74,6 +105,12 @@ describe("Pruefer fuer die Collab-Nachrichten", () => {
       );
     });
 
+    // Eine aeltere Web-App schickt weder versionId noch actorId; der
+    // Collab-Server faellt dann auf Page.content zurueck.
+    it("laesst eine Nachricht ohne versionId und actorId durch", () => {
+      expect(isDocResetMessage(wire({ pageId: "p1", nonce: "n1" }))).toBe(true);
+    });
+
     it.each([
       ["ohne nonce", { pageId: "p1" }],
       ["ohne pageId", { nonce: "n1" }],
@@ -82,12 +119,55 @@ describe("Pruefer fuer die Collab-Nachrichten", () => {
       ["mit pageId als Zahl", { pageId: 1, nonce: "n1" }],
       ["mit nonce als Objekt", { pageId: "p1", nonce: { v: 1 } }],
       ["mit pageId als null", { pageId: null, nonce: "n1" }],
+      // Die versionId geht in die Datenbankabfrage: eine Zahl oder ein
+      // leerer Text fiele dort nicht als Formfehler auf.
+      ["mit versionId als Zahl", { pageId: "p1", nonce: "n1", versionId: 7 }],
+      ["mit leerer versionId", { pageId: "p1", nonce: "n1", versionId: "" }],
+      ["mit versionId als null", { pageId: "p1", nonce: "n1", versionId: null }],
+      // Die actorId wird als Fremdschluessel gespeichert (lastEditedById,
+      // Autor einer Version); eine Zahl oder ein leerer Text liefe dort
+      // erst beim Schreiben auf.
+      ["mit actorId als Zahl", { pageId: "p1", nonce: "n1", actorId: 7 }],
+      ["mit leerer actorId", { pageId: "p1", nonce: "n1", actorId: "" }],
     ])("verwirft eine Nachricht %s", (_, message) => {
       expect(isDocResetMessage(wire(message))).toBe(false);
     });
 
     it.each(keinObjekt)("verwirft %j", (value) => {
       expect(isDocResetMessage(value)).toBe(false);
+    });
+  });
+
+  describe("isDocResetAck", () => {
+    const positiv: DocResetAck = { ok: true, outcome: "zurueckgesetzt" };
+
+    it("laesst positive und negative Quittungen durch", () => {
+      expect(isDocResetAck(wire(positiv))).toBe(true);
+      expect(isDocResetAck(wire({ ok: false, outcome: "fehlgeschlagen" }))).toBe(
+        true,
+      );
+    });
+
+    // Die Web-App entscheidet nur nach ok; ein neueres Ergebnis soll
+    // nicht als "keine Quittung" gelten.
+    it("laesst ein unbekanntes Ergebnis einer neueren Fassung durch", () => {
+      expect(isDocResetAck(wire({ ok: true, outcome: "etwas-neues" }))).toBe(
+        true,
+      );
+    });
+
+    it.each([
+      ["ohne ok", { outcome: "zurueckgesetzt" }],
+      ["mit ok als Text", { ok: "true", outcome: "zurueckgesetzt" }],
+      ["mit ok als Zahl", { ok: 1, outcome: "zurueckgesetzt" }],
+      ["ohne Ergebnis", { ok: true }],
+      ["mit leerem Ergebnis", { ok: true, outcome: "" }],
+    ])("verwirft eine Quittung %s", (_, ack) => {
+      expect(isDocResetAck(wire(ack))).toBe(false);
+    });
+
+    it.each(keinObjekt)("verwirft %j", (value) => {
+      expect(isDocResetAck(value)).toBe(false);
     });
   });
 
