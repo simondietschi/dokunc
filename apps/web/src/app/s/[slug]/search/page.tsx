@@ -1,17 +1,18 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { FileText, SearchX } from "lucide-react";
-import { prisma } from "@dokunc/db";
-import { seesEverything, visiblePageSql } from "@/lib/page-access";
+import { seesEverything } from "@/lib/page-access";
+import { searchPages, type PageHit } from "@/lib/page-search";
 import { loadSpace } from "@/lib/space-context";
-import { HL_START, HL_STOP, likeEscape, splitHighlights } from "@/lib/palette";
+import { normalizeQuery, splitHighlights } from "@/lib/palette";
+import { pageTitle } from "@/lib/page-title";
+import { relativeTime } from "@/lib/relative-time";
+import { collapseCrumbs } from "@/lib/breadcrumbs";
 
 export const metadata: Metadata = {
   title: "Suche",
   description: "Volltextsuche in diesem Space.",
 };
-
-type Row = { id: string; title: string; snippet: string; isTemplate: boolean };
 
 export default async function SearchPage({
   params,
@@ -23,49 +24,26 @@ export default async function SearchPage({
   const { slug } = await params;
   const { q, p } = await searchParams;
   const { space, role, user } = await loadSpace(slug);
-  const query = (q ?? "").trim();
+  // Dieselbe Obergrenze wie die Palette (100 Zeichen).
+  const query = normalizeQuery(q);
   const pageSize = 20;
   const pageNum = Math.max(1, Number(p ?? "1") || 1);
   const offset = (pageNum - 1) * pageSize;
 
-  let results: Row[] = [];
-  if (query) {
-    // Titel-Treffer (auch Wortanfaenge) UND Volltext — dieselbe Regel wie
-    // in der ⌘K-Palette. Ohne den ILIKE-Zweig fand die Palette Seiten,
-    // die diese Seite dann nicht mehr anzeigte (Volltext matcht nur ganze
-    // Woerter).
-    const like = `%${likeEscape(query)}%`;
-    results = await prisma.$queryRaw<Row[]>`
-      SELECT p.id, p.title, p."isTemplate",
-        CASE
-          WHEN to_tsvector('simple', coalesce(p."textContent", ''))
-               @@ plainto_tsquery('simple', ${query})
-          THEN ts_headline('simple', p."textContent",
-            plainto_tsquery('simple', ${query}),
-            ${`StartSel=${HL_START},StopSel=${HL_STOP},MaxFragments=1,MaxWords=24,MinWords=6`})
-          ELSE ''
-        END AS snippet
-      FROM "Page" p
-      WHERE p."spaceId" = ${space.id}
-        AND p."deletedAt" IS NULL
-        -- Geschuetzte Seiten nur dort, wo sie freigegeben sind.
-        AND ${visiblePageSql(user.id, seesEverything(role) ? [space.id] : [])}
-        AND (
-          p.title ILIKE ${like}
-          OR to_tsvector('simple',
-               coalesce(p.title,'') || ' ' || coalesce(p."textContent",''))
-             @@ plainto_tsquery('simple', ${query})
-        )
-      ORDER BY (p.title ILIKE ${like}) DESC,
-        ts_rank(
-          to_tsvector('simple',
-            coalesce(p.title,'') || ' ' || coalesce(p."textContent",'')),
-          plainto_tsquery('simple', ${query})
-        ) DESC,
-        p."updatedAt" DESC
-      LIMIT ${pageSize} OFFSET ${offset}
-    `;
-  }
+  // Dieselbe Abfrage wie die ⌘K-Palette (lib/page-search.ts), nur auf
+  // diesen Space beschraenkt und mit laengerem Schnipsel.
+  const results: PageHit[] = query
+    ? await searchPages({
+        userId: user.id,
+        spaceIds: [space.id],
+        openSpaceIds: seesEverything(role) ? [space.id] : [],
+        q: query,
+        limit: pageSize,
+        offset,
+        snippet: "long",
+      })
+    : [];
+  const now = new Date();
   const hasPrev = pageNum > 1;
   const hasNext = results.length === pageSize;
   const pageHref = (n: number) =>
@@ -88,6 +66,13 @@ export default async function SearchPage({
           className="w-full rounded-xl border border-line bg-surface px-4 py-3 text-[15px] text-ink shadow-soft placeholder:text-faint transition-all focus-visible:border-accent focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-accent-soft"
         />
       </form>
+      <p className="mt-2 text-[12px] text-faint">
+        Findet auch andere Wortformen (Rechnung findet Rechnungen) und
+        Wortanfänge. „Wörter in Anführungszeichen“ suchen genau diese Folge,
+        oder verbindet Alternativen, ein Minus davor schliesst ein Wort aus.
+        Unter drei Zeichen werden Titelanfänge gesucht, bei zwei Zeichen auch
+        genau dieses Wort (etwa KI).
+      </p>
       {query && pageNum > 1 && (
         <p className="mt-3 text-[13px] text-faint">Seite {pageNum}</p>
       )}
@@ -102,12 +87,35 @@ export default async function SearchPage({
               <FileText className="mt-0.5 h-4 w-4 shrink-0 text-faint group-hover:text-accent" />
               <div className="min-w-0">
                 <p className="flex items-center gap-2 font-medium tracking-tight">
-                  <span className="truncate">{r.title}</span>
+                  <span className="truncate">{pageTitle(r.title)}</span>
                   {r.isTemplate && (
                     <span className="shrink-0 rounded-full border border-accent/30 bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
                       Vorlage
                     </span>
                   )}
+                </p>
+                <p className="mt-0.5 flex min-w-0 items-center gap-1 text-[12px] text-faint">
+                  {collapseCrumbs(
+                    [space.name, ...r.path.map((a) => pageTitle(a.title))],
+                    4,
+                  ).map((slot, j) => (
+                    <span key={j} className="flex min-w-0 items-center gap-1">
+                      {j > 0 && <span className="shrink-0">›</span>}
+                      {slot.kind === "item" ? (
+                        <span className="truncate">{slot.item}</span>
+                      ) : (
+                        <span
+                          className="shrink-0"
+                          title={slot.hidden.join(" › ")}
+                        >
+                          …
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                  <span className="shrink-0">
+                    · Geändert {relativeTime(r.updatedAt, now)}
+                  </span>
                 </p>
                 {r.snippet && (
                   <p className="mt-1 line-clamp-2 text-[13px] leading-relaxed text-muted">

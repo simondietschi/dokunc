@@ -56,7 +56,10 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   (Meeting-Notizen, ADR, Runbook, Projektbrief, Wochenbericht), Picker
   neben „Neue Seite", **Seiten duplizieren** (optional mit Unterseiten),
   „Als Vorlage speichern"
-- Postgres-Volltextsuche, **Versionsverlauf** mit Versionsvergleich
+- **Volltextsuche** mit deutschen Wortformen (Rechnung findet Rechnungen),
+  Wortanfängen und Operatoren („genaue Folge“, oder, -Wort ausschliessen);
+  Treffer zeigen Pfad und Änderungsdatum
+- **Versionsverlauf** mit Versionsvergleich
   (Zeilen- und Wort-Diff gegen den aktuellen Stand oder die vorherige
   Version, Vorschau vor dem Wiederherstellen), Papierkorb
 - **Favoriten** (Stern in der Seitenkopfzeile, Abschnitt in der Sidebar,
@@ -289,6 +292,18 @@ Zertifikat seiner internen CA aus, und jeder Browser warnt.
 `docker compose port proxy 443` muss danach `0.0.0.0:443` zeigen,
 `docker compose port proxy 80` `0.0.0.0:80`.
 
+**Datenbank:** Die Migrationen legen die Erweiterung `pg_trgm` an (Suche
+in Titeln). Bei einer fremd verwalteten Datenbank ohne Besitzrechte muss
+sie vorher eine Administratorin oder ein Administrator anlegen:
+`CREATE EXTENSION pg_trgm;` (je nach Distribution im Paket
+`postgresql-contrib`). Das Update mit der neuen Suche füllt einmal den
+Suchvektor aller Seiten, grob 1 s je 500 bis 1000 Seiten (gemessen:
+20 000 Seiten mit 50 MB Text in 30 s). So lange ist die Seitentabelle
+gesperrt, weitere Instanzen warten, und der erste Start dauert länger;
+der Container kann dabei kurz als „unhealthy“ erscheinen. Sicherungen
+werden grösser, weil der Suchvektor etwa so viel Platz braucht wie der
+Text selbst oder etwas mehr.
+
 **Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
 (Restore-Befehle gibt das Skript aus).
 
@@ -336,7 +351,8 @@ arbeitet jede für sich (höchstens doppelte Anfragen an Voyage). Log mit
 
 ## Lokale Entwicklung (ohne Docker)
 
-Voraussetzungen: Node 26 (`.nvmrc`), pnpm, lokal laufendes PostgreSQL 16 + Redis.
+Voraussetzungen: Node 26 (`.nvmrc`), pnpm, lokal laufendes PostgreSQL 16
+mit pg_trgm (bei manchen Distributionen im Paket postgresql-contrib) + Redis.
 
 ```bash
 nvm use                 # Node 26
@@ -465,7 +481,8 @@ Kurz, was die App bewusst tut:
   Export, Druck, KI-Antworten, Benachrichtigungen und die
   Editor-Verbindung fragen dieselbe Regel. Ein Freigabelink auf eine
   geschützte Seite entsteht gar nicht erst und ein bestehender endet,
-  sobald der Schutz gesetzt wird.
+  sobald der Schutz gesetzt wird. Die Pfadzeile eines Suchtreffers endet
+  an der ersten nicht sichtbaren Elternseite.
 - **Gruppen** geben Rollen, nehmen aber keine: die wirksame Rolle ist
   die stärkste aus eigener Mitgliedschaft und allen Gruppen. OWNER
   vergibt keine Gruppe — Eigentümerschaft bleibt persönlich.

@@ -226,6 +226,11 @@ model Page {
   content     Json?
   /// Flacher Text für Suche & History
   textContent String   @default("")
+  /// Suchvektor aus Titel und textContent. Gepflegt von den Triggern
+  /// "Page_searchVector_insert" und "Page_searchVector_update" (Migration
+  /// 20260925110000), nie von Hand schreiben. Prisma liest und schreibt
+  /// ihn nicht (Unsupported).
+  searchVector Unsupported("tsvector")?
   position    Int      @default(0)
   /// Geschuetzt: nur Eingetragene (plus Space-Verwaltung) sehen sie.
   /// Der Schutz vererbt sich auf alle Unterseiten.
@@ -265,6 +270,8 @@ model Page {
   @@index([parentId])
   @@index([spaceId, isTemplate])
   @@index([accessRootId])
+  @@index([searchVector], type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "Page_title_trgm_idx")
 }
 
 /// Bilder werden inline ausgeliefert, alles andere als Download.

@@ -251,6 +251,18 @@ export async function retrieveSemantic(
 }
 
 /**
+ * Trefferbedingung des Volltext-Rueckgriffs ueber Alias c. Der Ausdruck
+ * ist zeichengleich zu PageChunk_fulltext_german_idx (Migration
+ * 20260925110000), sonst greift der Index nicht. plainto_tsquery, weil
+ * eine Frage keine Operatoren enthaelt; 'german' findet andere
+ * Wortformen und laesst Fuellwoerter wie "Wie", "ich", "die" weg.
+ * Exportiert fuer den EXPLAIN-Test.
+ */
+export function chunkFulltextMatch(question: string): Prisma.Sql {
+  return Prisma.sql`to_tsvector('german', c.text) @@ plainto_tsquery('german', ${question})`;
+}
+
+/**
  * Volltextsuche ueber die Chunks. `withoutEmbeddingOf`: nur Chunks ohne
  * Embedding dieses Modells (Beimischen neben der semantischen Suche).
  */
@@ -274,12 +286,14 @@ async function retrieveFts(
       ? Prisma.sql`AND c."embeddingModel" IS DISTINCT FROM ${opts.withoutEmbeddingOf}`
       : Prisma.empty;
 
+  // Ausdruck zeichengleich zu PageChunk_fulltext_german_idx (Migration
+  // 20260925110000), siehe chunkFulltextMatch.
   const rows = await prisma.$queryRaw<
     { chunkId: string; pageId: string; title: string; text: string; rank: number }[]
   >`
     SELECT c.id AS "chunkId", c."pageId", p.title, c.text,
-      ts_rank(to_tsvector('simple', c.text),
-              plainto_tsquery('simple', ${question})) AS rank
+      ts_rank(to_tsvector('german', c.text),
+              plainto_tsquery('german', ${question})) AS rank
     FROM "PageChunk" c
     JOIN "Page" p ON p.id = c."pageId"
     WHERE p."spaceId" IN (${
@@ -288,7 +302,7 @@ async function retrieveFts(
       AND p."deletedAt" IS NULL
       AND p."isTemplate" = false
       AND ${visiblePageSql(userId, openSpaceIds)}
-      AND to_tsvector('simple', c.text) @@ plainto_tsquery('simple', ${question})
+      AND ${chunkFulltextMatch(question)}
       ${withoutModel}
     ORDER BY rank DESC
     LIMIT ${TOP_K}

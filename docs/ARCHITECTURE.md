@@ -23,7 +23,7 @@ S3-Storage, E-Mail, SSO/OAuth, Enterprise-Features.
 | Sprache        | TypeScript                        | End-to-end Typsicherheit |
 | Runtime        | Node.js 26                        | Neueste Version (`.nvmrc`, `engines`, Docker-Image) |
 | Framework      | Next.js 16 (App Router), React 19 | Ein Framework für Front- & Backend (Server Actions, Route Handler) |
-| DB             | PostgreSQL 16                     | Relationale Daten + nativer Volltext (`tsvector`) |
+| DB             | PostgreSQL 18 mit `pg_trgm`       | Relationale Daten + nativer Volltext (`tsvector`), Trigramm-Index für Titel |
 | ORM            | Prisma 7 (+ `@prisma/adapter-pg`) | Typsichere Queries, Migrationen; v7 nutzt Driver-Adapter + `prisma.config.ts` |
 | Auth           | Eigene JWT-Session (jose + bcrypt, httpOnly-Cookie) | Schlank, keine Beta-Abhängigkeit, lehrreich |
 | Editor         | TipTap 3 (+ StarterKit)           | ProseMirror-basiert, identisch zu Docmost |
@@ -74,7 +74,10 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 - **PageGrant** — Zugriffseintrag einer geschützten Seite: entweder eine
   Person oder eine Gruppe.
 - **Page** — id, spaceId, parentId (Baum), title, content (TipTap-JSON),
-  textContent (für Suche/History), `searchVector` (tsvector), position, timestamps.
+  textContent (für Suche/History), `searchVector` (tsvector, von Triggern
+  gepflegt aus Titel (Gewicht A) und den ersten 250 000 Zeichen von
+  textContent, deutsch gestemmt und unverändert; bei übergrossen Seiten
+  verkürzt), position, timestamps.
 - **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit.
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
 - **Attachment** — spaceId, pageId?, uploaderId?, storedName (zufälliger
@@ -97,11 +100,15 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 AFTER) stellen jede neue Seite und jede echte Änderung von `textContent`
 in die `AiIndexQueue`, gleich auf welchem Weg der Text entstand (Editor,
 Import, Vorlage, Kopie, Wiederherstellen, rohes SQL). `Page` selbst wird
-dabei nicht beschrieben. Prisma kennt Trigger nicht: sie stehen nur in
-der Migration `20260925100000_ai_index`, `prisma migrate dev` lässt sie
+dabei nicht beschrieben. `Page_searchVector_insert` und
+`Page_searchVector_update` (Funktion `dokunc_page_search_vector_set`,
+beide BEFORE) setzen den Suchvektor bei jeder neuen Seite und bei jeder
+echten Änderung von Titel oder `textContent`. Prisma kennt Trigger nicht:
+sie stehen nur in den Migrationen `20260925100000_ai_index` und
+`20260925110000_search_german_trgm`, `prisma migrate dev` lässt sie
 stehen, und `prisma migrate diff` zeigt sie nicht. `pg_restore` legt
-Trigger erst nach den Daten an; Warteschlange und Chunks kommen dort aus
-demselben Snapshot.
+Trigger erst nach den Daten an; Warteschlange, Suchvektoren und Chunks
+kommen dort aus demselben Snapshot.
 
 Die **wirksame Rolle** einer Person in einem Space ist die stärkste aus
 eigener Mitgliedschaft und allen Gruppen, die dem Space zugeordnet sind
@@ -145,10 +152,53 @@ lädt eingebettete Bilder über dieselbe Prüfung (`uploadLoaderFor`).
 
 Die Regel selbst steht an genau einer Stelle und wird überall
 hineingereicht: als Prisma-Bedingung (`visiblePageWhere`,
-`visiblePagesAcrossSpaces`), als SQL-Baustein für die beiden
-Volltextabfragen (`visiblePageSql`), als Einzelprüfung (`canSeePage`,
+`visiblePagesAcrossSpaces`), als SQL-Baustein für die Suche
+(`lib/page-search.ts`), die Pfade der Treffer und den Rückgriff der KI
+(`visiblePageSql`), als Einzelprüfung (`canSeePage`,
 auch im Collab-Server) und als Filter für Benachrichtigungen
 (`filterByPageAccess`).
+
+**Suche.** Palette (`/api/search`) und Space-Suche (`/s/[slug]/search`)
+stellen dieselbe Abfrage (`searchPages` in `lib/page-search.ts`), den Plan
+dazu baut `planSearch` in `lib/search-query.ts`.
+
+- Der Inhalt liegt als gespeicherte Spalte `Page.searchVector` vor, mit
+  GIN-Index. Kein Ausdrucksindex: `ts_rank` braucht den Vektor jeder
+  passenden Seite, und aus einem Ausdrucksindex liest Postgres ihn nicht,
+  es berechnet ihn neu (bei einem häufigen Wort oder einem kurzen Präfix
+  beim Tippen für fast alle Seiten). Keine GENERATED-Spalte, weil Prisma
+  den Generierungsausdruck als Default liest und Drift meldet; die
+  Trigger aus der Migration `20260925110000_search_german_trgm` pflegen
+  sie.
+- Der Vektor trägt Titel (Gewicht A) und Text zweimal: `german` findet
+  andere Wortformen (Rechnung, Rechnungen; Haus, Häuser), `simple`
+  behält, was der Stemmer abschneidet oder als Stoppwort verwirft
+  („Bearbeitu“ beim Tippen, „will“). Der Text zählt bis 250 000 Zeichen.
+  Überschreitet der Vektor trotzdem die Grenze von 1 MB (viele
+  verschiedene Wörter aus Zeichen mit 4 Byte), fällt die Funktion auf
+  `simple` über 100 000 Zeichen zurück, im äussersten Fall auf den Titel.
+  So scheitert weder ein Speicherlauf noch die Migration.
+- Titel per `pg_trgm` (`Page_title_trgm_idx`): ab drei Zeichen als
+  Teilwort (`ILIKE '%q%'`).
+- Unter drei Zeichen (Kurzmodus) nur Titelanfang und Wortanfang im Titel;
+  bei genau zwei Buchstaben oder Ziffern zusätzlich das exakte Wort im
+  Vektor, damit Kürzel wie KI, HR oder IT auffindbar bleiben. Alles davon
+  ist indexgestützt.
+- Die Anfrage entsteht aus `websearch_to_tsquery` in beiden Sprachen
+  („Phrase“, `or`, `-Ausschluss`; das deutsche „oder“ wird zu `or`), das
+  letzte Wort zusätzlich als Präfix (`to_tsquery(... ':*')`, nur für
+  Wörter aus Buchstaben und Ziffern). Ein Ausschluss gilt in beiden
+  Sprachen („-Entwürfe“ schliesst auch „Entwurf“ aus) und auch für
+  Titeltreffer.
+- Rang: erst Titeltreffer, dann `ts_rank`, dann das Änderungsdatum, zuletzt
+  die ID, damit die Seiten beim Blättern stabil bleiben. Schnipsel
+  (`ts_headline`, deutsch) nur für die ausgelieferten Zeilen. Jeder
+  Treffer bringt seinen Pfad (`loadAncestorPaths`, eine rekursive Abfrage
+  für alle Treffer, endet an der ersten verborgenen oder gelöschten
+  Elternseite) und sein Änderungsdatum mit.
+- Der Rückgriff der KI ohne Voyage (`lib/retrieval.ts`) fragt die Chunks
+  ebenfalls `german` ab; der Ausdruck ist zeichengleich zum Index
+  `PageChunk_fulltext_german_idx`.
 
 ## 5. Realtime-Fluss
 
@@ -226,7 +276,8 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 - [x] Spaces + Mitgliedschaften + Rollen/Permissions
 - [x] Seitenbaum + CRUD + TipTap-Editor
 - [x] Realtime-Co-Editing (Yjs/Hocuspocus) + Live-Cursor
-- [x] Volltextsuche (Postgres `tsvector`)
+- [x] Suche mit deutschen Wortformen, Wortanfängen und Operatoren,
+      Trigramm-Index für Titel, Treffer mit Pfad und Änderungsdatum
 - [x] Page-History (Snapshots + Wiederherstellen, Redis-gethrottelt)
 - [x] Mitgliederverwaltung + tokenbasierte E-Mail-Einladungen (SHA-256-Hash,
       Konstantzeit-Vergleich, Ablauf, Einmaligkeit, E-Mail-Bindung)

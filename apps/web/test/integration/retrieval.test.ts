@@ -2,7 +2,11 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { prisma, vectorToBytes, type Prisma } from "@dokunc/db";
 import { log } from "@/lib/log";
 import { setPageRestricted } from "@/lib/page-access";
-import { retrieveChunks, retrieveSemantic } from "@/lib/retrieval";
+import {
+  chunkFulltextMatch,
+  retrieveChunks,
+  retrieveSemantic,
+} from "@/lib/retrieval";
 
 /**
  * "Frag dein Wiki" gegen die echte Datenbank: semantische Suche ueber alle
@@ -256,5 +260,53 @@ describe("Warnung bei vielen Abschnitten", () => {
     expect(warnungen()[0][0]).toMatchObject({ chunks: 4 });
     await retrieveSemantic(userId, FRAGE, MODEL, { pageBatch: 2, warnAt: 3 });
     expect(warnungen()).toHaveLength(1);
+  });
+});
+
+describe("Volltext-Rueckgriff mit deutschen Wortformen", () => {
+  beforeAll(() => {
+    // Ohne Voyage fragt "Frag dein Wiki" nur den Volltext.
+    vi.stubEnv("VOYAGE_API_KEY", "");
+  });
+  afterAll(() => {
+    vi.stubEnv("VOYAGE_API_KEY", "test-key");
+  });
+
+  it("findet andere Wortformen und uebergeht Fuellwoerter der Frage", async () => {
+    const { spaceId, userId } = await raum("german");
+    const id = await seite(spaceId, "Ablage");
+    const chunk = await abschnitt(
+      id,
+      0,
+      "Die Rechnungen finden Sie im Ordner Buchhaltung.",
+      null,
+    );
+    // Mit 'simple' verlangte die Frage wo & finde & ich & die & rechnung.
+    const treffer = await retrieveChunks(userId, "Wo finde ich die Rechnung?");
+    expect(treffer.map((t) => t.chunkId)).toEqual([chunk]);
+    expect(fetchAufrufe).toBe(0);
+  });
+
+  it("nutzt den Index PageChunk_fulltext_german_idx", async () => {
+    const PLAN = "plan";
+    let plan = "";
+    // Immer zurueckrollen: SET LOCAL und alles andere bleiben in der
+    // Transaktion.
+    await prisma
+      .$transaction(async (tx) => {
+        await tx.$executeRawUnsafe("SET LOCAL enable_seqscan = off");
+        const rows = await tx.$queryRaw<{ "QUERY PLAN": unknown }[]>`
+          EXPLAIN (FORMAT JSON)
+          SELECT c.id FROM "PageChunk" c
+          WHERE ${chunkFulltextMatch("Wo finde ich die Rechnung?")}
+        `;
+        plan = JSON.stringify(rows[0]["QUERY PLAN"]);
+        throw new Error(PLAN);
+      })
+      .catch((e: unknown) => {
+        if (!(e instanceof Error && e.message === PLAN)) throw e;
+      });
+    expect(plan).toContain("PageChunk_fulltext_german_idx");
+    expect(plan).not.toContain("Seq Scan");
   });
 });

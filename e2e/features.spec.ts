@@ -276,11 +276,29 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
   await input.fill("Willkommen");
   const hit = page.getByRole("option").filter({ hasText: "Willkommen" });
   await expect(hit.first()).toBeVisible();
+  // Treffer tragen das Aenderungsdatum (auch bei wiederverwendeter
+  // Datenbank, dann aelter).
+  await expect(hit.first()).toContainText(
+    /gerade eben|vor \d+ (Min\.|Std\.)|gestern|vor \d+ Tagen|\d{2}\.\d{2}\.\d{4}/,
+  );
   await hit.first().click();
   await page.waitForURL(/\/s\/[^/]+\/p\/[a-z0-9]+/);
 
-  // Aktion: Palette erneut öffnen, "Alle Spaces" wählen
-  await page.keyboard.press("ControlOrMeta+k");
+  // Die Space-Suche zeigt denselben Treffer mit Pfad und Datum.
+  const slug = new URL(page.url()).pathname.split("/")[2];
+  await page.goto(`/s/${slug}/search?q=Willkommen`);
+  const result = page
+    .getByRole("link")
+    .filter({ hasText: "Willkommen" })
+    .filter({ hasText: "Geändert" });
+  await expect(result.first()).toBeVisible();
+
+  // Aktion: Palette erneut öffnen, "Alle Spaces" wählen. Nach dem
+  // Seitenaufruf kann die Hydration noch laufen, wie oben.
+  await expect(async () => {
+    await page.keyboard.press("ControlOrMeta+k");
+    await expect(input).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
   await page.getByPlaceholder("Suchen oder springen…").fill("alle spaces");
   await page
     .getByRole("option", { name: "Alle Spaces", exact: true })

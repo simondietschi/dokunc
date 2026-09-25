@@ -79,9 +79,9 @@ export function visiblePagesAcrossSpaces(
 }
 
 /**
- * Dieselbe Sichtbarkeitsregel als SQL-Baustein, für die beiden
- * Rohabfragen (Volltextsuche und Rückgriff der KI). Erwartet die
- * Seitentabelle unter dem Alias `p`.
+ * Dieselbe Sichtbarkeitsregel als SQL-Baustein, für die Suche
+ * (lib/page-search.ts), die Pfade der Treffer und den Rückgriff der KI.
+ * Erwartet die Seitentabelle unter dem Alias `p`.
  *
  * Bewusst hier neben der Prisma-Fassung: die zwei Formulierungen
  * dürfen nie auseinanderlaufen, und nebeneinander fällt es auf.

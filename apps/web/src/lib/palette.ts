@@ -2,6 +2,8 @@
  * Reine Logik der ⌘K-Palette — vom UI getrennt, damit sie testbar ist.
  */
 
+import { pageTitle } from "./page-title";
+
 /**
  * Obergrenze für eine Sucheingabe.
  *
@@ -41,6 +43,22 @@ export function matchesQuery(label: string, query: string): boolean {
   if (!q) return true;
   const hay = label.toLowerCase();
   return q.split(/\s+/).every((token) => hay.includes(token));
+}
+
+/**
+ * Hinweis neben einem Seitentreffer: "Space › Elternseite", tiefer
+ * "Space › … › Elternseite". `path` sind die sichtbaren Vorfahren,
+ * Wurzel zuerst.
+ */
+export function pageHint(
+  spaceName: string,
+  path: readonly { title: string }[],
+): string {
+  if (path.length === 0) return spaceName;
+  const parent = pageTitle(path[path.length - 1].title);
+  return path.length === 1
+    ? `${spaceName} › ${parent}`
+    : `${spaceName} › … › ${parent}`;
 }
 
 /** Escaped LIKE-Metazeichen in Nutzereingaben (%, _, \). */
