@@ -1,4 +1,4 @@
-import { COLLAB_REJECT_REASON } from "@dokunc/editor";
+import { COLLAB_REJECT_REASON, type DocSizeLevel } from "@dokunc/editor";
 
 /**
  * Verbindungsstatus des Editors (app/s/[slug]/p/[pageId]/
@@ -11,6 +11,10 @@ import { COLLAB_REJECT_REASON } from "@dokunc/editor";
  * - limited: der Collab-Server hat an einer Grenze abgewiesen
  * - restored: die Instanz wurde zurückgespielt; dieser Tab verbindet
  *   nicht mehr (endgültig)
+ * - too-large: der Collab-Server hat eine Nachricht als zu gross
+ *   abgewiesen; die Verbindung ist endgültig getrennt
+ *
+ * Vorrang: restored > too-large > unauthorized/limited > Rest.
  */
 export type EditorStatus =
   | "connecting"
@@ -18,7 +22,8 @@ export type EditorStatus =
   | "offline"
   | "unauthorized"
   | "limited"
-  | "restored";
+  | "restored"
+  | "too-large";
 
 /**
  * Status nach einer abgelehnten Anmeldung (`onAuthenticationFailed`,
@@ -49,12 +54,20 @@ export function statusAfterRejection(
  * Nach einer Ablehnung meldet der Provider noch ein Trennen; ohne den
  * Vorrang der Ablehnung stuende gleich wieder "Verbinde…". Erst der
  * naechste gelungene Abgleich (`onSynced`) loest sie ab. "restored"
- * bleibt immer stehen.
+ * und "too-large" bleiben immer stehen.
  */
 export function statusAfterDisconnect(prev: EditorStatus): EditorStatus {
-  return prev === "unauthorized" || prev === "limited" || prev === "restored"
+  return prev === "unauthorized" ||
+    prev === "limited" ||
+    prev === "restored" ||
+    prev === "too-large"
     ? prev
     : "connecting";
+}
+
+/** Endgueltige Status: kein Rueckruf des Providers verlaesst sie. */
+function isFinal(status: EditorStatus): boolean {
+  return status === "restored" || status === "too-large";
 }
 
 /**
@@ -87,20 +100,51 @@ export type SetEditorStatus = (
  *   abgewiesenen Ticket meldet der Provider noch eine Ablehnung mit
  *   eigenem Grund, und ein spaeter Abgleich darf den Tab nicht wieder
  *   als "Live" zeigen.
+ * - onClose mit Code 1009: der Collab-Server hat eine Nachricht als zu
+ *   gross abgewiesen ("too-large"). Der Aufrufer trennt dann endgueltig
+ *   (`onMessageTooLarge`): sonst verbaende der Provider nach einer
+ *   Sekunde neu, schickte dieselbe Aenderung wieder und verbrauchte je
+ *   Runde ein Ticket und einen Versuch der Person. "too-large" verlaesst
+ *   nur der Vorrang von "restored"; einen Rueckweg ohne Neuladen gibt es
+ *   nicht (Rueckgaengig verkleinert den Yjs-Stand nicht, und die Kopie im
+ *   Browser haelt die Aenderung schon). Der Provider 4.4 ruft onClose je
+ *   Ereignis zweimal auf (am Socket und am Provider registriert); beides
+ *   ist wiederholbar, ein zweites Trennen aendert nichts.
  */
-export function statusHandlers(setStatus: SetEditorStatus) {
+export function statusHandlers(
+  setStatus: SetEditorStatus,
+  opts?: { onMessageTooLarge?: () => void },
+) {
   return {
     onSynced: () =>
-      setStatus((prev) => (prev === "restored" ? prev : "connected")),
+      setStatus((prev) => (isFinal(prev) ? prev : "connected")),
     onAuthenticationFailed: ({ reason }: { reason: string }) =>
       setStatus((prev) =>
-        prev === "restored" ? prev : statusAfterRejection(reason),
+        isFinal(prev) ? prev : statusAfterRejection(reason),
       ),
     onStatus: ({ status }: { status: string }) => {
       if (status !== "connected") setStatus(statusAfterDisconnect);
     },
     onDisconnect: () => setStatus(statusAfterDisconnect),
+    onClose: ({ event }: { event?: { code?: number } }) => {
+      if (event?.code !== 1009) return;
+      setStatus((prev) => (prev === "restored" ? prev : "too-large"));
+      opts?.onMessageTooLarge?.();
+    },
   };
+}
+
+/**
+ * Darf der Editor gerade bearbeitet werden? Rolle, Verbindung (inkl.
+ * Erst-Sync) und Groessensperre. `connected` ist `status === "connected"`;
+ * damit sperren auch "restored" und "too-large" den Editor.
+ */
+export function editorEditable(o: {
+  editable: boolean;
+  connected: boolean;
+  sizeLevel: DocSizeLevel | null;
+}): boolean {
+  return o.editable && o.connected && o.sizeLevel !== "frozen";
 }
 
 /**
@@ -117,7 +161,8 @@ export function visibleStatus(
     status === "connected" ||
     status === "unauthorized" ||
     status === "limited" ||
-    status === "restored"
+    status === "restored" ||
+    status === "too-large"
   ) {
     return status;
   }
@@ -157,6 +202,12 @@ export function statusLabel(status: EditorStatus): {
         text: "Neu laden nötig",
         title:
           "Die Instanz wurde aus einer Sicherung zurückgespielt. Änderungen aus diesem Tab werden nicht mehr übertragen. Bitte die Seite neu laden.",
+      };
+    case "too-large":
+      return {
+        text: "Änderung zu gross",
+        title:
+          "Eine Änderung war grösser, als der Server in einer Nachricht annimmt, und wurde nicht übertragen. Die Verbindung ist getrennt; der Hinweis über der Seite erklärt, wie es weitergeht.",
       };
   }
 }

@@ -8,12 +8,15 @@ import {
   DOC_RESET_ACK_TIMEOUT_MS,
   DOC_RESET_ACK_TTL_SEC,
   DOC_RESET_CHANNEL,
+  DOC_SIZE_NOTICE,
   NOTIFY_CHANNEL_PREFIX,
   PAGE_ACCESS_CHANNEL,
   isAccessRevokedMessage,
   isDocResetAck,
   isDocResetMessage,
   isPageAccessMessage,
+  encodeDocSizeNotice,
+  parseDocSizeNotice,
   type AccessRevokedMessage,
   type DocResetAck,
   type DocResetMessage,
@@ -227,5 +230,60 @@ describe("Pruefer fuer die Collab-Nachrichten", () => {
     expect(isAccessRevokedMessage(wire({ pageId: "p1", nonce: "n1" }))).toBe(
       false,
     );
+  });
+});
+
+/**
+ * Groessenhinweis des Collab-Servers an den Editor (stateless). Der
+ * Editor liest alle stateless-Nachrichten mit parseDocSizeNotice; was
+ * nicht passt, ist fuer ihn keine Stufe und aendert nichts.
+ */
+describe("Groessenhinweis (dokunc:doc-size)", () => {
+  it("haelt den vereinbarten Typ fest", () => {
+    expect(DOC_SIZE_NOTICE).toBe("dokunc:doc-size");
+  });
+
+  it("liest zurueck, was der Server schickt", () => {
+    for (const level of ["ok", "warn", "frozen"] as const) {
+      const raw = encodeDocSizeNotice({ level, bytes: 1234, limitBytes: 5678 });
+      expect(parseDocSizeNotice(raw)).toEqual({
+        type: "dokunc:doc-size",
+        level,
+        bytes: 1234,
+        limitBytes: 5678,
+      });
+    }
+  });
+
+  it("nimmt zusaetzliche Felder hin", () => {
+    const raw = JSON.stringify({
+      type: "dokunc:doc-size",
+      level: "warn",
+      bytes: 1,
+      limitBytes: 0,
+      neu: true,
+    });
+    expect(parseDocSizeNotice(raw)).toEqual({
+      type: "dokunc:doc-size",
+      level: "warn",
+      bytes: 1,
+      limitBytes: 0,
+    });
+  });
+
+  const gut = { type: "dokunc:doc-size", level: "ok", bytes: 1, limitBytes: 2 };
+  it.each([
+    ["kein JSON", "{kaputt"],
+    ["null", "null"],
+    ["ein Array", JSON.stringify([gut])],
+    ["ein Text", JSON.stringify("dokunc:doc-size")],
+    ["ein fremder Typ", JSON.stringify({ ...gut, type: "anders" })],
+    ["eine unbekannte Stufe", JSON.stringify({ ...gut, level: "gross" })],
+    ["eine Stufe als Zahl", JSON.stringify({ ...gut, level: 1 })],
+    ["negative Bytes", JSON.stringify({ ...gut, bytes: -1 })],
+    ["Bytes als Text", JSON.stringify({ ...gut, bytes: "1" })],
+    ["ohne limitBytes", JSON.stringify({ ...gut, limitBytes: undefined })],
+  ])("verwirft %s", (_, raw) => {
+    expect(parseDocSizeNotice(raw)).toBeNull();
   });
 });

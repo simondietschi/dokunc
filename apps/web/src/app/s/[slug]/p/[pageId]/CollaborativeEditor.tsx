@@ -17,7 +17,12 @@ import { Placeholder } from "@tiptap/extensions";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
-import { COLLAB_FIELD, richExtensions } from "@dokunc/editor";
+import {
+  COLLAB_FIELD,
+  parseDocSizeNotice,
+  richExtensions,
+  type DocSizeNotice,
+} from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
@@ -76,6 +81,7 @@ import { PromptDialog } from "@/components/ui/PromptDialog";
 import { useToast } from "@/components/ui/Toast";
 import { caretColorFor } from "@/lib/caret-color";
 import {
+  editorEditable,
   statusHandlers,
   statusLabel,
   visibleStatus,
@@ -83,6 +89,12 @@ import {
 } from "@/lib/editor-status";
 import { requestCollabTicket } from "@/lib/collab-ticket-client";
 import { localDocName, removeForeignLocalDocs } from "@/lib/local-doc";
+import { afterLocalCopy } from "@/lib/local-copy";
+import {
+  TOO_LARGE_DISCARD_LABEL,
+  TOO_LARGE_NOTICE,
+} from "@/lib/doc-size-notice";
+import { DocSizeBanner } from "@/components/editor/DocSizeBanner";
 import { looksLikeMarkdown, markdownToHtml } from "@/lib/markdown-paste";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/cn";
@@ -182,7 +194,11 @@ const LinkClick = Extension.create({
 let cleanedEpoch: string | null | undefined;
 
 type Peer = { name: string; color: string };
-type Conn = { ydoc: Y.Doc; provider: HocuspocusProvider };
+type Conn = {
+  ydoc: Y.Doc;
+  provider: HocuspocusProvider;
+  persistence: IndexeddbPersistence | null;
+};
 
 export function CollaborativeEditor({
   slug,
@@ -258,6 +274,10 @@ export function CollaborativeEditor({
   // Symbol und Titelbild liegen nicht im Yjs-Dokument. Nach einem Restore
   // sperrt sie der Tab trotzdem: er zeigt einen Stand von vorher.
   const metaEditable = editable && status !== "restored";
+  // Stufe und Groesse der Seite, wie der Collab-Server sie meldet
+  // (Dokumentgrenze). Titel, Symbol und Titelbild liegen nicht im
+  // Yjs-Dokument und bleiben bei einer Groessensperre bearbeitbar.
+  const [sizeNotice, setSizeNotice] = useState<DocSizeNotice | null>(null);
   const [peers, setPeers] = useState<Peer[]>([]);
   const [titleValue, setTitleValue] = useState(title);
   const [prompt, setPrompt] = useState<PromptRequest | null>(null);
@@ -425,6 +445,7 @@ export function CollaborativeEditor({
   useEffect(() => {
     const ydoc = new Y.Doc();
     setStatus("connecting");
+    setSizeNotice(null);
     /**
      * Lokaler Puffer. Ohne ihn lebte das Yjs-Dokument nur im Speicher des
      * Tabs: wer bei Netzausfall weiterschrieb und dann neu lud, verlor
@@ -445,39 +466,56 @@ export function CollaborativeEditor({
     // Trennen), steht in lib/editor-status (statusHandlers, dort
     // getestet).
     let provider: HocuspocusProvider | null = null;
-    provider = new HocuspocusProvider({
-      url: collabUrl,
-      name: pageId,
-      document: ydoc,
-      // Vor JEDEM Verbindungsversuch ein frisches Ticket holen. Die
-      // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
-      // HTML gelangt nichts Wiederverwendbares. Die Restore-Epoche geht
-      // mit: weicht sie ab, wurde die Instanz inzwischen zurueckgespielt.
-      token: async () => {
-        const result = await requestCollabTicket(pageId, restoreEpoch);
-        if (result.kind === "restored") {
-          setStatus("restored");
-          // Endgueltig trennen: jede weitere Verbindung spielte den Stand
-          // dieses Tabs in den zurueckgespielten hoch. Der Microtask laeuft
-          // noch vor dem catch in sendToken; danach gesendete Nachrichten
-          // gehen an einen geschlossenen Socket.
-          queueMicrotask(() => provider?.disconnect());
-          throw new Error("Instanz wurde zurückgespielt");
-        }
-        // Die Epoche ist jetzt vom Server bestaetigt: Kopien einer anderen
-        // Epoche stammen aus der Zeit vor einem Restore. Erst jetzt, weil ein
-        // veralteter Tab (Prop aus dem Router-Cache) sonst die Kopien der
-        // aktuellen Epoche loeschte.
-        if (cleanedEpoch !== restoreEpoch) {
-          cleanedEpoch = restoreEpoch;
-          void removeForeignLocalDocs(restoreEpoch);
-        }
-        return result.ticket;
-      },
-      ...statusHandlers(setStatus),
+    let cancelled = false;
+    // Erst die lokale Kopie laden, dann verbinden (lib/local-copy): so
+    // gleicht der Provider ueber SyncStep1/2 ab und schickt nur, was dem
+    // Server fehlt, statt die ganze Kopie als ein Update.
+    void afterLocalCopy(persistence).then(() => {
+      if (cancelled) return;
+      provider = new HocuspocusProvider({
+        url: collabUrl,
+        name: pageId,
+        document: ydoc,
+        // Vor JEDEM Verbindungsversuch ein frisches Ticket holen. Die
+        // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
+        // HTML gelangt nichts Wiederverwendbares. Die Restore-Epoche geht
+        // mit: weicht sie ab, wurde die Instanz inzwischen zurueckgespielt.
+        token: async () => {
+          const result = await requestCollabTicket(pageId, restoreEpoch);
+          if (result.kind === "restored") {
+            setStatus("restored");
+            // Endgueltig trennen: jede weitere Verbindung spielte den Stand
+            // dieses Tabs in den zurueckgespielten hoch. Der Microtask laeuft
+            // noch vor dem catch in sendToken; danach gesendete Nachrichten
+            // gehen an einen geschlossenen Socket.
+            queueMicrotask(() => provider?.disconnect());
+            throw new Error("Instanz wurde zurückgespielt");
+          }
+          // Die Epoche ist jetzt vom Server bestaetigt: Kopien einer anderen
+          // Epoche stammen aus der Zeit vor einem Restore. Erst jetzt, weil ein
+          // veralteter Tab (Prop aus dem Router-Cache) sonst die Kopien der
+          // aktuellen Epoche loeschte.
+          if (cleanedEpoch !== restoreEpoch) {
+            cleanedEpoch = restoreEpoch;
+            void removeForeignLocalDocs(restoreEpoch);
+          }
+          return result.ticket;
+        },
+        // Groessenhinweis des Collab-Servers (Stufe der Dokumentgrenze).
+        onStateless: ({ payload }: { payload: string }) => {
+          const notice = parseDocSizeNotice(payload);
+          if (notice) setSizeNotice(notice);
+        },
+        ...statusHandlers(setStatus, {
+          // Nach 1009 endgueltig trennen: jeder weitere Versuch schickte
+          // dieselbe zu grosse Aenderung wieder.
+          onMessageTooLarge: () => provider?.disconnect(),
+        }),
+      });
+      setConn({ ydoc, provider, persistence });
     });
-    setConn({ ydoc, provider });
     return () => {
+      cancelled = true;
       setConn(null);
       provider?.destroy();
       void persistence?.destroy();
@@ -543,7 +581,11 @@ export function CollaborativeEditor({
     {
     // Vor dem Erst-Sync ist der Editor nur Platzhalter: nicht editierbar
     // (das Yjs-Dokument ist noch leer), ohne Collaboration-Extensions.
-    editable: editable && !!conn && status === "connected",
+    editable: editorEditable({
+      editable,
+      connected: !!conn && status === "connected",
+      sizeLevel: sizeNotice?.level ?? null,
+    }),
     immediatelyRender: false,
     extensions: [
       ...richExtensions({
@@ -641,8 +683,15 @@ export function CollaborativeEditor({
   // nachziehen, statt den Editor dafuer neu aufzubauen.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    editor.setEditable(editable && !!conn && status === "connected", false);
-  }, [editor, editable, conn, status]);
+    editor.setEditable(
+      editorEditable({
+        editable,
+        connected: !!conn && status === "connected",
+        sizeLevel: sizeNotice?.level ?? null,
+      }),
+      false,
+    );
+  }, [editor, editable, conn, status, sizeNotice]);
 
   /**
    * Der Blockgriff kommt erst, wenn der Editor einmal den Fokus hatte.
@@ -902,6 +951,29 @@ export function CollaborativeEditor({
             Neu laden
           </button>
         </div>
+      )}
+      {status === "too-large" && (
+        <div
+          role="alert"
+          className="mx-auto mt-4 max-w-[760px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink"
+        >
+          <p>{TOO_LARGE_NOTICE}</p>
+          <button
+            type="button"
+            onClick={async () => {
+              // Ueber die Instanz dieses Effekts, nie ueber den Namen: so
+              // trifft es genau die Kopie, die die Aenderung haelt.
+              await conn?.persistence?.clearData();
+              window.location.reload();
+            }}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-subtle hover:text-ink"
+          >
+            {TOO_LARGE_DISCARD_LABEL}
+          </button>
+        </div>
+      )}
+      {status !== "restored" && status !== "too-large" && editable && (
+        <DocSizeBanner notice={sizeNotice} />
       )}
       {moveOpen && (
         <MovePageDialog

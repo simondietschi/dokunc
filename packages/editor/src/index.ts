@@ -189,8 +189,12 @@ export {
   isDocResetAck,
   isAccessRevokedMessage,
   isPageAccessMessage,
+  DOC_SIZE_NOTICE,
+  encodeDocSizeNotice,
+  parseDocSizeNotice,
 } from "./collab-protocol";
 export type {
+  DocSizeNotice,
   DocResetMessage,
   DocResetAck,
   DocResetOutcome,
@@ -201,6 +205,14 @@ export type { CalloutType } from "./callout";
 export { chunkText, chunkForAiIndex, AI_CHUNK_SIZE, headingSlug } from "./text";
 export { readWholeNumber } from "./env-number";
 export type { EnvWarn } from "./env-number";
+export {
+  readDocSizeLimits,
+  docSizeLevel,
+  DEFAULT_MAX_DOC_MB,
+  MESSAGE_HEADROOM_BYTES,
+  WS_DEFAULT_MAX_PAYLOAD,
+} from "./collab-size";
+export type { DocSizeLimits, DocSizeLevel } from "./collab-size";
 export { toBase64 } from "./excalidraw";
 export { CODE_LANGUAGES } from "./code-block";
 export { IMAGE_WIDTHS } from "./image";

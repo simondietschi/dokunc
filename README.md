@@ -75,6 +75,8 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   Beitreten
 - **Audit-Log** über sicherheitsrelevante Ereignisse (Anmeldungen,
   Rollenwechsel, Einladungen, Löschungen) mit Ansicht unter `/admin/audit`
+- **Grössengrenzen** für die gemeinsame Bearbeitung: sehr grosse Seiten
+  werden nur noch lesbar, die grössten listet `/admin/documents`
 - **Angemeldete Geräte** einzeln beenden, „angemeldet bleiben" optional
 - **Zwei-Faktor-Anmeldung** (TOTP) mit QR-Code für Authenticator-Apps
   und einmalig gültigen Wiederherstellungscodes
@@ -456,6 +458,8 @@ Umgebungsvariablen des Collab-Servers (Vorgabe in Klammern):
 (redis://localhost:6379; Abgleich mehrerer Instanzen, Wiederherstellen,
 Bremsen, Sperren), `TRUSTED_PROXY_HOPS` (0; in docker-compose 1), die
 fünf Verbindungsgrenzen `COLLAB_MAX_…` (siehe nächster Absatz),
+`COLLAB_MAX_DOC_MB` (16) und `COLLAB_MAX_MESSAGE_MB` (Dokumentgrenze
+plus 1), siehe unten,
 `MAIL_DISPATCH_INTERVAL_S` (30, mindestens 5), `DIGEST_HOUR_UTC` (6),
 `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_SECURE` (false), `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `MAIL_FROM_ADDRESS` (für Benachrichtigungs-Mails; ohne
@@ -488,6 +492,47 @@ abprallt, sieht im Editor „Zu viele Verbindungen“ (mit dem Hinweis,
 andere Tabs zu schliessen) statt „Kein Zugriff“; an den Grenzen vor dem
 Handshake (je Adresse, je Instanz) bleibt es bei „Verbinde…“. In beiden
 Fällen versucht der Editor es von selbst erneut.
+
+**Grössengrenzen:** Der Collab-Server begrenzt die Grösse einer
+WebSocket-Nachricht und die Grösse des Bearbeitungsstands (Yjs) einer
+Seite, beide in MB (1 MB = 1024 × 1024 Bytes). Leer heisst Vorgabe,
+0 schaltet eine Grenze ab, ein ungültiger Wert gilt als leer und steht
+beim Start im Log. Alle Instanzen brauchen dieselben Werte.
+
+- Nachrichtengrenze `COLLAB_MAX_MESSAGE_MB` (Vorgabe: Dokumentgrenze
+  plus 1, also 17; ohne Dokumentgrenze 100 wie bisher): Eine grössere
+  Nachricht schliesst der Server mit Code 1009, im Log steht
+  `Collab-Nachricht ueber der Groessengrenze, Verbindung geschlossen`
+  mit Seite und Person. Der Editor zeigt „Änderung zu gross“, trennt
+  endgültig (kein Neuverbinden im Sekundentakt) und bietet an, die lokale
+  Änderung zu verwerfen und neu zu laden. Nicht kleiner als die
+  Dokumentgrenze setzen: fehlt dem Server der Stand einer Seite, schickt
+  ein Browser seine Kopie beim Abgleich in einer Nachricht. Beim Öffnen
+  lädt der Editor zuerst seine Kopie aus IndexedDB (höchstens drei
+  Sekunden) und verbindet erst dann; so schickt er nur, was dem Server
+  fehlt, statt die ganze Kopie auf einmal.
+- Dokumentgrenze `COLLAB_MAX_DOC_MB` (Vorgabe 16, für Container mit 1 GB
+  eher 8): Der Server misst die Grösse beim Laden, beim Speichern und
+  gedrosselt bei Änderungen. Ab der Hälfte steht ein Hinweis über der
+  Seite und im Log `Collab-Dokument ueber der Warnschwelle`. Darüber
+  werden alle Schreibverbindungen nur lesend, der Editor sperrt sich und
+  erklärt es; im Log steht
+  `Collab-Dokument ueber der Groessengrenze, nur noch lesbar`. Titel,
+  Symbol und Titelbild bleiben bearbeitbar. Der Ausweg ist eine kleinere
+  Version aus dem Verlauf (die Sperre fällt dann von selbst, Log
+  `Collab-Dokument wieder unter der Groessengrenze, wieder beschreibbar`)
+  oder eine höhere Grenze mit Neustart des Collab-Servers. Die Sperre ist
+  keine harte Obergrenze: die Änderung, die sie überschreitet, wird noch
+  gespeichert.
+- Bestand: Seiten, die schon über der Grenze liegen, laden wie bisher,
+  sind aber nur lesbar. Beim Start nennt das Log ihre Zahl
+  (`Collab-Dokumente ueber der Groessengrenze`), die 20 grössten Seiten
+  listet die Administration unter `/admin/documents`. Die Web-App liest
+  dafür ebenfalls `COLLAB_MAX_DOC_MB`.
+
+Für bestehende Installationen: Seiten über 16 MB sind nach diesem Update
+nur noch lesbar. Wer solche Seiten hat (Startlog, `/admin/documents`),
+setzt `COLLAB_MAX_DOC_MB` vorher höher.
 
 **Änderungsmeldungen:** Wer einer Seite folgt, bekommt eine Meldung, wenn
 andere ihren Inhalt ändern. Sie entsteht nur zusammen mit einem Snapshot
@@ -593,6 +638,10 @@ Kurz, was die App bewusst tut:
   ausgeliefert.
 - **Sitzungen** sind einzeln widerrufbar; der Entzug wirkt auch auf
   offene Editor-Verbindungen, nicht erst beim nächsten Neuladen.
+- **Grössengrenzen im Collab-Server**: WebSocket-Nachrichten sind auf
+  `COLLAB_MAX_MESSAGE_MB` begrenzt (auch vor der Anmeldung, bisher galten
+  100 MB), Seiten über `COLLAB_MAX_DOC_MB` nur noch lesbar (siehe
+  „Collab-Server“, Absatz Grössengrenzen).
 - **Rate-Limits** pro Konto und pro IP. Die IP stammt aus
   `X-Forwarded-For`, ausgewertet gemäss `TRUSTED_PROXY_HOPS` — hinter dem
   mitgelieferten Caddy setzt der Proxy den Header selbst.

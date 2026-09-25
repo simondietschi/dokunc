@@ -3,7 +3,7 @@ import "./env";
 import { randomUUID } from "node:crypto";
 import { STATUS_CODES } from "node:http";
 import type { Duplex } from "node:stream";
-import { Server, type Connection } from "@hocuspocus/server";
+import { Server, type Connection, type Document } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
 import { jwtVerify, type JWTPayload } from "jose";
 import { Redis } from "ioredis";
@@ -13,6 +13,7 @@ import * as Y from "yjs";
 import {
   canSeePage,
   canSeePageWithGrant,
+  countCollabDocumentsOver,
   currentRestoreEpoch,
   effectiveSpaceRole,
   indexPageChunks,
@@ -44,6 +45,8 @@ import {
   extractWikiLinkIds,
   extractMentionIds,
   chunkForAiIndex,
+  readDocSizeLimits,
+  encodeDocSizeNotice,
   type DocResetMessage,
 } from "@dokunc/editor";
 import { startMailDispatcher } from "./mail-dispatcher";
@@ -51,6 +54,7 @@ import { startAiIndexer } from "./ai-indexer";
 import { createDocResetHandler, type ResetContent } from "./doc-reset";
 import { resolveAppSecret } from "./secret";
 import { StoreWatch } from "./store-watch";
+import { DocSizeTracker, roleNeedsReconnect } from "./doc-size";
 import { PageEditors, redisEditorStore } from "./page-editors";
 import {
   contentChanged,
@@ -131,6 +135,18 @@ const sockets = new SocketGate(
   limits.maxConnectionsPerIp,
 );
 const authDeadlines = new AuthDeadlines(UNAUTHENTICATED_TIMEOUT_MS);
+
+/*
+ * Groessengrenzen (Vorgaben in @dokunc/editor collab-size und README).
+ * maxMessageBytes geht als maxPayload an ws; die Dokumentgrenze setzt
+ * DocSizeTracker um (./doc-size).
+ */
+const sizeLimits = readDocSizeLimits(process.env, (detail, msg) =>
+  log.warn(detail, msg),
+);
+const docSizes = new DocSizeTracker<Document>(sizeLimits);
+/** Schreibverbindungen, die nur wegen der Dokumentgroesse lesen. */
+const sizeLocked = new WeakSet<Connection>();
 
 /**
  * Kopfzeile, ueber die onAuthenticate die Anmeldefrist seines Sockets
@@ -402,6 +418,120 @@ const pageEditors = new PageEditors(redisEditorStore(redis), {
   warn: (err, msg) => log.warn({ err }, msg),
 });
 
+/** Stateless-Nachricht mit Stufe und Groesse des Dokuments. */
+function sizeNotice(document: Document): string {
+  return encodeDocSizeNotice({
+    level: docSizes.level(document),
+    bytes: docSizes.bytes(document) ?? 0,
+    limitBytes: sizeLimits.maxDocBytes,
+  });
+}
+
+/** Schreibverbindung sperren und benachrichtigen; Lesende und schon Gesperrte bleiben. */
+function lockForSize(connection: Connection): void {
+  if (connection.readOnly) return;
+  connection.readOnly = true;
+  sizeLocked.add(connection);
+  connection.sendStateless(sizeNotice(connection.document));
+}
+
+/** Echte Groesse uebernehmen und auf einen Stufenwechsel reagieren. */
+function applyDocSize(
+  document: Document,
+  bytes: number,
+  quelle: "laden" | "speichern" | "aenderung" | "nachmessung",
+): void {
+  const change = docSizes.measured(document, bytes);
+  if (!change) return;
+  const detail = {
+    pageId: document.name,
+    bytes,
+    grenze: sizeLimits.maxDocBytes,
+    quelle,
+  };
+  // Beim Laden eines Altbestands jedes Mal: nur Info (der Startlog nennt
+  // den Bestand ohnehin); waehrend der Bearbeitung eine Warnung.
+  const melde = quelle === "laden" ? log.info.bind(log) : log.warn.bind(log);
+  if (change.level === "frozen") {
+    melde(detail, "Collab-Dokument ueber der Groessengrenze, nur noch lesbar");
+  } else if (change.previous === "frozen") {
+    log.info(
+      detail,
+      "Collab-Dokument wieder unter der Groessengrenze, wieder beschreibbar",
+    );
+  } else if (change.level === "warn") {
+    melde(
+      { ...detail, warnschwelle: sizeLimits.warnDocBytes },
+      "Collab-Dokument ueber der Warnschwelle",
+    );
+  }
+  for (const connection of Array.from(document.getConnections())) {
+    if (change.level === "frozen") {
+      lockForSize(connection);
+      continue;
+    }
+    if (sizeLocked.has(connection)) {
+      // Hinweis zuerst, dann neu aufbauen lassen: zwischen Sperre und
+      // Hinweis kann der Editor noch Aenderungen geschickt haben, die der
+      // Server verworfen hat. Erst der Abgleich beim Neuverbinden
+      // (SyncStep1/2) bringt beide Seiten wieder zusammen.
+      connection.sendStateless(sizeNotice(document));
+      closeConnection(connection, "Seite wieder beschreibbar");
+      continue;
+    }
+    if (!connection.readOnly) connection.sendStateless(sizeNotice(document));
+  }
+}
+
+function measureDocSize(
+  document: Document,
+  quelle: "laden" | "aenderung" | "nachmessung",
+): void {
+  applyDocSize(document, Y.encodeStateAsUpdate(document).byteLength, quelle);
+}
+
+/** Aus onChange: Schaetzung fortschreiben, bei Bedarf messen. */
+function noteDocUpdate(document: Document, updateBytes: number): void {
+  const next = docSizes.grew(document, updateBytes);
+  if (!next) return;
+  if (next.messen === "jetzt") {
+    measureDocSize(document, "aenderung");
+    return;
+  }
+  setTimeout(() => {
+    try {
+      // Inzwischen entladen oder neu geladen: das neue Dokument misst sich selbst.
+      if (server.hocuspocus.documents.get(document.name) !== document) return;
+      measureDocSize(document, "nachmessung");
+    } catch (e) {
+      log.warn({ err: e, pageId: document.name }, "Groesse nicht nachgemessen");
+    }
+  }, next.inMs).unref();
+}
+
+/**
+ * Eine zu grosse Nachricht schliesst ws selbst (1009), Hocuspocus
+ * schreibt dazu nur eine Rohzeile. Fuer ein Log mit Seite und Person
+ * haengt sich der Server an den Socket (crossws reicht once durch).
+ */
+function watchMessageLimit(connection: Connection, pageId: string): void {
+  const ws = connection.webSocket as unknown as {
+    once?: (event: "error", cb: (err: { code?: string }) => void) => unknown;
+  };
+  if (typeof ws.once !== "function") return;
+  ws.once("error", (err) => {
+    if (err?.code !== "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH") return;
+    log.warn(
+      {
+        pageId,
+        userId: (connection.context as { userId?: string } | null)?.userId,
+        grenze: sizeLimits.maxMessageBytes,
+      },
+      "Collab-Nachricht ueber der Groessengrenze, Verbindung geschlossen",
+    );
+  });
+}
+
 /**
  * "Instanz voll" und "Adresse voll" hoechstens alle zehn Sekunden
  * melden: wer an einer vollen Grenze steht, versucht es weiter, und das
@@ -436,6 +566,13 @@ const haExtension = new HocuspocusRedis({
 const server = new Server({
   port: PORT,
   extensions: [haExtension],
+  // Groesster Frame, den ws annimmt; groessere schliesst ws mit 1009
+  // (watchMessageLimit schreibt dazu das Log). Die Vorgabe liegt 1 MB
+  // ueber der Dokumentgrenze: hat der Server den Stand einer erlaubten
+  // Seite nicht (verlorene CollabDocument-Zeile), schickt ein Browser mit
+  // Kopie ihn im SyncStep2 in einer Nachricht. 0 heisst bei ws "keine
+  // Grenze".
+  websocketOptions: { maxPayload: sizeLimits.maxMessageBytes },
 
   /**
    * Vor dem WebSocket-Handshake: Versuche je IP, offene Sockets der
@@ -628,6 +765,30 @@ const server = new Server({
   // (establishedConnections); die Vormerkung aus onAuthenticate endet.
   async connected(data) {
     userSlots.settle(slotKey(data.socketId, data.documentName));
+    try {
+      const { connection } = data;
+      // Jede Schreibverbindung bekommt beim Verbinden ihre Stufe, auch "ok":
+      // nach einem Neustart mit hoeherer Grenze oder einer Freigabe auf
+      // einer anderen Instanz verschwindet so ein veralteter Hinweis.
+      if (docSizes.level(connection.document) === "frozen") {
+        lockForSize(connection);
+      } else if (!connection.readOnly) {
+        connection.sendStateless(sizeNotice(connection.document));
+      }
+      watchMessageLimit(connection, data.documentName);
+    } catch (e) {
+      log.warn(
+        { err: e, pageId: data.documentName },
+        "Groessenhinweis nicht gesendet",
+      );
+    }
+  },
+
+  // Der Riegel fuer jede Sync-Nachricht, auch fuer die, die Hocuspocus
+  // vor `connected` aus dem Puffer weitergibt: nach beforeSync prueft es
+  // readOnly fuer SyncStep2 und Update und verwirft sie dann.
+  async beforeSync({ connection, document }) {
+    if (docSizes.level(document) === "frozen") lockForSize(connection);
   },
 
   // Jedes Update einer angemeldeten Verbindung oder einer Direktverbindung
@@ -646,6 +807,15 @@ const server = new Server({
         "Mitwirkende nicht gemerkt",
       );
     }
+    // Groesse: auf jeder Instanz, auch fuer Updates aus Redis.
+    try {
+      noteDocUpdate(data.document, data.update.byteLength);
+    } catch (e) {
+      log.warn(
+        { err: e, pageId: data.documentName },
+        "Groesse nicht fortgeschrieben",
+      );
+    }
   },
 
   async afterUnloadDocument(data) {
@@ -660,6 +830,7 @@ const server = new Server({
 
     if (existing) {
       Y.applyUpdate(data.document, new Uint8Array(existing.state));
+      applyDocSize(data.document, existing.state.byteLength, "laden");
       return data.document;
     }
 
@@ -690,7 +861,10 @@ const server = new Server({
         select: { state: true },
       });
       Y.applyUpdate(data.document, new Uint8Array(row.state));
+      applyDocSize(data.document, row.state.byteLength, "laden");
+      return data.document;
     }
+    measureDocSize(data.document, "laden");
     return data.document;
   },
 
@@ -703,6 +877,10 @@ const server = new Server({
     // Austausch nicht (siehe ./store-watch).
     const marke = storeWatch.current(data.document);
     const state = Buffer.from(Y.encodeStateAsUpdate(data.document));
+    // Groesse vor allem Weiteren (auch vor shouldSnapshot) uebernehmen.
+    // Der Lauf, der die Grenze ueberschreitet, speichert trotzdem ganz:
+    // die Sperre ist keine harte Obergrenze.
+    applyDocSize(data.document, state.byteLength, "speichern");
 
     // Der Yjs-Zustand zuerst und für sich. Er ist das Einzige, woraus
     // onLoadDocument das Dokument wieder aufbaut; alles Weitere (Inhalt
@@ -1565,8 +1743,16 @@ async function enforceRevocations(): Promise<void> {
         !role ||
         !sichtbar ||
         // Herabstufung auf VIEWER: die Verbindung darf nicht mehr
-        // schreiben, also muss sie neu aufgebaut werden.
-        (role === "VIEWER") !== connection.readOnly;
+        // schreiben, also muss sie neu aufgebaut werden. Eine wegen der
+        // Dokumentgroesse gesperrte Schreibverbindung ist kein
+        // Widerspruch: sonst schloesse diese Runde sie, und beim
+        // Neuverbinden wuerde sie wieder gesperrt (eine Schleife im
+        // Minutentakt).
+        roleNeedsReconnect(
+          role,
+          connection.readOnly,
+          sizeLocked.has(connection),
+        );
 
       if (revoked) {
         log.info({ pageId, userId: ctx.userId }, "Verbindung getrennt: Zugriff entzogen");
@@ -1673,6 +1859,28 @@ server
   .listen()
   .then(() => {
     log.info({ port: PORT }, "Hocuspocus läuft");
+    log.info(
+      {
+        dokumentGrenze: sizeLimits.maxDocBytes,
+        warnschwelle: sizeLimits.warnDocBytes,
+        nachrichtenGrenze: sizeLimits.maxMessageBytes,
+      },
+      "Groessengrenzen",
+    );
+    if (sizeLimits.maxDocBytes > 0) {
+      void countCollabDocumentsOver(sizeLimits.maxDocBytes)
+        .then((anzahl) => {
+          if (anzahl > 0) {
+            log.warn(
+              { anzahl, grenze: sizeLimits.maxDocBytes },
+              "Collab-Dokumente ueber der Groessengrenze, nur lesbar (Liste unter /admin/documents)",
+            );
+          }
+        })
+        .catch((e) =>
+          log.warn({ err: e }, "Groesse der Collab-Dokumente nicht geprueft"),
+        );
+    }
     // Mail-Versand von Benachrichtigungen (periodisch, Redis-gelockt).
     startMailDispatcher({ redis, log });
     // KI-Index: Chunks fuer Seiten aus allen Schreibwegen, Embeddings im

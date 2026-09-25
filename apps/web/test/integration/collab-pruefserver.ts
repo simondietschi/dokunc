@@ -69,6 +69,12 @@ export async function startePruefserver(opts: {
    * aus.
    */
   exklusiv?: boolean;
+  /**
+   * Fester Port, etwa fuer einen Neustart auf demselben Port (Provider
+   * verbinden dann von selbst neu). Ohne Angabe der erste freie aus 3150
+   * bis 3199.
+   */
+  port?: number;
 }): Promise<Pruefserver> {
   const redisUrl = redisUrlMitDb(opts.redisDb);
   const redis = new Redis(redisUrl, { maxRetriesPerRequest: 1 });
@@ -83,7 +89,7 @@ export async function startePruefserver(opts: {
   await redis.set("dokunc:mail-dispatch:lock", "pruefstand", "PX", 300_000);
   const vorher = await resetZuhoerer(redis);
 
-  const port = await freierPort();
+  const port = opts.port ?? (await freierPort());
   let ausgabe = "";
   const child: ChildProcess = spawn(
     join(COLLAB_DIR, "node_modules/.bin/tsx"),

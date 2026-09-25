@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { COLLAB_REJECT_REASON } from "@dokunc/editor";
 import {
+  editorEditable,
   statusAfterDisconnect,
   statusAfterRejection,
   statusHandlers,
@@ -55,13 +56,16 @@ describe("statusAfterDisconnect()", () => {
  * damit die Rueckrufe gegen einen echten Zustand laufen und nicht gegen
  * eine Aufzeichnung ihrer Aufrufe.
  */
-function statusZustand(start: EditorStatus = "connecting") {
+function statusZustand(
+  start: EditorStatus = "connecting",
+  opts?: { onMessageTooLarge?: () => void },
+) {
   let wert = start;
   const setStatus: SetEditorStatus = (next) => {
     wert = typeof next === "function" ? next(wert) : next;
   };
   return {
-    h: statusHandlers(setStatus),
+    h: statusHandlers(setStatus, opts),
     get wert() {
       return wert;
     },
@@ -142,6 +146,89 @@ describe("statusHandlers()", () => {
     expect(z.wert).toBe("restored");
     z.h.onDisconnect();
     expect(z.wert).toBe("restored");
+  });
+});
+
+/**
+ * Close-Code 1009: der Collab-Server hat eine Nachricht als zu gross
+ * abgewiesen. Der Editor trennt dann endgueltig (onMessageTooLarge),
+ * sonst verbaende der Provider jede Sekunde neu und schickte dieselbe
+ * Aenderung wieder.
+ */
+describe("statusHandlers() bei einer zu grossen Nachricht", () => {
+  it("1009 fuehrt zu too-large und trennt genau einmal", () => {
+    const trennen = vi.fn();
+    const z = statusZustand("connected", { onMessageTooLarge: trennen });
+    z.h.onClose({ event: { code: 1009 } });
+    expect(z.wert).toBe("too-large");
+    expect(trennen).toHaveBeenCalledTimes(1);
+    // Was der Provider danach meldet, verlaesst too-large nicht.
+    z.h.onStatus({ status: "connecting" });
+    z.h.onDisconnect();
+    z.h.onSynced();
+    z.h.onAuthenticationFailed({ reason: "x" });
+    expect(z.wert).toBe("too-large");
+    expect(trennen).toHaveBeenCalledTimes(1);
+  });
+
+  it("andere Close-Codes aendern nichts", () => {
+    for (const code of [1000, 1006]) {
+      const trennen = vi.fn();
+      const z = statusZustand("connected", { onMessageTooLarge: trennen });
+      z.h.onClose({ event: { code } });
+      expect(z.wert).toBe("connected");
+      expect(trennen).not.toHaveBeenCalled();
+    }
+    // Ohne Ereignis ebenfalls nichts.
+    const z = statusZustand("connected");
+    z.h.onClose({});
+    expect(z.wert).toBe("connected");
+  });
+
+  it("restored hat Vorrang vor too-large", () => {
+    const z = statusZustand("restored");
+    z.h.onClose({ event: { code: 1009 } });
+    expect(z.wert).toBe("restored");
+  });
+
+  it("ohne Rueckruf setzt 1009 trotzdem too-large", () => {
+    const z = statusZustand("connected");
+    z.h.onClose({ event: { code: 1009 } });
+    expect(z.wert).toBe("too-large");
+  });
+});
+
+describe("too-large ausserhalb der Rueckrufe", () => {
+  it("bleibt nach dem Trennen und offline stehen, mit eigener Beschriftung", () => {
+    expect(statusAfterDisconnect("too-large")).toBe("too-large");
+    expect(visibleStatus("too-large", false)).toBe("too-large");
+    expect(statusLabel("too-large").text).toBe("Änderung zu gross");
+    expect(statusLabel("too-large").title).toMatch(/nicht übertragen/);
+  });
+});
+
+describe("editorEditable()", () => {
+  it("die Groessensperre sperrt den Editor", () => {
+    expect(
+      editorEditable({ editable: true, connected: true, sizeLevel: "frozen" }),
+    ).toBe(false);
+  });
+
+  it("warn und kein Hinweis sperren nicht", () => {
+    for (const sizeLevel of ["warn", "ok", null] as const) {
+      expect(editorEditable({ editable: true, connected: true, sizeLevel })).toBe(
+        true,
+      );
+    }
+  });
+
+  it("ohne Verbindung oder ohne Schreibrecht wie bisher gesperrt", () => {
+    expect(
+      editorEditable({ editable: true, connected: false, sizeLevel: null }),
+    ).toBe(false);
+    expect(
+      editorEditable({ editable: false, connected: true, sizeLevel: "ok" }),
+    ).toBe(false);
   });
 });
 

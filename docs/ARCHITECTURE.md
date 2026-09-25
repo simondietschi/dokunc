@@ -224,12 +224,36 @@ dazu baut `planSearch` in `lib/search-query.ts`.
    (Session-Revocation) und Schreibrecht, begrenzt Versuche und
    Verbindungen je Person und verbraucht das Ticket (SET NX in Redis).
    Vorgaben und Begründungen der Grenzen: `apps/collab/src/limits.ts`.
+   Frames über `COLLAB_MAX_MESSAGE_MB` (`maxPayload` von ws) schliesst ws
+   mit 1009; der Editor zeigt dann „Änderung zu gross“ und trennt
+   endgültig. Der Editor startet den Provider erst, wenn seine lokale
+   Kopie (y-indexeddb) geladen ist (höchstens drei Sekunden,
+   `lib/local-copy.ts`), und schickt so beim Abgleich nur die Differenz
+   statt der ganzen Kopie als ein Update.
 4. `onLoadDocument` lädt Yjs-State aus `CollabDocument` (oder seeded aus `Page.content`).
 5. Edits werden als Yjs-Updates zwischen Clients gemerged (CRDT, konfliktfrei).
 6. `onStoreDocument` (debounced) schreibt Yjs-State + extrahierten Text/JSON
    zurück in `Page` und erzeugt periodisch `PageVersion`-Snapshots.
    Mit jedem Snapshot entstehen PAGE_UPDATED-Meldungen für Folgende
    (siehe unten).
+7. Die Grösse des Yjs-Stands misst der Server beim Laden, beim Speichern
+   und gedrosselt bei Änderungen (`onChange` auf jeder Instanz, auch für
+   Updates aus Redis; über der Warnschwelle höchstens alle 64 KB bzw.
+   10 Sekunden). Ab der Hälfte von `COLLAB_MAX_DOC_MB` gibt es einen
+   Hinweis, darüber werden alle Schreibverbindungen `readOnly` (der Riegel
+   sitzt in `beforeSync`, das Hocuspocus auch für gepufferte Nachrichten
+   vor `connected` abwartet). Jede Schreibverbindung bekommt beim
+   Verbinden und bei jedem Stufenwechsel die stateless-Nachricht
+   `dokunc:doc-size` mit Stufe, Grösse und Grenze, auch „ok“, damit ein
+   veralteter Hinweis verschwindet. Wird das Dokument wieder kleiner
+   (Version wiederherstellen), werden die gesperrten Verbindungen
+   geschlossen und gleichen beim Neuverbinden ab. Die Minutenrunde
+   (`enforceRevocations`) behandelt eine wegen der Grösse gesperrte
+   Schreibverbindung nicht als Rollenwiderspruch (`roleNeedsReconnect`).
+   Vorgaben: `packages/editor/src/collab-size.ts`, Logik:
+   `apps/collab/src/doc-size.ts`, Liste der grössten Seiten:
+   `/admin/documents` (`octet_length` auf `CollabDocument.state`, ohne
+   Migration).
 
 **Änderungsmeldungen.** Wer einer Seite folgt, erfährt von Änderungen
 anderer. Jedes Update einer angemeldeten Verbindung (oder der
@@ -521,7 +545,9 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 - [ ] Ausbaustufen: S3, vollständige i18n, Prompt→Dialog-UI,
       pgvector, sobald die Warnung der KI-Suche (ab 20 000 Abschnitten
       je Frage) regelmässig erscheint
-- [ ] Offene Härtung: Größenlimit für Yjs-Dokumente
+- [x] Grössengrenzen für Collab-Nachrichten und Yjs-Dokumente
+      (`COLLAB_MAX_MESSAGE_MB`, `COLLAB_MAX_DOC_MB`), Liste der grössten
+      Seiten unter `/admin/documents`
 
 ## 7. Setup
 

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import {
   ArrowLeft,
+  HardDrive,
   KeyRound,
   ScrollText,
   Trash2,
@@ -96,20 +97,29 @@ export default async function AdminPage({
         <h1 className="text-2xl font-semibold tracking-tight">
           Administration
         </h1>
-        <Link
-          href="/admin/groups"
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] text-ink transition-colors hover:border-line-strong"
-        >
-          <Users className="h-4 w-4 text-muted" />
-          Gruppen
-        </Link>
-        <Link
-          href="/admin/audit"
-          className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] text-ink transition-colors hover:border-line-strong"
-        >
-          <ScrollText className="h-4 w-4 text-muted" />
-          Audit-Log
-        </Link>
+        <div className="flex flex-wrap items-center gap-2">
+          <Link
+            href="/admin/groups"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] text-ink transition-colors hover:border-line-strong"
+          >
+            <Users className="h-4 w-4 text-muted" />
+            Gruppen
+          </Link>
+          <Link
+            href="/admin/audit"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] text-ink transition-colors hover:border-line-strong"
+          >
+            <ScrollText className="h-4 w-4 text-muted" />
+            Audit-Log
+          </Link>
+          <Link
+            href="/admin/documents"
+            className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-line bg-surface px-3 text-[13px] text-ink transition-colors hover:border-line-strong"
+          >
+            <HardDrive className="h-4 w-4 text-muted" />
+            Grösste Seiten
+          </Link>
+        </div>
       </div>
 
       {ablehnung && (

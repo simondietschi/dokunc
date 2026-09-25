@@ -12,9 +12,12 @@
  * Zugriffsentzug bliebe stumm liegen, waehrend alles andere weiterlaeuft.
  *
  * Deshalb stehen sie hier, in einem Paket, das BEIDE Anwendungen
- * ohnehin laden. Das Modul hat bewusst keine Importe (insbesondere kein
- * "server-only"): COLLAB_FIELD braucht auch der Editor im Browser.
+ * ohnehin laden. Das Modul hat bewusst keine Laufzeit-Importe
+ * (insbesondere kein "server-only"): COLLAB_FIELD braucht auch der
+ * Editor im Browser. Der einzige Import ist ein Typ.
  */
+
+import type { DocSizeLevel } from "./collab-size";
 
 /**
  * Name des Yjs-Feldes, in dem das Dokument steckt. Client und
@@ -146,6 +149,69 @@ export const COLLAB_REJECT_REASON = {
    */
   restoreEpoch: "restore-epoch",
 } as const;
+
+/**
+ * Stateless-Nachricht des Collab-Servers an einen Editor: wie gross das
+ * Dokument ist und ob es noch beschrieben werden darf. Kommt bei jeder
+ * Schreibverbindung gleich nach dem Verbinden (auch "ok", damit ein
+ * veralteter Hinweis verschwindet) und bei jedem Wechsel der Stufe.
+ */
+export const DOC_SIZE_NOTICE = "dokunc:doc-size";
+
+export type DocSizeNotice = {
+  type: typeof DOC_SIZE_NOTICE;
+  level: DocSizeLevel;
+  /** Gemessene Groesse des Yjs-Stands; 0, solange nicht gemessen. */
+  bytes: number;
+  /** Dokumentgrenze (COLLAB_MAX_DOC_MB); 0 = keine. */
+  limitBytes: number;
+};
+
+/** Nachricht fuer Connection.sendStateless. */
+export function encodeDocSizeNotice(n: Omit<DocSizeNotice, "type">): string {
+  return JSON.stringify({
+    type: DOC_SIZE_NOTICE,
+    level: n.level,
+    bytes: n.bytes,
+    limitBytes: n.limitBytes,
+  });
+}
+
+const DOC_SIZE_LEVELS: readonly string[] = ["ok", "warn", "frozen"];
+
+function isSize(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+/**
+ * JSON lesen und Form pruefen; alles andere (auch fremde
+ * stateless-Nachrichten) -> null. Zusaetzliche Felder stoeren nicht: ein
+ * neuerer Collab-Server darf mehr mitschicken.
+ */
+export function parseDocSizeNotice(raw: string): DocSizeNotice | null {
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (
+    !isRecord(value) ||
+    value.type !== DOC_SIZE_NOTICE ||
+    typeof value.level !== "string" ||
+    !DOC_SIZE_LEVELS.includes(value.level) ||
+    !isSize(value.bytes) ||
+    !isSize(value.limitBytes)
+  ) {
+    return null;
+  }
+  return {
+    type: DOC_SIZE_NOTICE,
+    level: value.level as DocSizeLevel,
+    bytes: value.bytes,
+    limitBytes: value.limitBytes,
+  };
+}
 
 /**
  * Kanal, ueber den die Web-App bittet, die offenen Collab-Verbindungen

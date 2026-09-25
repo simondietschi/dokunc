@@ -88,6 +88,10 @@ services:
       COLLAB_MAX_CONNECTIONS_PER_USER: ${COLLAB_MAX_CONNECTIONS_PER_USER:-}
       COLLAB_MAX_ATTEMPTS_PER_IP: ${COLLAB_MAX_ATTEMPTS_PER_IP:-}
       COLLAB_MAX_ATTEMPTS_PER_USER: ${COLLAB_MAX_ATTEMPTS_PER_USER:-}
+      # Grössengrenzen in MB (Vorgabe 16 und 17). Die App liest
+      # COLLAB_MAX_DOC_MB für die Liste unter /admin/documents.
+      COLLAB_MAX_DOC_MB: ${COLLAB_MAX_DOC_MB:-}
+      COLLAB_MAX_MESSAGE_MB: ${COLLAB_MAX_MESSAGE_MB:-}
       NODE_ENV: production
       # Reverse-Proxys vor der App (hier: Caddy). Bestimmt, wie die
       # Ratenbegrenzung die Client-IP aus X-Forwarded-For liest. Gilt auch
