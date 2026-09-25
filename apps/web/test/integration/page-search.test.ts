@@ -359,10 +359,23 @@ describe("Trigger", () => {
 
 describe("Obergrenze des Suchvektors", () => {
   it("durchsucht nur den Anfang einer sehr langen Seite", async () => {
-    const words = Array.from({ length: 40_000 }, hexWord);
-    const id = await page("lang", { title: "Lange Seite", textContent: words.join(" ") });
-    expect((await asManager(words[0])).map((h) => h.id)).toContain(id);
-    expect((await asManager(words[words.length - 1])).map((h) => h.id)).not.toContain(id);
+    // Rund 1.3 MB Text. Die ersten 250 000 Zeichen passen mit 'german'
+    // und 'simple' in einen Vektor; der Rueckfall ('simple' ueber
+    // 100 000 Zeichen) darf hier nicht greifen.
+    const words = ["Häuser", ...Array.from({ length: 40_000 }, hexWord)];
+    const text = words.join(" ");
+    const id = await page("lang", { title: "Lange Seite", textContent: text });
+    const found = async (q: string) => (await asManager(q)).map((h) => h.id).includes(id);
+    // Nur der Zweig mit 'german' findet die Wortform.
+    expect(await found("Haus")).toBe(true);
+    expect(await found(words[1])).toBe(true);
+    // Ein Wort zwischen 100 000 und 250 000 Zeichen.
+    const mitte = words[5000];
+    const at = text.indexOf(mitte);
+    expect(at).toBeGreaterThan(100_000);
+    expect(at + mitte.length).toBeLessThan(250_000);
+    expect(await found(mitte)).toBe(true);
+    expect(await found(words[words.length - 1])).toBe(false);
   });
 
   it("scheitert nicht an Woertern aus Zeichen mit 4 Byte", async () => {
@@ -385,6 +398,18 @@ describe("Eingaben", () => {
     }
     expect(await asManager("%")).toEqual([]);
     expect(await asManager("_")).toEqual([]);
+  });
+
+  it("ein Ausschluss, den der Parser verwirft, leert die Trefferliste nicht", async () => {
+    // "½", "²" und "①" gelten als Ziffer, der Textparser verwirft sie
+    // aber: der Ausschluss wird eine leere tsquery.
+    for (const q of ["Rechnung -½", "Rechnung -²", "Rechnung -①"]) {
+      expect((await asManager(q)).map((h) => h.id)).toContain(ids.protokollU);
+    }
+    // Kontrolle: ein echter Ausschluss daneben wirkt weiter.
+    expect((await asManager("Rechnung -½ -Quartals")).map((h) => h.id)).not.toContain(
+      ids.protokollU,
+    );
   });
 
   it("blaettert ohne Dubletten", async () => {

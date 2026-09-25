@@ -216,7 +216,8 @@ dazu baut `planSearch` in `lib/search-query.ts`.
   letzte Wort zusätzlich als Präfix (`to_tsquery(... ':*')`, nur für
   Wörter aus Buchstaben und Ziffern). Ein Ausschluss gilt in beiden
   Sprachen („-Entwürfe“ schliesst auch „Entwurf“ aus) und auch für
-  Titeltreffer.
+  Titeltreffer. Bleibt vom Ausschluss nach dem Textparser nichts übrig
+  („-½“, „-²“), entfällt er, statt jeden Treffer zu verwerfen.
 - Rang: erst Titeltreffer, dann `ts_rank`, dann das Änderungsdatum, zuletzt
   die ID, damit die Seiten beim Blättern stabil bleiben. Schnipsel
   (`ts_headline`, deutsch) nur für die ausgelieferten Zeilen. Jeder

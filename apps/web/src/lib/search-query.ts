@@ -69,7 +69,8 @@ export function planSearch(input: string): SearchPlan {
     if (token.length > 1 && token.startsWith("-")) {
       // Ein Ausschluss ohne Buchstaben oder Ziffern ("-!!") ergaebe eine
       // leere tsquery, und "Vektor @@ leer" ist immer falsch: er haette
-      // jeden Treffer verworfen.
+      // jeden Treffer verworfen. Was der Parser trotz \p{L}/\p{N}
+      // verwirft ("-½", "-²"), faengt searchQueryCte in SQL ab.
       if (/[\p{L}\p{N}]/u.test(token)) neg.push(token);
       lastIsPositiveWord = false;
       continue;

@@ -82,11 +82,20 @@ function negativeQuery(plan: FullTextPlan): Prisma.Sql | null {
     : null;
 }
 
-/** CTE "q" mit pos und neg; nur fuer fullText. Exportiert fuer den EXPLAIN-Test. */
+/**
+ * CTE "q" mit pos und neg; nur fuer fullText. Exportiert fuer den EXPLAIN-Test.
+ *
+ * Ergibt der Ausschluss eine leere tsquery (der Parser verwirft Zeichen
+ * wie "½" oder "²", die fuer planSearch als Ziffer gelten), wird neg
+ * NULL: "Vektor @@ leer" ist immer falsch und haette jeden Treffer
+ * verworfen.
+ */
 export function searchQueryCte(plan: FullTextPlan): Prisma.Sql {
-  return Prisma.sql`q AS (SELECT ${positiveQuery(plan)} AS pos, ${
-    negativeQuery(plan) ?? Prisma.sql`NULL::tsquery`
-  } AS neg)`;
+  const pos = positiveQuery(plan);
+  const neg = negativeQuery(plan);
+  if (!neg) return Prisma.sql`q AS (SELECT ${pos} AS pos, NULL::tsquery AS neg)`;
+  return Prisma.sql`q AS (SELECT pos, CASE WHEN numnode(neg) = 0 THEN NULL ELSE neg END AS neg
+    FROM (SELECT ${pos} AS pos, ${neg} AS neg) q0)`;
 }
 
 /** Trefferbedingung ueber Alias p (und q bei fullText). Exportiert fuer den EXPLAIN-Test. */
@@ -102,9 +111,10 @@ export function pageMatchSql(
   const title = plan.contains
     ? Prisma.sql`p.title ILIKE ${plan.contains}`
     : Prisma.sql`false`;
-  // Der Ausschluss gilt auch fuer Titeltreffer.
+  // Der Ausschluss gilt auch fuer Titeltreffer. q.neg ist NULL, wenn
+  // vom Ausschluss nach dem Parser nichts uebrig bleibt (searchQueryCte).
   const neg = plan.negative
-    ? Prisma.sql` AND p."searchVector" @@ q.neg`
+    ? Prisma.sql` AND (q.neg IS NULL OR p."searchVector" @@ q.neg)`
     : Prisma.empty;
   return Prisma.sql`((${title} OR p."searchVector" @@ q.pos)${neg})`;
 }
