@@ -303,6 +303,16 @@ zeigt der Vergleich alles, was seither dazukam, auch nach dem Ausdünnen
 alter Versionen (dann die nächstältere). Wer die Seite selbst öffnet, hat
 den aktuellen Stand gesehen: offene Änderungsmeldungen dazu werden nach
 dem Rendern gelesen, und die nächste Änderung darf wieder melden.
+Grenze dieser Bindung an den Snapshot: Was nach dem Lesen der Meldung im
+selben Zwei-Minuten-Fenster noch geschrieben wird, meldet erst die
+nächste Bearbeitung der Seite. Jeder Speicherlauf in diesem Fenster
+trifft auf die Drossel, und beim Trennen der letzten Verbindung führt
+Hocuspocus nur einen schon anstehenden Speicherlauf aus; endet die
+Bearbeitung im Fenster, bekommt ihr Nachlauf weder Snapshot noch
+Meldung. Verloren geht nichts: der Vergleich der nächsten Meldung
+beginnt vor deren Snapshot und zeigt den Nachlauf mit. Dieselbe Lücke
+hat die Versionsgeschichte auch ohne Meldungen (siehe Roadmap,
+Nachlauf-Snapshot).
 
 **Wiederherstellen einer Version** muss an diesem Zwischenspeicher vorbei,
 und zwar auf derselben Yjs-Linie. Die Web-App schreibt den Inhalt der
@@ -563,6 +573,14 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       Seite, Link auf den Vergleich)
 - [x] Sicherung und Rückweg (`backup.sh`, `restore.sh`, Restore-Epoche, im
       Docker-Job der CI zurückgespielt)
+- [ ] Nachlauf-Snapshot: trifft ein Speicherlauf auf die belegte
+      Snapshot-Drossel, einen Merker `dokunc:snapshot-pending:<pageId>`
+      setzen; ein Zeitgeber schreibt nach Ablauf der Drossel für diese
+      Seiten einen Snapshot aus `Page.content` und meldet dabei wie der
+      Speicherlauf. Schliesst die Lücke, dass der Nachlauf eines
+      Zwei-Minuten-Fensters weder Version noch Änderungsmeldung bekommt.
+      Braucht eine eigene Spezifikation (Versionsgeschichte, mehrere
+      Instanzen)
 - [ ] Ausbaustufen: S3, vollständige i18n, Prompt→Dialog-UI,
       pgvector, sobald die Warnung der KI-Suche (ab 20 000 Abschnitten
       je Frage) regelmässig erscheint

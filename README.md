@@ -45,7 +45,9 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   Seite folgt (Glocke im Seitenkopf), erfährt von neuen Kommentaren und von
   Änderungen am Inhalt. Eine Änderung meldet dokunc höchstens alle zwei
   Minuten je Seite und nur einmal, bis die Meldung oder die Seite geöffnet
-  ist; die Meldung führt zum Vergleich mit dem Stand davor
+  ist; die Meldung führt zum Vergleich mit dem Stand davor. Was nach dem
+  Lesen der Meldung im selben Zwei-Minuten-Fenster noch geschrieben wird,
+  meldet erst die nächste Bearbeitung der Seite
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) über den ganzen
   Bestand, auch gleich nach einem Import, + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
@@ -601,9 +603,15 @@ Minuten mitgeschrieben haben (gesammelt in Redis unter
 `dokunc:page-editors:<Seite>`, über alle Instanzen), und ohne die im selben
 Lauf neu Erwähnten. Je Person und Seite bleibt höchstens eine Meldung
 ungelesen; gelesen ist sie, sobald die Meldung oder die Seite geöffnet
-wird. Die Mail verschickt der Dispatcher wie bei Erwähnungen, sofort
-gebündelt oder im Tagesdigest. Wer hinter diese Version zurückrollt,
-entfernt vorher die Zeilen mit
+wird. Der Snapshot entsteht beim ersten Speichern nach Ablauf der zwei
+Minuten, also am Anfang einer Bearbeitung. Was nach dem Lesen der
+Meldung im selben Zwei-Minuten-Fenster noch geschrieben wird, meldet
+erst die nächste Bearbeitung der Seite: endet die Bearbeitung in diesem
+Fenster, entsteht für diesen Nachlauf bis dahin weder ein Snapshot noch
+eine Meldung. Der Vergleich der nächsten Meldung zeigt ihn mit. Die Mail
+verschickt der Dispatcher wie bei Erwähnungen, sofort gebündelt oder im
+Tagesdigest. Wer hinter diese Version zurückrollt, entfernt vorher die
+Zeilen mit
 `DELETE FROM "Notification" WHERE type = 'PAGE_UPDATED'`: ein älterer Stand
 kann sie nicht lesen.
 

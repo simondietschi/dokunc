@@ -153,14 +153,38 @@ async function warteAufVersionen(pageId: string, n: number): Promise<void> {
 }
 
 /**
- * Wartet, bis ein Speicherlauf ohne Snapshot durch ist: der Text steht in
- * Page.textContent, danach folgen im Lauf nur noch Links, Chunks und die
- * Frage an die Drossel. Die kurze Pause deckt diesen Rest ab.
+ * Wie oft der Server je Seite die Drossel gefragt hat (`SET
+ * dokunc:snapshot:<pageId> 1 PX ... NX` in shouldSnapshot), mitgelesen
+ * per MONITOR. Der Test selbst belegt die Drossel ohne NX (`drossel`) und
+ * zaehlt hier nicht mit.
+ */
+const drosselFragen = new Map<string, number>();
+let monitor: Redis | null = null;
+
+function drosselGefragt(pageId: string): number {
+  return drosselFragen.get(pageId) ?? 0;
+}
+
+/**
+ * Schreibt mit `schreibe` bei belegter Drossel und wartet, bis der
+ * Speicherlauf mit `text` an der Drossel vorbei ist: der Text steht in
+ * Page.textContent, und der Server hat die Drossel danach gefragt (und
+ * wegen der belegten Drossel keinen Snapshot bekommen). Erst dann darf
+ * der Test sie freigeben, sonst holte sich dieser Lauf den Snapshot.
+ *
+ * Voraussetzung: vorher laeuft fuer die Seite kein Speicherlauf mehr und
+ * keiner steht an (frisch geoeffnet oder nach diesem Helfer). Hocuspocus
+ * fuehrt die Speicherlaeufe eines Dokuments nacheinander aus
+ * (saveMutex); die erste Frage nach `schreibe` stammt also von einem
+ * Lauf, der den Text schon enthaelt.
  */
 async function speicherlaufOhneSnapshot(
   pageId: string,
   text: string,
+  schreibe: () => void,
 ): Promise<void> {
+  const vorher = drosselGefragt(pageId);
+  schreibe();
   await warteBis(
     async () =>
       (
@@ -172,7 +196,11 @@ async function speicherlaufOhneSnapshot(
     `Speicherlauf mit "${text}"`,
     { log },
   );
-  await new Promise((r) => setTimeout(r, 1_000));
+  await warteBis(
+    () => drosselGefragt(pageId) > vorher,
+    `Frage an die Drossel nach "${text}"`,
+    { log },
+  );
 }
 
 /** Hat Redis die Person als Mitwirkende der Seite gemerkt? */
@@ -187,6 +215,18 @@ beforeAll(async () => {
     exklusiv: true,
   });
   redis = collab.redis;
+  monitor = await redis.monitor();
+  monitor.on("monitor", (_zeit: string, args: string[]) => {
+    const [befehl, schluessel, ...rest] = args;
+    if (
+      befehl?.toLowerCase() === "set" &&
+      schluessel?.startsWith("dokunc:snapshot:") &&
+      rest.some((a) => a.toUpperCase() === "NX")
+    ) {
+      const pageId = schluessel.slice("dokunc:snapshot:".length);
+      drosselFragen.set(pageId, drosselGefragt(pageId) + 1);
+    }
+  });
 
   [E1, E2, F, G, H, D] = await Promise.all([
     neuePerson("E1"),
@@ -219,6 +259,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const p of providers) p.destroy();
+  monitor?.disconnect();
   await collab?.stop();
   vi.unstubAllEnvs();
   if (spaceId) await prisma.space.deleteMany({ where: { id: spaceId } });
@@ -291,11 +332,14 @@ describe("PAGE_UPDATED gegen einen echten Collab-Server", () => {
 
     // Beide schreiben, waehrend die Drossel belegt ist: kein Snapshot.
     await drossel(pageId);
-    tippe(a.doc, "von E1");
+    await speicherlaufOhneSnapshot(pageId, "von E1", () =>
+      tippe(a.doc, "von E1"),
+    );
     await warteBis(() => gemerkt(pageId, E1), "E1 gemerkt", { log });
-    tippe(b.doc, "von E2");
+    await speicherlaufOhneSnapshot(pageId, "von E2", () =>
+      tippe(b.doc, "von E2"),
+    );
     await warteBis(() => gemerkt(pageId, E2), "E2 gemerkt", { log });
-    await speicherlaufOhneSnapshot(pageId, "von E2");
     expect(await versionen(pageId)).toBe(0);
     expect(await meldungen(F, pageId)).toBe(0);
 
@@ -315,9 +359,10 @@ describe("PAGE_UPDATED gegen einen echten Collab-Server", () => {
     const b = await oeffne(E2, pageId);
 
     await drossel(pageId);
-    tippe(a.doc, "frueher von E1");
+    await speicherlaufOhneSnapshot(pageId, "frueher von E1", () =>
+      tippe(a.doc, "frueher von E1"),
+    );
     await warteBis(() => gemerkt(pageId, E1), "E1 gemerkt", { log });
-    await speicherlaufOhneSnapshot(pageId, "frueher von E1");
     // Als haette E1 vor zehn Minuten zuletzt geschrieben.
     await redis.zadd(
       `dokunc:page-editors:${pageId}`,
@@ -339,8 +384,9 @@ describe("PAGE_UPDATED gegen einen echten Collab-Server", () => {
     const a = await oeffne(E1, pageId);
 
     await drossel(pageId);
-    tippe(a.doc, "gedrosselt");
-    await speicherlaufOhneSnapshot(pageId, "gedrosselt");
+    await speicherlaufOhneSnapshot(pageId, "gedrosselt", () =>
+      tippe(a.doc, "gedrosselt"),
+    );
     expect(await versionen(pageId)).toBe(0);
     expect(await meldungen(F, pageId)).toBe(0);
 
@@ -464,10 +510,12 @@ describe("PAGE_UPDATED gegen einen echten Collab-Server", () => {
       // Gemerkt wird in onChange, lange vor dem Speicherlauf; ob es in
       // Redis ankam, prueft erst das Ergebnis (E1 keine Meldung).
       await drossel(pageId);
-      tippe(a.doc, "auf A");
-      await speicherlaufOhneSnapshot(pageId, "auf A");
-      tippe(b.doc, "auf B");
-      await speicherlaufOhneSnapshot(pageId, "auf B");
+      await speicherlaufOhneSnapshot(pageId, "auf A", () =>
+        tippe(a.doc, "auf A"),
+      );
+      await speicherlaufOhneSnapshot(pageId, "auf B", () =>
+        tippe(b.doc, "auf B"),
+      );
       expect(await versionen(pageId)).toBe(0);
 
       // Der Snapshot entsteht auf B; E1 kennt nur A.
