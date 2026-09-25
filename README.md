@@ -573,9 +573,12 @@ beim Start im Log. Alle Instanzen brauchen dieselben Werte.
   `Collab-Nachricht ueber der Groessengrenze, Verbindung geschlossen`
   mit Seite und Person. Der Editor zeigt „Änderung zu gross“, trennt
   endgültig (kein Neuverbinden im Sekundentakt) und bietet an, die lokale
-  Änderung zu verwerfen und neu zu laden. Nicht kleiner als die
-  Dokumentgrenze setzen: fehlt dem Server der Stand einer Seite, schickt
-  ein Browser seine Kopie beim Abgleich in einer Nachricht. Beim Öffnen
+  Änderung zu verwerfen und neu zu laden. Mindestens Dokumentgrenze
+  plus 1 setzen, sonst warnt der Server beim Start: fehlt ihm der Stand
+  einer Seite, schickt ein Browser seine Kopie beim Abgleich in einer
+  Nachricht, und eine Seite kann die Dokumentgrenze um eine Änderung
+  überschreiten, bevor die Sperre greift. Dazu kommt der Rahmen des
+  Protokolls. Beim Öffnen
   lädt der Editor zuerst seine Kopie aus IndexedDB (höchstens drei
   Sekunden) und verbindet erst dann; so schickt er nur, was dem Server
   fehlt, statt die ganze Kopie auf einmal.
@@ -599,8 +602,19 @@ beim Start im Log. Alle Instanzen brauchen dieselben Werte.
   dafür ebenfalls `COLLAB_MAX_DOC_MB`.
 
 Für bestehende Installationen: Seiten über 16 MB sind nach diesem Update
-nur noch lesbar. Wer solche Seiten hat (Startlog, `/admin/documents`),
-setzt `COLLAB_MAX_DOC_MB` vorher höher.
+nur noch lesbar. Startlog und `/admin/documents` gibt es erst mit dem
+Update. Wer vorher wissen will, ob es solche Seiten gibt, fragt die
+Datenbank:
+
+```bash
+docker compose exec db psql -U dokunc dokunc -c \
+  'SELECT count(*) FROM "CollabDocument" WHERE octet_length("state") > 16 * 1024 * 1024;'
+```
+
+Ist die Zahl grösser als 0, vor dem Update `COLLAB_MAX_DOC_MB` höher
+setzen. Wer erst nach dem Update prüft (Startlog, `/admin/documents`),
+hebt die Grenze dann an und startet den Collab-Server neu; bis dahin
+sind diese Seiten nur lesbar, verloren geht nichts.
 
 **Änderungsmeldungen:** Wer einer Seite folgt, bekommt eine Meldung, wenn
 andere ihren Inhalt ändern. Sie entsteht nur zusammen mit einem Snapshot

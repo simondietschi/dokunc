@@ -577,15 +577,27 @@ export function CollaborativeEditor({
     [spaceId],
   );
 
+  /**
+   * Darf der Inhalt gerade geaendert werden (Rolle, Verbindung,
+   * Groessensperre)? Gilt fuer alles, was ins Yjs-Dokument schreibt:
+   * den Editor selbst, die Formatierungsleiste, den Blockgriff, das
+   * Auswahlmenue und das Entfernen von Kommentar-Markierungen. Die Leiste
+   * pruefte das vorher nicht: ihre Befehle dispatchen auch in einen
+   * gesperrten Editor, und bei einer Groessensperre blieb die Aenderung
+   * dann nur in diesem Browser liegen (der Server verwirft sie) und kam
+   * erst nach dem Aufheben der Sperre nachtraeglich an.
+   */
+  const inhaltBearbeitbar = editorEditable({
+    editable,
+    connected: !!conn && status === "connected",
+    sizeLevel: sizeNotice?.level ?? null,
+  });
+
   const editor = useEditor(
     {
     // Vor dem Erst-Sync ist der Editor nur Platzhalter: nicht editierbar
     // (das Yjs-Dokument ist noch leer), ohne Collaboration-Extensions.
-    editable: editorEditable({
-      editable,
-      connected: !!conn && status === "connected",
-      sizeLevel: sizeNotice?.level ?? null,
-    }),
+    editable: inhaltBearbeitbar,
     immediatelyRender: false,
     extensions: [
       ...richExtensions({
@@ -683,15 +695,8 @@ export function CollaborativeEditor({
   // nachziehen, statt den Editor dafuer neu aufzubauen.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    editor.setEditable(
-      editorEditable({
-        editable,
-        connected: !!conn && status === "connected",
-        sizeLevel: sizeNotice?.level ?? null,
-      }),
-      false,
-    );
-  }, [editor, editable, conn, status, sizeNotice]);
+    editor.setEditable(inhaltBearbeitbar, false);
+  }, [editor, inhaltBearbeitbar]);
 
   /**
    * Der Blockgriff kommt erst, wenn der Editor einmal den Fokus hatte.
@@ -722,33 +727,56 @@ export function CollaborativeEditor({
   }, [editor, griffBereit]);
 
   // CommentsPanel bittet darum, eine Kommentar-Markierung zu entfernen
-  // (Thread verworfen oder aufgelöst).
+  // (Thread verworfen oder aufgelöst). Ist der Inhalt gerade gesperrt
+  // (Groessensperre, getrennt), wartet die Bitte, bis er wieder
+  // bearbeitbar ist: sofort ausgefuehrt, bliebe die Aenderung nur in
+  // diesem Browser liegen. Ein Neuladen vorher verliert sie; die
+  // Markierung bleibt dann stehen.
+  const offeneMarkenRef = useRef(new Set<string>());
+  const entferneOffeneMarken = useCallback(() => {
+    const offen = offeneMarkenRef.current;
+    if (!editor || editor.isDestroyed || !editor.isEditable || !offen.size) {
+      return;
+    }
+    const { state } = editor;
+    const markType = state.schema.marks.commentMark;
+    if (!markType) return;
+    const tr = state.tr;
+    state.doc.descendants((node, pos) => {
+      for (const mark of node.marks) {
+        if (
+          mark.type === markType &&
+          offen.has(String(mark.attrs.commentId))
+        ) {
+          tr.removeMark(pos, pos + node.nodeSize, markType);
+        }
+      }
+    });
+    offen.clear();
+    if (tr.docChanged) editor.view.dispatch(tr);
+  }, [editor]);
   useEffect(() => {
     if (!editor) return;
     return onBrowserEvent(EVENT_REMOVE_COMMENT_MARK, ({ id }) => {
-      if (editor.isDestroyed) return;
-      const { state } = editor;
-      const markType = state.schema.marks.commentMark;
-      if (!markType) return;
-      const tr = state.tr;
-      state.doc.descendants((node, pos) => {
-        for (const mark of node.marks) {
-          if (mark.type === markType && mark.attrs.commentId === id) {
-            tr.removeMark(pos, pos + node.nodeSize, markType);
-          }
-        }
-      });
-      if (tr.docChanged) editor.view.dispatch(tr);
+      offeneMarkenRef.current.add(id);
+      entferneOffeneMarken();
     });
-  }, [editor]);
+  }, [editor, entferneOffeneMarken]);
+  // Nach dem setEditable-Effekt oben: erst dann ist der Editor wieder frei.
+  useEffect(() => {
+    if (inhaltBearbeitbar) entferneOffeneMarken();
+  }, [inhaltBearbeitbar, entferneOffeneMarken]);
 
   // Verwaiste Kommentar-Markierungen aufräumen: ein abgebrochener Entwurf
   // (Navigation, Reload, Absturz) setzt den Mark bereits im Yjs-Dokument,
   // bevor der Thread in der DB existiert. Einmal nach dem Sync durchgehen
-  // und alle Marks ohne zugehörigen Thread entfernen.
+  // und alle Marks ohne zugehörigen Thread entfernen. Erst wenn der
+  // Inhalt bearbeitbar ist, sonst ginge auch das nur in diesen Browser.
   useEffect(() => {
     const provider = conn?.provider;
-    if (!editor || !editable || !provider || sweptRef.current) return;
+    if (!editor || !inhaltBearbeitbar || !provider || sweptRef.current) {
+      return;
+    }
     const valid = new Set(commentThreadIds);
 
     const sweep = () => {
@@ -781,7 +809,7 @@ export function CollaborativeEditor({
     return () => {
       provider.off("synced", sweep);
     };
-  }, [editor, editable, conn, commentThreadIds]);
+  }, [editor, inhaltBearbeitbar, conn, commentThreadIds]);
 
   // Vom CommentsPanel angestossen: zur markierten Textstelle scrollen.
   useEffect(() => {
@@ -1042,12 +1070,18 @@ export function CollaborativeEditor({
         />
       </div>
 
-      {editable && griffBereit && <BlockHandle editor={editor} />}
+      {inhaltBearbeitbar && griffBereit && <BlockHandle editor={editor} />}
 
-      {/* Toolbar */}
+      {/* Toolbar. Sie steht fuer alle mit Schreibrecht und bleibt an
+          ihrem Platz, damit der Text beim Verbinden nicht springt; solange
+          der Inhalt gesperrt ist, sind ihre Knoepfe aus. */}
       {editable && (
         <div className="sticky top-14 z-10 mx-auto mt-4 max-w-[760px] px-6">
-          <EditorToolbar editor={editor} onPrompt={openPrompt} />
+          <EditorToolbar
+            editor={editor}
+            onPrompt={openPrompt}
+            gesperrt={!inhaltBearbeitbar}
+          />
         </div>
       )}
 
@@ -1060,7 +1094,7 @@ export function CollaborativeEditor({
       </div>
 
       {/* Formatieren direkt an der Auswahl. */}
-      {editable && editor && (
+      {inhaltBearbeitbar && editor && (
         <SelectionMenu editor={editor} onPrompt={openPrompt} />
       )}
 
@@ -1072,7 +1106,13 @@ export function CollaborativeEditor({
         label={prompt?.label ?? ""}
         placeholder={prompt?.placeholder}
         submitLabel={prompt?.submitLabel}
-        onSubmit={(value) => prompt?.onSubmit(value)}
+        onSubmit={(value) => {
+          // Alle Rueckfragen hier schreiben ins Dokument (Link, Video).
+          // Wurde der Inhalt gesperrt, waehrend der Dialog offen war,
+          // bliebe die Aenderung nur in diesem Browser liegen.
+          if (!editor?.isEditable) return;
+          prompt?.onSubmit(value);
+        }}
         onClose={() => setPrompt(null)}
       />
     </div>
