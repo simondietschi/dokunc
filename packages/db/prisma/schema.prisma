@@ -254,6 +254,7 @@ model Page {
   incomingLinks PageLink[] @relation("LinkTarget")
   comments      Comment[]
   chunks        PageChunk[]
+  aiIndexQueue  AiIndexQueue?
   subscriptions PageSubscription[]
   favorites     Favorite[]
   visits        PageVisit[]
@@ -425,19 +426,37 @@ model Notification {
 }
 
 /// Text-Chunk einer Seite für die KI-Suche ("Frag dein Wiki").
-/// embedding: Float32-Vektor (Bytes) — optional, nur mit Embedding-Key.
+/// embedding: Float32-Vektor (Bytes), optional, nur mit
+/// Embedding-Schluessel; embeddingModel nennt das Modell.
 model PageChunk {
-  id         String   @id @default(cuid())
-  pageId     String
-  chunkIndex Int
-  text       String
-  embedding  Bytes?
-  updatedAt  DateTime @updatedAt
+  id             String   @id @default(cuid())
+  pageId         String
+  chunkIndex     Int
+  text           String
+  embedding      Bytes?
+  /// Modell, mit dem `embedding` entstand (EMBEDDING_MODEL). Null ohne
+  /// Embedding und bei Altbestand von vor 20260925100000.
+  embeddingModel String?
+  updatedAt      DateTime @updatedAt
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   @@unique([pageId, chunkIndex])
   @@index([pageId])
+  @@index([embeddingModel])
+}
+
+/// Seiten, deren KI-Index (PageChunk) nicht mehr zum textContent passt.
+/// Zeilen legen die Trigger "Page_aiIndexQueue_insert" und
+/// "Page_aiIndexQueue_update" an (Migration 20260925100000_ai_index), bei
+/// jeder neuen Seite und jeder echten Aenderung von textContent, gleich auf
+/// welchem Weg. Entfernt nur von indexPageChunks (@dokunc/db, src/ai-index.ts).
+/// Nie von Hand schreiben.
+model AiIndexQueue {
+  pageId   String   @id
+  queuedAt DateTime @default(now())
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
 }
 
 model PageVersion {

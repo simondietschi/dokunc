@@ -86,6 +86,22 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   Datensatz, die nirgends mehr verwendet werden, räumt der Web-Prozess
   periodisch weg (`lib/upload-sweeper.ts`, gestartet aus
   `instrumentation.ts`, siehe README „Verwaiste Uploads“).
+- **PageChunk**: pageId, chunkIndex, text, embedding (Float32-Bytes),
+  embeddingModel (Modell, mit dem das Embedding entstand; null ohne
+  Embedding und beim Altbestand von vor der Migration `20260925100000`).
+- **AiIndexQueue**: Seiten, deren Chunks nicht zum Text passen (pageId,
+  queuedAt). Nur Trigger fügen ein, nur `indexPageChunks` entfernt.
+
+**Trigger in der Datenbank:** `Page_aiIndexQueue_insert` und
+`Page_aiIndexQueue_update` (Funktion `dokunc_ai_index_enqueue`, beide
+AFTER) stellen jede neue Seite und jede echte Änderung von `textContent`
+in die `AiIndexQueue`, gleich auf welchem Weg der Text entstand (Editor,
+Import, Vorlage, Kopie, Wiederherstellen, rohes SQL). `Page` selbst wird
+dabei nicht beschrieben. Prisma kennt Trigger nicht: sie stehen nur in
+der Migration `20260925100000_ai_index`, `prisma migrate dev` lässt sie
+stehen, und `prisma migrate diff` zeigt sie nicht. `pg_restore` legt
+Trigger erst nach den Daten an; Warteschlange und Chunks kommen dort aus
+demselben Snapshot.
 
 Die **wirksame Rolle** einer Person in einem Space ist die stärkste aus
 eigener Mitgliedschaft und allen Gruppen, die dem Space zugeordnet sind
@@ -180,6 +196,27 @@ stünden danach wieder im Dokument. Ohne Quittung verwirft die Web-App
 `CollabDocument` (der nächste Start baut aus `Page.content`) und zeigt
 einen Hinweis.
 
+**KI-Index.** Welche Seiten neue Chunks brauchen, halten die Trigger in
+`AiIndexQueue` fest (siehe §4). Der Speicherlauf (`onStoreDocument`)
+gleicht die eben gespeicherte Seite sofort ab (`indexPageChunks` aus
+`@dokunc/db`): nur wenn sie ansteht, unter der Zeilensperre
+`FOR NO KEY UPDATE`, mit Diff je `chunkIndex`, sodass unveränderte
+Abschnitte ihr Embedding behalten. Alles andere (Import, Vorlagen, Kopien,
+Wiederherstellen) holt der Hintergrundjob `apps/collab/src/ai-indexer.ts`
+nach, alle `AI_INDEX_INTERVAL_S` Sekunden unter einer Redis-Sperre
+(`dokunc:ai-index:lock`; ist Redis nicht erreichbar, läuft er ohne
+Sperre, doppelte Läufe sind durch `SKIP LOCKED` und bedingtes Schreiben
+unschädlich). Mit `VOYAGE_API_KEY` und `ANTHROPIC_API_KEY` bettet derselbe
+Job Chunks ohne Embedding des aktuellen Modells in Stapeln ein und
+schreibt je Chunk das Modell mit, nur solange der Text unverändert ist;
+Papierkorb und Vorlagen bleiben aussen vor. Nach einem Wechsel von
+`EMBEDDING_MODEL` baut er so den Bestand neu auf. Die Web-App
+(`lib/retrieval.ts`) bettet nur noch die Frage ein: Sie vergleicht alle
+Chunks der für die Person sichtbaren Seiten, stapelweise und ohne Deckel,
+behält die besten acht und warnt ab 20 000 Chunks je Frage im Log. Gibt
+es sichtbare Chunks ohne passendes Embedding, mischt sie Volltexttreffer
+aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
+
 ## 6. Roadmap / Status
 
 - [x] Architektur & Plan
@@ -216,7 +253,9 @@ einen Hinweis.
       Collab-Server, Thread-Antworten)
 - [x] KI-Layer: "Frag dein Wiki" (RAG mit Quellenangaben; Retrieval
       semantisch via Voyage-Embeddings, FTS-Fallback ohne Key;
-      Chunk-Indexierung im Collab-Server) + KI-Aktionen im Editor
+      Chunk-Index für alle Schreibwege (Queue per Trigger,
+      Hintergrundjob im Collab-Prozess), Embeddings mit Modell je
+      Chunk) + KI-Aktionen im Editor
       (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) über
       Claude API (claude-opus-4-8, adaptive thinking, Prompt-Caching);
       graceful deaktiviert ohne ANTHROPIC_API_KEY
@@ -367,7 +406,8 @@ einen Hinweis.
       Kontoanlage nur mit `OIDC_ALLOW_SIGNUP`; der zweite Faktor gilt
       auch hier, damit er nicht an der Sicherheit des Anbieters hängt
 - [ ] Ausbaustufen: S3, vollständige i18n, Prompt→Dialog-UI,
-      pgvector ab ~10k Seiten
+      pgvector, sobald die Warnung der KI-Suche (ab 20 000 Abschnitten
+      je Frage) regelmässig erscheint
 - [ ] Offene Härtung: Größenlimit für Yjs-Dokumente
 
 ## 7. Setup

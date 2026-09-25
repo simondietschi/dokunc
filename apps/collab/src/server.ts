@@ -14,6 +14,7 @@ import {
   canSeePage,
   canSeePageWithGrant,
   effectiveSpaceRole,
+  indexPageChunks,
   prisma,
   strongestSpaceRole,
   type SpaceRole,
@@ -40,10 +41,11 @@ import {
   isPageAccessMessage,
   extractWikiLinkIds,
   extractMentionIds,
-  chunkText,
+  chunkForAiIndex,
   type DocResetMessage,
 } from "@dokunc/editor";
 import { startMailDispatcher } from "./mail-dispatcher";
+import { startAiIndexer } from "./ai-indexer";
 import { createDocResetHandler, type ResetContent } from "./doc-reset";
 import { resolveAppSecret } from "./secret";
 import { StoreWatch } from "./store-watch";
@@ -734,7 +736,11 @@ const server = new Server({
       await syncWikiLinks(pageId, before.spaceId, json).catch((e) =>
         log.warn({ err: e, pageId, editorId }, "wikiLink sync fehlgeschlagen"),
       );
-      await indexChunks(pageId, textContent).catch((e) =>
+      // Scheitert es, bleibt die Seite in AiIndexQueue, und der KI-Index
+      // (./ai-indexer) holt sie im naechsten Lauf nach. Ohne skipLocked:
+      // haelt der Job die Seite gerade, wartet der Speicherlauf kurz.
+      // textContent liest indexPageChunks selbst unter der Zeilensperre.
+      await indexPageChunks(pageId, { chunk: chunkForAiIndex }).catch((e) =>
         log.warn({ err: e, pageId, editorId }, "chunk indexing fehlgeschlagen"),
       );
     }
@@ -865,49 +871,6 @@ async function newMentionRecipients(
   });
   const alreadyOpen = new Set(open.map((n) => n.userId));
   return reachable.filter((userId) => !alreadyOpen.has(userId));
-}
-
-/** Chunk-Größe für die KI-Indexierung (Zeichen). */
-const CHUNK_SIZE = 1200;
-
-/**
- * Zerlegt den Seitentext in Chunks und speichert sie für die KI-Suche.
- * Embeddings werden (falls konfiguriert) vom Retrieval-Layer der Web-App
- * nachgezogen — hier wird nur der Text aktuell gehalten.
- */
-async function indexChunks(pageId: string, text: string): Promise<void> {
-  const chunks = chunkText(text, CHUNK_SIZE);
-  // Nur geänderte Chunks anfassen. Wer bei jedem Speichern ALLE
-  // Embeddings verwirft, lässt nach jedem Tastendruck-Batch die ganze
-  // Seite neu einbetten — kostenpflichtige API-Aufrufe für Text, der
-  // sich gar nicht geändert hat, und bis dahin fehlt sie der Suche.
-  const existing = await prisma.pageChunk.findMany({
-    where: { pageId },
-    select: { chunkIndex: true, text: true },
-  });
-  const before = new Map(existing.map((c) => [c.chunkIndex, c.text]));
-
-  const writes = chunks
-    .map((chunk, i) => ({ chunk, i }))
-    .filter(({ chunk, i }) => before.get(i) !== chunk)
-    .map(({ chunk, i }) =>
-      prisma.pageChunk.upsert({
-        where: { pageId_chunkIndex: { pageId, chunkIndex: i } },
-        // embedding auf null: Text hat sich geändert -> neu einbetten.
-        create: { pageId, chunkIndex: i, text: chunk },
-        update: { text: chunk, embedding: null },
-      }),
-    );
-
-  const stale = existing.some((c) => c.chunkIndex >= chunks.length);
-  if (writes.length === 0 && !stale) return;
-
-  await prisma.$transaction([
-    prisma.pageChunk.deleteMany({
-      where: { pageId, chunkIndex: { gte: chunks.length } },
-    }),
-    ...writes,
-  ]);
 }
 
 /** Plain-Text aus ProseMirror-JSON ziehen (für Suche/History). */
@@ -1538,6 +1501,9 @@ server
     log.info({ port: PORT }, "Hocuspocus läuft");
     // Mail-Versand von Benachrichtigungen (periodisch, Redis-gelockt).
     startMailDispatcher({ redis, log });
+    // KI-Index: Chunks fuer Seiten aus allen Schreibwegen, Embeddings im
+    // Hintergrund (periodisch, Redis-Sperre, siehe ./ai-indexer).
+    startAiIndexer({ redis, log });
     startDocResetListener();
     setInterval(() => {
       void enforceRevocations().catch((e) =>

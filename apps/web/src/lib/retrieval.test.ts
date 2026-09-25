@@ -9,80 +9,17 @@ vi.mock("./space-access", async (importOriginal) => ({
   accessibleSpaces: vi.fn(async () => []),
 }));
 
-import { parseEmbeddings, retrieveChunks } from "./retrieval";
+import {
+  keepBest,
+  mergeHits,
+  retrieveChunks,
+  type RetrievedChunk,
+} from "./retrieval";
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   warn.mockReset();
-});
-
-describe("parseEmbeddings", () => {
-  it("gibt die Vektoren in der Reihenfolge der Anfrage zurück", () => {
-    const payload = { data: [{ embedding: [1, 2] }, { embedding: [3, 4] }] };
-    expect(parseEmbeddings(payload, 2)).toEqual([
-      [1, 2],
-      [3, 4],
-    ]);
-  });
-
-  it("sortiert nach index, wenn der Dienst ihn mitgibt", () => {
-    const payload = {
-      data: [
-        { index: 1, embedding: [3, 4] },
-        { index: 0, embedding: [1, 2] },
-      ],
-    };
-    expect(parseEmbeddings(payload, 2)).toEqual([
-      [1, 2],
-      [3, 4],
-    ]);
-  });
-
-  it("verwirft eine Antwort mit zu wenigen Einträgen", () => {
-    // Sonst landete undefined in vectorToBytes und die Anfrage bräche ab.
-    expect(parseEmbeddings({ data: [{ embedding: [1, 2] }] }, 2)).toBeNull();
-  });
-
-  it("verwirft doppelte und ausserhalb liegende Indizes", () => {
-    expect(
-      parseEmbeddings(
-        {
-          data: [
-            { index: 0, embedding: [1] },
-            { index: 0, embedding: [2] },
-          ],
-        },
-        2,
-      ),
-    ).toBeNull();
-    expect(
-      parseEmbeddings(
-        {
-          data: [
-            { index: 0, embedding: [1] },
-            { index: 7, embedding: [2] },
-          ],
-        },
-        2,
-      ),
-    ).toBeNull();
-  });
-
-  it("verwirft Antworten ohne brauchbare Zahlenliste", () => {
-    expect(parseEmbeddings({ data: [{ embedding: "nope" }] }, 1)).toBeNull();
-    expect(parseEmbeddings({ data: [{ embedding: [] }] }, 1)).toBeNull();
-    expect(
-      parseEmbeddings({ data: [{ embedding: [1, Number.NaN] }] }, 1),
-    ).toBeNull();
-    expect(parseEmbeddings({ data: [{}] }, 1)).toBeNull();
-  });
-
-  it("verwirft Antworten ohne data-Array", () => {
-    expect(parseEmbeddings(null, 1)).toBeNull();
-    expect(parseEmbeddings({}, 1)).toBeNull();
-    expect(parseEmbeddings({ data: "x" }, 1)).toBeNull();
-  });
 });
 
 describe("retrieveChunks", () => {
@@ -101,5 +38,61 @@ describe("retrieveChunks", () => {
       ([, msg]) => msg === "voyage nicht erreichbar",
     );
     expect(aufruf?.[0].err).toBe(fehler);
+  });
+});
+
+describe("keepBest", () => {
+  it("haelt die k besten absteigend und ignoriert schlechtere", () => {
+    const best: { score: number }[] = [];
+    for (const score of [0.1, 0.9, 0.5, 0.7, 0.2, 0.8]) keepBest(best, { score }, 3);
+    expect(best.map((b) => b.score)).toEqual([0.9, 0.8, 0.7]);
+    keepBest(best, { score: 0.3 }, 3);
+    expect(best.map((b) => b.score)).toEqual([0.9, 0.8, 0.7]);
+  });
+
+  it("k = 0: bleibt leer", () => {
+    const best: { score: number }[] = [];
+    keepBest(best, { score: 1 }, 0);
+    expect(best).toEqual([]);
+  });
+});
+
+describe("mergeHits", () => {
+  const hit = (chunkId: string, score = 1): RetrievedChunk => ({
+    chunkId,
+    pageId: `p-${chunkId}`,
+    pageTitle: "T",
+    text: chunkId,
+    score,
+  });
+  const liste = (prefix: string, n: number) =>
+    Array.from({ length: n }, (_, i) => hit(`${prefix}${i}`, 1 - i / 100));
+  const ids = (hits: RetrievedChunk[]) => hits.map((h) => h.chunkId);
+
+  it("nichts fehlt: nur semantische Treffer", () => {
+    expect(ids(mergeHits(liste("s", 10), liste("f", 10), { missing: 0, total: 50 }, 8))).toEqual(
+      ids(liste("s", 8)),
+    );
+  });
+
+  it("1 von 100 fehlend: 6 semantische und 2 aus dem Volltext", () => {
+    const out = mergeHits(liste("s", 10), liste("f", 10), { missing: 1, total: 100 }, 8);
+    expect(ids(out)).toEqual([...ids(liste("s", 6)), "f0", "f1"]);
+  });
+
+  it("Volltext liefert nur einen: die Semantik fuellt auf", () => {
+    const out = mergeHits(liste("s", 10), liste("f", 1), { missing: 1, total: 100 }, 8);
+    expect(ids(out)).toEqual([...ids(liste("s", 7)), "f0"]);
+  });
+
+  it("derselbe Chunk in beiden Listen erscheint einmal", () => {
+    const out = mergeHits([hit("x"), hit("s1")], [hit("x"), hit("f1")], { missing: 5, total: 10 }, 8);
+    expect(ids(out)).toEqual(["x", "s1", "f1"]);
+  });
+
+  it("gar keine Chunks gezaehlt: nur Volltext", () => {
+    expect(ids(mergeHits([], liste("f", 3), { missing: 0, total: 0 }, 8))).toEqual(
+      ids(liste("f", 3)),
+    );
   });
 });

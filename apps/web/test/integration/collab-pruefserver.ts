@@ -12,7 +12,8 @@ import { DOC_RESET_CHANNEL } from "@dokunc/editor";
  *
  * Er arbeitet auf derselben Postgres-Datenbank wie die Tests. Damit sein
  * Mail-Versand dort nichts anfasst, belegt der Pruefstand dessen Sperre
- * fuer die Dauer des Laufs.
+ * fuer die Dauer des Laufs. Sein KI-Index ist abgeschaltet
+ * (AI_INDEX_INTERVAL_S=0), damit er keine Seiten anderer Tests indexiert.
  */
 
 const COLLAB_DIR = fileURLToPath(new URL("../../../collab", import.meta.url));
@@ -95,6 +96,7 @@ export async function startePruefserver(opts: {
         REDIS_URL: redisUrl,
         APP_SECRET: opts.appSecret,
         LOG_LEVEL: "info",
+        AI_INDEX_INTERVAL_S: "0",
         ...opts.env,
       },
       stdio: ["ignore", "pipe", "pipe"],

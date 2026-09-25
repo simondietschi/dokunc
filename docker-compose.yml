@@ -131,6 +131,11 @@ services:
       AI_MODEL: ${AI_MODEL:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      # KI-Index im Collab-Prozess: Abstand der Laeufe in Sekunden (10 bis
+      # 3600, 0 = aus, dann keine Embeddings mehr) und Abschnitte je
+      # Anfrage an Voyage (1 bis 256)
+      AI_INDEX_INTERVAL_S: ${AI_INDEX_INTERVAL_S:-60}
+      AI_INDEX_EMBED_BATCH: ${AI_INDEX_EMBED_BATCH:-64}
       # PDF-Export über den mitlaufenden Gotenberg-Service
       GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
     volumes:

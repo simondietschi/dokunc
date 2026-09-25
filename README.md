@@ -43,7 +43,8 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   sich live aktualisiert. Optional **per Mail**, sofort gebündelt oder
   als tägliche Zusammenfassung, pro Person im Konto einstellbar; Seiten
   lassen sich einzeln abonnieren
-- **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
+- **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) über den ganzen
+  Bestand, auch gleich nach einem Import, + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
 - **Anhänge** beliebigen Typs (PDF, Office, Archive, Medien) per
@@ -242,7 +243,9 @@ geändert ist, läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
 alle bestehenden Sitzungen).
 Weitere Optionen — SMTP für Einladungs- und
 Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
-`ANTHROPIC_API_KEY` für die KI-Funktionen, `MAX_UPLOAD_MB` für das
+`ANTHROPIC_API_KEY` für die KI-Funktionen, `VOYAGE_API_KEY` für die
+semantische Suche von „Frag dein Wiki“, `AI_INDEX_INTERVAL_S` für den
+KI-Index, `MAX_UPLOAD_MB` für das
 Upload-Limit, `UPLOAD_SWEEP_INTERVAL_H` für den Aufräumer verwaister
 Uploads, `SESSION_IDLE_TIMEOUT` für die Abmeldung nach Untätigkeit
 (empfohlen für geteilte Geräte) — siehe `.env.example`.
@@ -311,6 +314,26 @@ ohne etwas zu löschen, und meldet das im Log; meist passen dann
 Dateien gelten 24 Stunden lang als neu, Datenbank und Uploads also
 innerhalb dieser Frist einspielen.
 
+**KI-Index:** Der Collab-Prozess zerlegt alle `AI_INDEX_INTERVAL_S`
+Sekunden (Vorgabe 60, erlaubt 10 bis 3600) neue und geänderte Seiten in
+Abschnitte, gleich auf welchem Weg der Text entstand (Editor, Import,
+Vorlage, Kopie, Wiederherstellen). Mit `VOYAGE_API_KEY` und
+`ANTHROPIC_API_KEY` bettet er sie in Stapeln ein (`AI_INDEX_EMBED_BATCH`,
+Vorgabe 64) und merkt sich je Abschnitt das Modell; nach einem Wechsel von
+`EMBEDDING_MODEL` baut er neu auf. **Damit geht der Text aller Seiten
+ausser Papierkorb und Vorlagen an Voyage AI, auch geschützte Seiten, und
+Kosten entstehen für den ganzen Bestand, nicht nur beim Fragen.** Solange
+Abschnitte ohne Embedding sind, mischt „Frag dein Wiki“ Volltexttreffer
+bei; eine frisch importierte Seite ist bis zum nächsten Lauf noch nicht
+dabei. Die Suche vergleicht alle Abschnitte, die die fragende Person sehen
+darf; ab 20 000 je Frage steht eine Warnung im Log.
+`AI_INDEX_INTERVAL_S=0` schaltet den Index ab: dann entstehen keine
+Embeddings mehr, „Frag dein Wiki“ sucht nur im Volltext, und Seiten aus
+Import oder Vorlagen bekommen erst beim Bearbeiten Abschnitte. Mehrere
+Instanzen stimmen sich per Redis-Sperre ab; ist Redis nicht erreichbar,
+arbeitet jede für sich (höchstens doppelte Anfragen an Voyage). Log mit
+`component: "ai-indexer"`.
+
 ## Lokale Entwicklung (ohne Docker)
 
 Voraussetzungen: Node 26 (`.nvmrc`), pnpm, lokal laufendes PostgreSQL 16 + Redis.
@@ -341,7 +364,11 @@ fünf Verbindungsgrenzen `COLLAB_MAX_…` (siehe nächster Absatz),
 `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_SECURE` (false), `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `MAIL_FROM_ADDRESS` (für Benachrichtigungs-Mails; ohne
 `SMTP_HOST` gibt es Benachrichtigungen nur in der App), `APP_URL`
-(http://localhost:3000; Links in Mails), `LOG_LEVEL` (info), `DEBUG_DB`
+(http://localhost:3000; Links in Mails), `VOYAGE_API_KEY` (leer; ohne
+ihn keine Embeddings), `ANTHROPIC_API_KEY` (hier nur Schalter fürs
+Einbetten: ohne ihn bettet der KI-Index nichts ein), `EMBEDDING_MODEL`
+(voyage-3.5-lite), `AI_INDEX_INTERVAL_S` (60, 0 = aus),
+`AI_INDEX_EMBED_BATCH` (64), `LOG_LEVEL` (info), `DEBUG_DB`
 (leer; gesetzt protokolliert Prisma jede Abfrage).
 
 Der Collab-Server begrenzt offene Verbindungen (je Instanz, je
@@ -409,7 +436,10 @@ Datensätze an (und wieder ab); sie leeren nichts. Einige starten dafür einen e
 Collab-Server (Port 3150 bis 3199, eigene Redis-Datenbank). Solange sie
 laufen, darf kein anderer Collab-Server an demselben Redis hängen, etwa
 aus `pnpm dev`: Pub/Sub gilt über alle Redis-Datenbanken hinweg, und er
-führte die Wiederherstellungen der Tests mit aus.
+führte die Wiederherstellungen der Tests mit aus. Der Prüf-Collab-Server
+läuft mit abgeschaltetem KI-Index. Die Integrationstests nicht neben einem
+laufenden `pnpm dev` starten: dessen Hintergrundjobs arbeiten auf derselben
+Datenbank.
 
 Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
 Server) und erwartet Postgres + Redis aus `.env`. In Umgebungen mit
