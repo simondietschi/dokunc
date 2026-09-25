@@ -13,8 +13,10 @@ import {
   MessageSquarePlus,
 } from "lucide-react";
 import { EditorButton, EditorSeparator } from "./EditorButton";
+import { normalizeLinkInput } from "@/lib/editor-text";
 import { startCommentThread } from "./comment-thread";
 import type { PromptRequest } from "./SlashCommands";
+import { DEFAULT_HIGHLIGHT } from "@/lib/brand";
 
 /**
  * Formatier-Menü direkt an der Textauswahl. Die sticky Leiste bleibt
@@ -103,7 +105,7 @@ export function SelectionMenu({
       </EditorButton>
       <EditorButton
         label="Markieren"
-        on={() => c().toggleHighlight({ color: "#fde68a" }).run()}
+        on={() => c().toggleHighlight({ color: DEFAULT_HIGHLIGHT }).run()}
         active={active.highlight}
       >
         <Highlighter className="h-4 w-4" />
@@ -111,8 +113,13 @@ export function SelectionMenu({
       <EditorButton
         label={active.link ? "Link entfernen" : "Link"}
         on={() => {
+          // Wie in der Leiste: extendMarkRange, sonst bleibt beim
+          // Entfernen aus der Mitte eines Links ein Rest der Markierung
+          // stehen. Und normalizeLinkInput, sonst wird aus "example.com"
+          // ein relativer Link auf /s/<slug>/p/example.com.
+          const linked = () => c().extendMarkRange("link");
           if (active.link) {
-            c().unsetLink().run();
+            linked().unsetLink().run();
             return;
           }
           onPrompt({
@@ -120,7 +127,11 @@ export function SelectionMenu({
             label: "Ziel-URL",
             placeholder: "https://…",
             submitLabel: "Verlinken",
-            onSubmit: (href) => c().setLink({ href }).run(),
+            onSubmit: (input) => {
+              const href = normalizeLinkInput(input);
+              if (!href) return;
+              linked().setLink({ href }).run();
+            },
           });
         }}
         active={active.link}

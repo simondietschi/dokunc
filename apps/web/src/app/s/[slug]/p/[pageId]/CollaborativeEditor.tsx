@@ -10,11 +10,14 @@ import {
 } from "@tiptap/react";
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import Placeholder from "@tiptap/extension-placeholder";
+// @tiptap/extension-placeholder ist seit v3 eine leere Weiterleitung
+// auf @tiptap/extensions und liegt im Tiptap-Repo unter
+// packages-deprecated; direkt aus der Quelle importiert.
+import { Placeholder } from "@tiptap/extensions";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
-import { richExtensions } from "@dokunc/editor";
+import { COLLAB_FIELD, richExtensions } from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
@@ -32,7 +35,6 @@ import { TableOfContents } from "@/components/editor/TableOfContents";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { AttachmentView } from "@/components/editor/AttachmentView";
 import { BlockHandle } from "@/components/editor/BlockHandle";
-import { Outline } from "@/components/editor/Outline";
 import { PageCover, PageIcon } from "@/components/editor/PageChrome";
 import { ShareDialog, type ShareRow } from "./ShareDialog";
 import {
@@ -62,6 +64,7 @@ import {
   IMAGE_ACCEPT,
   pickAndUpload,
   uploadAndInsert,
+  uploadFile,
 } from "@/components/editor/upload";
 import {
   createSlashCommands,
@@ -72,37 +75,31 @@ import { SelectionMenu } from "@/components/editor/SelectionMenu";
 import { PromptDialog } from "@/components/ui/PromptDialog";
 import { useToast } from "@/components/ui/Toast";
 import { caretColorFor } from "@/lib/caret-color";
+import {
+  statusHandlers,
+  statusLabel,
+  visibleStatus,
+  type EditorStatus,
+} from "@/lib/editor-status";
 import { looksLikeMarkdown, markdownToHtml } from "@/lib/markdown-paste";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/cn";
+import { IMAGE_TYPE_NAMES } from "@/lib/image-types";
 import { toggleSubscriptionAction } from "./comments/actions";
 import {
   renamePageAction,
   setPageCoverAction,
   setPageIconAction,
 } from "../../actions";
-
-/**
- * Titelbild hochladen. Der Rest der Dateiwege laeuft ueber
- * `components/editor/upload` (mehrere Dateien, Fehler pro Datei); das
- * Cover braucht nur die fertige URL einer einzelnen Datei.
- */
-async function uploadCoverImage(
-  file: File,
-  spaceId: string,
-  pageId: string,
-): Promise<string> {
-  const body = new FormData();
-  body.set("file", file);
-  // Space und Seite entscheiden, wer die Datei spaeter sehen darf.
-  body.set("spaceId", spaceId);
-  body.set("pageId", pageId);
-  body.set("kind", "image");
-  const res = await fetch("/api/upload", { method: "POST", body });
-  if (!res.ok) throw new Error(`Upload abgelehnt (${res.status})`);
-  const { url } = (await res.json()) as { url: string };
-  return url;
-}
+import { DEFAULT_PAGE_TITLE, EMPTY_PAGE_TITLE } from "@/lib/page-title";
+import {
+  EVENT_FOCUS_COMMENT_THREAD,
+  EVENT_PAGE_RENAMED,
+  EVENT_REMOVE_COMMENT_MARK,
+  EVENT_SCROLL_TO_COMMENT_MARK,
+  onBrowserEvent,
+  sendBrowserEvent,
+} from "@/lib/browser-events";
 
 /**
  * Setzt HTML an der aktuellen Auswahl ein.
@@ -203,6 +200,7 @@ export function CollaborativeEditor({
   collabUrl,
   editable,
   canManage,
+  canAdminister,
   userId,
   userName,
   pdfEnabled,
@@ -226,6 +224,8 @@ export function CollaborativeEditor({
   collabUrl: string;
   editable: boolean;
   canManage: boolean;
+  /** Ab ADMIN: darf Schutz und Freigaben einer Seite verwalten. */
+  canAdminister: boolean;
   userId: string;
   userName: string;
   pdfEnabled: boolean;
@@ -259,9 +259,7 @@ export function CollaborativeEditor({
   // Vor dem Sync ist das Yjs-Dokument noch leer bzw. unvollstaendig —
   // wer da schon tippt, schreibt in ein Dokument, dessen Inhalt gleich
   // erst eintrifft, und der Text landet an der falschen Stelle.
-  const [status, setStatus] = useState<
-    "connecting" | "connected" | "offline"
-  >("connecting");
+  const [status, setStatus] = useState<EditorStatus>("connecting");
   const [peers, setPeers] = useState<Peer[]>([]);
   const [titleValue, setTitleValue] = useState(title);
   const [prompt, setPrompt] = useState<PromptRequest | null>(null);
@@ -280,23 +278,32 @@ export function CollaborativeEditor({
   const [iconValue, setIconValue] = useState(icon);
   const [coverValue, setCoverValue] = useState(coverUrl);
 
-  const onUploadError = useCallback(() => {
-    toast({
-      title: "Upload fehlgeschlagen",
-      description: "Erlaubt sind PNG, JPG, GIF und WebP bis 10 MB.",
-      variant: "error",
-    });
-  }, [toast]);
+  const onUploadError = useCallback(
+    (reason?: unknown) => {
+      toast({
+        title: "Upload fehlgeschlagen",
+        // Bevorzugt die Servermeldung: sie nennt den Grund und die
+        // tatsaechlich geltende Grenze. Die fest verdrahteten 10 MB
+        // logen, sobald MAX_UPLOAD_MB kleiner gesetzt ist — die Person
+        // versuchte es dann vergeblich erneut.
+        description:
+          reason instanceof Error && reason.message
+            ? reason.message
+            : `Erlaubt sind ${IMAGE_TYPE_NAMES}.`,
+        variant: "error",
+      });
+    },
+    [toast],
+  );
 
   /** Sidebar sofort nachziehen; der Server liefert den Titel spaeter
    * ueber revalidatePath ohnehin nach. */
   const announceTitle = useCallback(
     (value: string) => {
-      window.dispatchEvent(
-        new CustomEvent("dokunc:page-renamed", {
-          detail: { pageId, title: value || "Untitled" },
-        }),
-      );
+      sendBrowserEvent(EVENT_PAGE_RENAMED, {
+        pageId,
+        title: value || DEFAULT_PAGE_TITLE,
+      });
     },
     [pageId],
   );
@@ -382,9 +389,14 @@ export function CollaborativeEditor({
       const file = input.files?.[0];
       if (!file) return;
       try {
-        void saveCover(await uploadCoverImage(file, spaceId, pageId));
-      } catch {
-        onUploadError();
+        // Derselbe Weg wie Bilder im Text (components/editor/upload): eine
+        // Fassung der Anfrage an /api/upload, nicht zwei. "image" erzwingt
+        // die strenge Bildpruefung — ein Titelbild darf kein Anhang werden.
+        // Wirft mit der Begruendung der Route, die onUploadError zeigt.
+        const { url } = await uploadFile(file, { spaceId, pageId }, "image");
+        void saveCover(url);
+      } catch (e) {
+        onUploadError(e);
       }
     };
     input.click();
@@ -422,10 +434,11 @@ export function CollaborativeEditor({
         ? null
         : new IndexeddbPersistence(`dokunc:${pageId}`, ydoc);
     // Die Status-Callbacks gehoeren in den Konstruktor: der Provider
-    // verbindet sofort, ein spaeter registrierter Listener koennte das
-    // "authenticated"-Ereignis verpassen. "Live" erst nach erfolgreicher
-    // Server-Authentifizierung: Socket-Open allein heisst noch nicht,
-    // dass wir schreiben duerfen.
+    // verbindet sofort, ein spaeter registrierter Listener koennte den
+    // ersten Sync oder eine Ablehnung verpassen. Was sie mit dem Status tun
+    // ("Live" erst nach dem Erst-Sync, eine Ablehnung ueberdauert das
+    // Trennen), steht in lib/editor-status (statusHandlers, dort
+    // getestet).
     const provider = new HocuspocusProvider({
       url: collabUrl,
       name: pageId,
@@ -434,14 +447,7 @@ export function CollaborativeEditor({
       // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
       // HTML gelangt nichts Wiederverwendbares.
       token: () => fetchCollabTicket(pageId),
-      // Erst der abgeschlossene Erst-Sync macht das Dokument bedienbar
-      // (onAuthenticated allein kommt vor den Inhalten).
-      onSynced: () => setStatus("connected"),
-      onAuthenticationFailed: () => setStatus("offline"),
-      onStatus: ({ status }) => {
-        if (status !== "connected") setStatus("connecting");
-      },
-      onDisconnect: () => setStatus("connecting"),
+      ...statusHandlers(setStatus),
     });
     setConn({ ydoc, provider });
     return () => {
@@ -458,11 +464,11 @@ export function CollaborativeEditor({
     () =>
       createSlashCommands({
         onImage: (e, r) =>
-          pickAndUpload(
-            e,
-            { spaceId, pageId },
-            { accept: IMAGE_ACCEPT, range: r },
-          ),
+          pickAndUpload(e, { spaceId, pageId }, {
+            accept: IMAGE_ACCEPT,
+            range: r,
+            onError: onUploadError,
+          }),
         onMarkdownImport: (e, r) =>
           pickAndImportMarkdown(e, r, () =>
             toast({
@@ -471,10 +477,11 @@ export function CollaborativeEditor({
               variant: "error",
             }),
           ),
-        onAttachment: (e, r) => pickAndUpload(e, { spaceId, pageId }, { range: r }),
+        onAttachment: (e, r) =>
+          pickAndUpload(e, { spaceId, pageId }, { range: r, onError: onUploadError }),
         onPrompt: openPrompt,
       }),
-    [openPrompt, pageId, spaceId, toast],
+    [onUploadError, openPrompt, pageId, spaceId, toast],
   );
 
   const wikiLinkSuggest = useMemo(
@@ -532,7 +539,7 @@ export function CollaborativeEditor({
       }),
       ...(conn
         ? [
-            Collaboration.configure({ document: conn.ydoc, field: "default" }),
+            Collaboration.configure({ document: conn.ydoc, field: COLLAB_FIELD }),
             CollaborationCaret.configure({
               provider: conn.provider,
               user: { name: userName, color },
@@ -555,9 +562,7 @@ export function CollaborativeEditor({
           .find((m) => m.type.name === "commentMark");
         const id = mark?.attrs.commentId;
         if (typeof id !== "string" || !id) return false;
-        window.dispatchEvent(
-          new CustomEvent("dokunc:focus-comment-thread", { detail: { id } }),
-        );
+        sendBrowserEvent(EVENT_FOCUS_COMMENT_THREAD, { id });
         return false;
       },
       // Dateien per Einfuegen: hochladen, dann als Bild oder Anhang
@@ -568,7 +573,7 @@ export function CollaborativeEditor({
         const files = Array.from(event.clipboardData?.files ?? []);
         if (files.length > 0) {
           event.preventDefault();
-          void uploadAndInsert(view, files, { spaceId, pageId });
+          void uploadAndInsert(view, files, { spaceId, pageId }, onUploadError);
           return true;
         }
 
@@ -596,7 +601,7 @@ export function CollaborativeEditor({
           left: event.clientX,
           top: event.clientY,
         })?.pos;
-        void uploadAndInsert(view, files, { spaceId, pageId }, pos);
+        void uploadAndInsert(view, files, { spaceId, pageId }, onUploadError, pos);
         return true;
       },
     },
@@ -612,12 +617,39 @@ export function CollaborativeEditor({
     editor.setEditable(editable && !!conn && status === "connected", false);
   }, [editor, editable, conn, status]);
 
+  /**
+   * Der Blockgriff kommt erst, wenn der Editor einmal den Fokus hatte.
+   *
+   * Er ist eine Zeigegeste — vor der ersten Beruehrung braucht ihn
+   * niemand. Von Anfang an eingehaengt kostete er dagegen genau den
+   * ersten Mausdruck: sein ProseMirror-Plugin ist aktiv, sobald die
+   * Komponente steht (der Griff selbst ist dabei noch `visibility:
+   * hidden` und weit weg vom Zeiger), und es verschluckt den mousedown,
+   * mit dem der Browser den Cursor setzen wuerde. Der Klick landete dann
+   * zwar im Editor — er bekam den Fokus — aber die Auswahl blieb auf
+   * ProseMirrors Vorgabe stehen: dem DOKUMENTANFANG. Wer daraufhin
+   * tippte, schrieb seinen Text vor den Seiteninhalt, ohne dass etwas
+   * darauf hindeutete.
+   *
+   * Nachgemessen ueber je zehn Kaltstarts: mit Griff von Anfang an ging
+   * der erste Klick in sieben von zehn Laeufen verloren, mit dieser
+   * Zeile in keinem einzigen.
+   */
+  const [griffBereit, setGriffBereit] = useState(false);
+  useEffect(() => {
+    if (!editor || griffBereit) return;
+    const an = () => setGriffBereit(true);
+    editor.on("focus", an);
+    return () => {
+      editor.off("focus", an);
+    };
+  }, [editor, griffBereit]);
+
   // CommentsPanel bittet darum, eine Kommentar-Markierung zu entfernen
   // (Thread verworfen oder aufgelöst).
   useEffect(() => {
     if (!editor) return;
-    const onRemove = (e: Event) => {
-      const { id } = (e as CustomEvent<{ id: string }>).detail;
+    return onBrowserEvent(EVENT_REMOVE_COMMENT_MARK, ({ id }) => {
       if (editor.isDestroyed) return;
       const { state } = editor;
       const markType = state.schema.marks.commentMark;
@@ -631,10 +663,7 @@ export function CollaborativeEditor({
         }
       });
       if (tr.docChanged) editor.view.dispatch(tr);
-    };
-    window.addEventListener("dokunc:remove-comment-mark", onRemove);
-    return () =>
-      window.removeEventListener("dokunc:remove-comment-mark", onRemove);
+    });
   }, [editor]);
 
   // Verwaiste Kommentar-Markierungen aufräumen: ein abgebrochener Entwurf
@@ -680,8 +709,7 @@ export function CollaborativeEditor({
 
   // Vom CommentsPanel angestossen: zur markierten Textstelle scrollen.
   useEffect(() => {
-    const onScrollTo = (e: Event) => {
-      const { id } = (e as CustomEvent<{ id: string }>).detail;
+    return onBrowserEvent(EVENT_SCROLL_TO_COMMENT_MARK, ({ id }) => {
       const el = document.querySelector(`[data-comment-id="${CSS.escape(id)}"]`);
       if (!el) return;
       el.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -690,10 +718,7 @@ export function CollaborativeEditor({
         () => el.classList.remove("dk-comment-anchor--active"),
         1600,
       );
-    };
-    window.addEventListener("dokunc:scroll-to-comment-mark", onScrollTo);
-    return () =>
-      window.removeEventListener("dokunc:scroll-to-comment-mark", onScrollTo);
+    });
   }, []);
 
   useEffect(() => {
@@ -715,26 +740,17 @@ export function CollaborativeEditor({
     return () => aw.off("change", sync);
   }, [conn]);
 
-  // Ohne Netz ist "Verbinde…" irreführend; das Gerät versucht es gar
-  // nicht erst. Der lokale Puffer trägt in dieser Zeit weiter.
-  const effectiveStatus =
-    status === "connected" ? "connected" : online ? status : "offline";
+  // Was angezeigt wird, entscheidet lib/editor-status (dort getestet):
+  // ohne Netz "Offline" statt "Verbinde…", eine Ablehnung bleibt stehen.
+  // Der lokale Puffer traegt offline weiter.
+  const effectiveStatus = visibleStatus(status, online);
   const dot =
     effectiveStatus === "connected"
       ? "bg-emerald-500"
-      : effectiveStatus === "offline"
-        ? "bg-danger"
-        : "bg-amber-500";
-  const statusText =
-    effectiveStatus === "connected"
-      ? "Live"
-      : effectiveStatus === "offline"
-        ? "Offline"
-        : "Verbinde…";
-  const statusTitle =
-    effectiveStatus === "offline"
-      ? "Ohne Verbindung. Änderungen werden auf diesem Gerät gesichert und später übertragen."
-      : undefined;
+      : effectiveStatus === "connecting"
+        ? "bg-amber-500"
+        : "bg-danger";
+  const { text: statusText, title: statusTitle } = statusLabel(effectiveStatus);
 
   return (
     <div>
@@ -783,6 +799,7 @@ export function CollaborativeEditor({
                   inheritedFrom={access.inheritedFrom}
                   grants={access.grants}
                   people={access.people}
+                  canAdminister={canAdminister}
                   groups={access.groups}
                 />
               </>
@@ -897,13 +914,12 @@ export function CollaborativeEditor({
               editor?.commands.focus("start");
             }
           }}
-          placeholder="Ohne Titel"
+          placeholder={EMPTY_PAGE_TITLE}
           className="w-full bg-transparent text-[2.5rem] font-bold leading-tight tracking-tight text-ink outline-none placeholder:text-faint"
         />
       </div>
 
-      <Outline editor={editor} />
-      {editable && <BlockHandle editor={editor} />}
+      {editable && griffBereit && <BlockHandle editor={editor} />}
 
       {/* Toolbar */}
       {editable && (
@@ -912,9 +928,10 @@ export function CollaborativeEditor({
         </div>
       )}
 
-      {/* Canvas */}
+      {/* Canvas. Das Inhaltsverzeichnis ist das einzige der Seite: es
+          waehlt selbst zwischen Panel und Block ueber dem Text. */}
       <div className="mt-6 animate-[fade-in_0.4s_ease]">
-        <TableOfContents editor={editor}>
+        <TableOfContents editor={editor} synced={status === "connected"}>
           <EditorContent editor={editor} />
         </TableOfContents>
       </div>

@@ -1,12 +1,14 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { stripImageMetadata } from "@/lib/image-metadata";
 import {
   ALLOWED_IMAGE_TYPES,
   UPLOAD_DIR,
   sniffImageType,
   uploadLimitBytes,
+  uploadPath,
 } from "@/lib/uploads";
 
 /**
@@ -30,10 +32,30 @@ export async function storeImportedImage(
   const ext = mimeType ? ALLOWED_IMAGE_TYPES[mimeType] : undefined;
   if (!mimeType || !ext) return { ok: false, reason: "type" };
 
+  // Wie beim Upload ueber /api/upload: Metadaten raus, bevor die Datei
+  // liegt. Ein Export aus einem anderen Wiki bringt die EXIF-Daten der
+  // Originalfotos unveraendert mit.
+  const rein = stripImageMetadata(bytes, mimeType);
+
   const storedName = `${randomBytes(16).toString("hex")}.${ext}`;
   await mkdir(UPLOAD_DIR, { recursive: true });
-  await writeFile(path.join(UPLOAD_DIR, storedName), bytes);
-  return { ok: true, file: { storedName, mimeType, size: bytes.length } };
+  await writeFile(path.join(UPLOAD_DIR, storedName), rein);
+  return { ok: true, file: { storedName, mimeType, size: rein.length } };
+}
+
+/**
+ * Eine von `storeImportedImage` geschriebene Datei wieder entfernen —
+ * wenn ihr Anhang nicht angelegt werden konnte oder der Import
+ * zurueckgenommen wird. Fehlt die Datei schon, ist das Ziel erreicht.
+ */
+export async function removeImportedImage(storedName: string): Promise<void> {
+  const full = uploadPath(storedName);
+  if (!full) return;
+  try {
+    await unlink(full);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
 }
 
 /** data:image/...;base64,... -> Bytes (null bei fremdem Format). */

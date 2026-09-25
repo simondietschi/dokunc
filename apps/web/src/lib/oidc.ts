@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
+import { normalizeEmail } from "./invitations";
 import { log } from "./log";
 
 /**
@@ -27,10 +28,47 @@ export type OidcConfig = {
   allowSignup: boolean;
 };
 
+/**
+ * Warum der konfigurierte Aussteller unbrauchbar ist — oder null.
+ *
+ * Der Wert wird unten per Zeichenkette zur Discovery-Adresse verlängert
+ * und entscheidet damit, woher die Signaturschlüssel kommen. Ohne diese
+ * Prüfung liefe ein Aussteller ohne Schema („idp.example") erst im
+ * `fetch` auf einen Fehler, den der Anmeldeweg nur noch als `sso=error`
+ * zeigt; und mit `http` gingen Discovery-Dokument, JWKS und der
+ * Token-Tausch samt Client-Secret unverschlüsselt durchs Netz — wer im
+ * Netzpfad sitzt, tauschte die Schlüssel aus und fälschte beliebige
+ * ID-Token. `http` bleibt allein für den eigenen Rechner erlaubt, damit
+ * ein Anbieter in der Entwicklung weiter benutzbar ist.
+ */
+function issuerProblem(issuer: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(issuer);
+  } catch {
+    return "keine absolute URL";
+  }
+  if (url.protocol === "https:") return null;
+  const local =
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "[::1]";
+  if (url.protocol === "http:" && local) return null;
+  return "kein https";
+}
+
 export function oidcConfig(): OidcConfig | null {
   const issuer = process.env.OIDC_ISSUER?.trim().replace(/\/+$/, "");
   const clientId = process.env.OIDC_CLIENT_ID?.trim();
   if (!issuer || !clientId) return null;
+  const problem = issuerProblem(issuer);
+  if (problem) {
+    // Lieber gar kein SSO als eines, dessen Schlüssel jemand unterwegs
+    // austauschen kann: die Anmeldung mit Passwort bleibt bestehen, und
+    // die Ursache steht im Log statt nur als „sso=error" im Browser.
+    log.error({ issuer, problem }, "OIDC_ISSUER unbrauchbar — SSO bleibt aus");
+    return null;
+  }
   return {
     issuer,
     clientId,
@@ -39,10 +77,6 @@ export function oidcConfig(): OidcConfig | null {
     label: process.env.OIDC_BUTTON_LABEL?.trim() || "Single Sign-on",
     allowSignup: process.env.OIDC_ALLOW_SIGNUP === "true",
   };
-}
-
-export function isOidcEnabled(): boolean {
-  return oidcConfig() !== null;
 }
 
 type Discovery = {
@@ -89,11 +123,6 @@ export async function discover(config: OidcConfig): Promise<Discovery> {
   }
   cached = { at: Date.now(), doc };
   return doc;
-}
-
-/** Nur für Tests: den Zwischenspeicher leeren. */
-export function resetDiscoveryCache(): void {
-  cached = null;
 }
 
 /** Zufälliger, URL-sicherer Wert für state, nonce und den Verifier. */
@@ -214,6 +243,22 @@ function jwksFor(uri: string) {
 }
 
 /**
+ * Grobe Form einer Adresse: genau ein „@", links und rechts davon etwas
+ * ohne Leerraum.
+ *
+ * Bewusst nicht strenger — massgeblich ist das Verzeichnis des
+ * Anbieters, und dort kommen Adressen ohne Punkt in der Domain
+ * („alex@intranet") vor. Ein blosses `includes("@")` liesse dagegen den
+ * Claim „@" durch: der wanderte als eindeutiger Schlüssel in die
+ * Benutzertabelle und ergäbe beim Anlegen über `split("@")[0]` ein Konto
+ * mit leerem Anzeigenamen. 254 Zeichen ist die Obergrenze einer Adresse
+ * nach RFC 5321; ohne sie landet ein beliebig langer Claim in derselben
+ * Spalte.
+ */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+$/;
+const EMAIL_MAX_LENGTH = 254;
+
+/**
  * Liest die Angaben, auf die sich diese App stützt.
  *
  * `email_verified` wird ernst genommen: eine unbestätigte Adresse darf
@@ -221,10 +266,17 @@ function jwksFor(uri: string) {
  * Adresse als unbestätigt — die Instanz kann die Verknüpfung dann
  * immer noch über das Subject herstellen.
  */
+
 export function readClaims(payload: Record<string, unknown>): OidcClaims {
+  // normalizeEmail und nicht von Hand trimmen: die Adresse wird gleich
+  // als eindeutiger Schlüssel gegen dieselbe Spalte gesucht, die der
+  // Passwortweg füllt — dieselbe Schreibweise muss dabei denselben
+  // Datensatz treffen.
+  const candidate =
+    typeof payload.email === "string" ? normalizeEmail(payload.email) : "";
   const email =
-    typeof payload.email === "string" && payload.email.includes("@")
-      ? payload.email.trim().toLowerCase()
+    candidate.length <= EMAIL_MAX_LENGTH && EMAIL_SHAPE.test(candidate)
+      ? candidate
       : null;
   const name =
     (typeof payload.name === "string" && payload.name.trim()) ||

@@ -35,7 +35,7 @@ export async function htmlToPdf(html: string): Promise<Buffer | null> {
     }
     return Buffer.from(await res.arrayBuffer());
   } catch (e) {
-    log.warn({ err: String(e) }, "gotenberg nicht erreichbar");
+    log.warn({ err: e }, "gotenberg nicht erreichbar");
     return null;
   }
 }

@@ -10,6 +10,7 @@ import { audit } from "@/lib/audit";
 import { deleteSpaceWithUploads } from "@/lib/file-access";
 import { revokeCollabAccess } from "@/lib/collab-sync";
 import { log } from "@/lib/log";
+import { isSerializationConflict } from "@/lib/concurrent-change";
 
 export type SettingsState = { error?: string; success?: string } | undefined;
 
@@ -64,7 +65,9 @@ export async function updateSpaceAction(
 /**
  * Space endgueltig loeschen — nur OWNER, Bestaetigung durch Eintippen
  * des Namens. Uploads der Anhaenge werden best effort von der Platte
- * entfernt (die Datensaetze fallen per Kaskade).
+ * entfernt (die Datensaetze loescht deleteSpaceWithUploads im selben Zug
+ * wie den Space; was beim Entfernen liegen bleibt, faengt
+ * lib/upload-sweeper).
  */
 export async function deleteSpaceAction(
   _prev: SettingsState,
@@ -84,6 +87,12 @@ export async function deleteSpaceAction(
 }
 
 /**
+ * Bricht die Austritts-Transaktion ab, ohne als 500 nach aussen zu gehen:
+ * der Aufrufer macht daraus eine Meldung im Formular.
+ */
+class LastOwnerError extends Error {}
+
+/**
  * Eigene Mitgliedschaft beenden (alle Rollen). Der letzte OWNER kann
  * den Space nicht verlassen — sonst bliebe er ohne Verwaltung zurueck.
  */
@@ -92,21 +101,64 @@ export async function leaveSpaceAction(
   form: FormData,
 ): Promise<SettingsState> {
   const { space, role, user } = await authorizeAction(form, "read");
-  if (role === "OWNER") {
-    // Nur Owner mit aktivem Konto zaehlen — ein gesperrtes Konto kann
-    // den Space nicht verwalten.
-    const owners = await prisma.spaceMember.count({
-      where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
-    });
-    if (owners <= 1) {
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        if (role === "OWNER") {
+          // Nur Owner mit aktivem Konto zaehlen — ein gesperrtes Konto kann
+          // den Space nicht verwalten.
+          const owners = await tx.spaceMember.count({
+            where: {
+              spaceId: space.id,
+              role: "OWNER",
+              user: { isActive: true },
+            },
+          });
+          if (owners <= 1) throw new LastOwnerError();
+        }
+        await tx.spaceMember.deleteMany({
+          where: { spaceId: space.id, userId: user.id },
+        });
+      },
+      // Serializable: sonst zaehlen zwei gleichzeitig austretende Owner
+      // beide zwei, beide loeschen, und der Space bleibt ohne Eigentuemer
+      // zurueck — genau der Zustand, den die Pruefung verhindern soll.
+      { isolationLevel: "Serializable" },
+    );
+  } catch (e) {
+    if (e instanceof LastOwnerError) {
       return {
         error:
           "Du bist der letzte Owner. Ernenne zuerst eine andere Person zum Owner oder lösche den Space.",
       };
     }
+    // Serialisierungskonflikt: eine parallele Aenderung am selben Space
+    // hat gewonnen. Ein neuer Versuch sieht den aktuellen Stand.
+    //
+    // Nicht nur P2034: mit dem pg-Adapter faellt der Konflikt meist erst
+    // beim COMMIT auf, und Prisma 7 reicht ihn dann unuebersetzt als
+    // DriverAdapterError durch. Die blosse P2034-Pruefung liess genau
+    // diesen Regelfall als 500-Seite nach aussen — traten zwei Owner
+    // gleichzeitig aus, sah der Verlierer einen Absturz statt dieses
+    // Satzes. Die Daten blieben dabei richtig.
+    if (isSerializationConflict(e)) {
+      return {
+        error:
+          "Der Space wurde gleichzeitig geändert. Bitte noch einmal versuchen.",
+      };
+    }
+    throw e;
   }
-  await prisma.spaceMember.deleteMany({
-    where: { spaceId: space.id, userId: user.id },
+  // Gegenstueck zu space.joined in spaces/actions.ts. Ohne diesen
+  // Eintrag verzeichnet das Protokoll jeden Beitritt, aber keinen
+  // Austritt: eine Mitgliederliste laesst sich daraus nicht
+  // nachvollziehen, obwohl der Eintrag dafuer laengst vorgesehen ist
+  // (lib/audit.ts, AuditAction und AUDIT_LABELS).
+  await audit({
+    action: "space.left",
+    actorId: user.id,
+    spaceId: space.id,
+    metadata: { name: space.name },
   });
   await revokeCollabAccess(user.id, space.id);
   revalidatePath("/spaces");

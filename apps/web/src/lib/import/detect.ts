@@ -33,7 +33,7 @@ export function detectFormat(files: ImportFile[]): ImportFormat {
 
   const html = pages.filter((f) => isHtmlExt(extname(f.path)));
   const sample = html.slice(0, PEEK_LIMIT);
-  if (sample.some((f) => looksLikeConfluenceHtml(decodeHead(f.data)))) {
+  if (sample.some((f) => looksLikeConfluenceHtml(decodeHead(f.read())))) {
     return "confluence";
   }
   return "markdown";

@@ -1,26 +1,30 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { Moon, Sun } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { isDarkTheme, subscribeTheme, toggleTheme } from "@/lib/theme";
+
+/** Auf dem Server und beim Hydrieren: noch unbekannt. */
+function unknownOnServer(): null {
+  return null;
+}
 
 export function ThemeToggle({ className }: { className?: string }) {
-  const [dark, setDark] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    setDark(document.documentElement.classList.contains("dark"));
-  }, []);
-
-  function toggle() {
-    const next = !document.documentElement.classList.contains("dark");
-    document.documentElement.classList.toggle("dark", next);
-    localStorage.setItem("theme", next ? "dark" : "light");
-    setDark(next);
-  }
+  // Das Theme lebt im DOM (Klasse am <html>), nicht in React. Frueher
+  // las der Knopf es nur einmal beim Mount; schaltete danach jemand
+  // anderes um (die Palette), zeigte er das alte Symbol, bis er neu
+  // montiert wurde. `subscribeTheme` meldet jedes Umschalten.
+  //
+  // Der Server kennt die Klasse nicht (das Inline-Skript aus app/layout
+  // setzt sie erst im Browser): `null` heisst "noch unbekannt" und
+  // rendert einen Platzhalter statt eines falschen Symbols; nach dem
+  // Hydrieren liest React den echten Stand.
+  const dark = useSyncExternalStore(subscribeTheme, isDarkTheme, unknownOnServer);
 
   return (
     <button
-      onClick={toggle}
+      onClick={() => toggleTheme()}
       aria-label="Theme wechseln"
       className={cn(
         "inline-flex h-9 w-9 items-center justify-center rounded-lg text-muted",

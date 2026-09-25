@@ -4,6 +4,7 @@ import { Fragment, useState } from "react";
 import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { collapseCrumbs } from "@/lib/breadcrumbs";
+import { pageTitle } from "@/lib/page-title";
 
 export type Crumb = { id: string; title: string };
 
@@ -33,7 +34,7 @@ export function Breadcrumbs({
     ...ancestors.map((a) => ({
       key: a.id,
       href: `/s/${slug}/p/${a.id}`,
-      title: a.title || "Untitled",
+      title: pageTitle(a.title),
     })),
   ];
   const slots = expanded
@@ -83,7 +84,7 @@ export function Breadcrumbs({
             aria-current="page"
             className="max-w-[260px] truncate px-1 py-0.5 font-medium text-ink"
           >
-            {current.trim() || "Ohne Titel"}
+            {pageTitle(current)}
           </span>
         </li>
       </ol>

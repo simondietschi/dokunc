@@ -4,6 +4,7 @@
  * Seitenbaum und die Link-Aufloesung. Trotzdem wird Traversal strikt
  * abgelehnt (Defense in Depth).
  */
+import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
 
 const MARKDOWN_EXT = new Set(["md", "markdown", "txt"]);
 const HTML_EXT = new Set(["html", "htm"]);
@@ -132,5 +133,5 @@ export function titleFromFilename(p: string, hyphens = false): string {
   name = name.replace(/_\d+$/, "");
   name = name.replace(hyphens ? /[-_]+/g : /_+/g, " ");
   name = name.replace(/\s+/g, " ").trim();
-  return name || "Untitled";
+  return name || DEFAULT_PAGE_TITLE;
 }

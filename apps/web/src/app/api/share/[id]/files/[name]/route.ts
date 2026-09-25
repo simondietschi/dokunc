@@ -1,5 +1,4 @@
-import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
@@ -8,6 +7,16 @@ import { fileResponseHeaders } from "@/lib/attachments";
 import { isSafeFilename, uploadPath } from "@/lib/uploads";
 
 export const runtime = "nodejs";
+
+/**
+ * Eine einzige Antwort fuer alle Absagen: Freigabe unbekannt, Datei
+ * unbekannt, Datei nicht von der Freigabe gedeckt. Unterschiedliche
+ * Antworten verrieten anonymen Aufrufern, welcher der Faelle vorliegt.
+ * JSON mit `error` wie in den uebrigen Routen.
+ */
+function nichtGefunden() {
+  return NextResponse.json({ error: "Nicht gefunden" }, { status: 404 });
+}
 
 /**
  * Datei aus einer freigegebenen Seite.
@@ -26,40 +35,58 @@ export async function GET(
   const { id, name } = await params;
   const full = uploadPath(name);
   if (!isSafeFilename(name) || !full) {
-    return new NextResponse("Bad request", { status: 400 });
+    return NextResponse.json({ error: "Ungültige Anfrage" }, { status: 400 });
   }
 
   const token = new URL(req.url).searchParams.get("token") ?? "";
   const share = await resolveShare(id, token);
-  if (!share) return new NextResponse("Not found", { status: 404 });
+  if (!share) return nichtGefunden();
 
   const attachment = await prisma.attachment.findFirst({
     where: { storedName: name, spaceId: share.spaceId },
     select: { name: true, mimeType: true, pageId: true },
   });
-  if (!attachment) return new NextResponse("Not found", { status: 404 });
+  if (!attachment) return nichtGefunden();
 
-  // Anhänge älterer Uploads haben keinen Seitenbezug; für sie bleibt es
-  // beim Space der Freigabe.
-  if (attachment.pageId && attachment.pageId !== share.page.id) {
+  // Anhänge älterer Uploads haben keinen Seitenbezug. Ohne ihn lässt
+  // sich nicht sagen, ob die Freigabe die Datei deckt — sie beim Space
+  // der Freigabe zu belassen, machte einen einzigen Link zum Schlüssel
+  // für alle seitenlosen Dateien des ganzen Space, auch ohne Konto.
+  // Über /api/files bleiben sie mit Konto erreichbar, und zwar für alle,
+  // die jede Seite sehen dürfen, in der die Datei steckt (lib/file-access,
+  // pagelessAttachmentReadable).
+  if (!attachment.pageId) return nichtGefunden();
+
+  if (attachment.pageId !== share.page.id) {
     const owner = await resolveShare(id, token, attachment.pageId);
-    if (!owner) return new NextResponse("Not found", { status: 404 });
+    if (!owner) return nichtGefunden();
   }
 
-  let size: number;
+  // Erst oeffnen, dann messen, und aus genau diesem Deskriptor lesen:
+  // verschwindet die Datei danach (deleteSpaceWithUploads in
+  // lib/file-access), liest der Strom weiter den geoeffneten Stand. Mit
+  // `stat` auf den Pfad und einem zweiten Oeffnen beim Lesen lagen
+  // Content-Length und Inhalt auseinander: die Kopfzeilen waren dann
+  // schon raus, statt eines 404 brach der Body mitten im Transfer ab.
+  let handle;
   try {
-    const s = await stat(full);
-    if (!s.isFile()) return new NextResponse("Not found", { status: 404 });
-    size = s.size;
+    handle = await open(full, "r");
   } catch {
-    return new NextResponse("Not found", { status: 404 });
+    return nichtGefunden();
+  }
+  const info = await handle.stat();
+  if (!info.isFile()) {
+    await handle.close();
+    return nichtGefunden();
   }
 
   const wantInline = new URL(req.url).searchParams.get("inline") === "1";
-  const headers = fileResponseHeaders(attachment, size, wantInline);
+  const headers = fileResponseHeaders(attachment, info.size, wantInline);
 
+  // Der Lesestrom schliesst den Deskriptor bei "end" und bei "error"
+  // (autoClose), sonst bliebe je Abruf einer offen.
   const stream = Readable.toWeb(
-    createReadStream(full),
+    handle.createReadStream({ autoClose: true }),
   ) as unknown as ReadableStream<Uint8Array>;
   return new NextResponse(stream, { headers });
 }

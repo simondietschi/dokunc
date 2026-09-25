@@ -3,12 +3,30 @@
  * Alle Module ausser run.ts sind reine Funktionen ohne Datenbankzugriff.
  */
 
-/** Eine Datei aus dem Upload bzw. aus einem entpackten Zip. */
+/**
+ * Eine Datei aus dem Upload bzw. aus einem Zip.
+ *
+ * Der Inhalt steht nicht im Objekt, sondern kommt erst mit `read()`:
+ * bei Zip-Eintraegen wird dafuer jedes Mal neu entpackt. Vorher lag der
+ * ganze Import entpackt im Speicher (bis zu 200 MB je Anfrage, neben dem
+ * Upload selbst), und das im selben Container wie der Collab-Server.
+ * Wer `read()` ruft, haelt das Ergebnis deshalb nur so lange wie noetig
+ * und legt es nirgends ab, wo es bis zum Ende des Imports lebt. Viele
+ * Ergebnisse von `read()` zugleich in Arbeit (etwa unter Promise.all)
+ * heben das ebenso auf; runImport speichert Bilder deshalb nacheinander.
+ */
 export type ImportFile = {
   /** Normalisierter Pfad innerhalb des Imports (immer mit "/"). */
   path: string;
-  data: Uint8Array;
+  /** Groesse des Inhalts in Bytes, ohne ihn zu lesen. */
+  size: number;
+  read(): Uint8Array;
 };
+
+/** ImportFile fuer Bytes, die ohnehin schon im Speicher liegen. */
+export function fileFromBytes(path: string, data: Uint8Array): ImportFile {
+  return { path, size: data.length, read: () => data };
+}
 
 export type ImportFormat = "markdown" | "confluence" | "notion";
 
@@ -45,11 +63,21 @@ export type JsonNode = {
  */
 export const DATA_IMAGE_PREFIX = "data-import://";
 
-/** Fehler mit Meldung, die dem Nutzer angezeigt werden darf. */
+/**
+ * Fehler mit Meldung, die dem Nutzer angezeigt werden darf.
+ *
+ * `warnings` sind die Hinweise, die bis zum Fehler gesammelt waren. Die
+ * Route gibt sie mit der Meldung aus: scheitert zum Beispiel jede Seite
+ * einzeln, steht nur dort, welche Datei woran scheiterte; die Meldung
+ * selbst sagt nur, dass nichts uebrig blieb.
+ */
 export class ImportError extends Error {
-  constructor(message: string) {
+  readonly warnings: string[];
+
+  constructor(message: string, warnings: string[] = []) {
     super(message);
     this.name = "ImportError";
+    this.warnings = warnings;
   }
 }
 

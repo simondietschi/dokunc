@@ -8,6 +8,7 @@ import { visiblePageWhere } from "@/lib/page-access";
 import { Button } from "@/components/ui/Button";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { restorePageAction, purgePageAction } from "../actions";
+import { pageTitle } from "@/lib/page-title";
 
 export const metadata: Metadata = {
   title: "Papierkorb",
@@ -52,7 +53,7 @@ export default async function TrashPage({
           >
             <div className="min-w-0">
               <p className="flex items-center gap-2 text-sm font-medium">
-                <span className="truncate">{p.title || "Ohne Titel"}</span>
+                <span className="truncate">{pageTitle(p.title)}</span>
                 {p.isTemplate && (
                   <span className="shrink-0 rounded-full border border-accent/30 bg-accent-soft px-2 py-0.5 text-[11px] font-medium text-accent">
                     Vorlage

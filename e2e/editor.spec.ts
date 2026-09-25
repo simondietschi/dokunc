@@ -126,8 +126,25 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
     await page.keyboard.press("Enter");
     await page.keyboard.type("Im Callout");
     await expect(page.locator(".dk-callout-body")).toContainText("Im Callout");
+    // Zwischen den beiden Enter auf den Zwischenzustand warten: das
+    // erste legt einen leeren Block IM Callout an, erst das zweite hebt
+    // heraus. Ohne diese Zusicherung treffen beide Tastendruecke
+    // gelegentlich denselben Zustand.
+    //
+    // Gezaehlt werden Textbloecke, nicht Absaetze: welcher Blocktyp im
+    // Callout landet, haengt daran, in welchem Block "/info" stand.
+    // Geprueft wird hier die Enter-Regel, nicht der Blocktyp.
+    //
+    // Diese Zusicherung fiel frueher in jedem zweiten Lauf — zu Recht:
+    // das Dokument stimmte nicht, weil der erste Klick in den Editor
+    // verloren ging (siehe den Schritt "bedienbar erst mit Inhalt" und
+    // den Blockgriff in CollaborativeEditor). Seit dem behoben ist,
+    // traegt sie.
+    const calloutBloecke = page.locator(".dk-callout-body :is(p, h1, h2, h3)");
     await page.keyboard.press("Enter");
+    await expect(calloutBloecke).toHaveCount(2);
     await page.keyboard.press("Enter");
+    await expect(calloutBloecke).toHaveCount(1);
     await page.keyboard.type("Danach");
     await expect(page.locator(".dk-callout-body")).not.toContainText("Danach");
     await expect(page.locator(".ProseMirror > p", { hasText: "Danach" })).toBeVisible();

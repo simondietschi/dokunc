@@ -17,6 +17,15 @@ import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { useToast } from "@/components/ui/Toast";
+import { MAX_COMMENT_LENGTH } from "@/lib/comment-limits";
+import {
+  EVENT_FOCUS_COMMENT_THREAD,
+  EVENT_NEW_COMMENT_THREAD,
+  EVENT_REMOVE_COMMENT_MARK,
+  EVENT_SCROLL_TO_COMMENT_MARK,
+  onBrowserEvent,
+  sendBrowserEvent,
+} from "@/lib/browser-events";
 import {
   createThreadAction,
   editCommentAction,
@@ -44,24 +53,134 @@ type ThreadData = {
   }[];
 };
 
-/** Wird vom Editor-Toolbar-Button gefeuert (Text markiert -> Thread). */
-type NewThreadEvent = CustomEvent<{
-  id: string;
-  anchorText: string;
-}>;
+/**
+ * Die vier Kommentar-Textfelder (neuer Thread, Kommentar zur Seite,
+ * Antwort, Bearbeiten). Sie standen viermal einzeln da und waren bereits
+ * auseinandergelaufen: das Bearbeiten-Feld hatte `p-2` statt `p-2.5` und
+ * sass dadurch enger als das Eingabefeld darueber.
+ *
+ * `maxLength` ist der Grund, warum daraus eine Komponente wurde: die
+ * Server Actions weisen Texte ueber MAX_COMMENT_LENGTH still ab (sie
+ * kehren ohne Fehler zurueck). Fehlte die Grenze an nur einem der vier
+ * Felder, koennte man dort weiter beliebig lange Kommentare tippen und
+ * saehe beim Absenden bloss, dass nichts geschieht.
+ */
+function CommentTextarea({
+  label,
+  placeholder,
+  defaultValue,
+}: {
+  /** Beschriftung fuer Screenreader; die Felder haben kein sichtbares Label. */
+  label: string;
+  placeholder?: string;
+  defaultValue?: string;
+}) {
+  return (
+    <textarea
+      name="body"
+      required
+      autoFocus
+      rows={2}
+      maxLength={MAX_COMMENT_LENGTH}
+      aria-label={label}
+      placeholder={placeholder}
+      defaultValue={defaultValue}
+      className="w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent"
+    />
+  );
+}
+
+/**
+ * Knopfzeile unter jedem Kommentar-Formular: absenden plus abbrechen.
+ * Auch diese Zeile stand viermal da und lief auseinander (`mt-1.5` beim
+ * Bearbeiten gegen `mt-2` sonst). Nur die Beschriftung und das, was
+ * "Abbrechen" zuruecknimmt, unterscheiden sich wirklich.
+ */
+function CommentFormActions({
+  submitLabel,
+  onCancel,
+}: {
+  submitLabel: string;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="mt-2 flex gap-2">
+      <Button type="submit" size="sm">
+        {submitLabel}
+      </Button>
+      <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+        Abbrechen
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Die Huelle der vier Kommentar-Formulare: Server Action aufrufen, den
+ * lokalen Zustand schliessen, `router.refresh()`, dazu die hidden inputs,
+ * darin Textfeld und Knopfzeile.
+ *
+ * Textfeld und Knopfzeile waren schon zusammengefasst, die Huelle stand
+ * aber noch viermal einzeln da, jedes Mal in derselben Reihenfolge:
+ * erst die Action abwarten, dann schliessen, dann neu laden. Was die
+ * vier Formulare wirklich unterscheidet — welche Action, welche hidden
+ * inputs, was "fertig" und "Abbrechen" zuruecknehmen —, steht jetzt als
+ * Angabe am Aufruf; ein weiteres Formular uebernimmt den Rest von hier.
+ */
+function CommentForm({
+  action,
+  fields,
+  onDone,
+  onCancel,
+  className,
+  label,
+  placeholder,
+  defaultValue,
+  submitLabel,
+}: {
+  action: (fd: FormData) => Promise<void>;
+  /** Hidden inputs, die die Action ausser dem Text liest (Name -> Wert). */
+  fields: Record<string, string>;
+  /** Nach erfolgreicher Action: lokalen Zustand schliessen. */
+  onDone: () => void;
+  onCancel: () => void;
+  className?: string;
+  label: string;
+  placeholder?: string;
+  defaultValue?: string;
+  submitLabel: string;
+}) {
+  const router = useRouter();
+  return (
+    <form
+      className={className}
+      action={async (fd) => {
+        await action(fd);
+        onDone();
+        router.refresh();
+      }}
+    >
+      {Object.entries(fields).map(([name, value]) => (
+        <input key={name} type="hidden" name={name} value={value} />
+      ))}
+      <CommentTextarea
+        label={label}
+        placeholder={placeholder}
+        defaultValue={defaultValue}
+      />
+      <CommentFormActions submitLabel={submitLabel} onCancel={onCancel} />
+    </form>
+  );
+}
 
 /** Markierung im Dokument entfernen (Thread verworfen, aufgelöst, gelöscht). */
 function removeMark(id: string) {
-  window.dispatchEvent(
-    new CustomEvent("dokunc:remove-comment-mark", { detail: { id } }),
-  );
+  sendBrowserEvent(EVENT_REMOVE_COMMENT_MARK, { id });
 }
 
 /** Im Dokument zur markierten Textstelle springen. */
 function scrollToMark(id: string) {
-  window.dispatchEvent(
-    new CustomEvent("dokunc:scroll-to-comment-mark", { detail: { id } }),
-  );
+  sendBrowserEvent(EVENT_SCROLL_TO_COMMENT_MARK, { id });
 }
 
 export function CommentsPanel({
@@ -80,7 +199,6 @@ export function CommentsPanel({
   canAnnotate: boolean;
   threads: ThreadData[];
 }) {
-  const router = useRouter();
   const [draft, setDraft] = useState<{
     id: string;
     anchorText: string;
@@ -89,25 +207,21 @@ export function CommentsPanel({
   const [showResolved, setShowResolved] = useState(false);
   const draftRef = useRef<HTMLDivElement>(null);
 
-  // Editor-Toolbar meldet: neue Kommentar-Markierung angelegt.
+  // Editor-Toolbar meldet: neue Kommentar-Markierung angelegt
+  // (Text markiert -> Thread).
   useEffect(() => {
-    const onNew = (e: Event) => {
-      const { id, anchorText } = (e as NewThreadEvent).detail;
+    return onBrowserEvent(EVENT_NEW_COMMENT_THREAD, ({ id, anchorText }) => {
       setDraft({ id, anchorText });
       setTimeout(
         () => draftRef.current?.scrollIntoView({ behavior: "smooth" }),
         50,
       );
-    };
-    window.addEventListener("dokunc:new-comment-thread", onNew);
-    return () =>
-      window.removeEventListener("dokunc:new-comment-thread", onNew);
+    });
   }, []);
 
   // Klick auf eine markierte Textstelle im Editor: Thread hervorheben.
   useEffect(() => {
-    const onFocus = (e: Event) => {
-      const { id } = (e as CustomEvent<{ id: string }>).detail;
+    return onBrowserEvent(EVENT_FOCUS_COMMENT_THREAD, ({ id }) => {
       // Aufgelöste Threads sind eingeklappt: aufklappen, sonst zeigt der
       // Sprung ins Leere.
       if (threads.some((t) => t.id === id && t.resolved)) setShowResolved(true);
@@ -118,10 +232,7 @@ export function CommentsPanel({
           .getElementById(`comment-thread-${id}`)
           ?.scrollIntoView({ block: "center", behavior: "smooth" });
       });
-    };
-    window.addEventListener("dokunc:focus-comment-thread", onFocus);
-    return () =>
-      window.removeEventListener("dokunc:focus-comment-thread", onFocus);
+    });
   }, [threads]);
 
   const cancelDraft = useCallback(() => {
@@ -167,45 +278,21 @@ export function CommentsPanel({
               „{draft.anchorText}“
             </p>
           )}
-          <form
-            action={async (fd) => {
-              await createThreadAction(fd);
-              // Markierung bleibt bestehen: der Thread existiert jetzt.
-              setDraft(null);
-              router.refresh();
+          <CommentForm
+            action={createThreadAction}
+            fields={{
+              slug,
+              pageId,
+              threadId: draft.id,
+              anchorText: draft.anchorText,
             }}
-          >
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="pageId" value={pageId} />
-            <input type="hidden" name="threadId" value={draft.id} />
-            <input
-              type="hidden"
-              name="anchorText"
-              value={draft.anchorText}
-            />
-            <textarea
-              name="body"
-              required
-              autoFocus
-              rows={2}
-              aria-label="Kommentar"
-              placeholder="Kommentar schreiben…"
-              className="w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent"
-            />
-            <div className="mt-2 flex gap-2">
-              <Button type="submit" size="sm">
-                Kommentieren
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={cancelDraft}
-              >
-                Abbrechen
-              </Button>
-            </div>
-          </form>
+            // Markierung bleibt bestehen: der Thread existiert jetzt.
+            onDone={() => setDraft(null)}
+            onCancel={cancelDraft}
+            label="Kommentar"
+            placeholder="Kommentar schreiben…"
+            submitLabel="Kommentieren"
+          />
         </div>
       )}
 
@@ -276,7 +363,6 @@ function PageCommentComposer({
   slug: string;
   pageId: string;
 }) {
-  const router = useRouter();
   const [open, setOpen] = useState(false);
   // Die Thread-ID muss dieselbe Form haben wie bei verankerten Threads.
   const [threadId, setThreadId] = useState<string | null>(null);
@@ -297,45 +383,22 @@ function PageCommentComposer({
     );
   }
 
+  const close = () => {
+    setOpen(false);
+    setThreadId(null);
+  };
+
   return (
-    <form
+    <CommentForm
       className="mt-4 rounded-xl border border-line bg-surface p-4 shadow-soft"
-      action={async (fd) => {
-        await createThreadAction(fd);
-        setOpen(false);
-        setThreadId(null);
-        router.refresh();
-      }}
-    >
-      <input type="hidden" name="slug" value={slug} />
-      <input type="hidden" name="pageId" value={pageId} />
-      <input type="hidden" name="threadId" value={threadId ?? ""} />
-      <textarea
-        name="body"
-        required
-        autoFocus
-        rows={2}
-        aria-label="Kommentar zur Seite"
-        placeholder="Kommentar zur ganzen Seite…"
-        className="w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent"
-      />
-      <div className="mt-2 flex gap-2">
-        <Button type="submit" size="sm">
-          Kommentieren
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            setOpen(false);
-            setThreadId(null);
-          }}
-        >
-          Abbrechen
-        </Button>
-      </div>
-    </form>
+      action={createThreadAction}
+      fields={{ slug, pageId, threadId: threadId ?? "" }}
+      onDone={close}
+      onCancel={close}
+      label="Kommentar zur Seite"
+      placeholder="Kommentar zur ganzen Seite…"
+      submitLabel="Kommentieren"
+    />
   );
 }
 
@@ -419,39 +482,16 @@ function Thread({
       {canComment && (
         <div className="mt-3 flex items-center gap-2">
           {replying ? (
-            <form
+            <CommentForm
               className="flex-1"
-              action={async (fd) => {
-                await replyAction(fd);
-                setReplying(false);
-                router.refresh();
-              }}
-            >
-              <input type="hidden" name="slug" value={slug} />
-              <input type="hidden" name="threadId" value={thread.id} />
-              <textarea
-                name="body"
-                required
-                autoFocus
-                rows={2}
-                aria-label="Antwort"
-                placeholder="Antworten…"
-                className="w-full rounded-lg border border-line-strong bg-surface p-2.5 text-sm outline-none focus-visible:border-accent"
-              />
-              <div className="mt-2 flex gap-2">
-                <Button type="submit" size="sm">
-                  Antworten
-                </Button>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setReplying(false)}
-                >
-                  Abbrechen
-                </Button>
-              </div>
-            </form>
+              action={replyAction}
+              fields={{ slug, threadId: thread.id }}
+              onDone={() => setReplying(false)}
+              onCancel={() => setReplying(false)}
+              label="Antwort"
+              placeholder="Antworten…"
+              submitLabel="Antworten"
+            />
           ) : (
             <>
               <button
@@ -567,39 +607,16 @@ function CommentRow({
           )}
         </p>
         {editing ? (
-          <form
+          <CommentForm
             className="mt-1"
-            action={async (fd) => {
-              await editCommentAction(fd);
-              setEditing(false);
-              router.refresh();
-            }}
-          >
-            <input type="hidden" name="slug" value={slug} />
-            <input type="hidden" name="commentId" value={commentId} />
-            <textarea
-              name="body"
-              required
-              autoFocus
-              rows={2}
-              defaultValue={body}
-              aria-label="Kommentar bearbeiten"
-              className="w-full rounded-lg border border-line-strong bg-surface p-2 text-sm outline-none focus-visible:border-accent"
-            />
-            <div className="mt-1.5 flex gap-2">
-              <Button type="submit" size="sm">
-                Speichern
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setEditing(false)}
-              >
-                Abbrechen
-              </Button>
-            </div>
-          </form>
+            action={editCommentAction}
+            fields={{ slug, commentId }}
+            onDone={() => setEditing(false)}
+            onCancel={() => setEditing(false)}
+            label="Kommentar bearbeiten"
+            defaultValue={body}
+            submitLabel="Speichern"
+          />
         ) : (
           <p className="mt-0.5 whitespace-pre-wrap text-sm">{body}</p>
         )}

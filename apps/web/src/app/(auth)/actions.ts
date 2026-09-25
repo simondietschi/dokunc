@@ -1,6 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@dokunc/db";
@@ -12,14 +13,10 @@ import {
   parseInviteFromNext,
   verifyToken,
 } from "@/lib/invitations";
-import {
-  rateLimit,
-  resetLimit,
-  isRateLimited,
-  penalize,
-  clientKey,
-} from "@/lib/rate-limit";
+import { rateLimit, resetLimit, clientKey } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
+import { log } from "@/lib/log";
+import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import {
   startPending2fa,
   clearPending2fa,
@@ -28,40 +25,58 @@ import {
 import { unseal } from "@/lib/secret-box";
 import { verifyTotpStep } from "@/lib/totp";
 import { claimTotpStep, consumeRecoveryCode } from "@/lib/totp-store";
+import { RATE_LIMITS } from "@/lib/rate-limits";
+
+/**
+ * Obergrenze wie beim Space-Namen (lib/space-settings.ts): ein Name ist
+ * eine Zeile. Ohne sie nimmt ausgerechnet der Eingang beliebig lange
+ * Werte an, die danach in jeder Mitgliederliste stehen.
+ */
+const NAME_MAX = 80;
 
 const registerSchema = z.object({
-  name: z.string().min(2, "Name zu kurz"),
-  email: z.string().email("Ungültige E-Mail"),
-  password: z.string().min(8, "Passwort min. 8 Zeichen"),
+  /**
+   * Getrimmt und begrenzt geprüft. Ohne `trim` zählte `min(2)` Rohzeichen,
+   * zwei Leerzeichen gingen also als Name durch: das Konto stünde danach
+   * ohne sichtbaren Namen in Mitgliederlisten und als Kommentarautor —
+   * und `updateProfileAction` lehnte denselben Wert ab, weil es über
+   * `str()` längst getrimmt prüft. Die schwächere Fassung sass am Eingang.
+   */
+  name: z
+    .string()
+    .trim()
+    .min(2, "Name zu kurz")
+    .max(NAME_MAX, `Name darf höchstens ${NAME_MAX} Zeichen haben`),
+  // `z.email()` statt der in zod 4 abgekündigten Methodenform
+  // `z.string().email()`.
+  email: z.email("Ungültige E-Mail"),
+  password: z
+    .string()
+    .min(PASSWORD_MIN_LENGTH, `Passwort min. ${PASSWORD_MIN_LENGTH} Zeichen`),
 });
 
 const loginSchema = z.object({
-  email: z.string().email("Ungültige E-Mail"),
+  email: z.email("Ungültige E-Mail"),
   password: z.string().min(1, "Passwort fehlt"),
 });
 
 export type ActionState = { error?: string } | undefined;
 
 /**
- * Bremse pro Konto, zusätzlich zur Bremse pro IP. Greift auch dann,
- * wenn die Versuche über wechselnde IPs kommen.
- *
- * Bewusst ein ablaufendes Fenster und keine harte Sperre: eine echte
- * Sperre liesse sich missbrauchen, um fremde Konten gezielt
- * auszusperren. Gezählt werden NUR Fehlversuche, ein erfolgreicher
- * Login räumt den Zähler sofort. Ein Zähler, der jede Anfrage frisst,
- * sperrte sonst aus, wer sich an mehreren Geräten anmeldet.
- */
-const LOGIN_ATTEMPTS = 8;
-const LOGIN_WINDOW_SEC = 900;
-
-/**
  * Vergleichswert für Anmeldungen ohne Konto — ein bcrypt-Hash mit
  * demselben Aufwand wie ein echter. Der Klartext dazu ist niemandem
  * bekannt und wird nirgends gebraucht.
+ *
+ * Beim Start erzeugt statt fest eingetragen: ein eingetragener Hash
+ * trägt den Kostenfaktor in sich ($2a$10$...). Wer BCRYPT_COST anhebt,
+ * hätte ihn übersehen, und der Vergleich für unbekannte Adressen liefe
+ * wieder messbar schneller als der für bekannte — genau der
+ * Unterschied, den dieser Wert verdecken soll.
  */
-const DUMMY_HASH =
-  "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+const DUMMY_HASH = bcrypt.hashSync(
+  randomBytes(32).toString("hex"),
+  BCRYPT_COST,
+);
 
 /**
  * Bremse pro IP. Bewusst grosszügiger als die pro Konto: hinter einer
@@ -69,10 +84,6 @@ const DUMMY_HASH =
  * Bremse ist inzwischen die pro Konto. Diese hier fängt nur das breite
  * Durchprobieren vieler Adressen ab.
  */
-const LOGIN_IP_ATTEMPTS = 30;
-const LOGIN_IP_WINDOW_SEC = 300;
-const REGISTER_ATTEMPTS = 10;
-const REGISTER_WINDOW_SEC = 600;
 
 /** Session anlegen und in die App leiten (gemeinsamer Abschluss von Login/Register). */
 async function startSession(
@@ -101,8 +112,8 @@ export async function registerAction(
   if (
     !(await rateLimit(
       await clientKey("register"),
-      REGISTER_ATTEMPTS,
-      REGISTER_WINDOW_SEC,
+      RATE_LIMITS.register.versuche,
+      RATE_LIMITS.register.fenster,
     ))
   ) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
@@ -162,7 +173,7 @@ export async function registerAction(
     data: {
       name,
       email,
-      passwordHash: await bcrypt.hash(password, 10),
+      passwordHash: await bcrypt.hash(password, BCRYPT_COST),
       isAdmin: decision.isAdmin,
     },
   });
@@ -190,8 +201,8 @@ export async function loginAction(
   if (
     !(await rateLimit(
       await clientKey("login"),
-      LOGIN_IP_ATTEMPTS,
-      LOGIN_IP_WINDOW_SEC,
+      RATE_LIMITS.loginIp.versuche,
+      RATE_LIMITS.loginIp.fenster,
     ))
   ) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
@@ -199,9 +210,23 @@ export async function loginAction(
 
   const email = normalizeEmail(parsed.data.email);
   const accountKey = `login:account:${email}`;
-  // Nur prüfen, nicht zählen: gezählt wird erst der Fehlversuch weiter
-  // unten (siehe LOGIN_ATTEMPTS).
-  if (await isRateLimited(accountKey, LOGIN_ATTEMPTS)) {
+  /**
+   * Zählen und Prüfen in einem Schritt, VOR dem bcrypt-Vergleich.
+   *
+   * Vorher wurde hier nur gelesen und erst nach dem Vergleich gezählt.
+   * Dazwischen liegt ein bewusst langsamer Schritt, also lasen
+   * gleichzeitig eintreffende Versuche alle denselben Stand und kamen
+   * alle durch: die Bremse begrenzte nur die Zahl der Schübe, pro Schub
+   * waren so viele Versuche möglich, wie die IP-Bremse durchliess.
+   * Erfolgreiche Anmeldungen räumt `resetLimit` weiter unten wieder ab.
+   */
+  if (
+    !(await rateLimit(
+      accountKey,
+      RATE_LIMITS.login.versuche,
+      RATE_LIMITS.login.fenster,
+    ))
+  ) {
     await audit({
       action: "auth.login_failed",
       metadata: { email, reason: "throttled" },
@@ -225,7 +250,6 @@ export async function loginAction(
     ? await bcrypt.compare(parsed.data.password, user.passwordHash)
     : await bcrypt.compare(parsed.data.password, DUMMY_HASH).then(() => false);
   if (!user || !passwordOk) {
-    await penalize(accountKey, LOGIN_WINDOW_SEC);
     await audit({
       action: "auth.login_failed",
       actorId: user?.id ?? null,
@@ -285,7 +309,13 @@ export async function completeTotpLoginAction(
   if (!code) return { error: "Code fehlt" };
 
   const brakeKey = `login:totp:${pending.userId}`;
-  if (!(await rateLimit(brakeKey, LOGIN_ATTEMPTS, LOGIN_WINDOW_SEC))) {
+  if (
+    !(await rateLimit(
+      brakeKey,
+      RATE_LIMITS.login.versuche,
+      RATE_LIMITS.login.fenster,
+    ))
+  ) {
     return { error: "Zu viele Versuche. Bitte in 15 Minuten erneut." };
   }
 
@@ -320,15 +350,37 @@ export async function completeTotpLoginAction(
     step !== null ? false : await consumeRecoveryCode(user.id, code);
 
   if (!codeOk && !recoveryOk) {
+    /**
+     * `unseal` meldet null auch dann, wenn APP_SECRET gewechselt hat
+     * oder der Wert beschädigt ist — nicht nur bei einem falschen Code.
+     * Ohne diese Unterscheidung stünde dort "Code stimmt nicht.", die
+     * Person suchte den Fehler bei ihrem Authenticator, und im Betrieb
+     * fiele nichts auf. Geprüft wird es erst hier: der
+     * Wiederherstellungscode hängt nicht am Schlüssel und bleibt auch
+     * dann der Weg zurück ins Konto.
+     */
+    const unreadable = !secret;
+    if (unreadable) {
+      log.error({ userId: user.id }, "totp secret unreadable");
+    }
     await audit({
       action: "auth.login_failed",
       actorId: user.id,
-      metadata: { reason: replayed ? "totp_replay" : "bad_totp" },
+      metadata: {
+        reason: unreadable
+          ? "totp_secret_unreadable"
+          : replayed
+            ? "totp_replay"
+            : "bad_totp",
+      },
     });
     return {
-      error: replayed
-        ? "Dieser Code wurde schon verwendet. Warte auf den nächsten."
-        : "Code stimmt nicht.",
+      error: unreadable
+        ? "Der zweite Faktor lässt sich zurzeit nicht prüfen. Nutze einen " +
+          "Wiederherstellungscode oder wende dich an die Administration."
+        : replayed
+          ? "Dieser Code wurde schon verwendet. Warte auf den nächsten."
+          : "Code stimmt nicht.",
     };
   }
 

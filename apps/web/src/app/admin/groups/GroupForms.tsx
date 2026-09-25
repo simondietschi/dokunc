@@ -16,8 +16,16 @@ export function NewGroupForm() {
   const router = useRouter();
   // Die Liste nachziehen, sobald die Meldung da ist. Das laeuft in einer
   // eigenen Transition und haelt den Absende-Knopf nicht fest.
+  //
+  // Steht noch eine Kennung von vorhin in der Adresszeile (etwa eine
+  // abgelehnte Umbenennung), wird sie dabei entfernt: der rote Kasten
+  // stuende sonst neben der gruenen Meldung, als ginge es um diese
+  // Gruppe. Der Wechsel auf die Adresse ohne Kennung laedt die Seite
+  // ohnehin neu.
   useEffect(() => {
-    if (state?.success) router.refresh();
+    if (!state?.success) return;
+    if (window.location.search) router.replace("/admin/groups");
+    else router.refresh();
   }, [state, router]);
   return (
     <form

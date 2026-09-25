@@ -9,9 +9,22 @@ dist
 .redis
 *.log
 .env
+**/.env
 
 # Laufzeit- und Testartefakte gehören nicht in den Build-Kontext
 uploads
+**/uploads
 backups
 test-results
 playwright-report
+
+# Testquellen ebenso wenig: sie landen sonst im Laufzeit-Image, das sie
+# nie ausführt. Die Unit-Tests liegen neben dem Code, deshalb nach Muster.
+e2e
+playwright.config.ts
+**/*.test.ts
+**/*.test.tsx
+**/vitest.config.ts
+**/vitest.integration.config.ts
+# Bilddateien, die nur Tests lesen (Metadaten-Entfernung).
+**/test/fixtures

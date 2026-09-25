@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { detectFormat } from "./detect";
-import type { ImportFile } from "./types";
+import { fileFromBytes, type ImportFile } from "./types";
 
 const enc = new TextEncoder();
-const file = (path: string, text = ""): ImportFile => ({ path, data: enc.encode(text) });
+const file = (path: string, text = ""): ImportFile => fileFromBytes(path, enc.encode(text));
 
 describe("detectFormat()", () => {
   it("erkennt Notion an Hex-Suffixen in Datei- oder Ordnernamen", () => {

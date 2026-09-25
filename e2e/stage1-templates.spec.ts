@@ -78,8 +78,11 @@ async function createPage(page: Page, title: string): Promise<string> {
     await input.click();
     await input.fill(title);
     await input.press("Enter");
-    saved = await page
-      .locator("aside")
+    // Im Seitenbaum, nicht in der ganzen Seitenleiste: nach dem
+    // Umbenennen laedt das Layout neu, und die Seite steht dann auch unter
+    // "Zuletzt besucht". Zwei Treffer brechen waitFor im strikten Modus
+    // sofort ab, und alle drei Versuche scheiterten in Sekundenbruchteilen.
+    saved = await pageTree(page)
       .getByText(title, { exact: true })
       .waitFor({ timeout: 4000 })
       .then(

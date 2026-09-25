@@ -19,6 +19,24 @@ describe("toMarkdown()", () => {
     expect(md).toContain("Hallo Welt");
   });
 
+  it("Überschriftenebene wird auf 1 bis 6 geklemmt", () => {
+    const heading = (level: unknown) =>
+      toMarkdown(
+        doc([
+          { type: "heading", attrs: { level }, content: [{ type: "text", text: "T" }] },
+        ]),
+      ).trim();
+    // Ohne Klemme wirft "#".repeat(-1) und der Export endet mit 500.
+    expect(heading(-1)).toBe("# T");
+    expect(heading(0)).toBe("# T");
+    expect(heading(9)).toBe("###### T");
+    // Nicht numerisch ergab vorher repeat(0): eine Überschrift ohne
+    // Raute, die im Export wie gewöhnlicher Text aussah.
+    expect(heading("zwei")).toBe("# T");
+    expect(heading(undefined)).toBe("# T");
+    expect(heading(3)).toBe("### T");
+  });
+
   it("Inline-Marks", () => {
     const md = toMarkdown(
       doc([p("x", [{ type: "bold" }]), p("y", [{ type: "code" }])]),

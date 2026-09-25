@@ -45,9 +45,17 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 │  ├─ web/      Next.js App (UI, API, Auth, Editor)
 │  └─ collab/   Hocuspocus WebSocket-Server (Yjs-Persistenz)
 ├─ packages/
-│  └─ db/       Prisma-Schema + generierter Client (geteilt)
+│  ├─ db/       Prisma-Schema + generierter Client + Zugriffsregeln (geteilt)
+│  ├─ editor/   TipTap-Schema und Collab-Protokoll (Web + Collab)
+│  └─ mail/     E-Mail-Versand und Benachrichtigungsplanung (Web + Collab)
+├─ e2e/         Playwright-E2E-Tests
+├─ scripts/     backup.sh, docker-entrypoint.sh
 ├─ docs/ARCHITECTURE.md
-├─ docker-compose.yml   Postgres + Redis (Prod/Dev)
+├─ Caddyfile            Proxy: TLS (CADDY_TLS), /collab an Hocuspocus
+├─ Dockerfile           Image der App (Web + Collab, Debian trixie)
+├─ docker-compose.yml   Proxy, App, Postgres, Redis, Gotenberg (Prod/Dev)
+├─ docker-compose.domain.yml  Zusatz eigene Domain: Port 80 (per COMPOSE_FILE)
+├─ docker-compose.ipv6.yml    Zusatz IPv6: 443/80 auf APP_BIND6 (per COMPOSE_FILE)
 └─ .env.example
 ```
 
@@ -56,7 +64,9 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 - **User** — id, email, name, passwordHash, createdAt; optional
   `totpSecret` (AES-256-GCM-versiegelt) und `totpEnabledAt`; optional
   `oidcSubject`/`oidcIssuer` für die Verknüpfung mit einem SSO-Anbieter.
-- **TotpRecoveryCode** — userId, SHA-256-Hash, usedAt; ein Code pro Notfall.
+- **TotpRecoveryCode** — userId, SHA-256-Hash, usedAt, pendingUntil
+  (gesetzt: ausgegeben, aber noch nicht bestätigt; NULL: aktiv); ein Code
+  pro Notfall.
 - **Space** — id, name, slug, description.
 - **SpaceMember** — userId, spaceId, role (`OWNER|ADMIN|MEMBER|VIEWER`).
 - **Group / GroupMember / SpaceGroup** — benannte Personengruppe,
@@ -72,7 +82,10 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   Bindet jede hochgeladene Datei an einen Space; `/api/files/<storedName>`
   liefert sie nur an angemeldete Mitglieder dieses Space aus. Uploads aus
   früheren Versionen ohne Datensatz werden beim ersten Abruf über die
-  referenzierende Seite zugeordnet und nachgetragen.
+  referenzierende Seite zugeordnet und nachgetragen. Dateien ohne
+  Datensatz, die nirgends mehr verwendet werden, räumt der Web-Prozess
+  periodisch weg (`lib/upload-sweeper.ts`, gestartet aus
+  `instrumentation.ts`, siehe README „Verwaiste Uploads“).
 
 Die **wirksame Rolle** einer Person in einem Space ist die stärkste aus
 eigener Mitgliedschaft und allen Gruppen, die dem Space zugeordnet sind
@@ -105,11 +118,14 @@ nachgeführt wird das von `refreshAccessRoots` — beim Anlegen unter einem
 Elternteil, beim Umhängen und bei jeder Änderung am Schutz, jeweils als
 eine rekursive SQL-Anweisung über den ganzen Ast.
 
-Nicht abgedeckt: hochgeladene Dateien tragen nur einen Space-Bezug
-(`Upload.spaceId`), keinen Seitenbezug. Die Auslieferung über
-`/api/files` kann die Sichtbarkeit einer Seite deshalb nicht prüfen. Das
-zu schliessen hiesse, `Upload.pageId` einzuführen und beim Hochladen
-mitzugeben — bewusst offen gelassen und im README als Grenze benannt.
+Hochgeladene Dateien fallen unter dieselbe Regel
+(`findReadableAttachment` in `lib/file-access.ts`): trägt ein Anhang einen
+Seitenbezug (`Attachment.pageId`), liefert `/api/files` ihn nur aus, wenn
+die Person diese Seite sehen darf. Ohne Seitenbezug (ältere Uploads,
+endgültig gelöschte Seiten) ersetzt der Inhalt den Bezug: lesbar nur,
+wenn mindestens eine Seite des Space die Datei verwendet (Inhalt,
+Titelbild oder Version) und die Person jede davon sieht. Der Export
+lädt eingebettete Bilder über dieselbe Prüfung (`uploadLoaderFor`).
 
 Die Regel selbst steht an genau einer Stelle und wird überall
 hineingereicht: als Prisma-Bedingung (`visiblePageWhere`,
@@ -123,22 +139,46 @@ auch im Collab-Server) und als Filter für Benachrichtigungen
 1. Client öffnet Seite → TipTap mit `Collaboration`-Extension + Yjs-Doc.
 2. Vor jedem Verbindungsversuch holt der Client ein **Collab-Ticket** von
    `POST /api/collab/ticket`: ein JWT mit eigener Audience (`dokunc-collab`),
-   gebunden an genau diese Seite, gültig zwei Minuten. Die Sitzung selbst
-   bleibt im httpOnly-Cookie und wird nie an den Client ausgeliefert.
+   gebunden an genau diese Seite, gültig zwei Minuten und für genau eine
+   Verbindung. Die Sitzung selbst bleibt im httpOnly-Cookie und wird nie
+   an den Client ausgeliefert.
 3. `HocuspocusProvider` verbindet via WebSocket zu `apps/collab` und schickt
-   das Ticket. `onAuthenticate` prüft Signatur, Audience, Seitenbindung,
-   Token-Version (Session-Revocation) und Schreibrecht.
+   das Ticket. Schon vor dem Handshake begrenzt `onUpgrade` die Versuche je
+   Client-Adresse und die offenen Sockets je Adresse und Instanz; ein
+   Socket ohne gültiges Ticket wird nach 15 Sekunden geschlossen.
+   `onAuthenticate` prüft Signatur, Audience, Seitenbindung, Token-Version
+   (Session-Revocation) und Schreibrecht, begrenzt Versuche und
+   Verbindungen je Person und verbraucht das Ticket (SET NX in Redis).
+   Vorgaben und Begründungen der Grenzen: `apps/collab/src/limits.ts`.
 4. `onLoadDocument` lädt Yjs-State aus `CollabDocument` (oder seeded aus `Page.content`).
 5. Edits werden als Yjs-Updates zwischen Clients gemerged (CRDT, konfliktfrei).
 6. `onStoreDocument` (debounced) schreibt Yjs-State + extrahierten Text/JSON
    zurück in `Page` und erzeugt periodisch `PageVersion`-Snapshots.
 
-**Wiederherstellen einer Version** muss an diesem Zwischenspeicher vorbei:
-Die Web-App schickt über Redis (`dokunc:collab:control`) eine Räumung, der
-Collab-Server wirft das Dokument aus dem Speicher, nimmt für fünf Sekunden
-keine Verbindungen an und speichert in dieser Zeit nicht. Erst danach
-schreibt die Web-App den alten Stand zurück. Ohne diesen Schritt hätte die
-noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
+**Wiederherstellen einer Version** muss an diesem Zwischenspeicher vorbei,
+und zwar auf derselben Yjs-Linie. Die Web-App schreibt den Inhalt der
+Version nach `Page.content` (Suche, Export) und schickt über Redis
+(`dokunc:doc-reset`) Seite, Version, Person und eine Nonce. Genau eine
+Collab-Instanz führt den Austausch aus: Sie belegt die Nonce per SET NX,
+wobei Instanzen, die das Dokument halten, 250 ms Vorsprung haben. Sie
+tauscht den Inhalt per Direktverbindung in einer Yjs-Transaktion aus
+(alles löschen, Version einfügen). Hält keine Instanz das Dokument, lädt
+sie es dafür aus `CollabDocument`; hält es eine andere, die nicht
+reagiert, tauscht sie nicht aus. Quittiert wird über eine Redis-Liste
+(`dokunc:doc-reset-ack:<nonce>`), und zwar erst, wenn ein Speicherlauf
+genau des Dokuments, in dem ausgetauscht wurde, den neuen Stand nach
+`CollabDocument` geschrieben hat; ein nach dem Entladen neu geladenes
+Dokument derselben Seite zählt nicht. Wurde das Dokument ungespeichert
+entladen, versucht der Collab-Server es erneut und spielt dabei zuerst
+den Stand des entladenen ein, damit ein Editor, der den ersten Austausch
+gesehen hat, ihn nicht doppelt bekommt. Jeder Versuch endet spätestens
+4,5 Sekunden nach Eingang; die Web-App wartet höchstens fünf Sekunden. Weil der Austausch auf der bestehenden Linie geschieht,
+bekommen offene Editoren und die Kopien in den Browsern (y-indexeddb) die
+Löschungen mit. Ein aus `Page.content` neu aufgebautes Dokument wäre
+dagegen eine neue Linie, und die alten Einträge aus diesen Kopien
+stünden danach wieder im Dokument. Ohne Quittung verwirft die Web-App
+`CollabDocument` (der nächste Start baut aus `Page.content`) und zeigt
+einen Hinweis.
 
 ## 6. Roadmap / Status
 
@@ -160,9 +200,10 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
 - [x] Härtung: Invite-only-Registrierung (erste Person = Instanz-Admin),
       APP_SECRET-Zwang in Prod, Soft-Delete/Papierkorb mit Bestätigung,
       CSRF/Origin-Check, Rate-Limiting, erweiterte Tests
-- [x] Prod-Härtung: TLS-Reverse-Proxy (Caddy, nur localhost exponiert),
-      Security-Header/CSP/HSTS, Upload-Magic-Byte-Prüfung, non-root
-      Container, fail-closed APP_SECRET, Backup-Skript
+- [x] Prod-Härtung: TLS-Reverse-Proxy (Caddy, Vorgabe nur localhost,
+      per APP_BIND/APP_BIND6 änderbar), Security-Header/CSP/HSTS,
+      Upload-Magic-Byte-Prüfung, non-root Container, fail-closed
+      APP_SECRET, Backup-Skript
 - [x] Ops/Account: Session-Revocation, Health-Endpoint, CI-Pipeline,
       strukturiertes Logging, Account (Profil/Passwort), Passwort-Reset
       per E-Mail, Admin-Panel, Papierkorb-UI, Collab-HA (Redis), Mobile-
@@ -182,7 +223,7 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
 - [x] Editor-Parität: Syntax-Hervorhebung (lowlight), volle
       Tabellenbedienung, Bilder per Einfügen und Ziehen samt
       Alternativtext, Breite und Unterschrift, Dateianhänge,
-      aufklappbare Abschnitte, Block-Griff, Gliederung, Anker,
+      aufklappbare Abschnitte, Block-Griff, Anker,
       Wortzähler, Seiten-Symbol, Titelbild, Vorlagen, Markdown
       einfügen und importieren, vollständiger Export
 - [x] Freigabelinks: Lesen ohne Konto über ein gehashtes Token, Dateien
@@ -236,7 +277,10 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
       optimistischer Anzeige, Dialog "Verschieben nach…" als
       Tastatur-/A11y-Weg), Brotkrumen (Vorfahren per rekursiver CTE,
       Kürzung langer Pfade) und Inhaltsverzeichnis aus den Überschriften
-      (sticky Panel bei genug Platz, sonst einklappbarer Block)
+      (sticky Panel bei genug Platz, sonst einklappbarer Block, ab 1400 px
+      Fensterbreite ohne eigene Wahl aufgeklappt; Einträge sind Links auf
+      die Anker, ein Anker in der Adresse wird nach dem ersten
+      Collab-Abgleich angesprungen)
 - [x] Anhänge beliebigen Typs (Attachment-Modell mit Space-Bezug):
       Upload mit Magic-Byte-Erkennung für Bilder, konservatives MIME-
       Mapping nach Endung, zufälliger Speichername, Limit MAX_UPLOAD_MB;
@@ -278,7 +322,11 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
       (Mermaid, Admonitions) -> zwei Durchläufe in der DB: erst alle Seiten
       anlegen (IDs), dann Inhalte mit Wiki-Links/Backlinks und Bildern als
       Attachment speichern; Route Handler mit Origin-Check, Rate-Limit,
-      `IMPORT_MAX_MB` und managePages-Prüfung
+      `IMPORT_MAX_MB`, managePages-Prüfung, Import-Plätzen (je Konto 1,
+      global `IMPORT_MAX_CONCURRENT`, `lib/import/slots.ts`), Lesefrist für
+      den Upload (`lib/import/upload-read.ts`), Zeitgrenze
+      `IMPORT_TIMEOUT_S` und Rücknahme bei Abbruch oder Ausfall der
+      Datenbank (`lib/import/rollback.ts`, `lib/import/db-errors.ts`)
 - [x] Editor-Fehlerbereinigung: TipTap 3 rendert nicht mehr pro
       Transaktion neu — Toolbar und KI-Menü lesen ihren Zustand über
       `useEditorState` (der Aktiv-Zustand war eingefroren), jede Aktion
@@ -297,7 +345,13 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
       die Testvektoren der Norm geprüft), QR-Code zur Einrichtung,
       Geheimnis nur versiegelt in der Datenbank (`lib/secret-box`,
       Schlüssel aus `APP_SECRET`), einmalig gültige
-      Wiederherstellungscodes als Hash; zwischen Passwort und Code steht
+      Wiederherstellungscodes als Hash; neue Codes gelten erst nach
+      Bestätigung eines davon (Satz ausstehend, 30 Minuten Frist, Tausch
+      in einer Transaktion, die zuerst die Nutzerzeile sperrt, in
+      derselben Reihenfolge wie Einrichtung und Abbruch und mit
+      `FOR NO KEY UPDATE`, damit das Anlegen neuer Codes in einem anderen
+      Fenster nicht daran hängen bleibt; so verklemmen sich zwei Fenster
+      nicht); zwischen Passwort und Code steht
       ein eigenes Cookie mit eigener Audience (`dokunc-2fa`, fünf
       Minuten) statt einer halbfertigen Sitzung
 - [x] Gruppen und Seitenberechtigungen: instanzweit verwaltete Gruppen,
@@ -321,7 +375,7 @@ noch offene Sitzung ihn beim nächsten Speichern lautlos überschrieben.
 **Docker (empfohlen, ein Befehl):**
 
 ```bash
-docker compose up --build        # App :3000, Collab :3001, Migrationen automatisch
+docker compose up -d --build     # https://localhost:7891 (Proxy), Migrationen automatisch
 ```
 
 **Lokal (ohne Docker):**

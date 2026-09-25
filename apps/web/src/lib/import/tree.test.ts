@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { buildImportTree, flattenTree } from "./tree";
-import type { ImportFile, ImportNode } from "./types";
+import { fileFromBytes, type ImportFile, type ImportNode } from "./types";
 
 const enc = new TextEncoder();
-const file = (path: string, text = ""): ImportFile => ({ path, data: enc.encode(text) });
+const file = (path: string, text = ""): ImportFile => fileFromBytes(path, enc.encode(text));
 
 function shape(nodes: ImportNode[]): unknown[] {
   return nodes.map((n) => ({

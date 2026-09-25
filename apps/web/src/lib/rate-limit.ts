@@ -1,17 +1,29 @@
 import "server-only";
-import { Redis } from "ioredis";
+import type { Redis } from "ioredis";
 import { clientIp } from "./client-ip";
+import { log } from "./log";
+import { sharedRedis } from "./redis";
 
-let redis: Redis | null | undefined;
-function client(): Redis | null {
-  if (redis !== undefined) return redis;
-  const url = process.env.REDIS_URL;
-  redis = url
-    ? new Redis(url, { maxRetriesPerRequest: 1, lazyConnect: true })
-    : null;
-  redis?.on("error", () => {});
-  return redis;
+/**
+ * Ein Redis-Ausfall schaltet die Bremse still auf die prozesslokale
+ * Karte um. Bei mehreren Web-Instanzen zaehlt dann jede fuer sich, die
+ * tatsaechlich erlaubte Zahl Fehlversuche vervielfacht sich also.
+ * Ohne diese Meldung bliebe der schwaechere Zustand im Betrieb
+ * unsichtbar, denn der Fallback greift lautlos.
+ */
+function redisFailed(op: string, e: unknown): void {
+  // Fehlerobjekt statt String: pino serialisiert daraus Typ, Meldung und
+  // Stack — aus String(e) bliebe nur die Meldung, und die Aufrufstelle
+  // waere nicht mehr zu bestimmen.
+  log.warn({ err: e, op }, "rate limit: redis nicht erreichbar");
 }
+
+/**
+ * Eigene Verbindung, kein Fehler-Rueckruf: ein Ausfall faellt ohnehin
+ * beim naechsten Befehl auf und wird dort ueber `redisFailed` gemeldet
+ * — mit der Stelle, an der er wirkt.
+ */
+const client = sharedRedis({ retries: 1, lazy: true });
 
 // Fallback, wenn kein Redis erreichbar ist (pro Instanz).
 const mem = new Map<string, { n: number; reset: number }>();
@@ -46,12 +58,14 @@ async function bump(
   key: string,
   windowSec: number,
 ): Promise<number> {
-  const [[, n]] = (await r
-    .multi()
-    .incr(key)
-    .expire(key, windowSec, "NX")
-    .exec()) as [[Error | null, number], [Error | null, number]];
-  return n;
+  const res = await r.multi().incr(key).expire(key, windowSec, "NX").exec();
+  // Die Multi-Antwort traegt pro Befehl einen eigenen Fehlerplatz. Ohne
+  // diese Pruefung ginge ein gescheitertes INCR als Zaehlerstand durch
+  // (der Wert waere null, also 0) und die Bremse liesse jeden Versuch
+  // passieren, statt auf den Speicher-Fallback zu wechseln.
+  if (!res) throw new Error("redis: multi abgebrochen");
+  for (const [err] of res) if (err) throw err;
+  return Number(res[0][1]);
 }
 
 /** Zähler im Fallback-Speicher erhöhen; gibt den neuen Stand zurück. */
@@ -71,6 +85,13 @@ function bumpMem(key: string, windowSec: number): number {
  * Fixed-Window-Limiter. Gibt true zurück, wenn die Aktion erlaubt ist.
  * Bei Redis-Ausfall greift ein In-Memory-Fallback (fail-open nur,
  * wenn beides nicht verfügbar ist).
+ *
+ * Zählen und Prüfen stecken in EINEM Schritt (INCR). Eine getrennte
+ * Variante, die erst liest und später erhöht, gab es hier: gleichzeitig
+ * eintreffende Anfragen lasen alle denselben Stand und kamen alle
+ * durch. Wer nur Fehlschläge zählen will, räumt den Zähler im
+ * Erfolgsfall mit `resetLimit` — sonst sperrte sich aus, wer sich an
+ * mehreren Geräten anmeldet.
  */
 export async function rateLimit(
   key: string,
@@ -81,50 +102,11 @@ export async function rateLimit(
   if (r) {
     try {
       return (await bump(r, `dokunc:rl:${key}`, windowSec)) <= limit;
-    } catch {
-      /* fällt auf Memory zurück */
+    } catch (e) {
+      redisFailed("rateLimit", e);
     }
   }
   return bumpMem(key, windowSec) <= limit;
-}
-
-/**
- * Prüft den Zähler, OHNE ihn zu erhöhen. Für Limits, die nur Fehlschläge
- * zählen sollen (Login): erst prüfen, dann — je nach Ausgang — `penalize`
- * oder `resetLimit`. Ein erhöhender Zähler würde sonst auch erfolgreiche
- * Anmeldungen verbrauchen: wer sich an mehreren Geräten anmeldet, sperrte
- * sich damit selbst aus.
- */
-export async function isRateLimited(
-  key: string,
-  limit: number,
-): Promise<boolean> {
-  const r = client();
-  if (r) {
-    try {
-      const raw = await r.get(`dokunc:rl:${key}`);
-      return Number(raw ?? 0) >= limit;
-    } catch {
-      /* fällt auf Memory zurück */
-    }
-  }
-  const entry = mem.get(key);
-  if (!entry || entry.reset < Date.now()) return false;
-  return entry.n >= limit;
-}
-
-/** Fehlversuch zählen (Fenster startet beim ersten Treffer). */
-export async function penalize(key: string, windowSec: number): Promise<void> {
-  const r = client();
-  if (r) {
-    try {
-      await bump(r, `dokunc:rl:${key}`, windowSec);
-      return;
-    } catch {
-      /* fällt auf Memory zurück */
-    }
-  }
-  bumpMem(key, windowSec);
 }
 
 /**
@@ -136,11 +118,54 @@ export async function resetLimit(key: string): Promise<void> {
   if (r) {
     try {
       await r.del(`dokunc:rl:${key}`);
-    } catch {
-      /* Fenster läuft von selbst ab */
+    } catch (e) {
+      // Für diesen Aufruf unkritisch, das Fenster läuft ohnehin ab —
+      // gemeldet wird es trotzdem, es ist derselbe Ausfall wie oben.
+      redisFailed("resetLimit", e);
     }
   }
   mem.delete(key);
+}
+
+/**
+ * Zieht genau einen Versuch ab, aber nur von einem laufenden Zaehler
+ * ueber null. In EINEM Schritt auf dem Server: ein getrenntes GET und
+ * DECR liesse zwei gleichzeitige Rueckgaben beide durch, und ein DECR
+ * auf einen abgelaufenen Schluessel legte ihn mit -1 und OHNE Ablauf neu
+ * an — ein dauerhaftes Guthaben an der Bremse vorbei. DECR selbst laesst
+ * den Ablauf des Fensters stehen.
+ */
+const RELEASE_SCRIPT = `
+local n = tonumber(redis.call('GET', KEYS[1]))
+if n and n > 0 then return redis.call('DECR', KEYS[1]) end
+return 0
+`;
+
+/**
+ * Gibt einen gezaehlten Versuch zurueck, ohne das Fenster zu beenden.
+ *
+ * Fuer den Fall, dass ein Versuch zwar gezaehlt wurde, die gebremste
+ * Wirkung aber nie eintrat (etwa eine Mail, die der Versand abgelehnt
+ * hat). Anders als `resetLimit` bleiben die uebrigen Versuche im
+ * Fenster gezaehlt: ein Rueckgabeweg, der den ganzen Zaehler loeschte,
+ * oeffnete nach jedem Fehlschlag wieder die volle Zahl.
+ *
+ * Der Weg folgt dem von `rateLimit`: ist Redis da, zaehlt nur Redis;
+ * sonst die prozesslokale Karte. Beides anzufassen gaebe nach einem
+ * kurzen Ausfall einen Versuch doppelt zurueck.
+ */
+export async function releaseLimit(key: string): Promise<void> {
+  const r = client();
+  if (r) {
+    try {
+      await r.eval(RELEASE_SCRIPT, 1, `dokunc:rl:${key}`);
+      return;
+    } catch (e) {
+      redisFailed("releaseLimit", e);
+    }
+  }
+  const entry = mem.get(key);
+  if (entry && entry.n > 0) entry.n -= 1;
 }
 
 /**

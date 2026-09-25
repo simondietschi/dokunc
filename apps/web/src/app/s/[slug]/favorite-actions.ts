@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@dokunc/db";
 import { authorizeAction } from "@/lib/space-context";
 import { str } from "@/lib/form";
+import { findLivePage, scopeOf } from "@/lib/page-guards";
 
 type ToggleFavoriteResult = { isFavorite: boolean };
 
@@ -12,24 +13,23 @@ type ToggleFavoriteResult = { isFavorite: boolean };
  * Darf jedes Mitglied (auch VIEWER): Favoriten sind persoenlich und
  * aendern nichts am Inhalt des Space.
  *
- * Die pageId kommt aus dem Formular und wird gegen den Space geprueft —
- * sonst liessen sich Seiten fremder Spaces (deren Titel dann in der
- * Sidebar auftauchen) als Favorit anlegen.
+ * Die pageId kommt aus dem Formular und wird gegen Space UND
+ * Sichtbarkeit geprueft. Der Space allein genuegte nicht: sonst legt
+ * jemand eine geschuetzte Seite als Favorit an, die er nicht oeffnen
+ * darf, und ihr Titel steht danach in der Palette. Die Pruefung ist
+ * `findLivePage` aus lib/page-guards und keine eigene Abfrage: dort
+ * steht die Bindung einmal und getestet.
  */
 export async function toggleFavoriteAction(
   form: FormData,
 ): Promise<ToggleFavoriteResult> {
-  const { user, space } = await authorizeAction(form, "read");
+  const access = await authorizeAction(form, "read");
+  const { user, space } = access;
   const pageId = str(form, "pageId");
 
-  const page = await prisma.page.findFirst({
-    where: {
-      id: pageId,
-      spaceId: space.id,
-      deletedAt: null,
-      isTemplate: false,
-    },
-    select: { id: true },
+  // Vorlagen tragen keinen Stern.
+  const page = await findLivePage(scopeOf(access), pageId, {
+    isTemplate: false,
   });
   if (!page) throw new Error("Seite nicht gefunden");
 

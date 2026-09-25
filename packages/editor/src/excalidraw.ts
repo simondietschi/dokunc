@@ -87,20 +87,41 @@ function svgFromPreview(el: HTMLElement): string {
   }
 }
 
-/** Unicode-sicheres Base64 (auch serverseitig ohne DOM). */
+/**
+ * Unicode-sicheres Base64 (auch serverseitig ohne DOM).
+ *
+ * Der zweite Zweig ist nicht der tote: Next liefert im Client-Bundle
+ * kein Buffer, die Vorschaubilder von Excalidraw und draw.io laufen im
+ * Browser also immer hier durch. Deshalb TextEncoder statt des frueher
+ * ueblichen btoa(unescape(encodeURIComponent(s))): unescape ist bei
+ * MDN als deprecated gefuehrt und muss von einer Engine nicht
+ * mitgebracht werden. Ergebnis identisch — beide Wege kodieren den
+ * String als UTF-8 und dann byteweise nach Base64.
+ */
 export function toBase64(s: string): string {
   if (typeof Buffer !== "undefined") {
     return Buffer.from(s, "utf-8").toString("base64");
   }
-  return btoa(unescape(encodeURIComponent(s)));
+  const bytes = new TextEncoder().encode(s);
+  // btoa nimmt nur Zeichen bis U+00FF, also Byte fuer Byte uebergeben.
+  // In Stuecken, weil String.fromCharCode(...bytes) bei grossen SVGs
+  // (ein Diagramm sind schnell einige hundert Kilobyte) den Argument-
+  // Stack sprengt und mit RangeError abbricht.
+  let bin = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
 }
 
-/** Gegenstueck zu toBase64. */
+/** Gegenstueck zu toBase64 (gleicher Grund fuer TextDecoder statt escape). */
 export function fromBase64(s: string): string {
   if (typeof Buffer !== "undefined") {
     return Buffer.from(s, "base64").toString("utf-8");
   }
-  return decodeURIComponent(escape(atob(s)));
+  const bin = atob(s);
+  return new TextDecoder().decode(Uint8Array.from(bin, (c) => c.charCodeAt(0)));
 }
 
 declare module "@tiptap/core" {

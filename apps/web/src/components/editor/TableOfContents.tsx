@@ -4,11 +4,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Editor } from "@tiptap/react";
 import { ChevronRight, ListTree } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { activeHeadingIndex, collectHeadings, type TocHeading } from "@/lib/toc";
+import {
+  activeHeadingIndex,
+  collectHeadings,
+  headingForHash,
+  headingHref,
+  isPlainClick,
+  parseStoredOpen,
+  TOC_OPEN_MEDIA_QUERY,
+  tocOpen,
+  type TocHeading,
+} from "@/lib/toc";
 
 /** Abstand zum Sticky-Header (Kopfzeile + Toolbar) beim Anspringen. */
 const SCROLL_OFFSET = 128;
-const STORAGE_KEY = "dokunc:toc-open";
+/**
+ * Mit Version: unter "dokunc:toc-open" liegt noch die Wahl aus der Zeit
+ * mit zwei Verzeichnissen. Wer dort zugeklappt hat ("0"), hatte ab
+ * 1400px trotzdem die feste Gliederung daneben. Unter der neuen Vorgabe
+ * (`tocOpen`) stuende fuer diese Personen zwischen 1400px und dem Panel
+ * nur noch der Umschalter. Der alte Eintrag wird deshalb nicht gelesen.
+ */
+const STORAGE_KEY = "dokunc:toc-open:2";
 
 /** Naechster scrollbarer Vorfahre (im Space-Layout: <main>). */
 function scrollParentOf(el: HTMLElement): HTMLElement | null {
@@ -21,35 +38,72 @@ function scrollParentOf(el: HTMLElement): HTMLElement | null {
   return null;
 }
 
-function readStoredOpen(): boolean {
+/** Gespeicherte Vorliebe, `null` = nie umgeschaltet (oder kein Speicher). */
+function readStoredOpen(): boolean | null {
   try {
-    return localStorage.getItem(STORAGE_KEY) === "1";
+    return parseStoredOpen(localStorage.getItem(STORAGE_KEY));
   } catch {
-    return false;
+    return null;
   }
 }
 
 /**
- * Inhaltsverzeichnis aus den Ueberschriften (Ebene 1 bis 3) des Editors.
+ * Das Inhaltsverzeichnis der Seite, aus den Ueberschriften (Ebene 1 bis
+ * 3) des Editors.
+ *
  * Umschliesst den Editor-Inhalt: bei genug Platz (Container-Breite ab
  * 1240px) als sticky Panel rechts neben dem Text, sonst als
- * einklappbarer Block ueber dem Inhalt. Unter zwei Ueberschriften bleibt
- * es unsichtbar.
+ * einklappbarer Block ueber dem Inhalt. Beide Varianten haengen an
+ * derselben Container-Abfrage, es steht also bei jeder Breite hoechstens
+ * eine da. Unter zwei Ueberschriften bleibt es unsichtbar.
+ *
+ * Es ist das einzige Verzeichnis der Seite. Daneben stand frueher ein
+ * zweites (`Outline`, fest am rechten Fensterrand ab 1400px Viewport,
+ * immer offen). Sobald hier das Panel erschien (Container 1240px, also
+ * gut 1520px Viewport neben Seitenleiste und Scrollleiste), standen
+ * beide Panels gleichzeitig rechts; darunter bis knapp 1480px lag der
+ * feste Streifen ueber dem Ende langer Zeilen. Damit zwischen 1400px
+ * Viewport und dem Panel die Liste nicht hinter einem Umschalter
+ * verschwindet, ist der Block dort aufgeklappt, solange niemand ihn
+ * umgeschaltet hat (`tocOpen`). Wer ihn zuklappt, behaelt das.
+ *
+ * Von `Outline` uebernommen sind die Anker: jeder Eintrag ist ein echter
+ * Link auf die id der Ueberschrift (siehe `headingHref`), laesst sich
+ * also kopieren oder in einem neuen Tab oeffnen. Der schlichte Klick
+ * springt weiter selbst, mit Abstand zum Sticky-Kopf und mit dem Cursor
+ * in der Ueberschrift. Kommt jemand mit einem Anker in der Adresse,
+ * springt das Verzeichnis nach dem ersten Abgleich dorthin (`synced`).
  */
 export function TableOfContents({
   editor,
+  synced,
   children,
 }: {
   editor: Editor | null;
+  /**
+   * Hat der Editor den Stand des Collab-Servers? Erst dann steht der
+   * Inhalt im Dokument, und ein Anker aus der Adresse hat ein Ziel.
+   */
+  synced: boolean;
   children: React.ReactNode;
 }) {
   const [headings, setHeadings] = useState<TocHeading[]>([]);
   const [active, setActive] = useState(0);
-  const [open, setOpen] = useState(false);
+  // Beides erst im Effekt gelesen: auf dem Server gibt es weder Speicher
+  // noch Fensterbreite, und der erste Client-Baum muss ihm gleichen.
+  const [stored, setStored] = useState<boolean | null>(null);
+  const [wide, setWide] = useState(false);
+  const open = tocOpen(stored, wide);
   const frame = useRef<number | null>(null);
+  const hashHandled = useRef(false);
 
   useEffect(() => {
-    setOpen(readStoredOpen());
+    setStored(readStoredOpen());
+    const mq = window.matchMedia(TOC_OPEN_MEDIA_QUERY);
+    const update = () => setWide(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
   }, []);
 
   // Ueberschriften einsammeln — initial und nach jeder Aenderung
@@ -123,10 +177,11 @@ export function TableOfContents({
     return () => container.removeEventListener("scroll", onScroll);
   }, [editor, headings, domFor]);
 
-  function jump(h: TocHeading) {
-    if (!editor) return;
-    const el = domFor(h);
-    if (el) {
+  /** Ueberschrift mit Abstand zum Sticky-Kopf an den oberen Rand holen. */
+  const scrollTo = useCallback(
+    (h: TocHeading, behavior: ScrollBehavior) => {
+      const el = domFor(h);
+      if (!el) return;
       const container = scrollParentOf(el);
       if (container) {
         const delta =
@@ -134,27 +189,51 @@ export function TableOfContents({
           container.getBoundingClientRect().top;
         container.scrollTo({
           top: container.scrollTop + delta - SCROLL_OFFSET,
-          behavior: "smooth",
+          behavior,
         });
       } else {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        el.scrollIntoView({ behavior, block: "start" });
       }
-    }
+    },
+    [domFor],
+  );
+
+  function jump(h: TocHeading) {
+    if (!editor) return;
+    scrollTo(h, "smooth");
     // Cursor an den Anfang der Ueberschrift, ohne dass der Browser
     // zusaetzlich (und gegen unseren Offset) scrollt.
     editor.commands.focus(h.pos + 1, { scrollIntoView: false });
   }
 
-  function toggle() {
-    setOpen((o) => {
-      const next = !o;
-      try {
-        localStorage.setItem(STORAGE_KEY, next ? "1" : "0");
-      } catch {
-        /* Speicherung ist nur Komfort */
-      }
-      return next;
+  // Anker aus der Adresse (geteilter Link, neuer Tab): einmal nach dem
+  // ersten Abgleich anspringen. Der Browser hat es beim Laden schon
+  // versucht, als die Ueberschrift noch nicht im Dokument stand. Nur
+  // scrollen, ohne Fokus: wer eine Seite oeffnet, hat nicht in den Text
+  // geklickt, und ein Tastendruck soll nicht in der Ueberschrift landen.
+  useEffect(() => {
+    if (!editor || !synced || hashHandled.current) return;
+    // Einen Frame warten, bis der abgeglichene Inhalt gezeichnet ist.
+    const raf = requestAnimationFrame(() => {
+      hashHandled.current = true;
+      if (editor.isDestroyed) return;
+      const ziel = headingForHash(
+        collectHeadings(editor.state.doc),
+        window.location.hash,
+      );
+      if (ziel) scrollTo(ziel, "auto");
     });
+    return () => cancelAnimationFrame(raf);
+  }, [editor, synced, scrollTo]);
+
+  function toggle() {
+    const next = !open;
+    setStored(next);
+    try {
+      localStorage.setItem(STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      /* Speicherung ist nur Komfort */
+    }
   }
 
   const minLevel = useMemo(
@@ -168,12 +247,22 @@ export function TableOfContents({
       {headings.map((h, i) => {
         const isActive = i === active;
         return (
+          // Gleich benannte Ueberschriften teilen sich den Anker, aber
+          // nicht den React-Key.
           <li key={`${h.pos}-${i}`}>
-            <button
-              type="button"
-              onClick={() => jump(h)}
-              aria-current={isActive ? "true" : undefined}
-              title={h.text || undefined}
+            <a
+              href={headingHref(h)}
+              onClick={(ev) => {
+                // Mit Zusatztaste oder mittlerer Taste bleibt es ein Link
+                // (neuer Tab, Link kopieren). Sonst springt der Browser
+                // hart, ohne Abstand zum Sticky-Kopf, und die
+                // Adresszeile fuellt sich mit Ankern.
+                if (!isPlainClick(ev)) return;
+                ev.preventDefault();
+                jump(h);
+              }}
+              aria-current={isActive ? "location" : undefined}
+              title={h.text}
               className={cn(
                 "block w-full truncate py-1 text-left text-[12.5px] leading-5 transition-colors",
                 variant === "panel" && "-ml-px border-l pl-3",
@@ -190,8 +279,8 @@ export function TableOfContents({
                 paddingLeft: `${(h.level - minLevel) * 12 + (variant === "panel" ? 12 : 8)}px`,
               }}
             >
-              {h.text || "Ohne Text"}
-            </button>
+              {h.text}
+            </a>
           </li>
         );
       })}

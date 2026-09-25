@@ -15,14 +15,16 @@ import { cn } from "@/lib/cn";
 
 export type ToastVariant = "success" | "error" | "info";
 
+/**
+ * Bewusst nur, was Aufrufer auch setzen. Früher standen hier noch
+ * `duration` und eine Rückgängig-`action` mit eigenem Knopf; keiner
+ * der Aufrufer hat je eines davon gesetzt, der Knopf lief also nie.
+ * Kommt ein Bedarf, gehört beides mit dem ersten Aufrufer zurück.
+ */
 export type ToastOptions = {
   title: string;
   description?: string;
   variant?: ToastVariant;
-  /** Millisekunden bis zum automatischen Ausblenden. 0 = bleibt stehen. */
-  duration?: number;
-  /** Optionale Rückgängig-Aktion, direkt im Toast. */
-  action?: { label: string; onClick: () => void };
 };
 
 type Toast = ToastOptions & { id: number };
@@ -33,6 +35,9 @@ type ToastApi = {
 };
 
 const ToastContext = createContext<ToastApi | null>(null);
+
+/** Millisekunden bis zum automatischen Ausblenden. */
+const TOAST_DURATION_MS = 5000;
 
 /**
  * Zugriff auf die Toasts. Bewusst fehlertolerant: wird der Hook ausserhalb
@@ -79,13 +84,10 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     (options: ToastOptions) => {
       const id = nextId.current++;
       setToasts((list) => [...list.slice(-3), { ...options, id }]);
-      const duration = options.duration ?? 5000;
-      if (duration > 0) {
-        timers.current.set(
-          id,
-          setTimeout(() => dismiss(id), duration),
-        );
-      }
+      timers.current.set(
+        id,
+        setTimeout(() => dismiss(id), TOAST_DURATION_MS),
+      );
     },
     [dismiss],
   );
@@ -112,7 +114,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             role="status"
             aria-live="polite"
             aria-relevant="additions"
-            className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2"
+            className="pointer-events-none fixed bottom-4 right-4 z-toast flex w-[min(22rem,calc(100vw-2rem))] flex-col gap-2"
           >
             {toasts.map((t) => {
               const { icon: Icon, tone } = STYLES[t.variant ?? "info"];
@@ -130,18 +132,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
                       <p className="mt-0.5 text-[12px] leading-snug text-muted">
                         {t.description}
                       </p>
-                    )}
-                    {t.action && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          t.action?.onClick();
-                          dismiss(t.id);
-                        }}
-                        className="mt-1.5 text-[12px] font-medium text-accent hover:underline"
-                      >
-                        {t.action.label}
-                      </button>
                     )}
                   </div>
                   <button

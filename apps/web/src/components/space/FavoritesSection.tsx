@@ -6,6 +6,7 @@ import { useState } from "react";
 import { ChevronRight, Star, StarOff } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { removeFavoriteAction } from "@/app/s/[slug]/favorite-actions";
+import { pageTitle } from "@/lib/page-title";
 
 export type FavoriteEntry = { id: string; title: string };
 
@@ -69,7 +70,7 @@ export function FavoritesSection({
                       active ? "font-medium text-ink" : "text-muted",
                     )}
                   >
-                    {f.title || "Untitled"}
+                    {pageTitle(f.title)}
                   </Link>
                   <form action={removeFavoriteAction}>
                     <input type="hidden" name="slug" value={slug} />
@@ -77,7 +78,7 @@ export function FavoritesSection({
                     <button
                       type="submit"
                       title="Aus Favoriten entfernen"
-                      aria-label={`${f.title || "Untitled"} aus Favoriten entfernen`}
+                      aria-label={`${pageTitle(f.title)} aus Favoriten entfernen`}
                       className="grid h-5 w-5 place-items-center rounded text-faint opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"
                     >
                       <StarOff className="h-3.5 w-3.5" />

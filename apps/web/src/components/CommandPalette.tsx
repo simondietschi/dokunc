@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Bell,
@@ -22,18 +23,25 @@ import { cn } from "@/lib/cn";
 import {
   isAuthPath,
   matchesQuery,
+  normalizeQuery,
   spaceSlugFromPath,
   splitHighlights,
 } from "@/lib/palette";
+import { toggleTheme } from "@/lib/theme";
 import type { SearchResponse } from "@/app/api/search/route";
 import type { FavoritesResponse } from "@/app/api/favorites/route";
 import { createPageAction } from "@/app/s/[slug]/actions";
-
-const OPEN_EVENT = "dokunc:cmdk";
+import { pageTitle } from "@/lib/page-title";
+import { useBackdropClose, useModal } from "@/components/ui/use-modal";
+import {
+  EVENT_OPEN_PALETTE,
+  onBrowserEvent,
+  sendBrowserEvent,
+} from "@/lib/browser-events";
 
 /** Öffnet die Palette von beliebiger Stelle aus (Buttons, Hints). */
 function openPalette() {
-  window.dispatchEvent(new CustomEvent(OPEN_EVENT));
+  sendBrowserEvent(EVENT_OPEN_PALETTE);
 }
 
 type Item = {
@@ -60,6 +68,8 @@ export function CommandPalette() {
     [],
   );
   const [loading, setLoading] = useState(false);
+  // Ein Fehler der Suche darf nicht wie ein leeres Ergebnis aussehen.
+  const [failed, setFailed] = useState<null | "server" | "auth">(null);
   const [active, setActive] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
   const slug = spaceSlugFromPath(pathname);
@@ -67,19 +77,15 @@ export function CommandPalette() {
   const disabled = isAuthPath(pathname);
 
   const close = useCallback(() => setOpen(false), []);
-  const restoreTo = useRef<HTMLElement | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
-  // Fokus zurückgeben und Hintergrund nicht mitscrollen lassen.
-  useEffect(() => {
-    if (!open) return;
-    restoreTo.current = document.activeElement as HTMLElement | null;
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevOverflow;
-      restoreTo.current?.focus?.();
-    };
-  }, [open]);
+  // Escape, Fokusfalle, Scroll-Sperre und Fokus-Rueckgabe aus useModal.
+  // Escape hing vorher am Suchfeld: wer in der Ergebnisliste stand, kam
+  // mit der Taste nicht heraus, und eine Fokusfalle gab es nicht.
+  // Ohne initialFocus: das erste fokussierbare Element im Geruest ist
+  // das Suchfeld, und das traegt bereits autoFocus.
+  const { mounted } = useModal({ open, onClose: close, panel: panelRef });
+  const onBackdrop = useBackdropClose(panelRef, close);
 
   // ⌘K / Ctrl+K global; Custom-Event für Buttons.
   useEffect(() => {
@@ -93,26 +99,24 @@ export function CommandPalette() {
         setOpen((o) => !o);
       }
     }
-    function onOpen() {
-      setOpen(true);
-    }
     window.addEventListener("keydown", onKey);
-    window.addEventListener(OPEN_EVENT, onOpen);
+    const stopOpen = onBrowserEvent(EVENT_OPEN_PALETTE, () => setOpen(true));
     return () => {
       window.removeEventListener("keydown", onKey);
-      window.removeEventListener(OPEN_EVENT, onOpen);
+      stopOpen();
     };
   }, [disabled]);
 
-  // Beim Öffnen zurücksetzen; Hintergrund nicht scrollen.
+  // Beim Öffnen zurücksetzen. Die Scroll-Sperre liegt allein im Effekt
+  // oben: hier stand sie ein zweites Mal und schrieb beim Aufräumen den
+  // Leerstring — wer die Palette über einem bereits gesperrten
+  // Hintergrund öffnete (etwa aus einem Dialog), konnte danach wieder
+  // scrollen.
   useEffect(() => {
     if (!open) return;
     setQuery("");
     setActive(0);
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = "";
-    };
+    setFailed(null);
   }, [open]);
 
   // Favoriten einmal pro Öffnen laden — Sprungziele bei leerer Eingabe.
@@ -145,18 +149,32 @@ export function CommandPalette() {
             { signal: controller.signal },
           );
           if (res.status === 401) {
-            // Sitzung abgelaufen — Palette hat nichts anzuzeigen.
-            setOpen(false);
+            // Sitzung abgelaufen. Die Palette schloss sich hier frueher
+            // kommentarlos: der Tastendruck wirkte folgenlos und niemand
+            // erfuhr, dass eine neue Anmeldung noetig ist.
+            setFailed("auth");
+            setLoading(false);
             return;
           }
-          if (res.ok) setData(await res.json());
+          if (res.ok) {
+            setData(await res.json());
+            setFailed(null);
+          } else {
+            // Ohne diesen Zweig bliebe `data` stehen und die Liste
+            // meldete "Nichts gefunden": ein 500 der Suche waere von
+            // einem leeren Ergebnis nicht zu unterscheiden.
+            setFailed("server");
+          }
           setLoading(false);
         } catch {
           // Ein Abbruch ist normal (jede Eingabe loest die vorige ab) —
           // dann laeuft gleich der naechste Lauf. Bei einem echten
           // Netzfehler muss der Spinner aber aufhoeren, sonst dreht er
           // sich fuer immer und verdeckt den Leer-Zustand.
-          if (!controller.signal.aborted) setLoading(false);
+          if (!controller.signal.aborted) {
+            setFailed("server");
+            setLoading(false);
+          }
         }
       },
       query ? 160 : 0,
@@ -167,12 +185,6 @@ export function CommandPalette() {
     };
   }, [open, query]);
 
-  function toggleTheme() {
-    const next = !document.documentElement.classList.contains("dark");
-    document.documentElement.classList.toggle("dark", next);
-    localStorage.setItem("theme", next ? "dark" : "light");
-  }
-
   function go(href: string) {
     close();
     router.push(href);
@@ -182,7 +194,7 @@ export function CommandPalette() {
   // Solange die Antwort noch zur alten Eingabe gehört (Debounce),
   // werden Server-Items client-seitig mitgefiltert — sonst trifft
   // Enter bei schnellem Tippen veraltete Treffer.
-  const stale = data.q !== query.trim().slice(0, 100);
+  const stale = data.q !== normalizeQuery(query);
   const items: Item[] = [];
   const favoriteIds = new Set<string>();
   if (!query.trim()) {
@@ -192,7 +204,7 @@ export function CommandPalette() {
         key: `fav:${f.id}`,
         group: "Favoriten",
         icon: <Star className="h-4 w-4" />,
-        label: f.title || "Untitled",
+        label: pageTitle(f.title),
         hint: f.spaceName,
         run: () => go(`/s/${f.slug}/p/${f.id}`),
       });
@@ -200,12 +212,12 @@ export function CommandPalette() {
   }
   for (const p of data.pages) {
     if (favoriteIds.has(p.id)) continue;
-    if (stale && !matchesQuery(p.title || "Untitled", query)) continue;
+    if (stale && !matchesQuery(pageTitle(p.title), query)) continue;
     items.push({
       key: `page:${p.id}`,
       group: "Seiten",
       icon: <FileText className="h-4 w-4" />,
-      label: p.title || "Untitled",
+      label: pageTitle(p.title),
       hint: p.spaceName,
       snippet: p.snippet,
       badge: p.isTemplate ? "Vorlage" : undefined,
@@ -321,26 +333,31 @@ export function CommandPalette() {
     } else if (e.key === "Enter") {
       e.preventDefault();
       items[clamped]?.run();
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      close();
     }
+    // Escape nicht hier: useModal faengt es am document, damit es auch
+    // greift, wenn der Fokus in der Liste steht.
   }
 
-  if (!open) return null;
+  if (!open || !mounted) return null;
 
   let lastGroup: Item["group"] | null = null;
 
-  return (
+  // Per Portal ans Ende von <body>, wie jedes Modal: auf der gemeinsamen
+  // Ebene z-modal entscheidet die Reihenfolge im DOM, was oben liegt
+  // (siehe globals.css, Stapelebenen). An ihrem festen Platz im Layout
+  // stuende die Palette vor allen Portalen und laege damit unter jedem
+  // anderen offenen Modal, auch wenn sie zuletzt aufging (Strg+K aus
+  // einem Dialog heraus) und die Tasten bekommt.
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
-      onMouseDown={close}
+      className="fixed inset-0 z-modal overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
+      onMouseDown={onBackdrop}
       role="dialog"
       aria-modal="true"
       aria-label="Befehle und Suche"
     >
       <div
-        onMouseDown={(e) => e.stopPropagation()}
+        ref={panelRef}
         className="mx-auto w-full max-w-xl overflow-hidden rounded-2xl border border-line bg-surface shadow-pop animate-[rise_0.25s_cubic-bezier(0.22,1,0.36,1)]"
       >
         <div className="flex items-center gap-3 border-b border-line px-4">
@@ -386,6 +403,27 @@ export function CommandPalette() {
           aria-label="Ergebnisse"
           className="max-h-[46vh] overflow-y-auto p-2"
         >
+          {/* Steht vor den Treffern, nicht anstelle des Leer-Zustands:
+              die Aktionen unten bleiben auch bei gestoerter Suche
+              bedienbar. */}
+          {failed && (
+            <li className="mx-1 mt-1 rounded-lg border border-line bg-subtle px-3 py-2 text-[12.5px] text-danger">
+              {failed === "auth" ? (
+                <>
+                  Deine Sitzung ist abgelaufen.{" "}
+                  <button
+                    type="button"
+                    onClick={() => go("/login")}
+                    className="font-medium underline underline-offset-2"
+                  >
+                    Neu anmelden
+                  </button>
+                </>
+              ) : (
+                "Die Suche ist gerade nicht erreichbar. Die Liste kann unvollständig sein."
+              )}
+            </li>
+          )}
           {items.map((item, i) => {
             const header =
               item.group !== lastGroup ? (
@@ -456,7 +494,7 @@ export function CommandPalette() {
               </li>
             );
           })}
-          {items.length === 0 && !loading && (
+          {items.length === 0 && !loading && !failed && (
             <li className="px-3 py-10 text-center text-sm text-muted">
               Nichts gefunden für{" "}
               <span className="font-medium text-ink">„{query}“</span>
@@ -485,7 +523,8 @@ export function CommandPalette() {
           </span>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -5,6 +5,7 @@ import { useActionState } from "react";
 import { Loader2, Sparkles, FileText } from "lucide-react";
 import { askAction, type AskState } from "./actions";
 import { Button } from "@/components/ui/Button";
+import { pageTitle } from "@/lib/page-title";
 
 export function AskForm() {
   const [state, action, pending] = useActionState<AskState, FormData>(
@@ -75,7 +76,7 @@ export function AskForm() {
                         [{i + 1}]
                       </span>
                       <FileText className="h-3.5 w-3.5" />
-                      {s.title || "Untitled"}
+                      {pageTitle(s.title)}
                     </Link>
                   </li>
                 ))}

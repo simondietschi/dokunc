@@ -1,7 +1,10 @@
 # Reverse-Proxy mit TLS-Terminierung.
 # Standard: localhost mit Caddys interner CA (für internen/VPN-Betrieb).
-# Für eine echte Domain: SITE_ADDRESS=wiki.example.com setzen und die
-# Zeile `tls internal` entfernen (Caddy holt dann automatisch Let's Encrypt).
+# Für eine echte Domain wird diese Datei NICHT geändert, alles steht in
+# der .env: SITE_ADDRESS=wiki.example.com, CADDY_TLS=<eigene Mailadresse>
+# (Caddy holt dann Let's-Encrypt-Zertifikate), dazu APP_BIND, APP_PORT=443
+# und COMPOSE_FILE (s. README), sonst bleibt die Instanz von aussen
+# unerreichbar.
 
 {$SITE_ADDRESS:localhost} {
 	encode zstd gzip
@@ -28,7 +31,13 @@
 		}
 	}
 
-	tls internal
+	# internal = Caddys eigene CA; eine Mailadresse schaltet ACME ein
+	# (Let's Encrypt, ZeroSSL als Ausweich). Über die Umgebung statt von
+	# Hand: wer diese versionierte Datei änderte, stiess bei jedem Update
+	# auf Konflikte. Leer darf der Wert nicht sein, sonst bricht Caddy mit
+	# "wrong argument count" ab; docker-compose.yml reicht deshalb
+	# ${CADDY_TLS:-internal} durch.
+	tls {$CADDY_TLS:internal}
 
 	header {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"

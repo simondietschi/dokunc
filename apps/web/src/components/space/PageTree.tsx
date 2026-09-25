@@ -23,6 +23,8 @@ import {
 import { cn } from "@/lib/cn";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { movePageAction } from "@/app/s/[slug]/move-actions";
+import { pageTitle } from "@/lib/page-title";
+import { EVENT_PAGE_RENAMED, onBrowserEvent } from "@/lib/browser-events";
 
 /**
  * Seitenbaum der Sidebar. Mit "managePages"-Recht lassen sich Seiten per
@@ -68,20 +70,15 @@ export function PageTree({
   const [error, setError] = useState<string | null>(null);
 
   // Umbenennungen aus dem Editor sofort anzeigen (Ereignis
-  // "dokunc:page-renamed"), bis der Server den neuen Titel liefert.
+  // EVENT_PAGE_RENAMED), bis der Server den neuen Titel liefert.
   const [renamed, setRenamed] = useState<Map<string, string>>(
     () => new Map(),
   );
 
   useEffect(() => {
-    const onRenamed = (e: Event) => {
-      const { pageId, title } = (
-        e as CustomEvent<{ pageId: string; title: string }>
-      ).detail;
+    return onBrowserEvent(EVENT_PAGE_RENAMED, ({ pageId, title }) => {
       setRenamed((prev) => new Map(prev).set(pageId, title));
-    };
-    window.addEventListener("dokunc:page-renamed", onRenamed);
-    return () => window.removeEventListener("dokunc:page-renamed", onRenamed);
+    });
   }, []);
 
   useEffect(() => {
@@ -414,7 +411,7 @@ function TreeItem({
               {node.icon}
             </span>
           )}
-          <span className="truncate">{node.title || "Untitled"}</span>
+          <span className="truncate">{pageTitle(node.title)}</span>
         </Link>
         {canManage && (
           <form action={createPageAction}>

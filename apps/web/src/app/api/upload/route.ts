@@ -4,16 +4,21 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
-import { isSameOrigin } from "@/lib/origin";
+import { isSameOrigin, originRejectionHint } from "@/lib/origin";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { can } from "@/lib/permissions";
 import { effectiveRole } from "@/lib/space-access";
 import { canSeePage } from "@/lib/page-access";
 import { audit } from "@/lib/audit";
+import { declaredBodySize } from "@/lib/body-size";
 import { log } from "@/lib/log";
+import { stripImageMetadata } from "@/lib/image-metadata";
+import { RATE_LIMITS } from "@/lib/rate-limits";
+import { IMAGE_TYPE_NAMES } from "@/lib/image-types";
 import {
   UPLOAD_DIR,
   ALLOWED_IMAGE_TYPES,
+  isInlineImageType,
   mimeTypeForExtension,
   safeExtension,
   sanitizeFilename,
@@ -46,6 +51,15 @@ export async function POST(req: Request) {
       req.headers.get("host"),
     )
   ) {
+    // Der eine Fall, der sonst raetselhaft bleibt, gehoert ins Log:
+    // die Instanz ist unter diesem Namen erreichbar, APP_URL nennt
+    // aber einen anderen.
+    const hinweis = originRejectionHint(
+      req.headers.get("origin"),
+      process.env.APP_URL,
+      req.headers.get("host"),
+    );
+    if (hinweis) log.warn({ hinweis }, "Anfrage wegen fremder Herkunft abgelehnt");
     return NextResponse.json({ error: "Ungültige Herkunft" }, { status: 403 });
   }
 
@@ -54,7 +68,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   }
 
-  if (!(await rateLimit(await clientKey("upload"), 30, 60))) {
+  if (!(await rateLimit(
+      await clientKey("upload"),
+      RATE_LIMITS.upload.versuche,
+      RATE_LIMITS.upload.fenster,
+    ))) {
     return NextResponse.json(
       { error: "Zu viele Uploads. Bitte kurz warten." },
       { status: 429 },
@@ -65,12 +83,36 @@ export async function POST(req: Request) {
   // in den Speicher, bevor irgendein Limit greift — eine 5-GB-Anfrage
   // haette den Prozess sonst schon erledigt, ehe die Groessenpruefung
   // weiter unten ueberhaupt drankommt.
+  //
+  // Ohne glaubwuerdige Laengenangabe wird gar nicht erst gepuffert: eine
+  // Anfrage mit chunked Transfer-Encoding hat keine Content-Length, und
+  // genau darueber liess sich die Pruefung vorher umgehen.
   const maxBody = uploadLimitBytes("FILE");
-  const declared = Number(req.headers.get("content-length") ?? 0);
-  if (Number.isFinite(declared) && declared > maxBody + 64 * 1024) {
+  const declared = declaredBodySize(
+    req.headers.get("content-length"),
+    maxBody + 64 * 1024,
+  );
+  if (declared.kind === "zu-gross") {
+    // Vor dem Puffern steht die Art der Datei noch nicht fest, geprueft
+    // wird deshalb an der groesseren Anhang-Grenze. Die Meldung nennt
+    // trotzdem beide Zahlen: stuende dort nur die Anhang-Grenze, wuerde
+    // ein 30-MB-Bild hier mit "max. 25 MB" abgelehnt, und dieselbe
+    // Datei auf 20 MB verkleinert unten noch einmal mit "max. 10 MB" —
+    // zwei Absagen mit zwei Zahlen, von denen die erste nie die Grenze
+    // war, an der die Datei tatsaechlich scheitert.
+    const grenzen =
+      uploadLimitMb("IMAGE") === uploadLimitMb("FILE")
+        ? `max. ${uploadLimitMb("FILE")} MB`
+        : `max. ${uploadLimitMb("FILE")} MB, Bilder ${uploadLimitMb("IMAGE")} MB`;
     return NextResponse.json(
-      { error: `Datei zu gross (max. ${uploadLimitMb("FILE")} MB)` },
+      { error: `Datei zu gross (${grenzen})` },
       { status: 413 },
+    );
+  }
+  if (declared.kind === "unbekannt") {
+    return NextResponse.json(
+      { error: "Länge der Anfrage fehlt (Content-Length erforderlich)" },
+      { status: 411 },
     );
   }
 
@@ -153,7 +195,7 @@ export async function POST(req: Request) {
   const sniffed = sniffImageType(bytes);
   if (wantedKind === "IMAGE" && !sniffed) {
     return NextResponse.json(
-      { error: "Nur echte PNG-, JPG-, GIF- oder WebP-Bilder erlaubt" },
+      { error: `Nur echte Bilder erlaubt (${IMAGE_TYPE_NAMES})` },
       { status: 415 },
     );
   }
@@ -171,13 +213,52 @@ export async function POST(req: Request) {
   const ext = imageType
     ? ALLOWED_IMAGE_TYPES[imageType]
     : safeExtension(file.name);
-  const mimeType = imageType ?? mimeTypeForExtension(ext);
+  const typ = imageType ?? mimeTypeForExtension(ext);
+  // Einen Bildtyp gibt es nur gegen die Magic Bytes. Sonst entschiede
+  // bei kind=file allein die vom Client gewaehlte Endung ueber den
+  // gespeicherten MIME-Typ: eine Datei "x.gif" mit beliebigem Inhalt
+  // bekaeme image/gif, und fileResponseHeaders liefert jeden Bildtyp
+  // mit Content-Disposition: inline und genau diesem Content-Type aus —
+  // eine Typangabe, die nicht zum Inhalt passt. Als octet-stream geht
+  // dieselbe Datei als Download raus.
+  const mimeType =
+    isInlineImageType(typ) && typ !== sniffed
+      ? "application/octet-stream"
+      : typ;
   const name = sanitizeFilename(file.name);
   const storedName = `${randomBytes(16).toString("hex")}.${ext}`;
 
-  await mkdir(UPLOAD_DIR, { recursive: true });
   const fullPath = path.join(UPLOAD_DIR, storedName);
-  await writeFile(fullPath, bytes);
+  // Metadaten raus, BEVOR die Datei liegt. Sonst behaelt ein Foto seine
+  // EXIF-Daten — GPS-Ort, Aufnahmezeit, Geraet — und /api/files, der
+  // Freigabelink und die Einbettung im Export liefern sie genauso wieder
+  // aus: wer ein Bild in eine Seite zieht, teilte mehr, als er sieht.
+  //
+  // Nur fuer erkannte Bildtypen (imageType kommt aus den Magic Bytes,
+  // nicht aus der Endung) und ohne Neucodieren: lib/image-metadata laesst
+  // ganze Abschnitte des Containers weg und ruehrt die Bilddaten nicht
+  // an. Bei allem, was nicht aufgeht, bleibt die Datei, wie sie ist.
+  const gespeicherteBytes = imageType
+    ? stripImageMetadata(bytes, imageType)
+    : bytes;
+  try {
+    await mkdir(UPLOAD_DIR, { recursive: true });
+    await writeFile(fullPath, gespeicherteBytes);
+  } catch (e) {
+    // Ohne diesen Zweig verliesse ein Schreibfehler (Verzeichnis nicht
+    // beschreibbar, Platte voll) die Route unbehandelt: kein Eintrag im
+    // Log und keine JSON-Antwort, an der sich der Client festhalten
+    // koennte. Derselbe Vorfall waere je nach Ursache sichtbar oder
+    // gar nicht — deshalb hier dieselbe Meldung wie im Datenbankzweig.
+    log.error(
+      { err: String(e), spaceId },
+      "Datei konnte nicht abgelegt werden",
+    );
+    return NextResponse.json(
+      { error: "Upload fehlgeschlagen" },
+      { status: 500 },
+    );
+  }
 
   try {
     // Erst nach dem Schreiben registrieren: ein Datensatz ohne Datei
@@ -191,7 +272,10 @@ export async function POST(req: Request) {
         name,
         mimeType,
         kind,
-        size: bytes.length,
+        // Die abgelegte Groesse, nicht die hochgeladene: nach dem
+        // Entfernen der Metadaten ist die Datei kleiner, und die Anzeige
+        // soll die Datei beschreiben, die wirklich da liegt.
+        size: gespeicherteBytes.length,
       },
       select: { name: true, size: true, mimeType: true },
     });
@@ -202,7 +286,7 @@ export async function POST(req: Request) {
       targetId: storedName,
       metadata: {
         mimeType,
-        size: bytes.length,
+        size: gespeicherteBytes.length,
         kind,
         pageId: attachedPageId,
       },
@@ -215,8 +299,19 @@ export async function POST(req: Request) {
       kind: kind === "IMAGE" ? "image" : "file",
     });
   } catch (e) {
-    // Ohne Datensatz keine verwaiste Datei zuruecklassen.
-    await unlink(fullPath).catch(() => {});
+    // Ohne Datensatz keine verwaiste Datei zuruecklassen — aber nur
+    // dann. `create` kann auch fehlschlagen, nachdem die Zeile
+    // geschrieben ist und nur die Antwort verloren ging (Verbindung
+    // weg, Timeout nach dem Commit). Ungeprueft geloescht, bliebe ein
+    // Anhang in der Liste des Space stehen, dessen Bytes fehlen: der
+    // Abruf ueber /api/files antwortet 404, und der Verweis laesst sich
+    // nicht mehr heilen. Die Datei liegen zu lassen ist der harmlosere
+    // Ausgang. Laesst sich die Zeile nicht nachsehen (Datenbank weg),
+    // bleibt es beim Loeschen wie bisher.
+    const angelegt = await prisma.attachment
+      .findUnique({ where: { storedName }, select: { id: true } })
+      .catch(() => null);
+    if (!angelegt) await unlink(fullPath).catch(() => {});
     log.error(
       { err: String(e), spaceId },
       "Attachment konnte nicht gespeichert werden",

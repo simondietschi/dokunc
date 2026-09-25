@@ -4,7 +4,16 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Dump und Uploads-Archiv enthalten sämtliche Passwort-Hashes, die
+# versiegelten TOTP-Geheimnisse und alle Seiteninhalte. Ohne diese Zeile
+# erben sie die Umask der aufrufenden Sitzung (üblich 022) — auf einem
+# Host mit mehreren Konten könnte jeder lokale Nutzer die Sicherung
+# lesen.
+umask 077
+
 mkdir -p backups
+# Ein schon bestehendes backups/ zieht die Umask nicht mehr nach.
+chmod 700 backups
 TS="$(date +%Y%m%d-%H%M%S)"
 
 echo "→ Datenbank-Dump…"

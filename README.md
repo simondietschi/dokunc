@@ -18,16 +18,21 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 - Verschachtelter Seitenbaum + Rich-Editor (Slash-Menü „/", Tabellen,
   Aufgabenlisten, Bilder mit Alternativtext, Breite und Bildunterschrift,
   Code-Blöcke mit Syntax-Hervorhebung, aufklappbare Abschnitte, Callouts,
-  Mermaid-Diagramme, YouTube-Embeds, Excalidraw-Zeichnungen,
-  draw.io-Diagramme); Tab rückt im Codeblock ein, Tabellen-Werkzeuge
+  Mermaid-Diagramme, YouTube-Embeds, Excalidraw-Zeichnungen und
+  draw.io-Diagramme, deren Zeichenfenster vor dem Verwerfen ungesicherter
+  Änderungen nachfragen); Tab rückt im Codeblock ein, Tabellen-Werkzeuge
   (Zeile/Spalte einfügen und löschen, Kopfzeile, Tabelle löschen)
   erscheinen in der Toolbar, sobald der Cursor in einer Tabelle steht;
   Links öffnen im Lesemodus per Klick, beim Bearbeiten per Cmd/Ctrl+Klick
-- Block-Griff zum Verschieben, Duplizieren und Löschen; Gliederung der
-  Seite, Anker an jeder Überschrift, Wortzähler
+- Block-Griff zum Verschieben, Duplizieren und Löschen; Anker an jeder
+  Überschrift, Wortzähler
 - Navigation: Seiten per Drag and Drop im Seitenbaum verschieben und
   sortieren (oder per Dialog „Verschieben nach…"), Brotkrumen über dem
-  Titel, Inhaltsverzeichnis aus den Überschriften der Seite
+  Titel, Inhaltsverzeichnis aus den Überschriften der Seite (auf breiten
+  Schirmen als Spalte neben dem Text, sonst aufklappbar über dem Inhalt
+  und ab 1400 px Fensterbreite von sich aus offen; jeder Eintrag ist ein
+  Link auf den Anker der Überschrift, und ein geteilter Link mit Anker
+  springt nach dem Laden an diese Stelle)
 - Seiten-Symbol und Titelbild
 - Markdown einfügen und importieren
 - Echtzeit-Kollaboration mit Live-Cursorn (Yjs + Hocuspocus)
@@ -97,10 +102,30 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
     (nur PNG/JPG/GIF/WebP, Magic-Byte-Prüfung), externe Bilder bleiben
     verlinkt. Es wird nie Roh-HTML gespeichert — alles läuft durch das
     Editor-Schema. Limits: `IMPORT_MAX_MB` (Default 100) pro Upload,
-    2000 Dateien / 500 MB entpackt pro Zip (32 MB pro Zip-Eintrag,
-    Seitendateien bis 5 MB), 2000 Seiten pro Import, 5 Importe pro
-    10 Minuten. Fehler einzelner Dateien werden als Hinweise
-    gesammelt, der Rest wird importiert.
+    2000 Dateien / 200 MB entpackt pro Import (alle Zips zusammen; 32 MB
+    pro Zip-Eintrag, Seitendateien bis 5 MB), 2000 Seiten pro Import,
+    5 Importe pro 10 Minuten je Konto und Client-Adresse, höchstens ein
+    laufender Import je Konto und insgesamt höchstens
+    `IMPORT_MAX_CONCURRENT` (Default 2) gleichzeitig laufende Importe
+    (mit Redis über alle Instanzen; darüber antwortet der Server mit 429).
+    Ein Upload muss nach 30 Sekunden Anlauf im Schnitt mindestens
+    128 KiB/s liefern, sonst wird er mit 408 abgebrochen und gibt seinen
+    Platz frei. Zips werden Eintrag für Eintrag entpackt und Bilder
+    nacheinander gespeichert: entpackt liegt jeweils nur die Seite in
+    Arbeit und ein Bild im Speicher, nicht der ganze Import (gemessen:
+    rund 40 MB Spitze bei 190 MB Bildern auf einer Seite, vorher rund
+    390 MB). Der Upload selbst liegt beim Einlesen des Formulars
+    kurzzeitig mehrfach im Speicher. Ein Import läuft ganz oder gar
+    nicht: bricht er nach dem Anlegen ab (Fehler, Ausfall der Datenbank,
+    Abbruch im Browser oder Zeitgrenze `IMPORT_TIMEOUT_S`, Default
+    80 Sekunden, erlaubt 1 bis 3600; Werte ausserhalb werden gekappt,
+    ungültige wie `0` oder `Infinity` ergeben den Default, beides mit
+    Warnung im Log), werden alle schon angelegten Seiten, Anhänge und
+    Bilddateien wieder entfernt. Fehler einzelner Dateien werden als
+    Hinweise gesammelt, der Rest wird importiert; scheitert jede Seite,
+    gilt der Import als gescheitert und wird ebenfalls zurückgenommen,
+    und die Fehlermeldung nennt mit den Hinweisen die gescheiterten
+    Dateien und den Grund (bis zu 200 Hinweise, darüber nur die Anzahl).
 
 ## Stack
 
@@ -135,7 +160,8 @@ Hinweise:
 - TLS nutzt Caddys **interne CA** (`localhost`). Der Browser zeigt anfangs
   eine Zertifikatswarnung — für internen/VPN-Betrieb ok, oder die Caddy-Root-CA
   importieren.
-- **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1:7891` (kein LAN-Zugriff).
+- **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1:7891` (kein LAN-Zugriff;
+  Adresse und Port über `APP_BIND` und `APP_PORT` in `.env` änderbar, s. u.).
   App/DB/Redis sind nur im internen Docker-Netz erreichbar.
 - Der App-Container läuft als **non-root**. Daten liegen in den Volumes
   `db_data`, `redis_data`, `uploads`, `app_data`.
@@ -148,23 +174,142 @@ nicht nötig, die Adressen werden zur Laufzeit ausgewertet:
 ```env
 SITE_ADDRESS=wiki.example.com
 APP_URL=https://wiki.example.com
+CADDY_TLS=admin@example.com
+APP_BIND=0.0.0.0
 APP_PORT=443
+COMPOSE_FILE=docker-compose.yml:docker-compose.domain.yml
 APP_SECRET=<openssl rand -base64 48>
 POSTGRES_PASSWORD=<eigenes Passwort>
 ```
 
-Dann `docker compose up -d`. In der `Caddyfile` `tls internal` entfernen,
-damit Caddy ein Let's-Encrypt-Zertifikat holt (dafür muss Caddy zusätzlich
-auf Port 80 erreichbar sein, also `"127.0.0.1:80:80"` bzw. ohne
-`127.0.0.1` beim Proxy unter `ports` ergänzen). Ein selbst gesetztes
+`SITE_ADDRESS` und `APP_URL` müssen denselben Namen tragen: `APP_URL`
+entscheidet allein, welche Herkunft die Route-Handler (Upload, Import,
+Collab-Ticket, KI) annehmen. Bleibt sie auf `localhost` stehen, während
+die Instanz unter der Domain läuft, antworten diese Aufrufe mit 403 —
+das Log nennt dann beide Namen.
+
+`CADDY_TLS` bestimmt, woher das Zertifikat kommt. Die Vorgabe `internal`
+nimmt Caddys eigene CA, der Browser warnt dann. Eine Mailadresse schaltet
+ACME ein: Caddy holt das Zertifikat bei Let's Encrypt (fällt das aus, bei
+ZeroSSL), erneuert es selbst und hinterlegt die Adresse als Kontakt beim
+Konto der Zertifizierungsstelle. Ein leerer Wert zählt wie `internal`.
+Die `Caddyfile` selbst bleibt unverändert, wie alle versionierten
+Dateien: alles Eigene steht in der `.env`.
+
+`APP_BIND` ist die Adresse, auf der der Proxy Verbindungen annimmt. Die
+Vorgabe `127.0.0.1` lässt nur den Server selbst herein; ohne
+`APP_BIND=0.0.0.0` (alle IPv4-Adressen des Servers) oder eine bestimmte
+Adresse des Servers bleibt die Instanz von aussen unerreichbar, auch mit
+`APP_PORT=443`. `COMPOSE_FILE` bindet `docker-compose.domain.yml` ein:
+sie veröffentlicht zusätzlich Port 80 auf derselben Adresse, für den
+Let's-Encrypt-Nachweis und die Umleitung von `http://` auf `https://`.
+Weil die Zeile in der `.env` steht, liest jeder `docker compose`-Befehl
+die Datei mit, auch `scripts/backup.sh`. Die Domain muss per DNS auf den
+Server zeigen, und eine Firewall davor muss Port 80 und 443 durchlassen.
+
+`COMPOSE_FILE` ersetzt die Standardliste von `docker compose`: eine
+vorhandene `docker-compose.override.yml` wird dann nicht mehr von selbst
+gelesen, und ihre Anpassungen (Limits, Volumes, Ports) fielen beim
+nächsten `docker compose up -d` ohne Meldung weg. Wer eine nutzt, hängt
+sie ans Ende der Liste:
+`COMPOSE_FILE=docker-compose.yml:docker-compose.domain.yml:docker-compose.override.yml`.
+Der Trenner ist unter Linux und macOS `:`, unter Windows `;` (änderbar
+über `COMPOSE_PATH_SEPARATOR`).
+
+**IPv6:** `APP_BIND=0.0.0.0` bedient nur IPv4. Docker veröffentlicht
+einen Port mit ausdrücklicher Adresse nur in deren Adressfamilie, und
+`APP_BIND` nimmt genau eine Adresse. Hat die Domain einen AAAA-Eintrag,
+erreichen reine IPv6-Clients die Instanz dann nicht, und Let's Encrypt
+versucht den Nachweis zuerst über IPv6. Entweder den AAAA-Eintrag
+weglassen oder IPv6 mit `docker-compose.ipv6.yml` dazunehmen: sie
+veröffentlicht 443 und 80 zusätzlich auf `APP_BIND6`. Dessen Vorgabe ist
+`::1`, also wie bei `APP_BIND` nur der Server selbst; für alle
+IPv6-Adressen in der `.env`:
+
+```env
+APP_BIND6=::
+COMPOSE_FILE=docker-compose.yml:docker-compose.domain.yml:docker-compose.ipv6.yml
+```
+
+Die Datei nur einbinden, wenn der Server IPv6 hat, sonst startet der
+Proxy nicht. Welche Adressen der Proxy tatsächlich belegt, zeigt
+`docker compose ps proxy` in der Spalte `PORTS`.
+
+Dann `docker compose up -d`. Aktualisiert wird wie im Schnellstart mit
+`git pull && docker compose up -d --build`; weil keine versionierte Datei
+geändert ist, läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
 `APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
-alle bestehenden Sitzungen). Weitere Optionen — SMTP für Einladungs- und
+alle bestehenden Sitzungen).
+Weitere Optionen — SMTP für Einladungs- und
 Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
 `ANTHROPIC_API_KEY` für die KI-Funktionen, `MAX_UPLOAD_MB` für das
-Upload-Limit — siehe `.env.example`.
+Upload-Limit, `UPLOAD_SWEEP_INTERVAL_H` für den Aufräumer verwaister
+Uploads, `SESSION_IDLE_TIMEOUT` für die Abmeldung nach Untätigkeit
+(empfohlen für geteilte Geräte) — siehe `.env.example`.
+
+Ohne SMTP steht der Link aus Reset- und Einladungsmails nur ausserhalb
+der Produktion im Log (`SMTP fehlt — … nur im Log`), in der Produktion
+nie; die Empfängeradresse steht in keinem Fall darin. Scheitert der
+Versand einer Mail zum Zurücksetzen des Passworts, oder fehlt in der
+Produktion SMTP, zeigt das Formular trotzdem die übliche Bestätigung —
+sonst verriete es, welche Adressen ein Konto haben. Der Fehler steht als
+`reset mail failed` mit Konto- und Reset-ID im Log (ohne Adresse, ohne
+Link). Nur wenn keine Verbindung zum Mailserver zustande kam oder sie
+abbrach (abgewiesen, Zeitüberschreitung, Socketfehler) oder der Server
+mit 4xx antwortete, zählt der Versuch nicht gegen die Bremse pro Konto
+(drei je Stunde). Alles andere zählt: eine dauerhafte Ablehnung (5xx),
+ein abgewiesener Empfänger (auch mit 4xx), ein nicht auflösbarer
+Servername, fehlendes SMTP und jeder unbekannte Fehler.
+
+**Umstieg von einer von Hand geänderten `docker-compose.yml` oder
+`Caddyfile`:** Frühere Fassungen dieser Anleitung liessen in der
+`docker-compose.yml` `127.0.0.1:` entfernen und `"80:80"` ergänzen und in
+der `Caddyfile` die Zeile `tls internal` löschen. Beides steht jetzt in
+der `.env`, und `git pull` bricht an den geänderten Dateien ab. Wer in
+den beiden Dateien noch anderes geändert hat, sichert es zuerst
+(`git diff docker-compose.yml Caddyfile`); Anpassungen an Diensten gehören
+danach in eine `docker-compose.override.yml` (in `COMPOSE_FILE`
+aufnehmen, s. o.). Dann die eigenen Änderungen verwerfen und
+aktualisieren:
+
+```bash
+git checkout -- docker-compose.yml Caddyfile
+git pull
+```
+
+Danach `APP_BIND`, `APP_PORT`, `COMPOSE_FILE` und `CADDY_TLS` wie oben in
+die `.env` setzen und `docker compose up -d --build`. Ohne `APP_BIND`
+fällt der Proxy auf `127.0.0.1` zurück: die Instanz ist von aussen still
+nicht mehr erreichbar, und die Zertifikatserneuerung scheitert. Ohne
+`COMPOSE_FILE` fehlt Port 80. Ohne `CADDY_TLS` stellt Caddy wieder ein
+Zertifikat seiner internen CA aus, und jeder Browser warnt.
+`docker compose port proxy 443` muss danach `0.0.0.0:443` zeigen,
+`docker compose port proxy 80` `0.0.0.0:80`.
 
 **Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
 (Restore-Befehle gibt das Skript aus).
+
+**Verwaiste Uploads:** Der Web-Prozess räumt alle
+`UPLOAD_SWEEP_INTERVAL_H` Stunden (Default 6, erlaubt 1 bis 168, `0`
+schaltet ab, andere Werte passt er mit Warnung im Log an, s.
+`.env.example`; der erste Lauf folgt 10 Minuten nach dem Start) Dateien aus
+dem Upload-Verzeichnis, zu denen es keinen Datensatz mehr gibt, etwa nach
+einem abgebrochenen Upload oder einer unterbrochenen Space-Löschung.
+Gelöscht wird nur, was im Namensformat der App vorliegt, älter als
+24 Stunden ist und nirgends mehr verwendet wird: weder im Seiteninhalt
+(auch im Papierkorb und in Vorlagen) noch als Titelbild, in einer
+Version, im Collab-Zustand, in einem Kommentar oder in einer
+Space-Beschreibung. Jeder Lauf loggt, wie viel er entfernt hat. Mehrere
+Instanzen stimmen sich über eine Redis-Sperre ab, sodass je Intervall in
+der Regel nur eine räumt; ohne Redis (`REDIS_URL` leer) räumt jede für
+sich, was unschädlich ist. Ist Redis eingerichtet, aber nicht
+erreichbar, setzt der Lauf aus. Soll ein Lauf mehr als die Hälfte der
+Dateien im Namensformat der App und zugleich mehr als 20 Dateien
+entfernen, oder kennt die Datenbank gar keinen Anhang, bricht er ab,
+ohne etwas zu löschen, und meldet das im Log; meist passen dann
+`DATABASE_URL` und `UPLOAD_DIR` nicht zusammen. Frisch zurückgespielte
+Dateien gelten 24 Stunden lang als neu, Datenbank und Uploads also
+innerhalb dieser Frist einspielen.
 
 ## Lokale Entwicklung (ohne Docker)
 
@@ -178,12 +323,74 @@ pnpm db:migrate          # Schema + Migrationen
 pnpm dev                 # web :3000 + collab :3001
 ```
 
+## Collab-Server
+
+Der Collab-Server prüft die Tickets mit demselben `APP_SECRET` wie die
+App. Ohne eigenes Secret (mindestens 32 Zeichen) startet er nur mit
+`NODE_ENV=development`, wie es `pnpm dev` setzt; `pnpm start`, die
+E2E-Tests und jeder andere Start brauchen ein `APP_SECRET`. Im
+Docker-Container erzeugt der Einstiegspunkt es beim ersten Start.
+
+Umgebungsvariablen des Collab-Servers (Vorgabe in Klammern):
+`COLLAB_PORT` (3001), `APP_SECRET` (Pflicht ausser unter
+`NODE_ENV=development`), `DATABASE_URL` (Pflicht), `REDIS_URL`
+(redis://localhost:6379; Abgleich mehrerer Instanzen, Wiederherstellen,
+Bremsen, Sperren), `TRUSTED_PROXY_HOPS` (0; in docker-compose 1), die
+fünf Verbindungsgrenzen `COLLAB_MAX_…` (siehe nächster Absatz),
+`MAIL_DISPATCH_INTERVAL_S` (30, mindestens 5), `DIGEST_HOUR_UTC` (6),
+`SMTP_HOST`, `SMTP_PORT` (587), `SMTP_SECURE` (false), `SMTP_USERNAME`,
+`SMTP_PASSWORD`, `MAIL_FROM_ADDRESS` (für Benachrichtigungs-Mails; ohne
+`SMTP_HOST` gibt es Benachrichtigungen nur in der App), `APP_URL`
+(http://localhost:3000; Links in Mails), `LOG_LEVEL` (info), `DEBUG_DB`
+(leer; gesetzt protokolliert Prisma jede Abfrage).
+
+Der Collab-Server begrenzt offene Verbindungen (je Instanz, je
+Client-Adresse und je Person) und Verbindungsversuche (je Adresse vor dem
+Handshake, je Person nach der Ticketprüfung; gezählt in Redis). Die
+Grenzen stehen in `COLLAB_MAX_CONNECTIONS`,
+`COLLAB_MAX_CONNECTIONS_PER_IP`, `COLLAB_MAX_CONNECTIONS_PER_USER`,
+`COLLAB_MAX_ATTEMPTS_PER_IP` und `COLLAB_MAX_ATTEMPTS_PER_USER`
+(Vorgaben 1000, 50, 50, 300/min, 120/min; 0 schaltet eine Grenze ab).
+Hinter einem Firmen-NAT teilen sich viele Menschen eine Adresse; dort
+`COLLAB_MAX_CONNECTIONS_PER_IP` und `COLLAB_MAX_ATTEMPTS_PER_IP`
+anheben. Die Adresse liest der Collab-Server wie die App nach
+`TRUSTED_PROXY_HOPS`. Ein Socket, der sich nicht binnen 15 Sekunden mit
+gültigem Ticket anmeldet, wird geschlossen. Abweisungen stehen mit Grund
+im Log (`Collab-Verbindung abgewiesen`,
+`Collab-Verbindung vor dem Handshake abgewiesen`,
+`Collab-Server voll, Verbindung abgewiesen`). Ein Collab-Ticket gilt zwei
+Minuten und für genau eine Verbindung; der Editor holt vor jedem
+Verbindungsaufbau ein neues. Wer an einer der Grenzen je Person
+abprallt, sieht im Editor „Zu viele Verbindungen“ (mit dem Hinweis,
+andere Tabs zu schliessen) statt „Kein Zugriff“; an den Grenzen vor dem
+Handshake (je Adresse, je Instanz) bleibt es bei „Verbinde…“. In beiden
+Fällen versucht der Editor es von selbst erneut.
+
+Beim Wiederherstellen einer Version schreibt die App den Inhalt nach
+`Page.content` (Suche, Export) und bittet den Collab-Server, ihn im
+Yjs-Dokument der Seite auszutauschen. Er tauscht auf dem bestehenden
+Yjs-Stand aus (löschen und einfügen), lädt das Dokument dafür notfalls
+selbst und bestätigt erst, wenn der neue Stand gespeichert ist. Offene
+Editoren übernehmen ihn sofort, und die Kopie, die jeder Browser
+zusätzlich hält (IndexedDB), bekommt die Löschungen beim nächsten
+Verbinden mit. Die App wartet bis zu fünf Sekunden auf diese
+Bestätigung; üblich sind Sekundenbruchteile. Solange sie wartet, ist der
+Knopf gesperrt und zeigt „Wird wiederhergestellt…“. Ohne Bestätigung
+(kein Redis, Collab-Server nicht erreichbar, Austausch oder Speichern
+gescheitert) verwirft die App den gespeicherten Yjs-Stand, damit der
+nächste Start aus `Page.content` aufbaut. Die Seite zeigt dann einen
+Hinweis mit den nächsten Schritten: In diesem Fall kann der alte Text
+aus einem offenen Editor oder einer Browser-Kopie zurückkommen, auch
+neben dem wiederhergestellten; eine zweite Wiederherstellung ohne
+Hinweis räumt das in der Regel auf. Ohne laufenden Collab-Server
+erscheint der Hinweis bei jeder Wiederherstellung.
+
 ## Tests
 
 ```bash
 pnpm lint             # ESLint über das ganze Monorepo
-pnpm test             # Unit-Tests (Vitest)
-pnpm test:integration # Autorisierungstests gegen die echte Datenbank
+pnpm test             # Unit-Tests von Web-App und Collab-Server (Vitest)
+pnpm test:integration # Integrationstests gegen echte Datenbank und Redis
 pnpm test:e2e         # Playwright-E2E: kompletter Editor-Pfad inkl.
                       # Realtime-Sync (leert die DB! Nur gegen Dev-DB laufen lassen)
 ```
@@ -192,14 +399,22 @@ Die Integrationstests prüfen, was in Abfragebedingungen steckt statt im
 Code: dass eine Seiten- oder Versions-ID aus einem Formular niemals einen
 fremden Space trifft, dass ein TOTP-Zeitschritt wie ein
 Wiederherstellungscode genau einmal gilt (auch bei gleichzeitigen
-Versuchen), und dass eine geschützte Seite genau denen sichtbar ist, die
-sie sehen dürfen — direkt, über eine Gruppe oder als Space-Verwaltung. Sie brauchen eine erreichbare Datenbank aus `.env` und legen
-ihre eigenen Datensätze an (und wieder ab); sie leeren nichts.
+Versuchen), dass neue Wiederherstellungscodes erst nach ihrer
+Bestätigung gelten und den alten Satz in einem Schritt ablösen (auch
+wenn zwei Fenster gleichzeitig daran arbeiten), und dass eine geschützte
+Seite genau denen sichtbar ist, die sie sehen dürfen — direkt, über eine
+Gruppe oder als Space-Verwaltung. Sie brauchen eine erreichbare
+Datenbank und ein erreichbares Redis aus `.env` und legen ihre eigenen
+Datensätze an (und wieder ab); sie leeren nichts. Einige starten dafür einen eigenen
+Collab-Server (Port 3150 bis 3199, eigene Redis-Datenbank). Solange sie
+laufen, darf kein anderer Collab-Server an demselben Redis hängen, etwa
+aus `pnpm dev`: Pub/Sub gilt über alle Redis-Datenbanken hinweg, und er
+führte die Wiederherstellungen der Tests mit aus.
 
 Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
 Server) und erwartet Postgres + Redis aus `.env`. In Umgebungen mit
 vorinstalliertem Chromium: `PW_EXECUTABLE_PATH=/pfad/zu/chromium` setzen.
-CI führt beide Suiten automatisch aus (`.github/workflows/ci.yml`).
+CI führt alle diese Suiten automatisch aus (`.github/workflows/ci.yml`).
 
 ## Sicherheit
 
@@ -207,6 +422,12 @@ Kurz, was die App bewusst tut:
 
 - **Sitzung** im httpOnly-Cookie; der Collab-WebSocket bekommt stattdessen
   ein kurzlebiges, an eine Seite gebundenes Ticket.
+- **Content-Security-Policy** mit frischer Nonce je Antwort statt
+  `'unsafe-inline'`, dazu `X-Frame-Options`, `nosniff`, Referrer- und
+  Permissions-Policy — in jedem Betriebsmodus, unabhängig von `NODE_ENV`.
+  Nur unter `pnpm dev` (`next dev`) ist die CSP der Seiten gelockert, und
+  zwar nur um das, was Fast Refresh braucht: `'unsafe-eval'` und den
+  HMR-WebSocket. `/api` bleibt auch dort bei der strengen Fassung.
 - **Space-Bindung** aller Schreibzugriffe: IDs aus Formularen werden gegen
   den Space geprüft, in dem die Person tatsächlich Rechte hat — und gegen
   das, was sie dort sehen darf.
@@ -245,15 +466,19 @@ Kurz, was die App bewusst tut:
   Geheimnis liegt mit AES-256-GCM verschlüsselt in der Datenbank (Schlüssel
   aus `APP_SECRET`), Wiederherstellungscodes nur als SHA-256-Hash und jeder
   genau einmal gültig. Zwischen Passwort und Code steht ein eigenes,
-  fünf Minuten gültiges Cookie — kein Sitzungscookie.
+  fünf Minuten gültiges Cookie — kein Sitzungscookie. Neue
+  Wiederherstellungscodes gelten erst, wenn man einen davon zurück
+  eintippt: bei der Einrichtung ist der zweite Faktor erst danach aktiv,
+  beim Erneuern gelten bis dahin die bisherigen Codes weiter.
+  Unbestätigte Codes verfallen nach 30 Minuten.
 - **Audit-Log** für Anmeldungen, Rollenwechsel, Einladungen und Löschungen.
-
-Bekannte Grenze: Hochgeladene Dateien hängen am Space, nicht an einer
-Seite (`Upload.spaceId`). Ein Bild oder Anhang aus einer geschützten
-Seite bleibt deshalb für jedes Space-Mitglied abrufbar, das die exakte
-URL kennt — die Dateinamen sind zufällig, aber sie stehen in Exporten
-und in Proxy-Logs. Wer das ausschliessen muss, sollte geschützte Seiten
-vorerst ohne Anhänge führen.
+- **Anhänge geschützter Seiten**: Jede hochgeladene Datei hängt an
+  ihrem Space und, wo bekannt, an ihrer Seite (`Attachment.pageId`).
+  `/api/files` liefert sie nur aus, wenn die Person diese Seite sehen
+  darf; der Export prüft dasselbe. Anhänge ohne Seitenbezug (ältere
+  Uploads, Seiten endgültig gelöscht) sind nur lesbar, wenn mindestens
+  eine Seite des Space sie verwendet und die Person jede dieser Seiten
+  sehen darf; Freigabelinks liefern sie gar nicht aus.
 
 ## Projektstruktur
 

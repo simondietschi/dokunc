@@ -5,6 +5,11 @@ import { prisma } from "@dokunc/db";
 import { requireAdmin } from "@/lib/current-user";
 import { Avatar } from "@/components/ui/Avatar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
+import {
+  isRenameRefusal,
+  RENAME_REFUSAL_PARAM,
+  renameRefusalMessage,
+} from "@/lib/group-rename";
 import { AddMemberForm, NewGroupForm } from "./GroupForms";
 import {
   addGroupMemberAction,
@@ -18,8 +23,19 @@ export const metadata: Metadata = {
   description: "Personengruppen für Spaces und geschützte Seiten.",
 };
 
-export default async function GroupsPage() {
+export default async function GroupsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   await requireAdmin();
+  // Eine abgelehnte Umbenennung kommt als Kennung zurueck (siehe
+  // renameGroupAction). Nur bekannte Kennungen werden zu Text — die
+  // Adresszeile ist von aussen setzbar.
+  const abgelehnt = (await searchParams)[RENAME_REFUSAL_PARAM];
+  const ablehnung = isRenameRefusal(abgelehnt)
+    ? renameRefusalMessage(abgelehnt)
+    : null;
 
   const [groups, users] = await Promise.all([
     prisma.group.findMany({
@@ -65,6 +81,15 @@ export default async function GroupsPage() {
         Zugriff erhalten. Die stärkste Rolle gilt: eine Gruppe nimmt nie
         weg, was jemand schon direkt hat.
       </p>
+
+      {ablehnung && (
+        <p
+          role="alert"
+          className="mt-6 rounded-lg border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-danger"
+        >
+          {ablehnung}
+        </p>
+      )}
 
       <div className="mt-8">
         <NewGroupForm />

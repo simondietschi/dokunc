@@ -25,8 +25,15 @@ jobs:
             exit 1
           fi
 
-      - name: Enable Corepack (pnpm)
-        run: corepack enable
+      # Node 26 liefert Corepack nicht mehr mit — das Dockerfile hält das
+      # fest und installiert pnpm deshalb über npm. Mit `corepack enable`
+      # hing die Bereitstellung hier an der Corepack-Version des
+      # vorinstallierten Runner-Node statt an dem Node, gegen das gebaut
+      # wird; verschwindet Corepack aus dem Image, brechen beide Jobs ab,
+      # bevor irgendetwas installiert ist. Muss vor setup-node stehen,
+      # weil `cache: pnpm` den Store-Pfad über ein laufendes pnpm sucht.
+      - name: pnpm installieren
+        run: npm install -g pnpm@11.13.1
 
       - uses: actions/setup-node@v7
         with:
@@ -45,8 +52,20 @@ jobs:
       - name: Unit tests
         run: pnpm --filter @dokunc/web test
 
+      # Grenzen, Bremse, Ticketverbrauch und Ablauf des Doc-Resets des
+      # Collab-Servers — ohne Redis und Datenbank, deshalb hier und nicht
+      # im e2e-Job.
+      - name: Unit tests collab server
+        run: pnpm --filter @dokunc/collab test
+
       - name: Typecheck collab server
         run: pnpm --filter @dokunc/collab build
+
+      # Die Pakete sah bisher nur tsc der Apps, und nur soweit diese sie
+      # importieren. Ein Fehler in einer Datei, die keine App einbindet
+      # (etwa prisma.config.ts), fiel so nirgends auf.
+      - name: Typecheck Pakete
+        run: pnpm typecheck
 
       - name: Build web
         run: pnpm --filter @dokunc/web build
@@ -88,8 +107,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Enable Corepack (pnpm)
-        run: corepack enable
+      # Node 26 liefert Corepack nicht mehr mit — das Dockerfile hält das
+      # fest und installiert pnpm deshalb über npm. Mit `corepack enable`
+      # hing die Bereitstellung hier an der Corepack-Version des
+      # vorinstallierten Runner-Node statt an dem Node, gegen das gebaut
+      # wird; verschwindet Corepack aus dem Image, brechen beide Jobs ab,
+      # bevor irgendetwas installiert ist. Muss vor setup-node stehen,
+      # weil `cache: pnpm` den Store-Pfad über ein laufendes pnpm sucht.
+      - name: pnpm installieren
+        run: npm install -g pnpm@11.13.1
 
       - uses: actions/setup-node@v7
         with:
@@ -170,6 +196,43 @@ jobs:
       - name: APP_SECRET wurde automatisch erzeugt
         run: |
           docker compose exec -T app sh -c 'test -s /app/data/app_secret'
+
+      # Ohne .env nimmt der Proxy nur auf dem Loopback an (APP_BIND,
+      # Vorgabe 127.0.0.1). Die Schritte oben sehen das nicht: sie fragen
+      # localhost und bekaemen auch von 0.0.0.0 eine Antwort. Hier zaehlt,
+      # woran Docker den Port wirklich gebunden hat.
+      - name: Proxy ohne .env nur auf 127.0.0.1
+        run: test "$(docker compose port proxy 443)" = "127.0.0.1:${APP_PORT:-7891}"
+
+      # APP_BIND und APP_BIND6 muessen die Bindeadressen aller
+      # Compose-Dateien setzen, und leer wie nicht gesetzt faellt jede auf
+      # den Loopback zurueck. Geprueft mit docker compose selbst, das die
+      # Interpolation vornimmt (der Unit-Test compose-ports.test.ts sieht
+      # nur den Text der Dateien).
+      - name: APP_BIND und APP_BIND6 werden uebernommen
+        run: |
+          ALLE=docker-compose.yml:docker-compose.domain.yml:docker-compose.ipv6.yml
+          bindungen() {
+            docker compose config --format json \
+              | jq -c '[.services.proxy.ports[] | "\(.host_ip) \(.published)->\(.target)"] | sort'
+          }
+          LOOPBACK='["127.0.0.1 7891->443","127.0.0.1 80->80","::1 7891->443","::1 80->80"]'
+          test "$(COMPOSE_FILE=$ALLE bindungen)" = "$LOOPBACK"
+          test "$(COMPOSE_FILE=$ALLE APP_BIND= APP_BIND6= bindungen)" = "$LOOPBACK"
+          test "$(COMPOSE_FILE=$ALLE APP_BIND=0.0.0.0 APP_BIND6=:: APP_PORT=443 bindungen)" \
+            = '["0.0.0.0 443->443","0.0.0.0 80->80",":: 443->443",":: 80->80"]'
+
+      # Leer wie nicht gesetzt muss beim Proxy `internal` ankommen: mit
+      # einem leeren Wert bricht Caddy schon am Parsen der Caddyfile ab.
+      # Eine Mailadresse muss unveraendert durchgehen (ACME).
+      - name: CADDY_TLS wird uebernommen, leer gilt internal
+        run: |
+          tls() {
+            docker compose config --format json | jq -r '.services.proxy.environment.CADDY_TLS'
+          }
+          test "$(tls)" = internal
+          test "$(CADDY_TLS= tls)" = internal
+          test "$(CADDY_TLS=admin@example.com tls)" = admin@example.com
 
       - name: Zustand und Logs bei Fehlschlag
         if: failure()

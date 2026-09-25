@@ -3,9 +3,11 @@ import { FileText, Globe, LayoutList, Upload } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
+import { visiblePageWhere } from "@/lib/page-access";
 import { buildTree, type TreeNode } from "@/lib/page-tree";
 import { importMaxMb } from "@/lib/import/limits";
 import { ImportForm, type ParentOption } from "./ImportForm";
+import { pageTitle } from "@/lib/page-title";
 
 const FORMATS = [
   {
@@ -27,7 +29,7 @@ const FORMATS = [
 
 function flatten(nodes: TreeNode[], depth = 0): ParentOption[] {
   return nodes.flatMap((n) => [
-    { id: n.id, title: n.title || "Untitled", depth },
+    { id: n.id, title: pageTitle(n.title), depth },
     ...flatten(n.children, depth + 1),
   ]);
 }
@@ -38,11 +40,20 @@ export default async function ImportPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const { space, role } = await loadSpace(slug);
+  const { user, space, role } = await loadSpace(slug);
   if (!can(role, "managePages")) redirect(`/s/${slug}`);
 
+  // Dieselbe Sichtbarkeitsbindung wie in der Seitenleiste: ohne sie
+  // listet die Elternauswahl Titel und Baumstruktur geschuetzter Seiten
+  // auf, die dieser Person in Seitenleiste, Suche und Dashboard bewusst
+  // vorenthalten werden — managePages hat auch jedes MEMBER.
   const pages = await prisma.page.findMany({
-    where: { spaceId: space.id, deletedAt: null, isTemplate: false },
+    where: {
+      spaceId: space.id,
+      ...visiblePageWhere(user.id, role),
+      deletedAt: null,
+      isTemplate: false,
+    },
     select: { id: true, title: true, parentId: true, position: true },
   });
   const parents = flatten(buildTree(pages));

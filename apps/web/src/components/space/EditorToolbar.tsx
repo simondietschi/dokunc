@@ -33,15 +33,7 @@ import { startCommentThread } from "@/components/editor/comment-thread";
 import { TableTools } from "@/components/editor/TableMenu";
 import type { PromptRequest } from "@/components/editor/SlashCommands";
 import { normalizeLinkInput } from "@/lib/editor-text";
-
-const HIGHLIGHTS: { label: string; color: string }[] = [
-  { label: "Gelb", color: "#fde68a" },
-  { label: "Grün", color: "#bbf7d0" },
-  { label: "Blau", color: "#bfdbfe" },
-  { label: "Rosa", color: "#fbcfe8" },
-  { label: "Orange", color: "#fed7aa" },
-  { label: "Violett", color: "#ddd6fe" },
-];
+import { HIGHLIGHT_COLORS } from "@/lib/brand";
 
 /** Markieren mit Farbwahl (Highlight ist multicolor konfiguriert). */
 function HighlightPicker({ editor }: { editor: Editor }) {
@@ -86,7 +78,7 @@ function HighlightPicker({ editor }: { editor: Editor }) {
           aria-label="Markierungsfarbe"
           className="absolute left-0 top-full z-30 mt-1.5 flex items-center gap-1 rounded-xl border border-line bg-elevated p-1.5 shadow-pop"
         >
-          {HIGHLIGHTS.map((h) => (
+          {HIGHLIGHT_COLORS.map((h) => (
             <button
               key={h.color}
               type="button"

@@ -2,17 +2,46 @@ packages:
   - "apps/*"
   - "packages/*"
 
-# pnpm 11 würde brandneue Pakete blocken. Da hier bewusst stets die
-# neuesten Versionen verwendet werden, ist die Karenzzeit deaktiviert.
-# (Tradeoff: kein automatischer Schutz vor frisch kompromittierten
-#  Releases — Abhängigkeiten sind exakt gepinnt + Lockfile-geprüft.)
-minimumReleaseAge: 0
+# Karenzzeit für frisch veröffentlichte Versionen, wie sie pnpm 11 per
+# Vorgabe setzt. Stand auf 0, begründet mit durchgehend exakt gepinnten
+# Abhängigkeiten — das stimmt nicht: mehrere Einträge sind offene
+# ^-Bereiche (u. a. eslint, globals, marked, y-indexeddb). Für die zieht
+# jeder pnpm install ohne --frozen-lockfile die neueste passende
+# Version, bei 0 auch eine wenige Minuten alte und womöglich frisch
+# kompromittierte.
+minimumReleaseAge: 1440
 
 # Genau EINE ProseMirror-Instanz erzwingen (transitive @tiptap/pm-
 # Versionen z. B. aus Hocuspocus würden sonst prosemirror-model doppeln
 # -> "multiple versions of prosemirror-model" zur Laufzeit).
+#
+# Die Einträge darunter heben transitive Pakete auf ihre geflickte
+# Fassung. Sie hängen alle an Bibliotheken, die im Browser laufen
+# (mermaid, Excalidraw) oder im Build stecken, und lassen sich nicht über
+# eine eigene Abhängigkeit heben: `pnpm audit` nennt sie, ihre Eltern
+# pinnen aber die verwundbare Version. Jeder Eintrag bleibt in seinem
+# Hauptversionsbereich, damit der Override keine fremde Schnittstelle
+# verschiebt. Fällt ein Eintrag aus `pnpm audit`, weil das Elternpaket
+# nachgezogen hat, darf er hier wieder raus.
 overrides:
-  "@tiptap/*": "3.28.0"
+  "@tiptap/*": "3.31.3"
+  # GHSA-55q2-fjhq-7xh7: IN_PLACE-Hook lässt einen abgetrennten Teilbaum
+  # ausführbar zurück. Kommt aus mermaid, das Diagramme damit säubert.
+  dompurify: "^3.4.13"
+  # GHSA-r5fr-rjxr-66jc (Code Injection über _.template) und zwei
+  # Prototype-Pollution-Fälle. Kommt aus Excalidraw.
+  lodash-es: "^4.17.24"
+  # GHSA-2v37-7h3g-55p8 und GHSA-28wg-ghj8-5hjv: Endlosschleife bei
+  # Grösse null oder negativ. Betrifft den 3er-Zweig aus Excalidraw.
+  nanoid@3: "^3.3.18"
+  # GHSA-fxqj-rqcc-2cmp. Steckt in der Build-Kette (Tailwind/Next).
+  postcss: "^8.5.23"
+  # GHSA-395f-4hp3-45gv: quadratische Laufzeit beim Quoten (DoS),
+  # behoben ab 1.8.5. Kommt aus concurrently, das seit dem Laufzeit-
+  # Image unter dependencies steht und damit im Bild landet.
+  shell-quote: "^1.10.0"
+  # GHSA-5qjj-4xww-7phc. Kommt über den Prisma-Client mit.
+  valibot: "^1.4.2"
 
 # Erlaubte Postinstall-Build-Skripte (pnpm 11).
 allowBuilds:

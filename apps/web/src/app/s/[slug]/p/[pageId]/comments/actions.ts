@@ -6,12 +6,21 @@ import { authorizeAction } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { str } from "@/lib/form";
 import { publishNotification } from "@/lib/notify-bus";
-import { filterByPageAccess, visiblePageWhere } from "@/lib/page-access";
+import { filterByPageAccess } from "@/lib/page-access";
+import { findLivePage, scopeOf, scopeWhere } from "@/lib/page-guards";
 
 /** Client-generierte Thread-IDs (crypto.randomUUID) validieren. */
 function isValidThreadId(id: string): boolean {
   return /^[a-f0-9-]{36}$/i.test(id);
 }
+
+/**
+ * Obergrenze fuer Kommentartexte. Comment.body ist ein unbegrenztes
+ * Textfeld: ohne diese Pruefung landet alles bis zum 5-MB-Limit der
+ * Server Action in der Datenbank und wird danach jedem Leser der Seite
+ * ungekuerzt ausgeliefert.
+ */
+const MAX_COMMENT_LENGTH = 10_000;
 
 export async function createThreadAction(form: FormData) {
   const access = await authorizeAction(form, "comment");
@@ -20,17 +29,10 @@ export async function createThreadAction(form: FormData) {
   const threadId = str(form, "threadId");
   const body = str(form, "body");
   const anchorText = str(form, "anchorText").slice(0, 300) || null;
-  if (!body || !isValidThreadId(threadId)) return;
+  if (!body || body.length > MAX_COMMENT_LENGTH) return;
+  if (!isValidThreadId(threadId)) return;
 
-  const page = await prisma.page.findFirst({
-    where: {
-      id: pageId,
-      spaceId: space.id,
-      deletedAt: null,
-      ...visiblePageWhere(user.id, access.role),
-    },
-    select: { id: true },
-  });
+  const page = await findLivePage(scopeOf(access), pageId);
   if (!page) return;
 
   // Die Thread-ID kommt vom Client (sie wird zeitgleich als Mark im
@@ -174,13 +176,13 @@ export async function replyAction(form: FormData) {
   const { space, user } = access;
   const threadId = str(form, "threadId");
   const body = str(form, "body");
-  if (!body) return;
+  if (!body || body.length > MAX_COMMENT_LENGTH) return;
 
   const thread = await prisma.comment.findFirst({
     where: {
       id: threadId,
       parentId: null,
-      page: { spaceId: space.id, ...visiblePageWhere(user.id, access.role) },
+      page: scopeWhere(scopeOf(access)),
     },
     include: {
       replies: { select: { authorId: true } },
@@ -241,7 +243,7 @@ export async function resolveThreadAction(form: FormData) {
     where: {
       id: threadId,
       parentId: null,
-      page: { spaceId: space.id, ...visiblePageWhere(user.id, role) },
+      page: scopeWhere(scopeOf({ space, user, role })),
     },
     select: { id: true, pageId: true, resolvedAt: true, authorId: true },
   });
@@ -265,7 +267,7 @@ export async function deleteCommentAction(form: FormData) {
   const comment = await prisma.comment.findFirst({
     where: {
       id: commentId,
-      page: { spaceId: space.id, ...visiblePageWhere(user.id, role) },
+      page: scopeWhere(scopeOf({ space, user, role })),
     },
     select: { id: true, pageId: true, authorId: true },
   });
@@ -289,13 +291,13 @@ export async function editCommentAction(form: FormData) {
   const access = await authorizeAction(form, "comment");
   const { space, user } = access;
   const body = str(form, "body");
-  if (!body) return;
+  if (!body || body.length > MAX_COMMENT_LENGTH) return;
 
   const comment = await prisma.comment.findFirst({
     where: {
       id: str(form, "commentId"),
       authorId: user.id,
-      page: { spaceId: space.id, ...visiblePageWhere(user.id, access.role) },
+      page: scopeWhere(scopeOf(access)),
     },
     select: { id: true, pageId: true },
   });
@@ -313,26 +315,28 @@ export async function toggleSubscriptionAction(form: FormData) {
   const access = await authorizeAction(form, "read");
   const { space, user } = access;
   const pageId = str(form, "pageId");
-  const page = await prisma.page.findFirst({
-    where: {
-      id: pageId,
-      spaceId: space.id,
-      deletedAt: null,
-      ...visiblePageWhere(user.id, access.role),
-    },
-    select: { id: true },
-  });
+  const page = await findLivePage(scopeOf(access), pageId);
   if (!page) return;
 
+  // Der Knopf hat keine pending-Sperre: zwei schnelle Klicks schicken
+  // zwei Anfragen, die denselben Stand lesen. Mit create/delete liefe die
+  // zweite in den Unique-Constraint oder auf eine bereits geloeschte
+  // Zeile und die Person saehe statt des Umschaltens eine Fehlerseite —
+  // deleteMany und upsert sind in beiden Richtungen wiederholbar.
+  const key = { userId_pageId: { userId: user.id, pageId: page.id } };
   const existing = await prisma.pageSubscription.findUnique({
-    where: { userId_pageId: { userId: user.id, pageId: page.id } },
+    where: key,
     select: { id: true },
   });
   if (existing) {
-    await prisma.pageSubscription.delete({ where: { id: existing.id } });
+    await prisma.pageSubscription.deleteMany({
+      where: { userId: user.id, pageId: page.id },
+    });
   } else {
-    await prisma.pageSubscription.create({
-      data: { userId: user.id, pageId: page.id },
+    await prisma.pageSubscription.upsert({
+      where: key,
+      create: { userId: user.id, pageId: page.id },
+      update: {},
     });
   }
   revalidatePath(`/s/${space.slug}/p/${page.id}`);

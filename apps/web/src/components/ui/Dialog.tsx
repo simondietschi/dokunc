@@ -1,15 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
-
-const FOCUSABLE =
-  'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])';
+import { useBackdropClose, useModal } from "./use-modal";
 
 /**
- * Modaler Dialog mit Fokusfalle, Escape, Scroll-Sperre und
- * Fokus-Rückgabe an das auslösende Element.
+ * Modaler Dialog: Titel, Beschreibung, Inhalt, Fussleiste.
+ *
+ * Fokusfalle, Escape, Scroll-Sperre und Fokus-Rückgabe kommen aus
+ * `useModal` — dieselben vier Dinge brauchen auch Palette, Verschiebe-
+ * Dialog und Vorlagenauswahl, die nicht in dieses Layout passen.
  */
 export function Dialog({
   open,
@@ -32,70 +33,20 @@ export function Dialog({
   className?: string;
 }) {
   const panel = useRef<HTMLDivElement>(null);
-  const restoreTo = useRef<HTMLElement | null>(null);
-  const [mounted, setMounted] = useState(false);
   const titleId = useId();
   const descId = useId();
-
-  useEffect(() => setMounted(true), []);
-
-  // Fokus fangen und beim Schliessen zurückgeben.
-  useEffect(() => {
-    if (!open) return;
-    restoreTo.current = document.activeElement as HTMLElement | null;
-    const target =
-      initialFocus?.current ??
-      panel.current?.querySelector<HTMLElement>(FOCUSABLE) ??
-      panel.current;
-    // Nach dem Paint fokussieren, sonst greift der Fokus ins Leere.
-    const raf = requestAnimationFrame(() => target?.focus());
-
-    const prevOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-
-    return () => {
-      cancelAnimationFrame(raf);
-      document.body.style.overflow = prevOverflow;
-      restoreTo.current?.focus?.();
-    };
-  }, [open, initialFocus]);
-
-  const onKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onClose();
-        return;
-      }
-      if (e.key !== "Tab") return;
-      const items = Array.from(
-        panel.current?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [],
-      ).filter((el) => el.offsetParent !== null);
-      if (items.length === 0) return;
-      const first = items[0];
-      const last = items[items.length - 1];
-      const active = document.activeElement;
-      if (e.shiftKey && (active === first || active === panel.current)) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && active === last) {
-        e.preventDefault();
-        first.focus();
-      }
-    },
-    [onClose],
-  );
+  const { mounted } = useModal({ open, onClose, panel, initialFocus });
+  const onBackdrop = useBackdropClose(panel, onClose);
 
   if (!mounted || !open) return null;
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[90] grid place-items-center p-4"
-      onKeyDown={onKeyDown}
+      className="fixed inset-0 z-modal grid place-items-center p-4"
+      onMouseDown={onBackdrop}
     >
       <div
         className="absolute inset-0 animate-[fade-in_0.15s_ease] bg-ink/25 backdrop-blur-[2px]"
-        onClick={onClose}
         aria-hidden="true"
       />
       <div

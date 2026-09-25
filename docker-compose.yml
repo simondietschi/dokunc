@@ -1,5 +1,6 @@
 services:
-  # TLS-Terminierung + einziger nach außen (nur localhost) exponierter Dienst.
+  # TLS-Terminierung + einziger nach aussen exponierter Dienst (Vorgabe:
+  # nur localhost, s. APP_BIND).
   proxy:
     image: caddy:2
     restart: unless-stopped
@@ -8,14 +9,45 @@ services:
         condition: service_healthy
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-localhost}
+      # internal = Caddys eigene CA; für eine eigene Domain die eigene
+      # Mailadresse (ACME, Let's Encrypt). Leer zählt wie nicht gesetzt:
+      # ein leerer Wert brächte die Caddyfile nicht durch den Parser.
+      CADDY_TLS: ${CADDY_TLS:-internal}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
     # Host-Port 7891 -> Caddy 443 (https://localhost:7891). Port 80 ist
-    # nicht gemappt: die HTTP->HTTPS-Umleitung würde auf :443 zeigen.
+    # hier nicht gemappt: die HTTP->HTTPS-Umleitung würde auf :443 zeigen,
+    # und ein belegter Port 80 auf dem Host liesse schon den Schnellstart
+    # scheitern. Für eine eigene Domain bringt docker-compose.domain.yml
+    # ihn dazu (s. README).
+    #
+    # Bindeadresse aus APP_BIND, Vorgabe 127.0.0.1: ohne .env ist die
+    # Instanz nur vom Server selbst aus erreichbar (kein LAN-Zugriff).
+    # Für eine eigene Domain in der .env APP_BIND=0.0.0.0 und APP_PORT=443
+    # setzen — APP_PORT allein genügt nicht, sonst antwortet die Instanz
+    # weiter nur auf dem Loopback des Servers. Leer zählt wie nicht
+    # gesetzt (`:-`): ein leerer Eintrag `APP_BIND=` in der .env fällt auf
+    # die Vorgabe zurück, statt host_ip leer zu lassen (daran bricht
+    # docker compose mit "invalid ip address" ab). Ganz ohne host_ip
+    # bände Docker dagegen still auf allen Adressen, 0.0.0.0 und ::.
+    #
+    # 0.0.0.0 heisst nur IPv4: mit ausdrücklicher Adresse veröffentlicht
+    # Docker nur in deren Adressfamilie, und host_ip nimmt genau einen
+    # Wert. Die IPv6-Gegenstücke bringt docker-compose.ipv6.yml (APP_BIND6).
+    #
+    # Lange Schreibweise, weil host_ip eine IPv6-Adresse wie `::` ohne
+    # Klammern annimmt; in der kurzen ("ip:port:port") wäre sie mehrdeutig.
+    #
+    # Die sichere Vorgabe prüfen apps/web/src/compose-ports.test.ts (für
+    # alle Compose-Dateien) und der CI-Job docker (am laufenden Stack und
+    # per docker compose config).
     ports:
-      - "127.0.0.1:${APP_PORT:-7891}:443"
+      - target: 443
+        published: "${APP_PORT:-7891}"
+        host_ip: "${APP_BIND:-127.0.0.1}"
+        protocol: tcp
 
   app:
     build:
@@ -36,16 +68,30 @@ services:
       # (empfohlen, z. B. für mehrere Instanzen) hat immer Vorrang:
       # APP_SECRET in .env setzen — openssl rand -base64 48
       APP_SECRET: ${APP_SECRET:-}
-      JWT_EXPIRES_IN: 7d
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # Abmeldung nach Untätigkeit, z. B. 12h. Leer = keine Grenze
+      # (Einzelheiten in .env.example).
+      SESSION_IDLE_TIMEOUT: ${SESSION_IDLE_TIMEOUT:-}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Muss denselben Namen tragen wie SITE_ADDRESS oben: die App
+      # nimmt nur Anfragen von hier an (Upload, Import, Collab-Ticket).
       APP_URL: ${APP_URL:-https://localhost:7891}
       # Leer = zur Laufzeit aus der aufgerufenen Adresse abgeleitet
       # (wss://<host>/collab). Nur setzen, wenn der Collab-Server unter
       # einer anderen Adresse läuft (dann Rebuild nötig, s. README).
       NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-}
       COLLAB_PORT: 3001
+      # Grenzen des Collab-Servers (Einzelheiten in .env.example). Leer =
+      # Vorgabe.
+      COLLAB_MAX_CONNECTIONS: ${COLLAB_MAX_CONNECTIONS:-}
+      COLLAB_MAX_CONNECTIONS_PER_IP: ${COLLAB_MAX_CONNECTIONS_PER_IP:-}
+      COLLAB_MAX_CONNECTIONS_PER_USER: ${COLLAB_MAX_CONNECTIONS_PER_USER:-}
+      COLLAB_MAX_ATTEMPTS_PER_IP: ${COLLAB_MAX_ATTEMPTS_PER_IP:-}
+      COLLAB_MAX_ATTEMPTS_PER_USER: ${COLLAB_MAX_ATTEMPTS_PER_USER:-}
       NODE_ENV: production
       # Reverse-Proxys vor der App (hier: Caddy). Bestimmt, wie die
-      # Ratenbegrenzung die Client-IP aus X-Forwarded-For liest.
+      # Ratenbegrenzung die Client-IP aus X-Forwarded-For liest. Gilt auch
+      # für die Verbindungsgrenzen des Collab-Servers.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
       # Anzeigename der Instanz (Aussteller im Authenticator)
       APP_NAME: ${APP_NAME:-dokunc}
@@ -57,7 +103,9 @@ services:
       OIDC_BUTTON_LABEL: ${OIDC_BUTTON_LABEL:-Single Sign-on}
       OIDC_ALLOW_SIGNUP: ${OIDC_ALLOW_SIGNUP:-false}
       OIDC_AUTO_LINK_BY_EMAIL: ${OIDC_AUTO_LINK_BY_EMAIL:-true}
-      # E-Mail (Einladungen) — optional, ohne SMTP_HOST nur Log-Fallback
+      # E-Mail (Einladungen, Passwort-Reset) — optional. Ohne SMTP_HOST
+      # kommen die Links hier nicht an: unter NODE_ENV production stehen
+      # sie auch nicht im Log.
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_SECURE: ${SMTP_SECURE:-false}
@@ -70,8 +118,14 @@ services:
       UPLOAD_DIR: /app/uploads
       # Maximale Groesse einer hochgeladenen Datei (Bilder und Anhaenge) in MB
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
+      # Aufraeumer fuer verwaiste Uploads: Abstand in Stunden (1 bis 168), 0 = aus
+      UPLOAD_SWEEP_INTERVAL_H: ${UPLOAD_SWEEP_INTERVAL_H:-6}
       # Import (Markdown/Confluence/Notion): Upload-Limit pro Import in MB
       IMPORT_MAX_MB: ${IMPORT_MAX_MB:-100}
+      # Import: gleichzeitige Importe (alle Konten; je Konto hoechstens 1)
+      # und Zeitgrenze in Sekunden (1 bis 3600)
+      IMPORT_MAX_CONCURRENT: ${IMPORT_MAX_CONCURRENT:-2}
+      IMPORT_TIMEOUT_S: ${IMPORT_TIMEOUT_S:-80}
       # KI — optional; ohne Key sind die KI-Features deaktiviert
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       AI_MODEL: ${AI_MODEL:-}

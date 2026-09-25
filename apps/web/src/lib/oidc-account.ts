@@ -3,6 +3,8 @@ import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { prisma } from "@dokunc/db";
 import { audit } from "./audit";
+import { decideRegistration } from "./registration";
+import { BCRYPT_COST } from "./password-policy";
 import type { OidcClaims } from "./oidc";
 
 /**
@@ -91,10 +93,23 @@ export async function resolveOidcUser(
     return { user: linked };
   }
 
-  // Neues Konto: nur wenn die Instanz das ausdrücklich erlaubt — oder
-  // wenn es noch gar keines gibt, dann wird es wie sonst auch Admin.
+  /**
+   * Neues Konto: dieselbe Zugangsregel wie beim Passwortweg, aus
+   * derselben Funktion.
+   *
+   * `decideRegistration` haelt fest, dass die allererste Person immer
+   * darf und Instanz-Admin wird und danach eine ausdrueckliche Erlaubnis
+   * noetig ist — dort die Einladung, hier `OIDC_ALLOW_SIGNUP`. Ein
+   * zweites Mal ausformuliert wuerde die Regel beim naechsten Mal nur
+   * auf einem der beiden Wege geaendert, und die Anmeldewege legten
+   * unterschiedlich berechtigte erste Konten an.
+   */
   const isFirstUser = (await prisma.user.count()) === 0;
-  if (!allowSignup && !isFirstUser) return { reason: "no_account" };
+  const decision = decideRegistration({
+    isFirstUser,
+    hasValidInvite: allowSignup,
+  });
+  if (!decision.allowed) return { reason: "no_account" };
   if (!claims.emailVerified && !isFirstUser) return { reason: "unverified" };
 
   const created = await prisma.user.create({
@@ -103,8 +118,14 @@ export async function resolveOidcUser(
       name: claims.name || claims.email.split("@")[0],
       // Kein nutzbares Passwort: die Anmeldung läuft über den Anbieter.
       // Wer eines will, setzt es über „Passwort vergessen".
-      passwordHash: await bcrypt.hash(randomBytes(32).toString("hex"), 10),
-      isAdmin: isFirstUser,
+      // Kostenfaktor trotzdem aus lib/password-policy und nicht nackt:
+      // sonst trüge ausgerechnet dieser Hash dauerhaft die alte Zahl in
+      // sich, falls BCRYPT_COST einmal angehoben wird.
+      passwordHash: await bcrypt.hash(
+        randomBytes(32).toString("hex"),
+        BCRYPT_COST,
+      ),
+      isAdmin: decision.isAdmin,
       oidcSubject: claims.subject,
       oidcIssuer: issuer,
     },
@@ -113,7 +134,7 @@ export async function resolveOidcUser(
   await audit({
     action: "auth.registered",
     actorId: created.id,
-    metadata: { via: "sso", isAdmin: isFirstUser },
+    metadata: { via: "sso", isAdmin: decision.isAdmin },
   });
   return { user: created };
 }

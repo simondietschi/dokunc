@@ -52,21 +52,13 @@ export function uploadLimitMb(kind: "IMAGE" | "FILE"): number {
 
 /**
  * Bildtypen, die inline im Editor/Browser angezeigt werden -> Endung.
- * SVG ist bewusst ausgeschlossen (kann Skripte enthalten): eine SVG-
- * Datei wird als gewoehnlicher Anhang gespeichert und nur zum Download
- * ausgeliefert, nie inline gerendert.
+ * Die Liste selbst steht in lib/image-types und wird hier nur
+ * weitergereicht: derselbe Satz Typen bestimmt das accept-Attribut der
+ * Dateidialoge im Browser, und dieses Modul ist "server-only" — der
+ * Client koennte es gar nicht laden. Hier weiterexportiert, damit die
+ * bestehenden Importe aus @/lib/uploads unveraendert bleiben.
  */
-export const ALLOWED_IMAGE_TYPES: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/gif": "gif",
-  "image/webp": "webp",
-};
-
-/** True, wenn der Typ ein inline darstellbares Bild ist. */
-export function isInlineImageType(mimeType: string): boolean {
-  return Object.prototype.hasOwnProperty.call(ALLOWED_IMAGE_TYPES, mimeType);
-}
+export { ALLOWED_IMAGE_TYPES, isInlineImageType } from "./image-types";
 
 const FALLBACK_MIME = "application/octet-stream";
 
@@ -188,6 +180,33 @@ export function isSafeFilename(name: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(name) && !name.includes("..");
 }
 
+/**
+ * Die Form, in der die App selbst Dateien ablegt: 32 Hex-Zeichen aus
+ * `randomBytes(16)` und eine Endung aus `safeExtension` oder
+ * ALLOWED_IMAGE_TYPES. So benennen api/upload und lib/import/files seit
+ * dem ersten Upload.
+ *
+ * Enger als `isSafeFilename`, und das mit Absicht: der Aufraeumer
+ * (lib/upload-sweeper) loescht nur, was in genau dieser Form vorliegt.
+ * Alles andere im Verzeichnis hat jemand anderes hingelegt — ein Backup,
+ * eine Notiz der Betreiberin —, und darueber weiss die Datenbank nichts.
+ */
+const STORED_NAME = /^[0-9a-f]{32}\.[a-z0-9]{1,8}$/;
+
+export function isStoredUploadName(name: string): boolean {
+  return STORED_NAME.test(name);
+}
+
+/**
+ * Das Upload-Verzeichnis als absoluter Pfad. Eine Stelle fuer alle, die
+ * darin lesen oder loeschen: `uploadPath` und der Aufraeumer muessen
+ * dasselbe Verzeichnis meinen, sonst raeumt er woanders als dort, wo
+ * die Dateien liegen.
+ */
+export function uploadDir(): string {
+  return path.resolve(UPLOAD_DIR);
+}
+
 /** MIME-Typ aus der Endung eines (gespeicherten) Dateinamens. */
 export function contentTypeForFile(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
@@ -197,7 +216,7 @@ export function contentTypeForFile(name: string): string {
 /** Absoluter Pfad im Upload-Verzeichnis oder null bei unsicherem Namen. */
 export function uploadPath(name: string): string | null {
   if (!isSafeFilename(name)) return null;
-  const base = path.resolve(UPLOAD_DIR);
+  const base = uploadDir();
   const full = path.resolve(base, name);
   // Defense in depth: aufgelöster Pfad muss im Upload-Verzeichnis liegen.
   if (full !== path.join(base, name) || !full.startsWith(base + path.sep)) {

@@ -1,5 +1,15 @@
+import { ACCENT_COLOR } from "./brand";
+
+/**
+ * Farbtopf fuer fremde Cursor im Editor.
+ *
+ * Der erste Eintrag ist absichtlich die Akzentfarbe der Anwendung — und
+ * kommt aus lib/brand, nicht noch einmal ausgeschrieben. Welche Stellen
+ * die Farbe aus technischen Gruenden trotzdem eigenstaendig fuehren,
+ * steht dort im Kopfkommentar.
+ */
 export const CARET_COLORS = [
-  "#5e60e8",
+  ACCENT_COLOR,
   "#0ea5e9",
   "#ec4899",
   "#f59e0b",

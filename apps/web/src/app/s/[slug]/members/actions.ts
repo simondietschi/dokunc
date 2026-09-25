@@ -18,17 +18,16 @@ import {
 import { buildInviteUrl, sendInvitationEmail } from "@/lib/mail";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
-import {
-  canChangeRole,
-  canRemoveMember,
-  isSpaceRole,
-} from "@/lib/role-policy";
+import { log } from "@/lib/log";
+import { isSpaceRole } from "@/lib/role-policy";
+import { changeMemberRole, removeSpaceMember } from "@/lib/member-changes";
 import { isGroupRole } from "@/lib/permissions";
+import { RATE_LIMITS } from "@/lib/rate-limits";
 
 export type FormState = { error?: string; success?: string } | undefined;
 
 const inviteSchema = z.object({
-  email: z.string().email("Bitte eine gültige E-Mail angeben"),
+  email: z.email("Bitte eine gültige E-Mail angeben"),
   role: z.string().refine(isInvitableRole, "Ungültige Rolle"),
 });
 
@@ -38,7 +37,13 @@ export async function inviteMemberAction(
 ): Promise<FormState> {
   const { space, user } = await authorizeAction(form, "manageSpace");
 
-  if (!(await rateLimit(`invite:${user.id}`, 20, 3600))) {
+  if (
+    !(await rateLimit(
+      `invite:${user.id}`,
+      RATE_LIMITS.invite.versuche,
+      RATE_LIMITS.invite.fenster,
+    ))
+  ) {
     return { error: "Zu viele Einladungen. Bitte später erneut." };
   }
 
@@ -64,6 +69,22 @@ export async function inviteMemberAction(
   ) {
     return { error: "Diese Person ist bereits Mitglied." };
   }
+
+  // Bei einer schon offenen Einladung ueberschreibt der upsert unten den
+  // tokenHash und entwertet damit sofort den Link aus der ersten Mail.
+  // Deshalb den bisherigen Stand merken: scheitert der Versand, haette die
+  // eingeladene Person sonst gar keinen gueltigen Link mehr — der alte tot,
+  // der neue nie zugestellt.
+  const previous = await prisma.spaceInvitation.findUnique({
+    where: { spaceId_email: { spaceId: space.id, email } },
+    select: {
+      role: true,
+      tokenHash: true,
+      invitedById: true,
+      expiresAt: true,
+      acceptedAt: true,
+    },
+  });
 
   const { token, tokenHash } = generateInviteToken();
   const invitation = await prisma.spaceInvitation.upsert({
@@ -93,7 +114,24 @@ export async function inviteMemberAction(
       role,
       inviteUrl: buildInviteUrl(invitation.id, token),
     });
-  } catch {
+  } catch (e) {
+    // Ohne diesen Eintrag bliebe der Grund (Verbindung abgelehnt, Auth,
+    // Empfaenger zurueckgewiesen) nirgends stehen — die Meldung unten
+    // sagt "SMTP pruefen", ohne zu sagen, was zu pruefen waere.
+    log.error(
+      { err: String(e), spaceId: space.id, invitationId: invitation.id },
+      "Einladungsmail konnte nicht gesendet werden",
+    );
+    if (previous) {
+      await prisma.spaceInvitation.update({
+        where: { id: invitation.id },
+        data: previous,
+      });
+      return {
+        error:
+          "E-Mail-Versand fehlgeschlagen. SMTP prüfen — die bisherige Einladung bleibt gültig.",
+      };
+    }
     return {
       error:
         "Einladung gespeichert, aber E-Mail-Versand fehlgeschlagen. SMTP prüfen.",
@@ -136,33 +174,31 @@ export async function changeRoleAction(form: FormData) {
   );
   const nextRole = str(form, "role");
   if (!isSpaceRole(nextRole)) return;
+  const memberId = str(form, "memberId");
 
-  const member = await prisma.spaceMember.findFirst({
-    where: { id: str(form, "memberId"), spaceId: space.id },
-    select: { id: true, role: true, userId: true },
-  });
-  if (!member) return;
-
-  // Nur aktive Konten zaehlen: ein deaktiviertes OWNER-Konto kann
-  // niemanden mehr befoerdern, wuerde als Zaehler aber den letzten
-  // aktiven Eigentuemer freigeben.
-  const ownerCount = await prisma.spaceMember.count({
-    where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
-  });
-  const verdict = canChangeRole({
-    actorRole,
-    isSelf: member.userId === user.id,
-    currentRole: member.role,
+  // Mitglied lesen, Owner zaehlen, Regel pruefen und schreiben in EINER
+  // serialisierbaren Transaktion (lib/member-changes) — sonst zaehlen zwei
+  // Eigentuemer, die einander gleichzeitig herabstufen, beide zwei, und
+  // der Space bleibt ohne Eigentuemer zurueck.
+  const result = await changeMemberRole(
+    { spaceId: space.id, actorId: user.id, actorRole },
+    memberId,
     nextRole,
-    ownerCount,
-  });
-  if (!verdict.allowed) return;
-  if (member.role === nextRole) return;
+  );
+  if (result.status === "gleichzeitig") {
+    // Die Mitgliederseite hat fuer diese Action keinen Meldeplatz; der
+    // Grund steht deshalb im Log, und die Seite zeigt danach den Stand,
+    // der gewonnen hat.
+    log.warn(
+      { spaceId: space.id, actorId: user.id, memberId, nextRole },
+      "Rollenwechsel verworfen: gleichzeitige Änderung am Space",
+    );
+    revalidatePath(`/s/${space.slug}/members`);
+    return;
+  }
+  if (result.status !== "erledigt") return;
+  const { member } = result;
 
-  await prisma.spaceMember.update({
-    where: { id: member.id },
-    data: { role: nextRole },
-  });
   await audit({
     action: "member.role_changed",
     actorId: user.id,
@@ -182,24 +218,24 @@ export async function removeMemberAction(form: FormData) {
     form,
     "manageSpace",
   );
-  const member = await prisma.spaceMember.findFirst({
-    where: { id: str(form, "memberId"), spaceId: space.id },
-    select: { id: true, role: true, userId: true },
-  });
-  if (!member) return;
+  const memberId = str(form, "memberId");
+  // Wie in changeRoleAction: Zaehlen und Loeschen in EINER
+  // serialisierbaren Transaktion (lib/member-changes).
+  const result = await removeSpaceMember(
+    { spaceId: space.id, actorId: user.id, actorRole },
+    memberId,
+  );
+  if (result.status === "gleichzeitig") {
+    log.warn(
+      { spaceId: space.id, actorId: user.id, memberId },
+      "Entfernen verworfen: gleichzeitige Änderung am Space",
+    );
+    revalidatePath(`/s/${space.slug}/members`);
+    return;
+  }
+  if (result.status !== "erledigt") return;
+  const { member } = result;
 
-  const ownerCount = await prisma.spaceMember.count({
-    where: { spaceId: space.id, role: "OWNER", user: { isActive: true } },
-  });
-  const verdict = canRemoveMember({
-    actorRole,
-    isSelf: member.userId === user.id,
-    targetRole: member.role,
-    ownerCount,
-  });
-  if (!verdict.allowed) return;
-
-  await prisma.spaceMember.delete({ where: { id: member.id } });
   await audit({
     action: "member.removed",
     actorId: user.id,
@@ -304,14 +340,40 @@ export async function addSpaceGroupAction(form: FormData) {
   revalidatePath(`/s/${space.slug}/members`);
 }
 
+/**
+ * Offene Editor-Sitzungen aller Mitglieder einer Gruppe trennen.
+ *
+ * Wie bei der direkten Mitgliedschaft: das Schreibrecht wird nur beim
+ * Verbinden geprueft. Ohne diesen Schritt schreibt weiter, wem das Recht
+ * ueber die Gruppe gerade herabgestuft oder entzogen wurde — bis zur
+ * naechsten wiederkehrenden Pruefung des Collab-Servers, also bis zu
+ * einer Minute lang.
+ */
+async function revokeGroupCollabAccess(groupId: string, spaceId: string) {
+  const members = await prisma.groupMember.findMany({
+    where: { groupId },
+    select: { userId: true },
+  });
+  for (const m of members) {
+    await revokeCollabAccess(m.userId, spaceId);
+  }
+}
+
 export async function updateSpaceGroupRoleAction(form: FormData) {
   const { space, user } = await authorizeAction(form, "manageSpace");
   const role = str(form, "role");
   if (!isGroupRole(role)) return;
 
-  const { count } = await prisma.spaceGroup.updateMany({
+  const spaceGroupId = str(form, "spaceGroupId");
+  const spaceGroup = await prisma.spaceGroup.findFirst({
     // spaceId in der Bedingung: die ID kommt aus dem Formular.
-    where: { id: str(form, "spaceGroupId"), spaceId: space.id },
+    where: { id: spaceGroupId, spaceId: space.id },
+    select: { groupId: true },
+  });
+  if (!spaceGroup) return;
+
+  const { count } = await prisma.spaceGroup.updateMany({
+    where: { id: spaceGroupId, spaceId: space.id },
     data: { role },
   });
   if (count > 0) {
@@ -319,9 +381,10 @@ export async function updateSpaceGroupRoleAction(form: FormData) {
       action: "space.group_role_changed",
       actorId: user.id,
       spaceId: space.id,
-      targetId: str(form, "spaceGroupId"),
+      targetId: spaceGroupId,
       metadata: { role },
     });
+    await revokeGroupCollabAccess(spaceGroup.groupId, space.id);
   }
   revalidatePath(`/s/${space.slug}/members`);
 }
@@ -329,6 +392,12 @@ export async function updateSpaceGroupRoleAction(form: FormData) {
 export async function removeSpaceGroupAction(form: FormData) {
   const { space, user } = await authorizeAction(form, "manageSpace");
   const spaceGroupId = str(form, "spaceGroupId");
+  // Vor dem Loeschen lesen: danach ist nicht mehr feststellbar, wessen
+  // offene Sitzungen zu trennen sind.
+  const spaceGroup = await prisma.spaceGroup.findFirst({
+    where: { id: spaceGroupId, spaceId: space.id },
+    select: { groupId: true },
+  });
   const { count } = await prisma.spaceGroup.deleteMany({
     where: { id: spaceGroupId, spaceId: space.id },
   });
@@ -339,6 +408,9 @@ export async function removeSpaceGroupAction(form: FormData) {
       spaceId: space.id,
       targetId: spaceGroupId,
     });
+    if (spaceGroup) {
+      await revokeGroupCollabAccess(spaceGroup.groupId, space.id);
+    }
   }
   revalidatePath(`/s/${space.slug}/members`);
 }

@@ -101,6 +101,9 @@ beforeAll(async () => {
         storedName: homeUploadName,
         name: homeUploadName,
         spaceId: homeSpaceId,
+        // Mit Seitenbezug wie jeder heutige Upload. Ohne ihn gilt die
+        // strengere Regel fuer Anhaenge ohne Seite (file-access.test.ts).
+        pageId: homePageId,
         uploaderId: insider.id,
         mimeType: "image/png",
         size: 1,
@@ -176,7 +179,9 @@ describe("Seitenzugriff über Space-Grenzen", () => {
     expect(await findTrashedPage(homeScope, homePageId)).not.toBeNull();
     expect(await findTrashedPage(outsideScope, homePageId)).toBeNull();
 
-    await restorePageTree(homeSpaceId, homePageId);
+    await prisma.$transaction((tx) =>
+      restorePageTree(homeSpaceId, homePageId, tx),
+    );
     const restored = await prisma.page.findMany({
       where: { id: { in: [homePageId, homeChildId] } },
       select: { deletedAt: true },
@@ -211,6 +216,21 @@ describe("Elternseite beim Anlegen", () => {
     await expect(
       resolveParentId(homeScope, foreignPageId),
     ).rejects.toThrow();
+  });
+
+  it("weist eine Vorlage als Elternseite ab", async () => {
+    // Vorlagen stehen nicht im Seitenbaum. Eine Seite darunter hinge an
+    // einem Elternteil, das der Baum nie zeigt, und waere unauffindbar.
+    const vorlage = await prisma.page.create({
+      data: { spaceId: homeSpaceId, title: "Vorlage", isTemplate: true },
+      select: { id: true },
+    });
+    try {
+      await expect(resolveParentId(homeScope, vorlage.id)).rejects.toThrow();
+    } finally {
+      // Die Tests zum Verschieben zaehlen die Wurzelseiten dieses Space.
+      await prisma.page.delete({ where: { id: vorlage.id } });
+    }
   });
 });
 

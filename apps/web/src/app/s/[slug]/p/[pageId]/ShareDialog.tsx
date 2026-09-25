@@ -9,6 +9,7 @@ import {
   revokeShareAction,
   type ShareState,
 } from "../../actions";
+import { FIELD_LABEL_CLASS } from "@/components/ui/Input";
 
 export type ShareRow = {
   id: string;
@@ -84,7 +85,7 @@ export function ShareDialog({
           <div>
             <label
               htmlFor="share-days"
-              className="mb-1.5 block text-[13px] font-medium text-muted"
+              className={FIELD_LABEL_CLASS}
             >
               Gültigkeit
             </label>

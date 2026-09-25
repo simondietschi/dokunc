@@ -5,15 +5,53 @@ import { richExtensions } from "@dokunc/editor";
 const extensions = richExtensions();
 
 /**
+ * Attributwert aus bereits erzeugtem HTML zurücklesen.
+ *
+ * Der Serializer kodiert in einem Attributwert nur `&` und `"` — mehr
+ * verlangt die HTML-Serialisierung dort nicht. Ein `<` steht also roh
+ * im Wert. Wer ihn herausholt, hält danach Text, kein HTML, und muss
+ * für den Zielkontext neu kodieren.
+ */
+function decodeHtmlAttr(value: string): string {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#(?:39|x27);/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/** Nur http und https werden verlinkt (kein javascript:, kein data:). */
+function isLinkableEmbedUrl(url: string): boolean {
+  try {
+    const { protocol } = new URL(url);
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Hängt hinter jedes eingebettete iframe seine Quelle als sichtbaren
  * Link. Im Druck und im PDF rendert kein iframe; ohne diesen Zusatz
  * verschwand ein eingebettetes Video dort spurlos.
+ *
+ * Die Quelle wandert dabei in zwei verschiedene Kontexte: in den
+ * Attributwert von `href` und in den Elementtext. Sie wird deshalb
+ * zuerst zurückgelesen und dann für beide neu kodiert. Ohne das zweite
+ * Kodieren wurde ein `<` im Attributwert, das dort erlaubt und roh
+ * steht, im Textkontext zu echtem Markup — auf der öffentlich
+ * geteilten Seite und in der Druckansicht.
  */
 function annotateEmbeds(html: string): string {
   return html.replace(
-    /<iframe\b[^>]*\bsrc="([^"]+)"[^>]*>\s*<\/iframe>/g,
-    (match, src: string) =>
-      `${match}<a class="dk-embed-url" href="${src}">${src}</a>`,
+    /<iframe\b[^>]*\bsrc="([^"]*)"[^>]*>\s*<\/iframe>/g,
+    (match, raw: string) => {
+      const url = decodeHtmlAttr(raw);
+      if (!isLinkableEmbedUrl(url)) return match;
+      const safe = escapeHtml(url);
+      return `${match}<a class="dk-embed-url" href="${safe}">${safe}</a>`;
+    },
   );
 }
 

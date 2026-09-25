@@ -16,6 +16,20 @@ import { requireAdmin } from "@/lib/current-user";
 import { Avatar } from "@/components/ui/Avatar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import {
+  adminDeletionMessage,
+  isDeletionReason,
+} from "@/lib/account-deletion";
+import {
+  isStatusRefusal,
+  statusRefusalMessage,
+  STATUS_REFUSAL_PARAM,
+} from "@/lib/account-status";
+import {
+  CONFLICT_MESSAGE,
+  CONFLICT_PARAM,
+  isConflictNotice,
+} from "@/lib/concurrent-change";
+import {
   resetUserTotpAction,
   toggleUserActiveAction,
   toggleUserAdminAction,
@@ -28,8 +42,27 @@ export const metadata: Metadata = {
   description: "Nutzer und Spaces der Instanz verwalten.",
 };
 
-export default async function AdminPage() {
+export default async function AdminPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
   const me = await requireAdmin();
+  // Eine abgelehnte Loeschung, Sperre, Freischaltung oder Aenderung der
+  // Adminrechte kommt als Kennung zurueck (siehe ./actions), ebenso eine
+  // Aenderung, die gegen eine gleichzeitige verloren hat. Nur bekannte
+  // Kennungen werden zu Text — die Adresszeile ist von aussen setzbar.
+  // Ein Erfolg leitet ohne Kennung hierher zurueck.
+  const params = await searchParams;
+  const abgelehnt = params["nicht-geloescht"];
+  const statusAbgelehnt = params[STATUS_REFUSAL_PARAM];
+  const ablehnung = isDeletionReason(abgelehnt)
+    ? adminDeletionMessage(abgelehnt)
+    : isStatusRefusal(statusAbgelehnt)
+      ? statusRefusalMessage(statusAbgelehnt)
+      : isConflictNotice(params[CONFLICT_PARAM])
+        ? CONFLICT_MESSAGE
+        : null;
 
   const [users, spaces] = await Promise.all([
     prisma.user.findMany({
@@ -78,6 +111,15 @@ export default async function AdminPage() {
           Audit-Log
         </Link>
       </div>
+
+      {ablehnung && (
+        <p
+          role="alert"
+          className="mt-6 rounded-lg border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-danger"
+        >
+          {ablehnung}
+        </p>
+      )}
 
       <h2 className="mt-8 text-sm font-semibold text-muted">
         Nutzer ({users.length})

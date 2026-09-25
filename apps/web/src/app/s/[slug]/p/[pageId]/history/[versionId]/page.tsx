@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, Clock, RotateCcw, Eye, GitCompareArrows } from "lucide-react";
+import { ArrowLeft, Clock, Eye, GitCompareArrows } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
@@ -12,6 +12,7 @@ import { cn } from "@/lib/cn";
 import { Avatar } from "@/components/ui/Avatar";
 import { DiffView, DiffSummary } from "@/components/history/DiffView";
 import { restoreVersionAction } from "../../../../actions";
+import { RestoreButton } from "../RestoreButton";
 
 /**
  * Versionsvergleich: eine gespeicherte Version gegen den aktuellen Stand
@@ -130,10 +131,9 @@ export default async function VersionComparePage({
           <form action={restoreVersionAction}>
             <input type="hidden" name="slug" value={slug} />
             <input type="hidden" name="versionId" value={version.id} />
-            <button className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-subtle">
-              <RotateCcw className="h-3.5 w-3.5" />
+            <RestoreButton className="inline-flex items-center gap-1.5 rounded-lg border border-line-strong bg-surface px-3 py-1.5 text-[13px] font-medium text-ink transition-colors hover:bg-subtle">
               Diese Version wiederherstellen
-            </button>
+            </RestoreButton>
           </form>
         )}
       </div>

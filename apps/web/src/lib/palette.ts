@@ -3,6 +3,22 @@
  */
 
 /**
+ * Obergrenze für eine Sucheingabe.
+ *
+ * Die EINE Stelle dafür: die Suchroute und die Vorschlagsroute schneiden
+ * damit, und die Palette rechnet mit demselben Wert nach, ob eine
+ * eingetroffene Antwort noch zur aktuellen Eingabe passt. Stünde die Zahl
+ * dreimal da und liefe auseinander, hielte die Palette jede Antwort auf
+ * eine längere Eingabe für veraltet und zeigte dauerhaft den Spinner.
+ */
+export const MAX_QUERY_LENGTH = 100;
+
+/** Eingabe auf die Form bringen, in der die Routen sie auswerten. */
+export function normalizeQuery(raw: string | null | undefined): string {
+  return (raw ?? "").trim().slice(0, MAX_QUERY_LENGTH);
+}
+
+/**
  * Auth-Seiten haben keine Palette: Dort ist niemand angemeldet,
  * es gäbe nichts zu durchsuchen.
  */

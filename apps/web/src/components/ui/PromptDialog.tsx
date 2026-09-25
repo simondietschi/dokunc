@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Dialog } from "./Dialog";
 import { Button } from "./Button";
 import { Input } from "./Input";
+import { FIELD_LABEL_CLASS } from "@/components/ui/Input";
 
 /**
  * Ersatz für window.prompt: ein echter Dialog mit einem Eingabefeld.
@@ -65,7 +66,7 @@ export function PromptDialog({
       }
     >
       <label className="block">
-        <span className="mb-1.5 block text-[13px] font-medium text-muted">
+        <span className={FIELD_LABEL_CLASS}>
           {label}
         </span>
         <Input

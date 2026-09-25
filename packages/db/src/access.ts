@@ -61,13 +61,32 @@ export async function effectiveSpaceRole(
 }
 
 /**
- * Darf diese Person diese Seite sehen?
+ * Die Regel selbst, für bereits geladene Angaben.
  *
  * `accessRootId` zeigt auf die nächste geschützte Seite Richtung Wurzel
  * (auf sich selbst, wenn die Seite selbst geschützt ist) und ist null,
  * solange nichts im Weg steht. Die Space-Verwaltung sieht alles, sonst
  * wäre ihr eigener Space nicht mehr vollständig verwaltbar.
+ *
+ * Wer viele Zeilen auf einmal prüft — der Collab-Server für alle offenen
+ * Verbindungen, der Mail-Dispatcher für eine ganze Warteschlange — kann
+ * `canSeePage` nicht je Zeile aufrufen; das wären zwei Abfragen pro
+ * Person und Seite. Ohne diese Fassung schreibt jede dieser Stellen die
+ * Regel selbst noch einmal hin, und eine Änderung hier (andere
+ * Rollenschwelle, weitere Freigabeart) ginge an ihnen vorbei.
  */
+export function canSeePageWithGrant(
+  role: SpaceRole | null | undefined,
+  accessRootId: string | null | undefined,
+  hasGrant: boolean,
+): boolean {
+  if (isAtLeast(role, "ADMIN")) return true;
+  if (!role) return false;
+  if (!accessRootId) return true;
+  return hasGrant;
+}
+
+/** Darf diese Person diese Seite sehen? Lädt die Angaben selbst. */
 export async function canSeePage(
   pageId: string,
   userId: string,
@@ -80,16 +99,19 @@ export async function canSeePage(
     select: { accessRootId: true },
   });
   if (!page) return false;
-  if (!page.accessRootId) return true;
 
-  const grant = await prisma.pageGrant.findFirst({
-    where: {
-      pageId: page.accessRootId,
-      OR: [{ userId }, { group: { members: { some: { userId } } } }],
-    },
-    select: { id: true },
-  });
-  return !!grant;
+  // Die Freigabe nur laden, wenn überhaupt ein Schutz im Weg steht —
+  // sonst käme zu jedem Seitenaufruf eine zweite Abfrage dazu.
+  const grant = page.accessRootId
+    ? await prisma.pageGrant.findFirst({
+        where: {
+          pageId: page.accessRootId,
+          OR: [{ userId }, { group: { members: { some: { userId } } } }],
+        },
+        select: { id: true },
+      })
+    : null;
+  return canSeePageWithGrant(role, page.accessRootId, !!grant);
 }
 
 /**

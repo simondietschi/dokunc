@@ -6,14 +6,15 @@ import { log } from "@/lib/log";
 import { startPending2fa } from "@/lib/pending-2fa";
 import { exchangeCode, oidcConfig, type OidcClaims } from "@/lib/oidc";
 import { resolveOidcUser } from "@/lib/oidc-account";
-import { clearOidcFlow, readOidcFlow } from "@/lib/oidc-state";
+import { consumeOidcFlow, readOidcFlows } from "@/lib/oidc-state";
 import { oidcRedirectUri } from "@/lib/oidc-redirect";
 
 /**
  * Rücksprung des OIDC-Anbieters.
  *
- * Prüft state gegen das Cookie, tauscht den Code (mit PKCE-Verifier)
- * gegen Tokens, prüft das ID-Token und meldet die Person an.
+ * Prüft state gegen den gemerkten Fluss, tauscht den Code (mit
+ * PKCE-Verifier) gegen Tokens, prüft das ID-Token und meldet die
+ * Person an.
  */
 export async function GET(req: Request) {
   const config = oidcConfig();
@@ -25,11 +26,24 @@ export async function GET(req: Request) {
 
   if (!config) return back("disabled");
 
-  const flow = await readOidcFlow();
-  await clearOidcFlow();
-  // Der Zustand gilt genau einmal: das Cookie ist weg, bevor
-  // irgendetwas anderes passiert.
-  if (!flow) return back("expired");
+  const state = url.searchParams.get("state");
+  const flows = await readOidcFlows();
+  const flow = state ? (flows.find((f) => f.state === state) ?? null) : null;
+  /**
+   * Der Zustand gilt genau einmal: der passende Eintrag ist aus dem
+   * Cookie heraus, bevor irgendetwas anderes passiert.
+   *
+   * Herausgenommen wird nur dieser eine. Vorher lag genau ein Fluss im
+   * Cookie und jeder Rücksprung löschte es ganz — wer die Anmeldung in
+   * zwei Tabs begann, riss damit die jeweils andere mit: die zuerst
+   * zurückkommende fand den Zustand der später begonnenen vor
+   * (sso=state), die andere gar keinen mehr (sso=expired).
+   */
+  if (flow) await consumeOidcFlow(flow.state);
+
+  // Gar kein offener Fluss: entweder abgelaufen (das Cookie lebt zehn
+  // Minuten) oder nie einer begonnen worden.
+  if (flows.length === 0) return back("expired");
 
   if (url.searchParams.get("error")) {
     log.warn(
@@ -40,8 +54,9 @@ export async function GET(req: Request) {
   }
 
   const code = url.searchParams.get("code");
-  const state = url.searchParams.get("state");
-  if (!code || !state || state !== flow.state) return back("state");
+  // Offene Flüsse gibt es, aber keinen zu diesem `state`: der Rücksprung
+  // gehört nicht zu einer hier begonnenen Anmeldung.
+  if (!code || !flow) return back("state");
 
   let claims: OidcClaims;
   try {
@@ -53,14 +68,26 @@ export async function GET(req: Request) {
       nonce: flow.nonce,
     });
   } catch (e) {
-    log.error({ err: String(e) }, "OIDC-Rücksprung fehlgeschlagen");
+    log.error({ err: e }, "OIDC-Rücksprung fehlgeschlagen");
     return back("error");
   }
+
+  /**
+   * Die Uebernahme eines bestehenden Kontos ueber die E-Mail-Adresse ist
+   * die folgenreichste Einstellung im Anmeldepfad, darum zaehlt hier nur
+   * ein ausdrueckliches Ja. Als Negativliste (alles ausser "false" ist
+   * an) haetten "0", "no" oder "FALSE" die Uebernahme still weiterlaufen
+   * lassen, obwohl der Betreiber sie abschalten wollte. Nicht gesetzt
+   * bleibt "an" — so ist es in README und .env.example dokumentiert.
+   */
+  const autoLink = process.env.OIDC_AUTO_LINK_BY_EMAIL?.trim().toLowerCase();
+  const autoLinkByEmail =
+    !autoLink || ["true", "1", "yes", "on"].includes(autoLink);
 
   const outcome = await resolveOidcUser(claims, {
     allowSignup: config.allowSignup,
     issuer: config.issuer,
-    autoLinkByEmail: process.env.OIDC_AUTO_LINK_BY_EMAIL !== "false",
+    autoLinkByEmail,
   });
   if ("reason" in outcome) {
     await audit({

@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/Button";
 import { PaletteButton } from "@/components/CommandPalette";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { relativeTime } from "@/lib/relative-time";
+import { pageTitle } from "@/lib/page-title";
+import { Panel } from "@/components/ui/Panel";
 
 type DashboardEntry = {
   id: string;
@@ -142,15 +144,7 @@ function Section({
   style?: React.CSSProperties;
 }) {
   return (
-    <section
-      aria-label={title}
-      className="flex flex-col rounded-xl border border-line bg-surface shadow-soft"
-      style={style}
-    >
-      <h2 className="flex items-center gap-2 border-b border-line px-4 py-3 text-[13px] font-semibold text-muted">
-        <span className="text-faint">{icon}</span>
-        {title}
-      </h2>
+    <Panel title={title} icon={icon} style={style} className="flex flex-col">
       {entries.length === 0 ? (
         <p className="px-4 py-6 text-[13px] leading-relaxed text-faint">
           {empty}
@@ -166,7 +160,7 @@ function Section({
                 <FileText className="h-4 w-4 shrink-0 text-faint transition-colors group-hover:text-accent" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13.5px] font-medium text-ink">
-                    {e.title || "Untitled"}
+                    {pageTitle(e.title)}
                   </span>
                   <span className="block truncate text-[12px] text-faint">
                     {e.meta}
@@ -177,7 +171,7 @@ function Section({
           ))}
         </ul>
       )}
-    </section>
+    </Panel>
   );
 }
 

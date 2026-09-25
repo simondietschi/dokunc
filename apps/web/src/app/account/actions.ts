@@ -6,10 +6,20 @@ import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
-import { createSession, destroySession } from "@/lib/session";
+import {
+  createSession,
+  destroySession,
+  getSessionClaims,
+} from "@/lib/session";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
-import { canDeleteUser } from "@/lib/account-deletion";
+import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
+import {
+  ACCOUNT_DELETE_TIMEOUT_MS,
+  canDeleteUser,
+  orphanedSpacesFor,
+} from "@/lib/account-deletion";
+import { isSerializationConflict } from "@/lib/concurrent-change";
 
 export type AccountState = { error?: string; success?: string } | undefined;
 
@@ -27,7 +37,16 @@ export async function updateProfileAction(
 
 const pwSchema = z.object({
   current: z.string().min(1, "Aktuelles Passwort fehlt"),
-  next: z.string().min(8, "Neues Passwort min. 8 Zeichen"),
+  // Mindestlänge aus lib/password-policy: dieselbe Zahl gilt bei
+  // Registrierung und Reset. Stünde sie hier nackt, liesse sich die
+  // Vorgabe anheben und ausgerechnet der Passwortwechsel bliebe zurück —
+  // das schwächste Schema entscheidet dann über das ganze Konto.
+  next: z
+    .string()
+    .min(
+      PASSWORD_MIN_LENGTH,
+      `Neues Passwort min. ${PASSWORD_MIN_LENGTH} Zeichen`,
+    ),
 });
 
 export async function changePasswordAction(
@@ -51,11 +70,22 @@ export async function changePasswordAction(
     return { error: "Aktuelles Passwort ist falsch." };
   }
 
+  // Vor dem Entwerten lesen: die neue Sitzung soll dieselbe Form haben
+  // wie die alte. Ohne das wird aus einer Anmeldung, die mit dem
+  // Browserfenster enden sollte, still eine dauerhafte — createSession
+  // setzt ohne Angabe ein Ablaufdatum.
+  const remember = (await getSessionClaims())?.rem ?? true;
+
   // Passwort setzen + alle bestehenden Sessions entwerten.
   const updated = await prisma.user.update({
     where: { id: dbUser.id },
     data: {
-      passwordHash: await bcrypt.hash(parsed.data.next, 10),
+      // Kostenfaktor aus lib/password-policy, nicht nackt: die Anmeldung
+      // hasht auch gegen einen Blindwert mit demselben Faktor, damit
+      // unbekannte Adressen nicht schneller antworten. Bliebe hier eine
+      // eigene Zahl stehen, ginge diese Deckung beim nächsten Anheben
+      // verloren.
+      passwordHash: await bcrypt.hash(parsed.data.next, BCRYPT_COST),
       tokenVersion: { increment: 1 },
     },
   });
@@ -66,7 +96,7 @@ export async function changePasswordAction(
     data: { revokedAt: new Date() },
   });
   // Aktuelles Gerät frisch einloggen (neue Token-Version).
-  await createSession(updated.id, updated.tokenVersion);
+  await createSession(updated.id, updated.tokenVersion, { remember });
   await audit({ action: "auth.password_changed", actorId: updated.id });
   return { success: "Passwort geändert. Andere Sitzungen wurden beendet." };
 }
@@ -146,34 +176,11 @@ export async function revokeSessionAction(form: FormData) {
 }
 
 /**
- * Spaces, in denen diese Person der einzige Eigentümer ist.
- * Gemeinsame Grundlage für Konto-Löschung im Konto und im Admin-Bereich.
+ * Bricht die Lösch-Transaktion ab, ohne als 500 nach aussen zu gehen:
+ * der Aufrufer macht daraus eine Meldung im Formular. Wie LastOwnerError
+ * in app/s/[slug]/settings/actions.ts.
  */
-export async function orphanedSpacesFor(userId: string): Promise<string[]> {
-  const owned = await prisma.spaceMember.findMany({
-    where: { userId, role: "OWNER" },
-    select: { spaceId: true, space: { select: { name: true } } },
-  });
-  if (owned.length === 0) return [];
-
-  // Nur aktive Konten zählen: ein deaktivierter Mit-Eigentümer kann den
-  // Space nicht übernehmen, der Space wäre also trotzdem verwaist.
-  const counts = await prisma.spaceMember.groupBy({
-    by: ["spaceId"],
-    where: {
-      spaceId: { in: owned.map((o) => o.spaceId) },
-      role: "OWNER",
-      user: { isActive: true },
-    },
-    _count: { _all: true },
-  });
-  const single = new Set(
-    counts.filter((c) => c._count._all <= 1).map((c) => c.spaceId),
-  );
-  return owned
-    .filter((o) => single.has(o.spaceId))
-    .map((o) => o.space.name);
-}
+class DeletionRefusedError extends Error {}
 
 /**
  * Eigenes Konto löschen.
@@ -199,23 +206,49 @@ export async function deleteAccountAction(
     return { error: "Passwort ist falsch." };
   }
 
-  const activeAdmins = dbUser.isAdmin
-    ? await prisma.user.count({ where: { isAdmin: true, isActive: true } })
-    : 0;
-  const verdict = canDeleteUser({
-    isLastActiveAdmin: dbUser.isAdmin && activeAdmins <= 1,
-    orphanedSpaces: await orphanedSpacesFor(dbUser.id),
-  });
-  if (!verdict.allowed) return { error: verdict.reason };
+  try {
+    await prisma.$transaction(
+      async (tx) => {
+        const orphanedSpaces = await orphanedSpacesFor(dbUser.id, tx);
+        const activeAdmins = dbUser.isAdmin
+          ? await tx.user.count({ where: { isAdmin: true, isActive: true } })
+          : 0;
+        const verdict = canDeleteUser({
+          isLastActiveAdmin: dbUser.isAdmin && activeAdmins <= 1,
+          orphanedSpaces,
+        });
+        if (!verdict.allowed) throw new DeletionRefusedError(verdict.reason);
+        await tx.user.delete({ where: { id: dbUser.id } });
+      },
+      // Serializable: sonst zaehlen die letzten beiden aktiven Admins, die
+      // gleichzeitig ihr Konto loeschen, beide zwei, beide loeschen, und
+      // die Instanz steht ohne Admin da — genau der Zustand, den die
+      // Pruefung verhindern soll.
+      { isolationLevel: "Serializable", timeout: ACCOUNT_DELETE_TIMEOUT_MS },
+    );
+  } catch (e) {
+    if (e instanceof DeletionRefusedError) return { error: e.message };
+    // Serialisierungskonflikt: eine parallele Aenderung an den Konten
+    // hat gewonnen. Ein neuer Versuch sieht den aktuellen Stand.
+    if (isSerializationConflict(e)) {
+      return {
+        error:
+          "Gleichzeitig wurde an den Konten etwas geändert. Bitte noch einmal versuchen.",
+      };
+    }
+    throw e;
+  }
 
-  // Vor dem Löschen protokollieren: der Eintrag verweist auf den
-  // Nutzer, und die Beziehung wird beim Löschen auf null gesetzt.
+  // Erst nach der Transaktion protokollieren: vorher stuende eine
+  // Löschung im Protokoll, die die Pruefung darin noch abgelehnt hat.
+  // actorId bleibt leer, denn das Konto gibt es nicht mehr. Vorher stand
+  // der Eintrag davor und die Beziehung wurde beim Löschen genullt
+  // (onDelete: SetNull) — der Eintrag sieht also aus wie bisher.
   await audit({
     action: "account.deleted",
-    actorId: dbUser.id,
+    actorId: null,
     metadata: { email: dbUser.email, bySelf: true },
   });
-  await prisma.user.delete({ where: { id: dbUser.id } });
   await destroySession();
   redirect("/login");
 }

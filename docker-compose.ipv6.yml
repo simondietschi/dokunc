@@ -1,0 +1,30 @@
+# IPv6 für den Betrieb unter eigener Domain (s. README, "Eigene Domain /
+# Produktionsbetrieb"). Ergänzt docker-compose.domain.yml und wird wie
+# diese über die .env eingebunden:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.domain.yml:docker-compose.ipv6.yml
+#   APP_BIND6=::
+#
+# Warum eine eigene Datei: Docker veröffentlicht einen Port mit
+# ausdrücklicher Adresse nur in deren Adressfamilie, APP_BIND=0.0.0.0
+# bedient also nur IPv4, und host_ip nimmt genau einen Wert. Ohne Host-IP
+# bände Docker zwar beide Familien, aber auf jeder Adresse, und der
+# Schnellstart ohne .env stünde offen. Hier kommen deshalb die
+# IPv6-Gegenstücke zu 443 (APP_PORT) und 80 dazu, auf APP_BIND6.
+#
+# Vorgabe ::1, aus demselben Grund wie 127.0.0.1 bei APP_BIND: ohne
+# APP_BIND6=:: nimmt der Proxy auch über IPv6 nur Verbindungen vom Server
+# selbst an, und leer zählt wie nicht gesetzt (`:-`). Nur einbinden, wenn
+# der Server IPv6 hat: ohne kann Docker auch ::1 nicht binden ("address
+# family not supported by protocol"), und der Proxy startet nicht.
+services:
+  proxy:
+    ports:
+      - target: 443
+        published: "${APP_PORT:-7891}"
+        host_ip: "${APP_BIND6:-::1}"
+        protocol: tcp
+      - target: 80
+        published: "80"
+        host_ip: "${APP_BIND6:-::1}"
+        protocol: tcp
