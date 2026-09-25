@@ -410,6 +410,9 @@ enum NotificationType {
   MENTION
   COMMENT
   COMMENT_REPLY
+  /// Eine Seite, der die Person folgt, wurde geaendert. Entsteht im
+  /// Collab-Server zusammen mit einem Snapshot (PageVersion).
+  PAGE_UPDATED
 }
 
 model Notification {
@@ -419,6 +422,11 @@ model Notification {
   type      NotificationType
   pageId    String?
   commentId String?
+  /// Nur PAGE_UPDATED: die Version, die mit der Aenderung entstand. Bewusst
+  /// ohne Fremdschluessel (wie pageId): das Ausduennen alter Versionen darf
+  /// Benachrichtigungen weder loeschen noch blockieren. Fehlt die Version,
+  /// sucht /notifications/<id> ueber createdAt die naechstaeltere.
+  versionId String?
   readAt    DateTime?
   /// Gesetzt, sobald die Benachrichtigung per Mail zugestellt (oder
   /// bewusst übersprungen) wurde. NULL = noch offen für den Dispatcher.

@@ -41,8 +41,11 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   Seite, bearbeitbar, mit Benachrichtigung an Beteiligte; auch die
   VIEWER-Rolle darf mitreden. Dazu **@-Mentions** und die Glocke, die
   sich live aktualisiert. Optional **per Mail**, sofort gebündelt oder
-  als tägliche Zusammenfassung, pro Person im Konto einstellbar; Seiten
-  lassen sich einzeln abonnieren
+  als tägliche Zusammenfassung, pro Person im Konto einstellbar. Wer einer
+  Seite folgt (Glocke im Seitenkopf), erfährt von neuen Kommentaren und von
+  Änderungen am Inhalt. Eine Änderung meldet dokunc höchstens alle zwei
+  Minuten je Seite und nur einmal, bis die Meldung oder die Seite geöffnet
+  ist; die Meldung führt zum Vergleich mit dem Stand davor
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) über den ganzen
   Bestand, auch gleich nach einem Import, + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
@@ -408,6 +411,22 @@ abprallt, sieht im Editor „Zu viele Verbindungen“ (mit dem Hinweis,
 andere Tabs zu schliessen) statt „Kein Zugriff“; an den Grenzen vor dem
 Handshake (je Adresse, je Instanz) bleibt es bei „Verbinde…“. In beiden
 Fällen versucht der Editor es von selbst erneut.
+
+**Änderungsmeldungen:** Wer einer Seite folgt, bekommt eine Meldung, wenn
+andere ihren Inhalt ändern. Sie entsteht nur zusammen mit einem Snapshot
+der Versionsgeschichte (höchstens einer je Seite alle zwei Minuten) und nur,
+wenn sich der Inhalt gegenüber der letzten Version geändert hat; eine
+blosse Kommentar-Markierung zählt nicht. Empfänger sind die Folgenden mit
+aktivem Konto und Zugriff auf die Seite, ohne alle, die in den letzten vier
+Minuten mitgeschrieben haben (gesammelt in Redis unter
+`dokunc:page-editors:<Seite>`, über alle Instanzen), und ohne die im selben
+Lauf neu Erwähnten. Je Person und Seite bleibt höchstens eine Meldung
+ungelesen; gelesen ist sie, sobald die Meldung oder die Seite geöffnet
+wird. Die Mail verschickt der Dispatcher wie bei Erwähnungen, sofort
+gebündelt oder im Tagesdigest. Wer hinter diese Version zurückrollt,
+entfernt vorher die Zeilen mit
+`DELETE FROM "Notification" WHERE type = 'PAGE_UPDATED'`: ein älterer Stand
+kann sie nicht lesen.
 
 Beim Wiederherstellen einer Version schreibt die App den Inhalt nach
 `Page.content` (Suche, Export) und bittet den Collab-Server, ihn im

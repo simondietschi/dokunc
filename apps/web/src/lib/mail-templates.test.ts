@@ -3,6 +3,7 @@ import {
   notificationMail,
   digestMail,
   describeNotification,
+  notificationPath,
   type NotificationMailItem,
 } from "@dokunc/mail";
 
@@ -19,6 +20,12 @@ const reply: NotificationMailItem = {
   url: "http://localhost:3000/p/def",
   excerpt: "Passt so, danke!",
 };
+const updated: NotificationMailItem = {
+  type: "PAGE_UPDATED",
+  actorName: "Kim Muster",
+  pageTitle: "Onboarding",
+  url: "http://localhost:3000/notifications/n1",
+};
 
 describe("describeNotification()", () => {
   it("liefert deutsche Prädikate", () => {
@@ -27,6 +34,18 @@ describe("describeNotification()", () => {
     expect(describeNotification("COMMENT_REPLY")).toBe(
       "hat auf deinen Kommentar geantwortet",
     );
+    expect(describeNotification("PAGE_UPDATED")).toBe("hat bearbeitet");
+  });
+});
+
+describe("notificationPath()", () => {
+  it("fuehrt Aenderungen ueber die Meldung, alles andere direkt zur Seite", () => {
+    expect(
+      notificationPath({ id: "n1", type: "PAGE_UPDATED", pageId: "p1" }),
+    ).toBe("/notifications/n1");
+    for (const type of ["MENTION", "COMMENT", "COMMENT_REPLY"] as const) {
+      expect(notificationPath({ id: "n1", type, pageId: "p1" })).toBe("/p/p1");
+    }
   });
 });
 
@@ -45,6 +64,15 @@ describe("notificationMail()", () => {
     expect(m.subject).toBe("Alex hat auf deinen Kommentar geantwortet");
     expect(m.text).toContain("Passt so, danke!");
     expect(m.html).toContain("Passt so, danke!");
+  });
+
+  it("Betreff und Knopf bei einer Änderung", () => {
+    const m = notificationMail({ recipientName: "Sam", items: [updated] });
+    expect(m.subject).toBe("Kim Muster hat Onboarding bearbeitet");
+    expect(m.html).toContain("Änderungen ansehen");
+    expect(m.html).not.toContain("Seite öffnen");
+    expect(m.html).toContain(`href="${updated.url}"`);
+    expect(m.text).toContain("Kim Muster hat bearbeitet");
   });
 
   it("Betreff bei mehreren Einträgen zählt", () => {
@@ -105,6 +133,20 @@ describe("digestMail()", () => {
     expect(m.text).toContain("Alex hat auf deinen Kommentar geantwortet");
     expect(m.html).toContain("Tägliche Zusammenfassung");
     expect(m.html).toContain(`href="${reply.url}"`);
+  });
+
+  it("listet Erwähnung und Änderung mit ihren Links", () => {
+    const m = digestMail({
+      recipientName: "Sam",
+      items: [mention, updated],
+      since: new Date("2026-09-02T06:00:00Z"),
+    });
+    expect(m.text).toContain("Kim Muster hat dich erwähnt");
+    expect(m.text).toContain("Kim Muster hat bearbeitet");
+    expect(m.text).toContain(mention.url);
+    expect(m.text).toContain(updated.url);
+    expect(m.html).toContain(`href="${mention.url}"`);
+    expect(m.html).toContain(`href="${updated.url}"`);
   });
 
   it("Singular bei einem Eintrag", () => {

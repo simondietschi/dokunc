@@ -17,6 +17,7 @@ import {
   indexPageChunks,
   prisma,
   strongestSpaceRole,
+  usersWhoCanSeePage,
   type SpaceRole,
 } from "@dokunc/db";
 import {
@@ -49,6 +50,12 @@ import { startAiIndexer } from "./ai-indexer";
 import { createDocResetHandler, type ResetContent } from "./doc-reset";
 import { resolveAppSecret } from "./secret";
 import { StoreWatch } from "./store-watch";
+import { PageEditors, redisEditorStore } from "./page-editors";
+import {
+  contentChanged,
+  pageUpdateCandidates,
+  withoutOpenUpdates,
+} from "./page-updates";
 import {
   ATTEMPT_WINDOW_SEC,
   AuthDeadlines,
@@ -377,6 +384,20 @@ function refuseUpgrade(
 const storeWatch = new StoreWatch();
 
 /**
+ * Wer zuletzt an einer Seite mitgeschrieben hat, ueber alle Instanzen
+ * (./page-editors). lastContext kennt nur die letzte Person dieser
+ * Instanz; wer davor oder auf einer anderen Instanz schrieb, bekaeme
+ * sonst eine Meldung ueber die eigene Aenderung. Das Fenster umfasst
+ * zwei Snapshot-Intervalle: wer darin schrieb, arbeitet an dieser
+ * Bearbeitung mit; wer davor zuletzt schrieb, soll von der neuen
+ * Aenderung erfahren.
+ */
+const pageEditors = new PageEditors(redisEditorStore(redis), {
+  windowMs: 2 * VERSION_INTERVAL_MS,
+  warn: (err, msg) => log.warn({ err }, msg),
+});
+
+/**
  * "Instanz voll" und "Adresse voll" hoechstens alle zehn Sekunden
  * melden: wer an einer vollen Grenze steht, versucht es weiter, und das
  * Log liefe mit.
@@ -589,6 +610,28 @@ const server = new Server({
     userSlots.settle(slotKey(data.socketId, data.documentName));
   },
 
+  // Jedes Update einer angemeldeten Verbindung oder einer Direktverbindung
+  // mit Person (Wiederherstellen) zaehlt als Mitwirken. Updates aus Redis
+  // tragen keinen Kontext; gemerkt hat sie die Instanz, bei der sie
+  // entstanden. Lesende Verbindungen senden keine Updates. Hocuspocus
+  // wartet diesen Hook nicht ab und faengt nichts: jeder Aufruf hier steht
+  // in einem eigenen try/catch (eine Ablehnung beendete den Prozess).
+  async onChange(data) {
+    try {
+      const userId = (data.context as { userId?: string } | null)?.userId;
+      if (userId) pageEditors.note(data.documentName, userId);
+    } catch (e) {
+      log.warn(
+        { err: e, pageId: data.documentName },
+        "Mitwirkende nicht gemerkt",
+      );
+    }
+  },
+
+  async afterUnloadDocument(data) {
+    pageEditors.forget(data.documentName);
+  },
+
   async onLoadDocument(data) {
     const pageId = data.documentName;
     const existing = await prisma.collabDocument.findUnique({
@@ -668,7 +711,7 @@ const server = new Server({
     // Alten Inhalt VOR dem Update lesen (für den Mention-Diff).
     const before = await prisma.page.findUnique({
       where: { id: pageId },
-      select: { content: true, spaceId: true, title: true },
+      select: { content: true, spaceId: true, title: true, deletedAt: true },
     });
 
     // Neue Erwähnungen werden gegen genau diesen alten Stand bestimmt, und
@@ -746,15 +789,89 @@ const server = new Server({
     }
 
     if (await shouldSnapshot(pageId)) {
-      try {
-        await prisma.pageVersion.create({
-          data: {
+      // Mitwirkende der laufenden Bearbeitung, dazu die Person dieses Laufs.
+      const recent = await pageEditors.recent(pageId);
+      const contributors = new Set(recent.map((r) => r.userId));
+      if (editorId) contributors.add(editorId);
+      const actorId = editorId ?? recent.at(-1)?.userId ?? null;
+
+      // Wer davon erfahren soll. Scheitert das, entsteht der Snapshot
+      // trotzdem: die Versionsgeschichte wiegt schwerer als eine Meldung.
+      // Ohne Mitwirkende (kein Mensch hat geschrieben) keine Meldung, fuer
+      // Seiten im Papierkorb ebenfalls nicht.
+      let candidates: string[] = [];
+      if (before && !before.deletedAt && contributors.size > 0) {
+        try {
+          candidates = await pageUpdateRecipients(
             pageId,
-            title: before?.title ?? "Untitled",
-            content: json,
-            textContent,
-            authorId: editorId,
-          },
+            contributors,
+            mentioned,
+          );
+        } catch (e) {
+          log.warn(
+            { err: e, pageId, editorId },
+            "Folgende nicht ermittelt, keine Aenderungsmeldung",
+          );
+        }
+      }
+
+      let notified: string[];
+      try {
+        notified = await prisma.$transaction(async (tx) => {
+          // Die neueste Version VOR dem Anlegen lesen, und nur, wenn es
+          // jemanden zu benachrichtigen gibt (spart das JSON bei Seiten
+          // ohne Folgende).
+          const previous =
+            candidates.length > 0
+              ? await tx.pageVersion.findFirst({
+                  where: { pageId },
+                  orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+                  select: { content: true },
+                })
+              : null;
+          const version = await tx.pageVersion.create({
+            data: {
+              pageId,
+              title: before?.title ?? "Untitled",
+              content: json,
+              textContent,
+              authorId: editorId,
+            },
+            select: { id: true },
+          });
+          if (candidates.length === 0) return [];
+          // Nur bei echter Inhaltsaenderung: eine blosse Kommentar-Markierung
+          // meldet sich als COMMENT, nicht als Bearbeitung.
+          if (previous && !contentChanged(previous.content, json)) return [];
+          // Hoechstens eine ungelesene Meldung je Person und Seite: der Link
+          // zeigt beim Oeffnen ohnehin alles bis jetzt. Doppelte Laeufe fuer
+          // dieselbe Seite verhindert die Snapshot-Drossel (ein Snapshot je
+          // Fenster, instanzuebergreifend in Redis).
+          const open = await tx.notification.findMany({
+            where: {
+              userId: { in: candidates },
+              pageId,
+              type: "PAGE_UPDATED",
+              readAt: null,
+            },
+            select: { userId: true },
+          });
+          const recipients = withoutOpenUpdates(
+            candidates,
+            open.map((n) => n.userId),
+          );
+          if (recipients.length > 0) {
+            await tx.notification.createMany({
+              data: recipients.map((userId) => ({
+                userId,
+                actorId,
+                type: "PAGE_UPDATED" as const,
+                pageId,
+                versionId: version.id,
+              })),
+            });
+          }
+          return recipients;
         });
       } catch (e) {
         // Die Drossel ist schon belegt, der Snapshot aber nicht
@@ -765,6 +882,15 @@ const server = new Server({
         await releaseSnapshot(pageId);
         throw e;
       }
+
+      // Glocke erst nach dem Commit (wie bei den Erwaehnungen).
+      await Promise.all(
+        notified.map((userId) =>
+          redis
+            .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
+            .catch(() => undefined),
+        ),
+      );
     }
   },
 });
@@ -816,6 +942,9 @@ async function syncWikiLinks(
  * er kennt das Sammelfenster, den Tagesdigest und
  * `User.emailNotifications`. Beim Speichern entsteht nur die Zeile —
  * zwei Versandwege nebeneinander hiessen zwei Mails pro Erwähnung.
+ *
+ * Meldungen über Änderungen an gefolgten Seiten (PAGE_UPDATED) entstehen
+ * dagegen nur mit dem Snapshot (siehe `pageUpdateRecipients`).
  */
 async function newMentionRecipients(
   pageId: string,
@@ -871,6 +1000,31 @@ async function newMentionRecipients(
   });
   const alreadyOpen = new Set(open.map((n) => n.userId));
   return reachable.filter((userId) => !alreadyOpen.has(userId));
+}
+
+/**
+ * Wer eine PAGE_UPDATED bekommen kann: Folgende mit aktivem Konto, ohne
+ * Mitwirkende und neu Erwaehnte (./page-updates), die die Seite heute
+ * sehen duerfen (usersWhoCanSeePage). Ob sie schon eine ungelesene
+ * haben, prueft die Transaktion, die die Zeilen anlegt.
+ */
+async function pageUpdateRecipients(
+  pageId: string,
+  contributors: ReadonlySet<string>,
+  mentioned: readonly string[],
+): Promise<string[]> {
+  const followers = await prisma.pageSubscription.findMany({
+    where: { pageId, user: { isActive: true } },
+    orderBy: { createdAt: "asc" },
+    select: { userId: true },
+  });
+  const candidates = pageUpdateCandidates(
+    followers.map((f) => f.userId),
+    contributors,
+    mentioned,
+  );
+  if (candidates.length === 0) return [];
+  return usersWhoCanSeePage(pageId, candidates);
 }
 
 /** Plain-Text aus ProseMirror-JSON ziehen (für Suche/History). */

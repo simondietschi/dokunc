@@ -114,6 +114,99 @@ export async function canSeePage(
   return canSeePageWithGrant(role, page.accessRootId, !!grant);
 }
 
+/** Groesse der IN-Listen beim Pruefen vieler Personen. */
+const ACCESS_CHUNK = 500;
+
+/**
+ * Von `userIds` bleibt, wer diese Seite heute sehen darf: wirksame Rolle
+ * im Space (eigene Mitgliedschaft oder Gruppe) und bei einer geschuetzten
+ * Seite die Freigabe am accessRoot. Eine Seite im Papierkorb sieht
+ * niemand. Reihenfolge wie in `userIds`, ohne Doppelte.
+ *
+ * Gebuendelt fuer viele Personen (der Collab-Server fuer alle Folgenden
+ * einer Seite): `canSeePage` je Person waeren zwei Abfragen pro Kopf.
+ * Entschieden wird mit derselben Regel (`canSeePageWithGrant`).
+ */
+export async function usersWhoCanSeePage(
+  pageId: string,
+  userIds: readonly string[],
+): Promise<string[]> {
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { spaceId: true, accessRootId: true, deletedAt: true },
+  });
+  if (!page || page.deletedAt) return [];
+  const { spaceId, accessRootId } = page;
+
+  const unique = [...new Set(userIds)];
+  const roles = new Map<string, SpaceRole[]>();
+  const granted = new Set<string>();
+  const addRole = (userId: string, role: SpaceRole) => {
+    const list = roles.get(userId);
+    if (list) list.push(role);
+    else roles.set(userId, [role]);
+  };
+
+  for (let i = 0; i < unique.length; i += ACCESS_CHUNK) {
+    const chunk = unique.slice(i, i + ACCESS_CHUNK);
+    const [members, groups, grants] = await Promise.all([
+      prisma.spaceMember.findMany({
+        where: { spaceId, userId: { in: chunk } },
+        select: { userId: true, role: true },
+      }),
+      prisma.spaceGroup.findMany({
+        where: {
+          spaceId,
+          group: { members: { some: { userId: { in: chunk } } } },
+        },
+        select: {
+          role: true,
+          group: {
+            select: {
+              members: {
+                where: { userId: { in: chunk } },
+                select: { userId: true },
+              },
+            },
+          },
+        },
+      }),
+      accessRootId
+        ? prisma.pageGrant.findMany({
+            where: { pageId: accessRootId },
+            select: {
+              userId: true,
+              group: {
+                select: {
+                  members: {
+                    where: { userId: { in: chunk } },
+                    select: { userId: true },
+                  },
+                },
+              },
+            },
+          })
+        : Promise.resolve([]),
+    ]);
+    for (const m of members) addRole(m.userId, m.role);
+    for (const g of groups) {
+      for (const m of g.group.members) addRole(m.userId, g.role);
+    }
+    for (const grant of grants) {
+      if (grant.userId) granted.add(grant.userId);
+      for (const m of grant.group?.members ?? []) granted.add(m.userId);
+    }
+  }
+
+  return unique.filter((userId) =>
+    canSeePageWithGrant(
+      strongestSpaceRole(roles.get(userId) ?? []),
+      accessRootId,
+      granted.has(userId),
+    ),
+  );
+}
+
 /**
  * Schreibt `accessRootId` für eine Seite und ihren Unterbaum neu.
  *

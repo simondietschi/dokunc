@@ -94,6 +94,10 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   Embedding und beim Altbestand von vor der Migration `20260925100000`).
 - **AiIndexQueue**: Seiten, deren Chunks nicht zum Text passen (pageId,
   queuedAt). Nur Trigger fügen ein, nur `indexPageChunks` entfernt.
+- **Notification**: userId, actorId, type (MENTION, COMMENT,
+  COMMENT_REPLY, PAGE_UPDATED), pageId, commentId, versionId (nur
+  PAGE_UPDATED, ohne Fremdschlüssel), readAt, emailedAt.
+- **PageSubscription**: Person folgt Seite (Kommentare und Änderungen).
 
 **Trigger in der Datenbank:** `Page_aiIndexQueue_insert` und
 `Page_aiIndexQueue_update` (Funktion `dokunc_ai_index_enqueue`, beide
@@ -156,7 +160,8 @@ hineingereicht: als Prisma-Bedingung (`visiblePageWhere`,
 (`lib/page-search.ts`), die Pfade der Treffer und den Rückgriff der KI
 (`visiblePageSql`), als Einzelprüfung (`canSeePage`,
 auch im Collab-Server) und als Filter für Benachrichtigungen
-(`filterByPageAccess`).
+(`filterByPageAccess`, im Collab-Server gebündelt über
+`usersWhoCanSeePage`).
 
 **Suche.** Palette (`/api/search`) und Space-Suche (`/s/[slug]/search`)
 stellen dieselbe Abfrage (`searchPages` in `lib/page-search.ts`), den Plan
@@ -220,6 +225,36 @@ dazu baut `planSearch` in `lib/search-query.ts`.
 5. Edits werden als Yjs-Updates zwischen Clients gemerged (CRDT, konfliktfrei).
 6. `onStoreDocument` (debounced) schreibt Yjs-State + extrahierten Text/JSON
    zurück in `Page` und erzeugt periodisch `PageVersion`-Snapshots.
+   Mit jedem Snapshot entstehen PAGE_UPDATED-Meldungen für Folgende
+   (siehe unten).
+
+**Änderungsmeldungen.** Wer einer Seite folgt, erfährt von Änderungen
+anderer. Jedes Update einer angemeldeten Verbindung (oder der
+Direktverbindung beim Wiederherstellen) meldet die Person in `onChange`
+nach Redis, gedrosselt auf einmal je fünf Sekunden: ein ZSET
+`dokunc:page-editors:<pageId>` mit dem Zeitpunkt des letzten Mitwirkens
+(`apps/collab/src/page-editors.ts`). Schreibt der Speicherlauf einen
+Snapshot, zählen als Mitwirkende alle, die in den letzten zwei
+Snapshot-Intervallen (vier Minuten) geschrieben haben, über alle
+Instanzen, dazu die Person dieses Laufs; nichts wird dabei verbraucht.
+`lastContext` allein genügte nicht: er kennt nur die letzte Person der
+speichernden Instanz. Empfänger sind die Folgenden mit aktivem Konto ohne
+Mitwirkende und ohne die im selben Lauf neu Erwähnten, soweit sie die
+Seite heute sehen dürfen (`usersWhoCanSeePage`). In derselben
+Transaktion wie die neue Version liest der Lauf die bisher neueste
+Version und meldet nur, wenn sich der Inhalt ohne Kommentar-Marken
+geändert hat (`contentChanged` in `apps/collab/src/page-updates.ts`,
+unabhängig von der Reihenfolge der Schlüssel, die jsonb umstellt). Wer
+zu dieser Seite schon eine ungelesene Meldung hat, bekommt keine zweite;
+doppelte Läufe verhindert die Snapshot-Drossel. Die Glocke erfährt es
+nach dem Commit, die Mail kommt vom Dispatcher. Der Link führt über
+`/notifications/<id>`: die Route setzt die Meldung auf gelesen und leitet
+auf den Vergleich der letzten Version VOR der gemeldeten gegen den
+aktuellen Stand. Der Snapshot entsteht am Anfang einer Bearbeitung; so
+zeigt der Vergleich alles, was seither dazukam, auch nach dem Ausdünnen
+alter Versionen (dann die nächstältere). Wer die Seite selbst öffnet, hat
+den aktuellen Stand gesehen: offene Änderungsmeldungen dazu werden nach
+dem Rendern gelesen, und die nächste Änderung darf wieder melden.
 
 **Wiederherstellen einer Version** muss an diesem Zwischenspeicher vorbei,
 und zwar auf derselben Yjs-Linie. Die Web-App schreibt den Inhalt der
@@ -456,6 +491,9 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       den Subject-Claim, E-Mail-Verknüpfung nur bei `email_verified`;
       Kontoanlage nur mit `OIDC_ALLOW_SIGNUP`; der zweite Faktor gilt
       auch hier, damit er nicht an der Sicherheit des Anbieters hängt
+- [x] Seite folgen meldet Änderungen (PAGE_UPDATED mit dem Snapshot,
+      Mitwirkende im Zeitfenster über Redis, höchstens eine ungelesene je
+      Seite, Link auf den Vergleich)
 - [ ] Ausbaustufen: S3, vollständige i18n, Prompt→Dialog-UI,
       pgvector, sobald die Warnung der KI-Suche (ab 20 000 Abschnitten
       je Frage) regelmässig erscheint

@@ -15,6 +15,7 @@ import { atLeast, can } from "@/lib/permissions";
 import { resolveCollabUrl } from "@/lib/collab-url";
 import { loadAncestors } from "@/lib/page-ancestors";
 import { recordPageVisit } from "@/lib/page-visits";
+import { markPageUpdatesRead } from "@/lib/page-updates";
 import { CollaborativeEditor } from "./CollaborativeEditor";
 import { CommentsPanel } from "./comments/CommentsPanel";
 import { PageAttachments } from "@/components/space/PageAttachments";
@@ -113,6 +114,9 @@ export default async function PageView({
 
   // "Zuletzt besucht": nach dem Senden der Antwort, nie blockierend.
   after(() => recordPageVisit(user.id, page.id));
+  // Offene Aenderungsmeldungen zu dieser Seite sind mit dem Oeffnen
+  // erledigt (lib/page-updates), ebenfalls nach dem Senden.
+  after(() => markPageUpdatesRead(user.id, page.id));
 
   const requestHeaders = await headers();
   const collabUrl = resolveCollabUrl({
