@@ -470,6 +470,26 @@ Löschbefehl, etwa
 
 ### Update und Rückweg
 
+**Das Update auf die Version mit KI-Index, Aufbewahrung und
+Dokumentgrenze ändert beim ersten Start ohne weiteres Zutun vier Dinge.
+Wer das bisherige Verhalten behalten will, setzt die genannte Variable
+vor dem Update in die `.env`, denn die ersten Läufe folgen 15 Sekunden
+bzw. 15 Minuten nach dem Start:**
+
+- Aufbewahrung (oben, Hinweis 1): 15 Minuten nach dem Start dünnt der
+  erste Lauf die Versionen aus und löscht Audit-Einträge älter als ein
+  Jahr. Behalten mit `VERSION_RETENTION=off` und `AUDIT_RETENTION_DAYS=0`.
+- KI-Index (oben): Sind `VOYAGE_API_KEY` und `ANTHROPIC_API_KEY` gesetzt,
+  geht ab dem ersten Lauf 15 Sekunden nach dem Start der Text aller Seiten
+  an Voyage AI, auch der geschützten. Abschalten mit
+  `AI_INDEX_INTERVAL_S=0`.
+- Dokumentgrenze (unter „Collab-Server“): Seiten über 16 MB sind danach
+  nur noch lesbar. Vorher mit der Abfrage dort prüfen und nötigenfalls
+  `COLLAB_MAX_DOC_MB` höher setzen.
+- Datenbank (oben): Die Migrationen brauchen die Erweiterung `pg_trgm` und
+  füllen einmal den Suchvektor aller Seiten, der erste Start dauert
+  entsprechend länger (siehe unten zu „unhealthy“).
+
 Migrationen laufen beim Start automatisch und nur vorwärts. Vor jedem
 Update deshalb sichern und den bisherigen Stand notieren:
 
@@ -479,8 +499,19 @@ Update deshalb sichern und den bisherigen Stand notieren:
     git diff --stat HEAD origin/main -- packages/db/prisma/migrations
     git pull && docker compose up -d --build --wait
 
-Die vierte Zeile zeigt, welche Migrationen das Update mitbringt. Startet
-die neue Version nicht (der Container startet immer wieder neu,
+Die vierte Zeile zeigt, welche Migrationen das Update mitbringt.
+
+Bei grossem Bestand (grob ab 100 000 Seiten) laufen die Migrationen
+länger als die gut drei Minuten, die der Healthcheck der App beim Start
+abwartet. Dann bricht die letzte Zeile mit „container … is unhealthy“ ab,
+und der Proxy bleibt aus, obwohl die Migrationen noch laufen. Das ist
+kein Grund für den Rückweg: in `docker compose logs -f app` abwarten, bis
+die Migrationen durch sind und die App startet, dann
+`docker compose up -d --wait` erneut ausführen. Ein höheres
+`--wait-timeout` hilft hier nicht, der Abbruch kommt beim ersten
+„unhealthy“.
+
+Startet die neue Version nicht (der Container startet immer wieder neu,
 `docker compose logs app` nennt die gescheiterte Migration) oder zeigt sie
 einen Fehler, geht es zurück auf den notierten Stand:
 

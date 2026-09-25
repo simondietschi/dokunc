@@ -322,7 +322,9 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
   // Erst wenn das Suchfeld den Fokus hat: useModal setzt ihn einen Frame
   // nach dem Oeffnen. Ein Tab davor holt die Fokusfalle aufs erste
   // Element, also ebenfalls ins Suchfeld, und der Test sahe dort einen
-  // Fehler, wo keiner ist.
+  // Fehler, wo keiner ist. Das Warten traegt nur, weil allein useModal
+  // fokussiert: mit autoFocus am Suchfeld war es sofort erfuellt, und ein
+  // spaeter Frame holte den Fokus nach dem Tab ins Suchfeld zurueck.
   await expect(feld).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(feld).not.toBeFocused();
@@ -332,6 +334,18 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
   ).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(feld).toBeHidden();
+
+  // Beim Schliessen geht der Fokus an den Ausloeser zurueck. Mit autoFocus
+  // am Suchfeld merkte sich useModal das Suchfeld als Rueckgabeziel, und
+  // der Fokus landete nach Escape im Nichts.
+  const knopf = page.getByRole("button", {
+    name: "Suchen oder springen (⌘K)",
+  });
+  await knopf.click();
+  await expect(feld).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(feld).toBeHidden();
+  await expect(knopf).toBeFocused();
 });
 
 test("Datei-Auslieferung verlangt Anmeldung", async ({ page }) => {

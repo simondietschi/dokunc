@@ -87,7 +87,10 @@ export function CommandPalette() {
   // Escape hing vorher am Suchfeld: wer in der Ergebnisliste stand, kam
   // mit der Taste nicht heraus, und eine Fokusfalle gab es nicht.
   // Ohne initialFocus: das erste fokussierbare Element im Geruest ist
-  // das Suchfeld, und das traegt bereits autoFocus.
+  // das Suchfeld. Bewusst ohne autoFocus daran: das setzte den Fokus schon
+  // beim Commit, vor dem Effekt von useModal. Der merkte sich dann das
+  // Suchfeld statt des Ausloesers als Ziel der Fokus-Rueckgabe, und sein
+  // Fokus einen Frame spaeter holte einen schnellen Tab ins Suchfeld zurueck.
   const { mounted } = useModal({ open, onClose: close, panel: panelRef });
   const onBackdrop = useBackdropClose(panelRef, close);
 
@@ -388,7 +391,6 @@ export function CommandPalette() {
             aria-activedescendant={
               items[clamped] ? `cmdk-option-${clamped}` : undefined
             }
-            autoFocus
             className="h-13 w-full bg-transparent py-4 text-[15px] text-ink outline-none placeholder:text-faint"
           />
           <kbd className="shrink-0 rounded border border-line-strong bg-subtle px-1.5 py-0.5 font-mono text-[10.5px] text-faint">
