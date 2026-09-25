@@ -1,9 +1,9 @@
 import "server-only";
-import { randomUUID } from "node:crypto";
 import type { Dirent, Stats } from "node:fs";
 import { lstat, readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { Prisma, prisma } from "@dokunc/db";
+import { acquireJobLock, type JobLockClient } from "@/lib/job-lock";
 import { log } from "@/lib/log";
 import { sharedRedis } from "@/lib/redis";
 import { isStoredUploadName, uploadDir } from "@/lib/uploads";
@@ -319,16 +319,8 @@ export const sweepDeps: SweepDeps = {
   referencedStems: referencedStemsInDb,
 };
 
-/** Das Stueck Redis, das die Sperre braucht. */
-export type SweepLockClient = {
-  set(
-    key: string,
-    value: string,
-    px: "PX",
-    ms: number,
-    nx: "NX",
-  ): Promise<"OK" | null>;
-};
+/** Das Stueck Redis, das die Sperre braucht (lib/job-lock). */
+export type SweepLockClient = JobLockClient;
 
 export type SweepRun =
   | { status: "fertig"; result: SweepResult }
@@ -362,39 +354,16 @@ export async function runUploadSweep(opts: {
   now?: number;
   deps?: SweepDeps;
 }): Promise<SweepRun> {
-  if (opts.redis) {
-    let acquired: boolean;
-    try {
-      acquired =
-        (await opts.redis.set(
-          opts.lockKey ?? SWEEP_LOCK_KEY,
-          randomUUID(),
-          "PX",
-          opts.lockTtlMs,
-          "NX",
-        )) === "OK";
-    } catch (e) {
-      // ReplyError ist eine Fehlerantwort von Redis selbst: erreichbar,
-      // aber der Befehl ist abgelehnt (etwa eine unbrauchbare Sperrdauer
-      // oder fehlende ACL-Rechte). Als "nicht erreichbar" gemeldet,
-      // suchte man den Fehler an der falschen Stelle.
-      if (e instanceof Error && e.name === "ReplyError") {
-        log.error(
-          { err: e },
-          "Upload-Aufraeumer: Redis lehnt die Sperre ab, Lauf ausgesetzt",
-        );
-      } else {
-        log.warn(
-          { err: e },
-          "Upload-Aufraeumer: Redis nicht erreichbar, Lauf ausgesetzt",
-        );
-      }
-      return { status: "ausgesetzt" };
-    }
-    if (!acquired) {
-      log.info("Upload-Aufraeumer: in diesem Intervall raeumt eine andere Instanz");
-      return { status: "gesperrt" };
-    }
+  const lock = await acquireJobLock(
+    opts.redis,
+    opts.lockKey ?? SWEEP_LOCK_KEY,
+    opts.lockTtlMs,
+    "Upload-Aufraeumer",
+  );
+  if (lock === "ausgesetzt") return { status: "ausgesetzt" };
+  if (lock === "gesperrt") {
+    log.info("Upload-Aufraeumer: in diesem Intervall raeumt eine andere Instanz");
+    return { status: "gesperrt" };
   }
   const started = Date.now();
   const result = await sweepOrphanUploads({

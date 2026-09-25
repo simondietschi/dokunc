@@ -122,6 +122,9 @@ export const fileAccessDeps: FileAccessDeps = {
  * zurueckgerollt: Space, Zeilen und Dateien bleiben, die Person sieht
  * einen Fehler und kann es erneut versuchen.
  *
+ * Die Audit-Eintraege des Space bleiben: AuditLog.spaceId wird per
+ * ON DELETE SET NULL geleert, statt mit dem Space zu verschwinden.
+ *
  * Was bleibt: endet der Prozess nach dem Commit, bevor `unlink` durch
  * ist, oder scheitert `unlink`, liegen die Bytes ohne Zeile da. Die
  * sammelt der Aufraeumer ein (lib/upload-sweeper), sobald sie die

@@ -9,7 +9,9 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
  * Aufgaben traegt (Mailversand): das Upload-Verzeichnis gehoert dem
  * Web-Prozess. Ohne UPLOAD_DIR loest lib/uploads es relativ zu dessen
  * Arbeitsverzeichnis auf, und nur wer dieselbe Aufloesung benutzt,
- * raeumt dort, wo die Dateien liegen.
+ * raeumt dort, wo die Dateien liegen. Auch die Aufbewahrung
+ * (lib/retention) startet hier, weil purgeTrashedTree und audit in der
+ * Web-App leben.
  *
  * Nur im Node-Runtime: `register()` laeuft auch fuer die Middleware im
  * Edge-Runtime, und dort gibt es weder Dateisystem noch Prisma. Die
@@ -31,6 +33,12 @@ export async function register(): Promise<void> {
       // Instanz weg. console statt lib/log, weil gerade das Laden der
       // Module gescheitert sein kann.
       console.error("Upload-Aufraeumer konnte nicht starten:", e);
+    }
+    try {
+      const { startRetentionJob } = await import("@/lib/retention");
+      startRetentionJob();
+    } catch (e) {
+      console.error("Aufbewahrung konnte nicht starten:", e);
     }
   }
 }

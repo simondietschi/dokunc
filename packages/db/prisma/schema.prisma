@@ -438,6 +438,8 @@ model Notification {
 
   @@index([userId, readAt])
   @@index([emailedAt, createdAt])
+  /// Loeschbedingung des Aufbewahrungsjobs (gelesen vor der Frist).
+  @@index([readAt])
 }
 
 /// Text-Chunk einer Seite für die KI-Suche ("Frag dein Wiki").
@@ -481,12 +483,17 @@ model PageVersion {
   content     Json?
   textContent String   @default("")
   authorId    String?
+  /// Vom Ausduennen ausgenommen (lib/version-thinning): die Quelle einer
+  /// Wiederherstellung und der Stand unmittelbar davor. Gesetzt von
+  /// restoreVersionAction, fuer den Bestand aus dem Audit-Log nachgetragen.
+  pinned      Boolean  @default(false)
   createdAt   DateTime @default(now())
 
   page   Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
   author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
 
-  @@index([pageId])
+  /// Verlauf (Cursor auf createdAt, id), neueste Version, Ausduennen je Seite.
+  @@index([pageId, createdAt])
 }
 
 /// Tokenbasierte E-Mail-Einladung in einen Space.
@@ -517,6 +524,8 @@ model AuditLog {
   actorId   String?
   /// Stabiler Ereignisschluessel, z. B. "member.role_changed".
   action    String
+  /// Wird beim Loeschen des Space NULL; der Eintrag bleibt, space.deleted
+  /// traegt Name und Slug.
   spaceId   String?
   /// Kennung des betroffenen Objekts (Seite, Nutzer, Einladung).
   targetId  String?
@@ -526,7 +535,7 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   actor User?  @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
-  space Space? @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  space Space? @relation(fields: [spaceId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([spaceId, createdAt])

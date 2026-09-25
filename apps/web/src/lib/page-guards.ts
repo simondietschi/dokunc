@@ -385,6 +385,38 @@ export async function detachLiveChildren(
 }
 
 /**
+ * Loescht einen geloeschten Ast endgueltig: lebende Kinder vorher an die
+ * oberste Ebene haengen, dann die Seite (Kaskade nimmt die geloeschten
+ * Nachfahren mit), danach die Zugriffswurzeln der abgehaengten Aeste
+ * nachziehen. purged false, wenn die Seite nicht mehr im Papierkorb liegt
+ * oder weg ist. Zeitgrenze wie deleteSpaceWithUploads: ein grosser Ast mit
+ * Versionen, Kommentaren und Chunks braucht laenger als Prismas Vorgabe von
+ * 5 s. Die Rechtepruefung (subtreeHasHiddenPages) macht der Aufrufer, wo
+ * es eine handelnde Person gibt.
+ */
+export async function purgeTrashedTree(
+  spaceId: string,
+  pageId: string,
+): Promise<{ purged: boolean; detached: { id: string }[] }> {
+  const { purged, detached } = await prisma.$transaction(
+    async (tx) => {
+      const orphans = await detachLiveChildren(spaceId, pageId, tx);
+      // Jetzt trifft die Kaskade nur noch geloeschte Seiten.
+      const { count } = await tx.page.deleteMany({
+        where: { id: pageId, spaceId, NOT: { deletedAt: null } },
+      });
+      return { purged: count > 0, detached: orphans };
+    },
+    { timeout: 120_000, maxWait: 10_000 },
+  );
+  // Die abgehaengten Aeste haben ihre Zugriffswurzel im geloeschten
+  // Unterbaum verloren; sie muessen neu berechnet werden, sonst stuende
+  // eine geschuetzte Seite ploetzlich offen da.
+  for (const o of detached) await refreshAccessRoots(o.id);
+  return { purged, detached };
+}
+
+/**
  * Ist `candidateId` ein Nachfahre von `pageId`?
  *
  * Muss vor jedem Verschieben geprüft werden: eine Seite unter ihre

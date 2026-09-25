@@ -4,13 +4,28 @@ import { ArrowLeft, ScrollText } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { requireAdmin } from "@/lib/current-user";
 import { AUDIT_LABELS, auditLabel, type AuditAction } from "@/lib/audit";
+import {
+  currentRetentionConfig,
+  retentionNotes,
+} from "@/lib/retention-config";
 
 export const metadata: Metadata = {
   title: "Audit-Log",
   description: "Sicherheitsrelevante Ereignisse dieser Instanz.",
 };
 
+/** Muss zur Zahl im Hinweistext passen (lib/retention-config). */
 const PAGE_SIZE = 100;
+
+/** Eintrag des Aufbewahrungsjobs (metadata.automatisch). */
+function isAutomatic(metadata: unknown): boolean {
+  return (
+    typeof metadata === "object" &&
+    metadata !== null &&
+    !Array.isArray(metadata) &&
+    (metadata as Record<string, unknown>).automatisch === true
+  );
+}
 
 export default async function AuditPage({
   searchParams,
@@ -51,8 +66,7 @@ export default async function AuditPage({
         Audit-Log
       </h1>
       <p className="mt-1 text-sm text-muted">
-        Die {PAGE_SIZE} jüngsten sicherheitsrelevanten Ereignisse. Einträge
-        werden nur angehängt, nie geändert.
+        {retentionNotes(currentRetentionConfig()).audit}
       </p>
 
       <form className="mt-6 flex items-center gap-2">
@@ -102,7 +116,9 @@ export default async function AuditPage({
               <p className="mt-1 text-muted">
                 {e.actor
                   ? `${e.actor.name} (${e.actor.email})`
-                  : "unbekannt"}
+                  : isAutomatic(e.metadata)
+                    ? "System (Aufbewahrung)"
+                    : "unbekannt"}
                 {e.space && ` · Space ${e.space.name}`}
                 {e.ip && ` · ${e.ip}`}
               </p>

@@ -78,7 +78,8 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   gepflegt aus Titel (Gewicht A) und den ersten 250 000 Zeichen von
   textContent, deutsch gestemmt und unverändert; bei übergrossen Seiten
   verkürzt), position, timestamps.
-- **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit.
+- **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit,
+  `pinned` für Wiederherstellungspunkte; ausgedünnt vom Aufbewahrungsjob.
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
 - **InstanceState**: genau eine Zeile mit `restoreEpoch` (32 Hex-Zeichen,
   von `scripts/restore.sh` bei jedem Zurückspielen neu vergeben, sonst
@@ -101,6 +102,8 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   COMMENT_REPLY, PAGE_UPDATED), pageId, commentId, versionId (nur
   PAGE_UPDATED, ohne Fremdschlüssel), readAt, emailedAt.
 - **PageSubscription**: Person folgt Seite (Kommentare und Änderungen).
+- **AuditLog**: sicherheitsrelevante Ereignisse; `spaceId` wird beim
+  Löschen des Space NULL, der Eintrag bleibt.
 
 **Trigger in der Datenbank:** `Page_aiIndexQueue_insert` und
 `Page_aiIndexQueue_update` (Funktion `dokunc_ai_index_enqueue`, beide
@@ -165,6 +168,22 @@ hineingereicht: als Prisma-Bedingung (`visiblePageWhere`,
 auch im Collab-Server) und als Filter für Benachrichtigungen
 (`filterByPageAccess`, im Collab-Server gebündelt über
 `usersWhoCanSeePage`).
+
+**Hintergrundjobs der Web-App.** Aus `instrumentation.ts` starten der
+Upload-Aufräumer (`lib/upload-sweeper.ts`) und die Aufbewahrung
+(`lib/retention.ts`). Beide nehmen dieselbe Sperre (`lib/job-lock.ts`:
+`SET NX PX`, läuft ab statt freigegeben zu werden; ist Redis eingerichtet,
+aber weg, setzt der Lauf aus; ohne `REDIS_URL` läuft jede Instanz selbst).
+Die Aufbewahrung löscht einmal täglich in Stapeln zu 5000 Zeilen mit kurzen
+Pausen und beginnt nach 60 Minuten keinen neuen Stapel mehr. Fristen und
+Hinweistexte liegen getrennt in `lib/retention-config.ts`, damit Seiten sie
+anzeigen können. Das Ausdünnen der Versionen (`lib/version-thinning.ts`)
+rankt je Seite alle Versionen in einer Abfrage; Zeitpunkte gehen als
+ISO-Parameter mit `AT TIME ZONE 'UTC'` hinein, die Sitzungszeitzone wirkt
+also nicht, und `now()` kommt in der Abfrage nicht vor. Beim Papierkorb
+wird jede Wurzel für sich gelöscht (`purgeTrashedTree` in
+`lib/page-guards.ts`): scheitert ein Ast, steht das im Log, und die übrigen
+laufen weiter. Der KI-Index läuft im Collab-Prozess mit eigener Sperre.
 
 **Suche.** Palette (`/api/search`) und Space-Suche (`/s/[slug]/search`)
 stellen dieselbe Abfrage (`searchPages` in `lib/page-search.ts`), den Plan
@@ -235,7 +254,8 @@ dazu baut `planSearch` in `lib/search-query.ts`.
 6. `onStoreDocument` (debounced) schreibt Yjs-State + extrahierten Text/JSON
    zurück in `Page` und erzeugt periodisch `PageVersion`-Snapshots.
    Mit jedem Snapshot entstehen PAGE_UPDATED-Meldungen für Folgende
-   (siehe unten).
+   (siehe unten). Ältere Snapshots dünnt der Aufbewahrungsjob der Web-App
+   aus; der Verlauf blättert per Cursor.
 7. Die Grösse des Yjs-Stands misst der Server beim Laden, beim Speichern
    und gedrosselt bei Änderungen (`onChange` auf jeder Instanz, auch für
    Updates aus Redis; über der Warnschwelle höchstens alle 64 KB bzw.
@@ -548,6 +568,10 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 - [x] Grössengrenzen für Collab-Nachrichten und Yjs-Dokumente
       (`COLLAB_MAX_MESSAGE_MB`, `COLLAB_MAX_DOC_MB`), Liste der grössten
       Seiten unter `/admin/documents`
+- [x] Aufbewahrung: täglicher Job mit Fristen per Umgebung, Versionen
+      ausdünnen (24 h alle, 30 Tage stündlich, dann täglich,
+      Wiederherstellungspunkte gepinnt), Verlauf mit Cursor, Audit-Spur
+      bleibt beim Löschen eines Space
 
 ## 7. Setup
 

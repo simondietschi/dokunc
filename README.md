@@ -64,7 +64,8 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   Treffer zeigen Pfad und Änderungsdatum
 - **Versionsverlauf** mit Versionsvergleich
   (Zeilen- und Wort-Diff gegen den aktuellen Stand oder die vorherige
-  Version, Vorschau vor dem Wiederherstellen), Papierkorb
+  Version, Vorschau vor dem Wiederherstellen, seitenweise durch den ganzen
+  Verlauf blätterbar), Papierkorb (auf Wunsch mit Frist)
 - **Favoriten** (Stern in der Seitenkopfzeile, Abschnitt in der Sidebar,
   Sprungziele in der Palette), **Zuletzt besucht** und ein
   **Space-Dashboard** (Kennzahlen, zuletzt besuchte, favorisierte und
@@ -255,7 +256,8 @@ Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
 semantische Suche von „Frag dein Wiki“, `AI_INDEX_INTERVAL_S` für den
 KI-Index, `MAX_UPLOAD_MB` für das
 Upload-Limit, `UPLOAD_SWEEP_INTERVAL_H` für den Aufräumer verwaister
-Uploads, `SESSION_IDLE_TIMEOUT` für die Abmeldung nach Untätigkeit
+Uploads, die Fristen der Aufbewahrung (`SESSION_RETENTION_DAYS` und
+weitere), `SESSION_IDLE_TIMEOUT` für die Abmeldung nach Untätigkeit
 (empfohlen für geteilte Geräte) — siehe `.env.example`.
 
 Ohne SMTP steht der Link aus Reset- und Einladungsmails nur ausserhalb
@@ -352,6 +354,43 @@ Import oder Vorlagen bekommen erst beim Bearbeiten Abschnitte. Mehrere
 Instanzen stimmen sich per Redis-Sperre ab; ist Redis nicht erreichbar,
 arbeitet jede für sich (höchstens doppelte Anfragen an Voyage). Log mit
 `component: "ai-indexer"`.
+
+**Aufbewahrung:** Ein täglicher Job im Web-Prozess löscht, was seine Frist
+hinter sich hat, und dünnt den Versionsverlauf aus. Abgelaufene oder
+widerrufene Sitzungen fallen 30 Tage nach Ablauf bzw. Widerruf
+(`SESSION_RETENTION_DAYS`), Passwort-Reset-Links und Einladungen 30 Tage
+nach Ablauf, Einlösung oder Annahme (`TOKEN_RETENTION_DAYS`), gelesene
+Benachrichtigungen 90 Tage nach dem Lesen (`NOTIFICATION_RETENTION_DAYS`,
+ungelesene bleiben), Audit-Einträge nach einem Jahr
+(`AUDIT_RETENTION_DAYS=365`). Seiten im Papierkorb entfernt er nur, wenn
+`TRASH_RETENTION_DAYS` grösser als 0 ist (Vorgabe 0: nie automatisch); ein
+später einzeln gelöschter Unterast wartet, bis auch er seine Frist erreicht
+hat, und lebende Unterseiten wandern an die oberste Ebene. Jede Frist in
+ganzen Tagen, `0` heisst unbegrenzt. Versionen (`VERSION_RETENTION=standard`,
+`off` schaltet ab): aus den letzten 24 Stunden bleibt jede, bis 30 Tage die
+letzte je Stunde, danach die letzte je Tag (UTC). Immer bleiben die erste
+Version einer Seite, die Quelle jeder Wiederherstellung und der Stand
+unmittelbar davor. Der erste Lauf folgt 15 Minuten nach dem Start, danach
+alle 24 Stunden; gelöscht wird in Stapeln, nach einer Stunde endet der Lauf
+und der Rest folgt am nächsten Tag. Mehrere Instanzen stimmen sich wie beim
+Aufräumer über eine Redis-Sperre ab (ohne Redis läuft jede für sich, was
+unschädlich ist). Jeder Lauf loggt seine Zahlen unter
+„Aufbewahrung: Lauf beendet“. Hinweise:
+
+1. **Der erste Lauf nach dem Update wendet alle Fristen auf den ganzen
+   Bestand an: er dünnt Versionen aus, löscht Audit-Einträge älter als ein
+   Jahr und alte Sitzungen. Vorher eine Sicherung ziehen. Wer den Bestand
+   unverändert behalten will, setzt vorher `VERSION_RETENTION=off` und
+   `AUDIT_RETENTION_DAYS=0`.**
+2. Postgres gibt den frei gewordenen Platz nicht sofort ans Dateisystem
+   zurück, verwendet ihn aber wieder; Sicherungen werden sofort kleiner.
+3. Uploads ohne Datensatz, die nur in ausgedünnten Versionen standen,
+   räumt danach der Aufräumer verwaister Uploads.
+4. Die Einträge eines gelöschten Space bleiben im Audit-Log, nur ohne
+   Bezug zum Space; „Space gelöscht“ nennt Name und Slug.
+5. Nach dem Zurückspielen einer alten Sicherung dünnt der nächste Lauf
+   deren Versionen aus. Soll der alte Verlauf vollständig bleiben, vorher
+   `VERSION_RETENTION=off` setzen.
 
 ### Sicherung und Rückweg
 
@@ -596,7 +635,9 @@ aus `pnpm dev`: Pub/Sub gilt über alle Redis-Datenbanken hinweg, und er
 führte die Wiederherstellungen der Tests mit aus. Der Prüf-Collab-Server
 läuft mit abgeschaltetem KI-Index. Die Integrationstests nicht neben einem
 laufenden `pnpm dev` starten: dessen Hintergrundjobs arbeiten auf derselben
-Datenbank.
+Datenbank. Die Integrationstests der Aufbewahrung arbeiten mit einem
+Zeitpunkt im Jahr 2001 und entfernen ihre eigenen Zeilen samt
+Audit-Einträgen.
 
 Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
 Server) und erwartet Postgres + Redis aus `.env`. In Umgebungen mit
@@ -666,13 +707,16 @@ Kurz, was die App bewusst tut:
   eintippt: bei der Einrichtung ist der zweite Faktor erst danach aktiv,
   beim Erneuern gelten bis dahin die bisherigen Codes weiter.
   Unbestätigte Codes verfallen nach 30 Minuten.
-- **Audit-Log** für Anmeldungen, Rollenwechsel, Einladungen und Löschungen.
+- **Audit-Log** für Anmeldungen, Rollenwechsel, Einladungen und
+  Löschungen, mit Frist (`AUDIT_RETENTION_DAYS`, Vorgabe ein Jahr);
+  Einträge eines gelöschten Space bleiben erhalten.
 - **Anhänge geschützter Seiten**: Jede hochgeladene Datei hängt an
   ihrem Space und, wo bekannt, an ihrer Seite (`Attachment.pageId`).
   `/api/files` liefert sie nur aus, wenn die Person diese Seite sehen
   darf; der Export prüft dasselbe. Anhänge ohne Seitenbezug (ältere
   Uploads, Seiten endgültig gelöscht) sind nur lesbar, wenn mindestens
-  eine Seite des Space sie verwendet und die Person jede dieser Seiten
+  eine Seite des Space sie verwendet (Inhalt, Titelbild oder eine
+  erhaltene Version) und die Person jede dieser Seiten
   sehen darf; Freigabelinks liefern sie gar nicht aus.
 
 ## Projektstruktur

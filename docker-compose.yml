@@ -124,6 +124,14 @@ services:
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
       # Aufraeumer fuer verwaiste Uploads: Abstand in Stunden (1 bis 168), 0 = aus
       UPLOAD_SWEEP_INTERVAL_H: ${UPLOAD_SWEEP_INTERVAL_H:-6}
+      # Aufbewahrung (taeglich, Einzelheiten in .env.example). 0 = unbegrenzt.
+      SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-30}
+      TOKEN_RETENTION_DAYS: ${TOKEN_RETENTION_DAYS:-30}
+      NOTIFICATION_RETENTION_DAYS: ${NOTIFICATION_RETENTION_DAYS:-90}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
+      TRASH_RETENTION_DAYS: ${TRASH_RETENTION_DAYS:-0}
+      # Versionen ausduennen: standard oder off
+      VERSION_RETENTION: ${VERSION_RETENTION:-standard}
       # Import (Markdown/Confluence/Notion): Upload-Limit pro Import in MB
       IMPORT_MAX_MB: ${IMPORT_MAX_MB:-100}
       # Import: gleichzeitige Importe (alle Konten; je Konto hoechstens 1)

@@ -14,11 +14,11 @@ import {
   revokePageAccess,
 } from "@/lib/collab-sync";
 import {
-  detachLiveChildren,
   findLivePage,
   findRestorableVersion,
   findTrashedPage,
   livePageWhere,
+  purgeTrashedTree,
   renamePageInSpace,
   resolveParentId,
   restorePageTree,
@@ -35,6 +35,7 @@ import { isValidIcon } from "@/lib/space-settings";
 import { appUrl } from "@dokunc/mail";
 import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
 import { nextSiblingPosition } from "@/lib/page-position";
+import { pinRestorePoints } from "@/lib/version-thinning";
 
 export async function createPageAction(form: FormData) {
   const access = await authorizeAction(form, "managePages");
@@ -223,24 +224,12 @@ export async function purgePageAction(form: FormData) {
     );
   }
 
-  // Endgueltig loeschen heisst: der geloeschte Unterbaum verschwindet —
+  // Endgueltig loeschen heisst: der geloeschte Unterbaum verschwindet,
   // aber NUR er. Lebende Unterseiten unter einem noch geloeschten
   // Elternteil sind ein voellig normaler Zustand (restorePageAction
-  // stellt nur nach unten wieder her); ohne das Abhaengen naehme die
-  // Kaskade sie mit.
-  const detached = await prisma.$transaction(async (tx) => {
-    const orphans = await detachLiveChildren(space.id, page.id, tx);
-    // Jetzt trifft die Kaskade nur noch geloeschte Seiten.
-    await tx.page.deleteMany({
-      where: { id: page.id, spaceId: space.id, NOT: { deletedAt: null } },
-    });
-    return orphans;
-  });
-
-  // Die abgehaengten Aeste haben ihre Zugriffswurzel im geloeschten
-  // Unterbaum verloren; sie muessen neu berechnet werden, sonst stuende
-  // eine geschuetzte Seite ploetzlich offen da.
-  for (const orphan of detached) await refreshAccessRoots(orphan.id);
+  // stellt nur nach unten wieder her); purgeTrashedTree haengt sie vorher
+  // ab und zieht ihre Zugriffswurzeln nach.
+  await purgeTrashedTree(space.id, page.id);
   await audit({
     action: "page.purged",
     actorId: user.id,
@@ -264,6 +253,12 @@ export async function restoreVersionAction(form: FormData) {
     str(form, "versionId"),
   );
   if (!version) throw new Error("Version nicht gefunden");
+  // Quelle und Stand davor vom Ausduennen ausnehmen (lib/version-thinning),
+  // bevor irgendetwas geschrieben wird. Ist die Quelle eben ausgeduennt
+  // worden, bricht die Wiederherstellung hier ab.
+  if (!(await pinRestorePoints(version.pageId, version.id))) {
+    throw new Error("Version nicht gefunden");
+  }
 
   // Page.content fuer Suche, Export und den Fall, dass es noch gar kein
   // Yjs-Dokument gibt (dann baut der Collab-Server es daraus). Das

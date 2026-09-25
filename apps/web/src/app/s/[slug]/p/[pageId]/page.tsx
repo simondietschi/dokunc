@@ -108,6 +108,11 @@ export default async function PageView({
       isTemplate: true,
       isRestricted: true,
       accessRootId: true,
+      // Wer zuletzt gespeichert hat: Collab-Server, Vorlagen und Import
+      // setzen lastEditedById, die Migration hat es fuer den Bestand aus
+      // der neuesten Version nachgetragen. Die Versionen selbst werden
+      // ausgeduennt und taugen dafuer nicht mehr.
+      lastEditedBy: { select: { name: true } },
     },
   });
   if (!page) notFound();
@@ -140,7 +145,6 @@ export default async function PageView({
   const [
     backlinks,
     comments,
-    lastVersion,
     subscription,
     favorite,
     shares,
@@ -167,13 +171,6 @@ export default async function PageView({
           include: { author: { select: { id: true, name: true } } },
         },
       },
-    }),
-    // Wer zuletzt gespeichert hat: der Collab-Server schreibt Snapshots
-    // mit Autor, das ist die einzige Autorenspur pro Seite.
-    prisma.pageVersion.findFirst({
-      where: { pageId: page.id },
-      orderBy: { createdAt: "desc" },
-      select: { author: { select: { name: true } } },
     }),
     prisma.pageSubscription.findUnique({
       where: { userId_pageId: { userId: user.id, pageId: page.id } },
@@ -287,7 +284,7 @@ export default async function PageView({
         userName={user.name}
         pdfEnabled={!!process.env.GOTENBERG_URL}
         updatedAt={page.updatedAt.toISOString()}
-        lastEditorName={lastVersion?.author?.name ?? null}
+        lastEditorName={page.lastEditedBy?.name ?? null}
         commentThreadIds={comments.map((c) => c.id)}
         icon={page.icon}
         coverUrl={page.coverUrl}

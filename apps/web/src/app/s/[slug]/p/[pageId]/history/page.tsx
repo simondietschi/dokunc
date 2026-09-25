@@ -6,6 +6,15 @@ import { prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { can } from "@/lib/permissions";
 import { visiblePageWhere } from "@/lib/page-access";
+import {
+  currentRetentionConfig,
+  retentionNotes,
+} from "@/lib/retention-config";
+import {
+  HISTORY_PAGE_SIZE,
+  loadVersionPage,
+  parseHistoryCursor,
+} from "@/lib/version-history";
 import { Avatar } from "@/components/ui/Avatar";
 import { restoreVersionAction } from "../../../actions";
 import { RestoreButton } from "./RestoreButton";
@@ -15,18 +24,17 @@ export const metadata: Metadata = {
   description: "Frühere Fassungen dieser Seite.",
 };
 
-/** Fassungen pro Seite. Vorher wurde die gesamte Historie geladen. */
-const PAGE_SIZE = 25;
-
 export default async function HistoryPage({
   params,
   searchParams,
 }: {
   params: Promise<{ slug: string; pageId: string }>;
-  searchParams: Promise<{ limit?: string }>;
+  searchParams: Promise<{ vor?: string | string[] }>;
 }) {
   const { slug, pageId } = await params;
-  const { limit } = await searchParams;
+  // Ein unlesbarer Cursor (auch ein alter Link mit ?limit=) zeigt die
+  // erste Seite.
+  const cursor = parseHistoryCursor((await searchParams).vor);
   const { space, role, user } = await loadSpace(slug);
 
   const page = await prisma.page.findFirst({
@@ -40,25 +48,13 @@ export default async function HistoryPage({
   });
   if (!page) notFound();
 
-  const take = Math.min(Math.max(Number(limit) || PAGE_SIZE, PAGE_SIZE), 200);
-  // Nur die angezeigten Felder: `include` zog bisher jede Version MIT
-  // vollem Dokument-JSON (bei viel Bearbeitung alle zwei Minuten eine) —
-  // auf einer vielbearbeiteten Seite Dutzende Megabyte fuer eine Liste
-  // aus Name und Datum. Der Inhalt wird erst auf der Vergleichsseite
-  // geladen.
-  const [versions, total] = await Promise.all([
-    prisma.pageVersion.findMany({
-      where: { pageId: page.id },
-      orderBy: { createdAt: "desc" },
-      take,
-      select: {
-        id: true,
-        createdAt: true,
-        author: { select: { name: true } },
-      },
-    }),
+  // Je Seite HISTORY_PAGE_SIZE Fassungen, per Cursor geblaettert
+  // (lib/version-history); der Cursor ueberlebt das Ausduennen.
+  const [{ versions, next }, total] = await Promise.all([
+    loadVersionPage(page.id, cursor, HISTORY_PAGE_SIZE),
     prisma.pageVersion.count({ where: { pageId: page.id } }),
   ]);
+  const hinweis = retentionNotes(currentRetentionConfig()).verlauf;
   const canRestore = can(role, "write");
 
   const label = (date: Date) =>
@@ -79,6 +75,7 @@ export default async function HistoryPage({
       <p className="mt-1 text-sm text-muted">
         {page.title} · {total} {total === 1 ? "Fassung" : "Fassungen"}
       </p>
+      {hinweis && <p className="mt-2 text-xs text-faint">{hinweis}</p>}
 
       <ol className="mt-8 space-y-1 border-l border-line pl-6">
         {versions.map((v, i) => (
@@ -90,7 +87,7 @@ export default async function HistoryPage({
                 <div className="min-w-0">
                   <p className="flex items-center gap-2 truncate text-sm font-medium">
                     {v.author?.name ?? "System"}
-                    {i === 0 && (
+                    {!cursor && i === 0 && (
                       <span className="rounded-md bg-accent-soft px-1.5 py-0.5 text-[11px] font-medium text-accent">
                         Aktueller Stand
                       </span>
@@ -127,16 +124,25 @@ export default async function HistoryPage({
         ))}
       </ol>
 
-      {total > versions.length && (
-        <Link
-          href={`?limit=${Math.min(take + PAGE_SIZE, 200)}`}
-          className="mt-2 inline-block rounded-lg border border-line px-3 py-1.5 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-ink"
-        >
-          Weitere Fassungen laden
-        </Link>
+      {(cursor || next) && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {cursor && (
+            <Link href="?" className="mt-2 inline-block rounded-lg border border-line px-3 py-1.5 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-ink">
+              Neueste Fassungen
+            </Link>
+          )}
+          {next && (
+            <Link
+              href={`?vor=${encodeURIComponent(next)}`}
+              className="mt-2 inline-block rounded-lg border border-line px-3 py-1.5 text-[13px] text-muted transition-colors hover:border-line-strong hover:text-ink"
+            >
+              Ältere Fassungen
+            </Link>
+          )}
+        </div>
       )}
 
-      {versions.length === 0 && (
+      {versions.length === 0 && !cursor && (
         <p className="mt-10 text-sm text-faint">
           Noch keine gespeicherten Versionen. Sobald jemand schreibt,
           entstehen automatisch Snapshots.

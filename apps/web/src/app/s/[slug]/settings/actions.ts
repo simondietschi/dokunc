@@ -80,6 +80,15 @@ export async function deleteSpaceAction(
   }
 
   await deleteSpaceWithUploads(space.id);
+  // Erst nach der erfolgreichen Loeschung, wie in admin/actions.ts: die
+  // Eintraege des Space bleiben (AuditLog.spaceId wird NULL), dieser traegt
+  // Name und Slug.
+  await audit({
+    action: "space.deleted",
+    actorId: user.id,
+    targetId: space.id,
+    metadata: { name: space.name, slug: space.slug },
+  });
   log.info({ spaceId: space.id, userId: user.id }, "Space gelöscht");
 
   revalidatePath("/spaces");

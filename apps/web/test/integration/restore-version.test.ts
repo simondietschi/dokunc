@@ -193,3 +193,47 @@ describe("restoreVersionAction", () => {
     expect(mocks.reset).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("restoreVersionAction und das Ausduennen", () => {
+  it("pinnt die Quelle und den Stand unmittelbar davor, sonst nichts", async () => {
+    mocks.reset.mockResolvedValue(true);
+    const seite = (
+      await prisma.page.create({
+        data: { spaceId, title: `${TAG}-pins`, content: doc("Jetzt") },
+        select: { id: true },
+      })
+    ).id;
+    const t0 = Date.now() - 3 * 60 * 60 * 1000;
+    const ids: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      ids.push(
+        (
+          await prisma.pageVersion.create({
+            data: {
+              pageId: seite,
+              title: `${TAG}-pins`,
+              content: doc(`Stand ${i}`),
+              textContent: `Stand ${i}`,
+              createdAt: new Date(t0 + i * 60 * 60 * 1000),
+            },
+            select: { id: true },
+          })
+        ).id,
+      );
+    }
+    const f = new FormData();
+    f.set("slug", TAG);
+    f.set("versionId", ids[0]);
+    await umleitung(restoreVersionAction(f));
+    const pins = await prisma.pageVersion.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, pinned: true },
+    });
+    const gepinnt = Object.fromEntries(pins.map((p) => [p.id, p.pinned]));
+    expect([gepinnt[ids[0]], gepinnt[ids[1]], gepinnt[ids[2]]]).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
+});
