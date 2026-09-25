@@ -144,8 +144,8 @@ services:
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
       # KI-Index im Collab-Prozess: Abstand der Laeufe in Sekunden (10 bis
-      # 3600, 0 = aus, dann keine Embeddings mehr) und Abschnitte je
-      # Anfrage an Voyage (1 bis 256)
+      # 3600, 0 = aus, dann wird kein Seitentext mehr eingebettet) und
+      # Abschnitte je Anfrage an Voyage (1 bis 256, siehe .env.example)
       AI_INDEX_INTERVAL_S: ${AI_INDEX_INTERVAL_S:-60}
       AI_INDEX_EMBED_BATCH: ${AI_INDEX_EMBED_BATCH:-64}
       # PDF-Export über den mitlaufenden Gotenberg-Service

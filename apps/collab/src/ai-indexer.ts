@@ -244,7 +244,7 @@ export function createAiIndexer(opts: {
   }
 
   /** Einen Fehler der Embeddingstufe melden, aber nur beim Wechsel der Art. */
-  function noteFailure(res: Failure): void {
+  function noteFailure(res: Failure, abschnitte: number): void {
     const status = "status" in res ? res.status : undefined;
     const art = `${res.reason}:${status ?? ""}`;
     if (art === lastFailure) return;
@@ -258,6 +258,14 @@ export function createAiIndexer(opts: {
       // Schluessel falsch oder ohne Berechtigung: das behebt nur die
       // Einrichtung, kein weiterer Versuch.
       log.error({ status }, "voyage embeddings fehlgeschlagen");
+    } else if (status === 400 || status === 413) {
+      // Meist ist die Anfrage zu gross: Voyage begrenzt die Tokens je
+      // Anfrage je nach Modell. Derselbe Stapel kommt im naechsten Lauf
+      // wieder, die Stufe kommt also erst mit kleinerem Stapel weiter.
+      log.warn(
+        { status, abschnitte, hinweis: "Anfrage zu gross? AI_INDEX_EMBED_BATCH verkleinern" },
+        "voyage embeddings fehlgeschlagen",
+      );
     } else {
       log.warn({ status }, "voyage embeddings fehlgeschlagen");
     }
@@ -298,7 +306,7 @@ export function createAiIndexer(opts: {
       for (const c of batch) attempted.push(c.id);
       const res = await deps.embed(batch.map((c) => c.text));
       if (!res.ok) {
-        noteFailure(res);
+        noteFailure(res, batch.length);
         out.abbruch = res.reason;
         if (res.reason === "rate-limit") {
           pausedUntil =
@@ -422,7 +430,7 @@ export function startAiIndexer(opts: {
   const config = readAiIndexConfig(env, (d, m) => log.warn(d, m));
   if (config.intervalMs === null) {
     log.info(
-      "KI-Index abgeschaltet (AI_INDEX_INTERVAL_S=0): neue Seiten aus Import und Vorlagen bekommen keine Abschnitte, bis sie bearbeitet werden, und es entstehen keine Embeddings mehr; Frag dein Wiki sucht dann nur im Volltext",
+      "KI-Index abgeschaltet (AI_INDEX_INTERVAL_S=0): neue Seiten aus Import und Vorlagen bekommen keine Abschnitte, bis sie bearbeitet werden, und kein Seitentext wird mehr eingebettet. Frag dein Wiki nutzt vorhandene Embeddings des aktuellen Modells weiter und schickt die Frage an Voyage, solange VOYAGE_API_KEY gesetzt ist; ganz ohne Voyage: VOYAGE_API_KEY leeren",
     );
     return;
   }

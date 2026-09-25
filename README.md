@@ -348,12 +348,30 @@ Abschnitte ohne Embedding sind, mischt „Frag dein Wiki“ Volltexttreffer
 bei; eine frisch importierte Seite ist bis zum nächsten Lauf noch nicht
 dabei. Die Suche vergleicht alle Abschnitte, die die fragende Person sehen
 darf; ab 20 000 je Frage steht eine Warnung im Log.
-`AI_INDEX_INTERVAL_S=0` schaltet den Index ab: dann entstehen keine
-Embeddings mehr, „Frag dein Wiki“ sucht nur im Volltext, und Seiten aus
-Import oder Vorlagen bekommen erst beim Bearbeiten Abschnitte. Mehrere
-Instanzen stimmen sich per Redis-Sperre ab; ist Redis nicht erreichbar,
-arbeitet jede für sich (höchstens doppelte Anfragen an Voyage). Log mit
-`component: "ai-indexer"`.
+`AI_INDEX_INTERVAL_S=0` schaltet den Index ab: dann wird kein Seitentext
+mehr eingebettet, und Seiten aus Import oder Vorlagen bekommen erst beim
+Bearbeiten Abschnitte. „Frag dein Wiki“ nutzt vorhandene Embeddings des
+aktuellen Modells weiter, geänderte Abschnitte kommen nur noch über den
+Volltext dazu, und solange `VOYAGE_API_KEY` gesetzt ist, geht jede Frage
+weiter an Voyage AI. Wer gar nichts mehr an Voyage senden will, leert
+`VOYAGE_API_KEY`. Mehrere Instanzen stimmen sich per Redis-Sperre ab; ist
+Redis nicht erreichbar, arbeitet jede für sich (höchstens doppelte
+Anfragen an Voyage). Log mit `component: "ai-indexer"`.
+
+Beim Update auf die Version mit dem KI-Index stehen alle Seiten einmal
+an. Ein Lauf schafft rund 2000 Seiten, 10 000 Seiten sind also nach rund
+fünf Minuten durch; so lange warten auch neu importierte Seiten und neue
+Seiten aus Vorlagen hinter dem Bestand. Embeddings von vor diesem Update
+tragen kein Modell: Der erste Lauf, der etwas einbettet, ordnet sie dem
+dabei verwendeten Modell zu, sofern die Vektorlänge passt (Log
+„KI-Index: vorhandene Embeddings dem Modell zugeordnet“). Deshalb
+`EMBEDDING_MODEL` nicht zusammen mit diesem Update wechseln, sondern erst,
+wenn
+`SELECT count(*) FROM "PageChunk" WHERE embedding IS NOT NULL AND "embeddingModel" IS NULL`
+0 ergibt; sonst gelten die alten Vektoren als Vektoren des neuen Modells
+und werden nie neu eingebettet. Ist das schon geschehen, erzwingt
+`UPDATE "PageChunk" SET embedding = NULL, "embeddingModel" = NULL` den
+Neuaufbau (der ganze Bestand geht dann noch einmal an Voyage AI).
 
 **Aufbewahrung:** Ein täglicher Job im Web-Prozess löscht, was seine Frist
 hinter sich hat, und dünnt den Versionsverlauf aus. Abgelaufene oder

@@ -200,21 +200,59 @@ export async function storeEmbeddings(
   return written;
 }
 
+/** Zeilen je Statement der Uebernahme (adoptLegacyEmbeddings). */
+export const ADOPT_LEGACY_BATCH = 5000;
+
 /**
  * Altbestand (eingebettet vor 20260925100000, Modell unbekannt) dem Modell
  * zuordnen: alle Vektoren derselben Bytelaenge. Das entspricht dem
  * Verhalten davor, als die Suche alle Vektoren verglich. Liefert die Zahl.
+ *
+ * In Stapeln zu `batch` Zeilen per Keyset ueber id, jedes Statement eine
+ * eigene kurze Transaktion: ein einziges UPDATE hielte bei grossem
+ * Altbestand alle Alt-Chunks bis zum Ende gesperrt, und Speicherlaeufe
+ * auf Altseiten liefen in die Frist von indexPageChunks. Die Bedingung
+ * steht im UPDATE noch einmal: hat ein Speicherlauf einen Chunk der
+ * Auswahl inzwischen geaendert, bleibt er unberuehrt. Kehrt erst zurueck,
+ * wenn ein Stapel weniger als `batch` Kandidaten findet (alles zugeordnet).
  */
 export async function adoptLegacyEmbeddings(
   model: string,
   bytes: number,
-  opts: { pageIds?: string[] } = {},
+  opts: { pageIds?: string[]; batch?: number } = {},
 ): Promise<number> {
-  return prisma.$executeRaw`
-    UPDATE "PageChunk" c SET "embeddingModel" = ${model}
-    WHERE c."embeddingModel" IS NULL
-      AND c.embedding IS NOT NULL
-      AND octet_length(c.embedding) = ${bytes}
-      ${onlyPages(opts.pageIds)}
-  `;
+  const batch = opts.batch ?? ADOPT_LEGACY_BATCH;
+  let afterId = "";
+  let adopted = 0;
+  for (;;) {
+    const rows = await prisma.$queryRaw<
+      { last: string | null; picked: number; updated: number }[]
+    >`
+      WITH b AS (
+        SELECT c.id FROM "PageChunk" c
+        WHERE c."embeddingModel" IS NULL
+          AND c.embedding IS NOT NULL
+          AND octet_length(c.embedding) = ${bytes}
+          AND c.id > ${afterId}
+          ${onlyPages(opts.pageIds)}
+        ORDER BY c.id
+        LIMIT ${batch}
+      ), u AS (
+        UPDATE "PageChunk" c SET "embeddingModel" = ${model}
+        FROM b
+        WHERE c.id = b.id
+          AND c."embeddingModel" IS NULL
+          AND c.embedding IS NOT NULL
+          AND octet_length(c.embedding) = ${bytes}
+        RETURNING c.id
+      )
+      SELECT (SELECT max(id) FROM b) AS last,
+             (SELECT count(*)::int FROM b) AS picked,
+             (SELECT count(*)::int FROM u) AS updated
+    `;
+    const { last, picked, updated } = rows[0];
+    adopted += Number(updated);
+    if (last === null || Number(picked) < batch) return adopted;
+    afterId = last;
+  }
 }

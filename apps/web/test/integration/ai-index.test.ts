@@ -310,6 +310,31 @@ describe("Embeddings", () => {
     expect(zeilen.map((z) => z.embeddingModel)).toEqual([MODEL, null, MODEL, null]);
   });
 
+  it("ordnet Altbestand in Stapeln zu, bis nichts mehr uebrig ist", async () => {
+    const id = await seite();
+    const bytes = (n: number) => new Uint8Array(new ArrayBuffer(n));
+    await prisma.pageChunk.createMany({
+      data: [0, 1, 2, 3, 4, 5, 6].map((i) => ({
+        pageId: id,
+        chunkIndex: i,
+        text: `t${i}`,
+        // Einer mit anderer Laenge mitten drin: zaehlt nicht, haelt nicht auf.
+        embedding: bytes(i === 3 ? 32 : 16),
+      })),
+    });
+    expect(await adoptLegacyEmbeddings(MODEL, 16, { pageIds: [id], batch: 2 })).toBe(6);
+    const zeilen = await prisma.pageChunk.findMany({
+      where: { pageId: id },
+      orderBy: { chunkIndex: "asc" },
+      select: { embeddingModel: true },
+    });
+    expect(zeilen.map((z) => z.embeddingModel)).toEqual([
+      MODEL, MODEL, MODEL, null, MODEL, MODEL, MODEL,
+    ]);
+    // Zweiter Aufruf: nichts mehr zu tun.
+    expect(await adoptLegacyEmbeddings(MODEL, 16, { pageIds: [id], batch: 2 })).toBe(0);
+  });
+
   it("ganzer Weg: importierte Seite bis zum Embedding", async () => {
     const text = `${satz("import")} ${satz("weiter")}`;
     const id = await seite({ textContent: text, title: "Importiert" });

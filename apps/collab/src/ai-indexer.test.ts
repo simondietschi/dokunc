@@ -294,6 +294,26 @@ describe("createAiIndexer", () => {
     expect(wieder).toHaveLength(1);
   });
 
+  it("nennt bei 400 und 413 die Stapelgroesse als moegliche Ursache", async () => {
+    let antwort: EmbedResult = { ok: false, reason: "http", status: 400 };
+    const deps = fakeDeps({
+      embed: vi.fn(async () => antwort),
+      chunksNeedingEmbedding: vi.fn(async () => chunks(3, "c")),
+    });
+    const { ix, log } = indexer({ deps });
+    await ix.tick();
+    antwort = { ok: false, reason: "http", status: 413 };
+    await ix.tick();
+    antwort = { ok: false, reason: "http", status: 500 };
+    await ix.tick();
+    const hinweis = "Anfrage zu gross? AI_INDEX_EMBED_BATCH verkleinern";
+    expect(log.warn.mock.calls).toEqual([
+      [{ status: 400, abschnitte: 3, hinweis }, "voyage embeddings fehlgeschlagen"],
+      [{ status: 413, abschnitte: 3, hinweis }, "voyage embeddings fehlgeschlagen"],
+      [{ status: 500 }, "voyage embeddings fehlgeschlagen"],
+    ]);
+  });
+
   it("ordnet den Altbestand nach dem ersten erfolgreichen Stapel einmal zu", async () => {
     const adoptLegacy = vi
       .fn<(model: string, bytes: number) => Promise<number>>()
