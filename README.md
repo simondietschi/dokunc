@@ -686,7 +686,9 @@ läuft mit abgeschaltetem KI-Index. Die Integrationstests nicht neben einem
 laufenden `pnpm dev` starten: dessen Hintergrundjobs arbeiten auf derselben
 Datenbank. Die Integrationstests der Aufbewahrung arbeiten mit einem
 Zeitpunkt im Jahr 2001 und entfernen ihre eigenen Zeilen samt
-Audit-Einträgen.
+Audit-Einträgen. Die Nachträge aus der Migration der Aufbewahrung gelten
+für die ganze Datenbank; ihr Test führt sie darum in einer Transaktion
+aus, die er am Ende zurückrollt.
 
 Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
 Server) und erwartet Postgres + Redis aus `.env`. In Umgebungen mit

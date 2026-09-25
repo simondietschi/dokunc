@@ -607,29 +607,59 @@ describe("Backfills der Migration", () => {
       data: { pageId: w.id, title: "w", authorId: autor, createdAt: new Date(t0) },
     });
 
-    for (let runde = 0; runde < 2; runde++) {
-      for (const u of updates) await prisma.$executeRawUnsafe(u);
+    // Die Anweisungen gelten fuer die ganze Datenbank, nicht nur fuer die
+    // Zeilen dieses Tests. Sie laufen darum in einer Transaktion, die nach
+    // dem Auslesen zurueckgerollt wird: fremde Zeilen bleiben unveraendert.
+    const lesen = async (db: Pick<typeof prisma, "pageVersion" | "page">) => {
+      const pins = await db.pageVersion.findMany({
+        where: { pageId: x },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, pinned: true },
+      });
+      const editors = await db.page.findMany({
+        where: { id: { in: [y, z, w.id] } },
+        select: { id: true, lastEditedById: true },
+      });
+      return {
+        pins: pins.map((p) => [p.id.slice(-1), p.pinned]),
+        von: Object.fromEntries(editors.map((e) => [e.id, e.lastEditedById])),
+      };
+    };
+    class Zurueckrollen extends Error {
+      stand: Awaited<ReturnType<typeof lesen>>;
+      constructor(stand: Awaited<ReturnType<typeof lesen>>) {
+        super("zurueckrollen");
+        this.stand = stand;
+      }
     }
+    const fehler = await prisma
+      .$transaction(
+        async (tx) => {
+          for (let runde = 0; runde < 2; runde++) {
+            for (const u of updates) await tx.$executeRawUnsafe(u);
+          }
+          throw new Zurueckrollen(await lesen(tx));
+        },
+        { timeout: 60_000 },
+      )
+      .catch((e: unknown) => e);
+    expect(fehler).toBeInstanceOf(Zurueckrollen);
+    const { pins, von } = (fehler as Zurueckrollen).stand;
 
-    const pins = await prisma.pageVersion.findMany({
-      where: { pageId: x },
-      orderBy: { createdAt: "asc" },
-      select: { id: true, pinned: true },
-    });
-    expect(pins.map((p) => [p.id.slice(-1), p.pinned])).toEqual([
+    expect(pins).toEqual([
       ["a", false],
       ["q", true],
       ["b", true],
       ["c", true],
       ["d", false],
     ]);
-    const editors = await prisma.page.findMany({
-      where: { id: { in: [y, z, w.id] } },
-      select: { id: true, lastEditedById: true },
-    });
-    const von = Object.fromEntries(editors.map((e) => [e.id, e.lastEditedById]));
     expect(von[y]).toBe(autor);
     expect(von[z]).toBeNull();
     expect(von[w.id]).toBe(anderer);
+
+    // Nach dem Zurueckrollen ist nichts davon geblieben.
+    const danach = await lesen(prisma);
+    expect(danach.pins.every(([, pinned]) => pinned === false)).toBe(true);
+    expect(danach.von[y]).toBeNull();
   });
 });

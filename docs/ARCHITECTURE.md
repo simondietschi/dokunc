@@ -171,9 +171,11 @@ auch im Collab-Server) und als Filter für Benachrichtigungen
 
 **Hintergrundjobs der Web-App.** Aus `instrumentation.ts` starten der
 Upload-Aufräumer (`lib/upload-sweeper.ts`) und die Aufbewahrung
-(`lib/retention.ts`). Beide nehmen dieselbe Sperre (`lib/job-lock.ts`:
+(`lib/retention.ts`). Beide nutzen dieselbe Sperrlogik (`lib/job-lock.ts`:
 `SET NX PX`, läuft ab statt freigegeben zu werden; ist Redis eingerichtet,
-aber weg, setzt der Lauf aus; ohne `REDIS_URL` läuft jede Instanz selbst).
+aber weg, setzt der Lauf aus; ohne `REDIS_URL` läuft jede Instanz selbst),
+jeder mit eigenem Schlüssel: Sie schliessen nur Läufe desselben Jobs auf
+anderen Instanzen aus, nicht einander.
 Die Aufbewahrung löscht einmal täglich in Stapeln zu 5000 Zeilen mit kurzen
 Pausen und beginnt nach 60 Minuten keinen neuen Stapel mehr. Fristen und
 Hinweistexte liegen getrennt in `lib/retention-config.ts`, damit Seiten sie
