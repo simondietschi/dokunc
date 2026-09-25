@@ -44,6 +44,8 @@ else
 fi
 case "$args" in
   *"pg_restore -f /dev/null"*) cat >/dev/null; exit "\${FAKE_DUMP_EXIT:-0}" ;;
+  *"cat > /app/data/app_secret"*) printf 'SECRET %s\n' "$(cat)" >> "$FAKE_LOG"; exit 0 ;;
+  *"up -d --wait --wait-timeout 300"*) exit "\${FAKE_START_EXIT:-0}" ;;
   *pg_dump*) echo "DUMP"; exit 0 ;;
   *"compose cp "*) ziel="\${@: -1}"; mkdir -p "$ziel"; echo x > "$ziel/datei"; exit 0 ;;
   *_prisma_migrations*) printf '%s\\n' $FAKE_MIGRATIONS; exit 0 ;;
@@ -56,10 +58,15 @@ let log: string;
 
 function run(
   args: string[],
-  opts: { migrations?: string[]; dumpExit?: number } = {},
+  opts: {
+    migrations?: string[];
+    dumpExit?: number;
+    startExit?: number;
+    cwd?: string;
+  } = {},
 ) {
   const res = spawnSync("bash", [join(dir, "scripts/restore.sh"), ...args], {
-    cwd: dir,
+    cwd: opts.cwd ?? dir,
     // stdin ist eine Pipe, kein Terminal (wie in CI oder per ssh ohne -t)
     input: "",
     encoding: "utf8",
@@ -69,6 +76,7 @@ function run(
       FAKE_LOG: log,
       FAKE_MIGRATIONS: (opts.migrations ?? [BEKANNTE_MIGRATION]).join(" "),
       FAKE_DUMP_EXIT: String(opts.dumpExit ?? 0),
+      FAKE_START_EXIT: String(opts.startExit ?? 0),
     },
   });
   return {
@@ -230,5 +238,34 @@ describe("scripts/restore.sh", () => {
       epoche,
     );
     expect(r.out).toContain(`Zurückgespielt: Stand vom ${TS}`);
+  });
+
+  it("meldet einen gescheiterten Start nicht als gescheiterten Restore", () => {
+    sicherung();
+    const r = run(["--ja", TS], { startExit: 1 });
+    expect(r.status).toBe(1);
+    // Positivkontrolle: der Start wurde wirklich versucht, alles davor lief.
+    expect(r.protokoll).toContain("up -d --wait --wait-timeout 300");
+    expect(r.protokoll).toContain('UPDATE "Notification" SET "emailedAt" = now()');
+    // Nur die Meldung des Abbruchs; davor nennt backup.sh selbst restore.sh.
+    const meldung = r.out.slice(r.out.indexOf("Abgebrochen bei"));
+    expect(meldung).toContain("Abgebrochen bei: App starten");
+    expect(meldung).toContain("Erneut zurückspielen ist nicht nötig");
+    expect(meldung).not.toContain("Die App bleibt angehalten");
+    expect(meldung).not.toMatch(/restore\.sh \d{8}-\d{6}/);
+  });
+
+  it("nimmt einen relativen Pfad bei --secret vom Aufrufort aus", () => {
+    sicherung();
+    const woanders = join(dir, "woanders");
+    mkdirSync(woanders);
+    const secret = "s".repeat(40);
+    writeFileSync(join(woanders, "mein-secret"), `${secret}\n`);
+    const r = run(
+      ["--ja", "--ohne-vorsicherung", "--secret", "mein-secret", TS],
+      { cwd: woanders },
+    );
+    expect(r.status, r.out).toBe(0);
+    expect(r.protokoll).toContain(`SECRET ${secret}`);
   });
 });

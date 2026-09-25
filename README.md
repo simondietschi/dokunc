@@ -458,6 +458,11 @@ Nach dem Restore gilt:
   einem Browser.
 - Benachrichtigungen, die zur Zeit der Sicherung noch nicht per Mail
   verschickt waren, bekommen keine Mail mehr; in der App stehen sie weiter.
+- Den vorherigen Stand holt `./scripts/restore.sh <Zeitstempel der
+  Vorsicherung>` vollständig zurück. Die Datenbank `dokunc_vor_…` enthält
+  dazu noch, was zwischen Vorsicherung und Anhalten geschrieben wurde,
+  aber keine passenden Uploads: die ersetzt Schritt 5. Mit
+  `--ohne-vorsicherung` fehlen dort alle bisherigen Uploads.
 
 Die Abschlussmeldung nennt die Datenbanken mit früheren Ständen samt
 Löschbefehl, etwa
@@ -488,7 +493,11 @@ Erst der alte Code, dann die Sicherung: `restore.sh` setzt die Migrationen
 des ausgecheckten Stands nach, und nur die Sicherung von vor dem Update
 passt zu ihm. Die zweite Zeile holt das Skript, falls der alte Stand es
 noch nicht kennt (erstes Update über diese Version). Später wieder
-aktualisieren mit `git checkout main` und den Schritten oben.
+aktualisieren mit `git checkout main` und den Schritten oben. Hat die
+zweite Zeile das Skript geholt (`git status` zeigt
+`?? scripts/restore.sh`), vorher `rm scripts/restore.sh`, sonst bricht
+`git checkout main` ab, weil es die unversionierte Datei überschreiben
+müsste.
 
 ## Lokale Entwicklung (ohne Docker)
 

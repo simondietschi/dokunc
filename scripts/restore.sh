@@ -19,6 +19,8 @@
 # stehen, waehrend _prisma_migrations zurueckfaellt, und der naechste
 # migrate deploy braeche mit "relation already exists" ab.
 set -Eeuo pipefail
+# Relative Pfade in den Argumenten (--secret) gelten vom Aufrufort aus.
+AUFRUFORT=$PWD
 cd "$(dirname "$0")/.."
 umask 077
 
@@ -50,6 +52,9 @@ while [ $# -gt 0 ]; do
   shift
 done
 if [ -z "$TS" ]; then nutzung; exit 2; fi
+if [ -n "$SECRET_DATEI" ] && [[ "$SECRET_DATEI" != /* ]]; then
+  SECRET_DATEI="$AUFRUFORT/$SECRET_DATEI"
+fi
 # Nur der Zeitstempel, kein Pfad: die Dateien liegen immer in backups/.
 if ! [[ "$TS" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
   echo "Ungültiger Zeitstempel: $TS (erwartet JJJJMMTT-HHMMSS)" >&2
@@ -91,9 +96,15 @@ fehler() {
       if [ -n "$VTS" ]; then
         echo "Das Skript erneut ausführen (legt eine weitere Kopie an; mit --ohne-vorsicherung, die Vorsicherung liegt schon in backups/) oder den vorherigen Stand zurückholen: ./scripts/restore.sh $VTS." >&2
       else
-        echo "Das Skript erneut ausführen (legt eine weitere Kopie an) oder den vorherigen Stand aus der Datenbank $VOR_DB zurückholen." >&2
+        echo "Das Skript erneut ausführen (legt eine weitere Kopie an) oder den vorherigen Stand aus der Datenbank $VOR_DB zurückholen (nur die Datenbank: die bisherigen Uploads sind nicht gesichert)." >&2
       fi
       echo "Die App bleibt angehalten." >&2
+      ;;
+    fertig)
+      # Nur noch der Start fehlt: nicht erneut zurueckspielen, und schon
+      # gar nicht den vorherigen Stand holen.
+      echo "Der Stand vom $TS ist vollständig zurückgespielt, nur die App wurde nicht rechtzeitig bereit." >&2
+      echo "Zustand prüfen mit docker compose ps und docker compose logs app, starten mit docker compose up -d. Erneut zurückspielen ist nicht nötig." >&2
       ;;
   esac
   exit 1
@@ -144,7 +155,7 @@ if [ "$JA" -ne 1 ]; then
   if [ "$VORSICHERUNG" -eq 1 ]; then
     ZUSATZ=" (vorher wird der aktuelle Stand gesichert)"
   else
-    ZUSATZ=" (ohne Vorsicherung)"
+    ZUSATZ=" (ohne Vorsicherung: die bisherige Datenbank bleibt als Kopie liegen, die bisherigen Uploads nicht)"
   fi
   echo "Das ersetzt Datenbank und Uploads durch den Stand vom ${TS}. Was seither geändert wurde, geht verloren${ZUSATZ}. Alle werden abgemeldet."
   read -r -p "Zum Fortfahren ja eingeben: " ANTWORT
@@ -279,6 +290,7 @@ INSERT INTO "InstanceState" ("id", "restoreEpoch", "restoredAt")
 UPDATE "Session" SET "revokedAt" = now() WHERE "revokedAt" IS NULL;
 UPDATE "Notification" SET "emailedAt" = now() WHERE "emailedAt" IS NULL;
 SQL
+PHASE="fertig"
 
 # 13. Start
 SCHRITT="App starten"
@@ -293,9 +305,10 @@ echo
 echo "✓ Zurückgespielt: Stand vom ${TS}. Alle Sitzungen sind beendet. Offene Tabs bitten um Neuladen."
 echo "  Restore-Epoche: ${EPOCHE}"
 if [ -n "$VTS" ]; then
-  echo "  Vorheriger Stand: backups/db-${VTS}.dump und die Datenbank ${VOR_DB}."
+  echo "  Vorheriger Stand: backups/db-${VTS}.dump mit den Uploads dazu, zurückholen mit ./scripts/restore.sh ${VTS}."
+  echo "  Die Datenbank ${VOR_DB} enthält zusätzlich Änderungen bis zum Anhalten, aber nicht deren Uploads."
 else
-  echo "  Vorheriger Stand: die Datenbank ${VOR_DB} (ohne Vorsicherung)."
+  echo "  Vorheriger Stand: die Datenbank ${VOR_DB} (ohne Vorsicherung, ohne die bisherigen Uploads)."
 fi
 if [ -n "$FRUEHERE" ]; then
   echo "  Frühere Stände in der Datenbank (löschen mit docker compose exec db dropdb -U dokunc <name>):"

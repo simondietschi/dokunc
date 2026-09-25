@@ -243,6 +243,14 @@ jobs:
           sql() { docker compose exec -T db psql -X -U dokunc -d dokunc -v ON_ERROR_STOP=1 -At -c "$1"; }
           im_app() { docker compose exec -T app sh -c "$1"; }
           secret_summe() { docker compose exec -T app cat /app/data/app_secret | sha256sum; }
+          # Der Mail-Dispatcher im Collab-Prozess markiert ohne SMTP jede
+          # offene Benachrichtigung sofort als gemailt (erster Lauf 5 s nach
+          # dem Start, unabhaengig von MAIL_DISPATCH_INTERVAL_S). Solange
+          # seine Sperre belegt ist, laeuft er nicht; sonst waere die
+          # Pruefung von Schritt 12 unten auch ohne Schritt 12 gruen.
+          sperre_mails() {
+            test "$(docker compose exec -T redis redis-cli SET dokunc:mail-dispatch:lock ci-rundlauf PX 3600000)" = OK
+          }
           warte_auf_health() {
             for i in $(seq 1 30); do
               curl -fsSk "https://localhost:${APP_PORT:-7891}/api/health" | grep -q '"status":"ok"' && return 0
@@ -258,6 +266,7 @@ jobs:
 
           # Stand der Sicherung, dazu eine Person mit offener Sitzung und
           # eine noch nicht gemailte Benachrichtigung (Schritt 12 des Skripts)
+          sperre_mails
           sql "CREATE TABLE ci_rundlauf (wert text); INSERT INTO ci_rundlauf VALUES ('vorher')"
           sql "INSERT INTO \"User\" (id, email, name, \"passwordHash\", \"updatedAt\") VALUES ('ci-rundlauf', 'ci-rundlauf@example.test', 'CI', 'x', now());
                INSERT INTO \"Session\" (id, \"userId\", \"expiresAt\") VALUES ('ci-rundlauf', 'ci-rundlauf', now() + interval '7 days');
@@ -267,6 +276,8 @@ jobs:
           im_app 'echo vorher > /app/uploads/ci-vorher.txt'
           TS=$(./scripts/backup.sh | sed -n 's#.*backups/db-\(.*\)\.dump$#\1#p')
           test -n "$TS"
+          # Noch offen, also auch in der Sicherung offen
+          test "$(sql "SELECT \"emailedAt\" IS NULL FROM \"Notification\" WHERE id = 'ci-rundlauf'")" = t
 
           # Aenderungen danach, darunter eine neue Tabelle (wie eine Migration)
           sql "UPDATE ci_rundlauf SET wert = 'nachher'"
@@ -281,6 +292,10 @@ jobs:
             sql 'SELECT "restoreEpoch" FROM "InstanceState"' | grep -Eqx '[0-9a-f]{32}'
             test "$(sql 'SELECT count(*) FROM "Session" WHERE "revokedAt" IS NULL')" = 0
             test "$(sql 'SELECT count(*) FROM "Notification" WHERE "emailedAt" IS NULL')" = 0
+            # Beides aus der Transaktion von Schritt 12 (gleiches now() wie
+            # restoredAt), nicht vom Dispatcher oder einer Abmeldung
+            test "$(sql "SELECT s.\"revokedAt\" = i.\"restoredAt\" FROM \"Session\" s, \"InstanceState\" i WHERE s.id = 'ci-rundlauf'")" = t
+            test "$(sql "SELECT n.\"emailedAt\" = i.\"restoredAt\" FROM \"Notification\" n, \"InstanceState\" i WHERE n.id = 'ci-rundlauf'")" = t
             test "$(secret_summe)" = "$SUMME"
             warte_auf_health
           }
@@ -295,6 +310,7 @@ jobs:
           # 2. Neuer Host: Volumes weg, frischer Stack mit neuem Secret
           docker compose down -v
           docker compose up -d --wait --wait-timeout 600
+          sperre_mails
           test "$(secret_summe)" != "$SUMME"
           ./scripts/restore.sh --ja --ohne-vorsicherung --secret "$SECRET" "$TS"
           pruefe_stand
