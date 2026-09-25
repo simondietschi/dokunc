@@ -45,6 +45,7 @@ describe("Collab-Protokoll", () => {
       tooManyConnections: "too-many-connections",
       rateLimited: "rate-limited",
       ticketUsed: "ticket-used",
+      restoreEpoch: "restore-epoch",
     });
   });
 

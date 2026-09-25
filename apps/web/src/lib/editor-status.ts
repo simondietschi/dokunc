@@ -9,13 +9,16 @@ import { COLLAB_REJECT_REASON } from "@dokunc/editor";
  * - offline: der Browser meldet kein Netz
  * - unauthorized: der Collab-Server hat die Anmeldung abgelehnt
  * - limited: der Collab-Server hat an einer Grenze abgewiesen
+ * - restored: die Instanz wurde zurückgespielt; dieser Tab verbindet
+ *   nicht mehr (endgültig)
  */
 export type EditorStatus =
   | "connecting"
   | "connected"
   | "offline"
   | "unauthorized"
-  | "limited";
+  | "limited"
+  | "restored";
 
 /**
  * Status nach einer abgelehnten Anmeldung (`onAuthenticationFailed`,
@@ -27,11 +30,14 @@ export type EditorStatus =
  * Unter "Kein Zugriff" mit der Bitte, sich neu anzumelden, suchte die
  * Person den Fehler an der falschen Stelle. "ticket-used" bleibt bei
  * "unauthorized": ein normaler Client schickt nie ein verbrauchtes
- * Ticket, er holt vor jedem Versuch ein neues.
+ * Ticket, er holt vor jedem Versuch ein neues. "restore-epoch" heisst:
+ * die Instanz wurde aus einer Sicherung zurueckgespielt, der Tab haelt
+ * einen Stand von vorher ("restored", endgueltig).
  */
 export function statusAfterRejection(
   reason: string,
-): "limited" | "unauthorized" {
+): "limited" | "unauthorized" | "restored" {
+  if (reason === COLLAB_REJECT_REASON.restoreEpoch) return "restored";
   return reason === COLLAB_REJECT_REASON.tooManyConnections ||
     reason === COLLAB_REJECT_REASON.rateLimited
     ? "limited"
@@ -42,10 +48,13 @@ export function statusAfterRejection(
  * Status nach einem Trennen oder einem Statuswechsel ausser "verbunden".
  * Nach einer Ablehnung meldet der Provider noch ein Trennen; ohne den
  * Vorrang der Ablehnung stuende gleich wieder "Verbinde…". Erst der
- * naechste gelungene Abgleich (`onSynced`) loest sie ab.
+ * naechste gelungene Abgleich (`onSynced`) loest sie ab. "restored"
+ * bleibt immer stehen.
  */
 export function statusAfterDisconnect(prev: EditorStatus): EditorStatus {
-  return prev === "unauthorized" || prev === "limited" ? prev : "connecting";
+  return prev === "unauthorized" || prev === "limited" || prev === "restored"
+    ? prev
+    : "connecting";
 }
 
 /**
@@ -74,12 +83,19 @@ export type SetEditorStatus = (
  *   ein Trennen; ohne den Vorrang der Ablehnung (`statusAfterDisconnect`)
  *   stuende gleich wieder "Verbinde…". Ein Statuswechsel auf "connected"
  *   aendert nichts, "Live" setzt nur onSynced.
+ * - "restored" verlaesst kein Rueckruf mehr (nur Neuladen): nach dem
+ *   abgewiesenen Ticket meldet der Provider noch eine Ablehnung mit
+ *   eigenem Grund, und ein spaeter Abgleich darf den Tab nicht wieder
+ *   als "Live" zeigen.
  */
 export function statusHandlers(setStatus: SetEditorStatus) {
   return {
-    onSynced: () => setStatus("connected"),
+    onSynced: () =>
+      setStatus((prev) => (prev === "restored" ? prev : "connected")),
     onAuthenticationFailed: ({ reason }: { reason: string }) =>
-      setStatus(statusAfterRejection(reason)),
+      setStatus((prev) =>
+        prev === "restored" ? prev : statusAfterRejection(reason),
+      ),
     onStatus: ({ status }: { status: string }) => {
       if (status !== "connected") setStatus(statusAfterDisconnect);
     },
@@ -100,7 +116,8 @@ export function visibleStatus(
   if (
     status === "connected" ||
     status === "unauthorized" ||
-    status === "limited"
+    status === "limited" ||
+    status === "restored"
   ) {
     return status;
   }
@@ -135,5 +152,11 @@ export function statusLabel(status: EditorStatus): {
       };
     case "connecting":
       return { text: "Verbinde…" };
+    case "restored":
+      return {
+        text: "Neu laden nötig",
+        title:
+          "Die Instanz wurde aus einer Sicherung zurückgespielt. Änderungen aus diesem Tab werden nicht mehr übertragen. Bitte die Seite neu laden.",
+      };
   }
 }

@@ -234,6 +234,72 @@ jobs:
           test "$(CADDY_TLS= tls)" = internal
           test "$(CADDY_TLS=admin@example.com tls)" = admin@example.com
 
+      # Sicherung und Rueckweg mit genau den Befehlen aus dem README. Einmal
+      # auf demselben Stack, einmal auf einem frisch angelegten (wie nach
+      # einem Plattenausfall, mit getrennt gesichertem APP_SECRET).
+      - name: Sichern und zurückspielen (Rundlauf)
+        run: |
+          set -euo pipefail
+          sql() { docker compose exec -T db psql -X -U dokunc -d dokunc -v ON_ERROR_STOP=1 -At -c "$1"; }
+          im_app() { docker compose exec -T app sh -c "$1"; }
+          secret_summe() { docker compose exec -T app cat /app/data/app_secret | sha256sum; }
+          warte_auf_health() {
+            for i in $(seq 1 30); do
+              curl -fsSk "https://localhost:${APP_PORT:-7891}/api/health" | grep -q '"status":"ok"' && return 0
+              sleep 2
+            done
+            return 1
+          }
+          SECRET="$RUNNER_TEMP/app_secret"
+          (umask 077; docker compose exec -T app cat /app/data/app_secret > "$SECRET")
+          SUMME=$(secret_summe)
+          MIGRATIONEN=$(sql 'SELECT count(*) FROM "_prisma_migrations"')
+          test -z "$(sql 'SELECT "restoreEpoch" FROM "InstanceState"')"
+
+          # Stand der Sicherung, dazu eine Person mit offener Sitzung und
+          # eine noch nicht gemailte Benachrichtigung (Schritt 12 des Skripts)
+          sql "CREATE TABLE ci_rundlauf (wert text); INSERT INTO ci_rundlauf VALUES ('vorher')"
+          sql "INSERT INTO \"User\" (id, email, name, \"passwordHash\", \"updatedAt\") VALUES ('ci-rundlauf', 'ci-rundlauf@example.test', 'CI', 'x', now());
+               INSERT INTO \"Session\" (id, \"userId\", \"expiresAt\") VALUES ('ci-rundlauf', 'ci-rundlauf', now() + interval '7 days');
+               INSERT INTO \"Notification\" (id, \"userId\", type) VALUES ('ci-rundlauf', 'ci-rundlauf', 'MENTION')"
+          test "$(sql 'SELECT count(*) FROM "Session" WHERE "revokedAt" IS NULL')" -ge 1
+          test "$(sql 'SELECT count(*) FROM "Notification" WHERE "emailedAt" IS NULL')" -ge 1
+          im_app 'echo vorher > /app/uploads/ci-vorher.txt'
+          TS=$(./scripts/backup.sh | sed -n 's#.*backups/db-\(.*\)\.dump$#\1#p')
+          test -n "$TS"
+
+          # Aenderungen danach, darunter eine neue Tabelle (wie eine Migration)
+          sql "UPDATE ci_rundlauf SET wert = 'nachher'"
+          sql "CREATE TABLE ci_nach_sicherung (x int)"
+          im_app 'rm /app/uploads/ci-vorher.txt; echo nachher > /app/uploads/ci-nachher.txt'
+
+          pruefe_stand() {
+            test "$(sql 'SELECT wert FROM ci_rundlauf')" = vorher
+            test -z "$(sql "SELECT to_regclass('public.ci_nach_sicherung')")"
+            test "$(sql 'SELECT count(*) FROM "_prisma_migrations"')" = "$MIGRATIONEN"
+            im_app 'test -f /app/uploads/ci-vorher.txt && test ! -e /app/uploads/ci-nachher.txt'
+            sql 'SELECT "restoreEpoch" FROM "InstanceState"' | grep -Eqx '[0-9a-f]{32}'
+            test "$(sql 'SELECT count(*) FROM "Session" WHERE "revokedAt" IS NULL')" = 0
+            test "$(sql 'SELECT count(*) FROM "Notification" WHERE "emailedAt" IS NULL')" = 0
+            test "$(secret_summe)" = "$SUMME"
+            warte_auf_health
+          }
+
+          # 1. Rueckweg auf demselben Stack (mit Vorsicherung)
+          ./scripts/restore.sh --ja "$TS"
+          pruefe_stand
+          EPOCHE1=$(sql 'SELECT "restoreEpoch" FROM "InstanceState"')
+          test "$(ls backups/db-*.dump | wc -l)" -ge 2
+          test "$(sql "SELECT count(*) FROM pg_database WHERE datname LIKE 'dokunc\_vor\_%'")" = 1
+
+          # 2. Neuer Host: Volumes weg, frischer Stack mit neuem Secret
+          docker compose down -v
+          docker compose up -d --wait --wait-timeout 600
+          test "$(secret_summe)" != "$SUMME"
+          ./scripts/restore.sh --ja --ohne-vorsicherung --secret "$SECRET" "$TS"
+          pruefe_stand
+          test "$(sql 'SELECT "restoreEpoch" FROM "InstanceState"')" != "$EPOCHE1"
+
       - name: Zustand und Logs bei Fehlschlag
         if: failure()
         run: |

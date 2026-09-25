@@ -30,6 +30,12 @@ describe("statusAfterRejection()", () => {
     );
     expect(statusAfterRejection("")).toBe("unauthorized");
   });
+
+  it("eine veraltete Restore-Epoche heisst: neu laden", () => {
+    expect(statusAfterRejection(COLLAB_REJECT_REASON.restoreEpoch)).toBe(
+      "restored",
+    );
+  });
 });
 
 describe("statusAfterDisconnect()", () => {
@@ -111,6 +117,32 @@ describe("statusHandlers()", () => {
     z.h.onDisconnect();
     expect(z.wert).toBe("connecting");
   });
+
+  // Nach dem abgewiesenen Ticket (409 restore-epoch) setzt der Editor
+  // "restored" selbst; der Provider meldet danach noch eine Ablehnung
+  // mit eigenem Grund, ein Trennen und womoeglich einen Abgleich. Nichts
+  // davon darf den Tab wieder als "Kein Zugriff" oder "Live" zeigen.
+  it("restored bleibt stehen, was der Provider danach auch meldet", () => {
+    const z = statusZustand("restored");
+    z.h.onAuthenticationFailed({
+      reason: "Failed to get token: Error: Instanz wurde zurückgespielt",
+    });
+    expect(z.wert).toBe("restored");
+    z.h.onDisconnect();
+    z.h.onStatus({ status: "disconnected" });
+    z.h.onStatus({ status: "connecting" });
+    expect(z.wert).toBe("restored");
+    z.h.onSynced();
+    expect(z.wert).toBe("restored");
+  });
+
+  it("die Ablehnung restore-epoch des Collab-Servers fuehrt zu restored", () => {
+    const z = statusZustand("connected");
+    z.h.onAuthenticationFailed({ reason: COLLAB_REJECT_REASON.restoreEpoch });
+    expect(z.wert).toBe("restored");
+    z.h.onDisconnect();
+    expect(z.wert).toBe("restored");
+  });
 });
 
 describe("visibleStatus()", () => {
@@ -123,6 +155,7 @@ describe("visibleStatus()", () => {
     expect(visibleStatus("connected", false)).toBe("connected");
     expect(visibleStatus("unauthorized", false)).toBe("unauthorized");
     expect(visibleStatus("limited", false)).toBe("limited");
+    expect(visibleStatus("restored", false)).toBe("restored");
   });
 });
 
@@ -140,5 +173,11 @@ describe("statusLabel()", () => {
     expect(statusLabel("offline").text).toBe("Offline");
     expect(statusLabel("unauthorized").text).toBe("Kein Zugriff");
     expect(statusLabel("unauthorized").title).toMatch(/neu anmelden/);
+  });
+
+  it("bittet nach einem Restore um Neuladen", () => {
+    const { text, title } = statusLabel("restored");
+    expect(text).toBe("Neu laden nötig");
+    expect(title).toMatch(/zurückgespielt/);
   });
 });

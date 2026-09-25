@@ -81,6 +81,8 @@ import {
   visibleStatus,
   type EditorStatus,
 } from "@/lib/editor-status";
+import { requestCollabTicket } from "@/lib/collab-ticket-client";
+import { localDocName, removeForeignLocalDocs } from "@/lib/local-doc";
 import { looksLikeMarkdown, markdownToHtml } from "@/lib/markdown-paste";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/cn";
@@ -174,20 +176,10 @@ const LinkClick = Extension.create({
 });
 
 /**
- * Holt eine kurzlebige Eintrittskarte für den Collab-Server.
- * Wirft bei Ablehnung — der Provider behandelt das als
- * fehlgeschlagene Authentifizierung und versucht es später erneut.
+ * Fuer welche Restore-Epoche dieser Tab die lokalen Kopien schon
+ * aufgeraeumt hat (einmal je Tab und Epoche). undefined: noch nie.
  */
-async function fetchCollabTicket(pageId: string): Promise<string> {
-  const res = await fetch("/api/collab/ticket", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pageId }),
-  });
-  if (!res.ok) throw new Error(`Ticket abgelehnt (${res.status})`);
-  const { ticket } = (await res.json()) as { ticket: string };
-  return ticket;
-}
+let cleanedEpoch: string | null | undefined;
 
 type Peer = { name: string; color: string };
 type Conn = { ydoc: Y.Doc; provider: HocuspocusProvider };
@@ -216,6 +208,7 @@ export function CollaborativeEditor({
   access,
   breadcrumbs,
   hasChildren = false,
+  restoreEpoch,
 }: {
   slug: string;
   spaceId: string;
@@ -253,6 +246,8 @@ export function CollaborativeEditor({
   breadcrumbs: { spaceName: string; ancestors: Crumb[] };
   /** Für "Duplizieren": Option "Unterseiten mitkopieren" nur bei Bedarf. */
   hasChildren?: boolean;
+  /** Restore-Epoche der Instanz (InstanceState). Benennt die lokale Kopie. */
+  restoreEpoch: string | null;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
   // "connected" heisst hier: authentifiziert UND erstmalig synchronisiert.
@@ -260,6 +255,9 @@ export function CollaborativeEditor({
   // wer da schon tippt, schreibt in ein Dokument, dessen Inhalt gleich
   // erst eintrifft, und der Text landet an der falschen Stelle.
   const [status, setStatus] = useState<EditorStatus>("connecting");
+  // Symbol und Titelbild liegen nicht im Yjs-Dokument. Nach einem Restore
+  // sperrt sie der Tab trotzdem: er zeigt einen Stand von vorher.
+  const metaEditable = editable && status !== "restored";
   const [peers, setPeers] = useState<Peer[]>([]);
   const [titleValue, setTitleValue] = useState(title);
   const [prompt, setPrompt] = useState<PromptRequest | null>(null);
@@ -321,6 +319,9 @@ export function CollaborativeEditor({
     // Merker gleicht).
     const next = titleRef.current?.value ?? titleValue;
     if (!editable || next === lastSavedTitle.current) return;
+    // Nach einem Restore traegt dieser Tab nichts mehr ein, auch nicht
+    // den Titel (er stammt aus dem Stand von vorher).
+    if (status === "restored") return;
     if (savingTitle.current === next) return; // schon unterwegs
     savingTitle.current = next;
     announceTitle(next);
@@ -428,35 +429,61 @@ export function CollaborativeEditor({
      * Lokaler Puffer. Ohne ihn lebte das Yjs-Dokument nur im Speicher des
      * Tabs: wer bei Netzausfall weiterschrieb und dann neu lud, verlor
      * alles.
+     *
+     * Der Name traegt die Restore-Epoche (lib/local-doc): eine Kopie aus
+     * der Zeit vor einem Restore wird so nie geladen und bringt ihre
+     * spaeteren Updates nicht in den zurueckgespielten Stand zurueck.
      */
     const persistence =
       typeof indexedDB === "undefined"
         ? null
-        : new IndexeddbPersistence(`dokunc:${pageId}`, ydoc);
+        : new IndexeddbPersistence(localDocName(pageId, restoreEpoch), ydoc);
     // Die Status-Callbacks gehoeren in den Konstruktor: der Provider
     // verbindet sofort, ein spaeter registrierter Listener koennte den
     // ersten Sync oder eine Ablehnung verpassen. Was sie mit dem Status tun
     // ("Live" erst nach dem Erst-Sync, eine Ablehnung ueberdauert das
     // Trennen), steht in lib/editor-status (statusHandlers, dort
     // getestet).
-    const provider = new HocuspocusProvider({
+    let provider: HocuspocusProvider | null = null;
+    provider = new HocuspocusProvider({
       url: collabUrl,
       name: pageId,
       document: ydoc,
       // Vor JEDEM Verbindungsversuch ein frisches Ticket holen. Die
       // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
-      // HTML gelangt nichts Wiederverwendbares.
-      token: () => fetchCollabTicket(pageId),
+      // HTML gelangt nichts Wiederverwendbares. Die Restore-Epoche geht
+      // mit: weicht sie ab, wurde die Instanz inzwischen zurueckgespielt.
+      token: async () => {
+        const result = await requestCollabTicket(pageId, restoreEpoch);
+        if (result.kind === "restored") {
+          setStatus("restored");
+          // Endgueltig trennen: jede weitere Verbindung spielte den Stand
+          // dieses Tabs in den zurueckgespielten hoch. Der Microtask laeuft
+          // noch vor dem catch in sendToken; danach gesendete Nachrichten
+          // gehen an einen geschlossenen Socket.
+          queueMicrotask(() => provider?.disconnect());
+          throw new Error("Instanz wurde zurückgespielt");
+        }
+        // Die Epoche ist jetzt vom Server bestaetigt: Kopien einer anderen
+        // Epoche stammen aus der Zeit vor einem Restore. Erst jetzt, weil ein
+        // veralteter Tab (Prop aus dem Router-Cache) sonst die Kopien der
+        // aktuellen Epoche loeschte.
+        if (cleanedEpoch !== restoreEpoch) {
+          cleanedEpoch = restoreEpoch;
+          void removeForeignLocalDocs(restoreEpoch);
+        }
+        return result.ticket;
+      },
       ...statusHandlers(setStatus),
     });
     setConn({ ydoc, provider });
     return () => {
       setConn(null);
-      provider.destroy();
+      provider?.destroy();
       void persistence?.destroy();
       ydoc.destroy();
     };
-  }, [collabUrl, pageId]);
+  }, [collabUrl, pageId, restoreEpoch]);
 
   const color = useMemo(() => caretColorFor(userId), [userId]);
 
@@ -852,6 +879,30 @@ export function CollaborativeEditor({
           </div>
         </div>
       </header>
+      {status === "restored" && (
+        <div
+          role="alert"
+          className="mx-auto mt-4 max-w-[760px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink"
+        >
+          <p>
+            Die Instanz wurde aus einer Sicherung zurückgespielt. Dieser Tab
+            zeigt noch den Stand von vorher, und Änderungen daraus werden
+            nicht mehr übertragen.
+          </p>
+          <p className="mt-1.5">
+            Lade die Seite neu. Was seit der Sicherung hier geschrieben
+            wurde, ist danach nicht mehr da. Kopiere es vorher, falls du es
+            noch brauchst.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-subtle hover:text-ink"
+          >
+            Neu laden
+          </button>
+        </div>
+      )}
       {moveOpen && (
         <MovePageDialog
           slug={slug}
@@ -863,7 +914,7 @@ export function CollaborativeEditor({
 
       <PageCover
         coverUrl={coverValue}
-        editable={editable}
+        editable={metaEditable}
         onPick={pickCover}
         onRemove={() => void saveCover("")}
       />
@@ -886,10 +937,10 @@ export function CollaborativeEditor({
         <div className="mb-1 flex items-center gap-1">
           <PageIcon
             icon={iconValue}
-            editable={editable}
+            editable={metaEditable}
             onChange={(next) => void saveIcon(next)}
           />
-          {editable && !coverValue && (
+          {metaEditable && !coverValue && (
             <PageCover
               coverUrl={null}
               editable
@@ -904,7 +955,7 @@ export function CollaborativeEditor({
           aria-label="Seitentitel"
           value={titleValue}
           onChange={(e) => setTitleValue(e.target.value)}
-          readOnly={!editable}
+          readOnly={!editable || status === "restored"}
           onBlur={() => void saveTitle()}
           onKeyDown={(e) => {
             // Enter/Pfeil nach unten: in den Text springen (wie in Notion).

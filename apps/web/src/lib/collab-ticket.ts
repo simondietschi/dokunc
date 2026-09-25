@@ -34,6 +34,8 @@ export async function issueCollabTicket(opts: {
   tokenVersion: number;
   sessionId: string;
   pageId: string;
+  /** Restore-Epoche der Instanz (InstanceState), null ohne Restore. */
+  restoreEpoch?: string | null;
 }): Promise<string> {
   // sid mitzugeben heisst: wird diese Anmeldung beendet, endet auch die
   // Verbindung zum Collab-Server, nicht erst mit dem nächsten Ticket.
@@ -41,6 +43,9 @@ export async function issueCollabTicket(opts: {
     tv: opts.tokenVersion,
     sid: opts.sessionId,
     pid: opts.pageId,
+    // ep: die Restore-Epoche, gegen die das Ticket ausgestellt ist. Der
+    // Collab-Server nimmt es nur an, solange sie noch gilt.
+    ep: opts.restoreEpoch ?? null,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(opts.userId)

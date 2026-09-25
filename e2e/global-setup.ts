@@ -66,6 +66,12 @@ export default async function globalSetup() {
       // bricht den gesamten Lauf schon im globalSetup ab.
       `TRUNCATE "User","Space","SpaceMember","Page","PageVersion","CollabDocument","SpaceInvitation","PasswordResetToken","PageLink","Comment","Notification","PageChunk","Attachment","Favorite","PageVisit","AuditLog","Session","PageSubscription","PageShare","Group","GroupMember","SpaceGroup","PageGrant","TotpRecoveryCode" CASCADE`,
     );
+    // InstanceState gehoert zum Schema (genau eine Zeile) und steht
+    // deshalb nicht in der Liste oben: nur die Restore-Epoche eines
+    // abgebrochenen Laufs zuruecksetzen.
+    await client.query(
+      `UPDATE "InstanceState" SET "restoreEpoch" = NULL, "restoredAt" = NULL`,
+    );
   } finally {
     await client.end();
   }

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@dokunc/db";
+import { currentRestoreEpoch, prisma } from "@dokunc/db";
+import { COLLAB_REJECT_REASON } from "@dokunc/editor";
 import { effectiveRole } from "@/lib/space-access";
 import { canSeePage } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
@@ -13,6 +14,22 @@ import {
 } from "@/lib/collab-ticket";
 
 export const runtime = "nodejs";
+
+/**
+ * Antwort, wenn der Editor mit einer anderen Restore-Epoche fragt als der
+ * aktuellen: die Instanz wurde seit dem Laden des Tabs aus einer
+ * Sicherung zurueckgespielt (scripts/restore.sh). Der Editor trennt dann
+ * endgueltig und bittet um Neuladen. Kein Log: erwartet, je Tab einmal.
+ */
+function restoredResponse() {
+  return NextResponse.json(
+    {
+      error: "Die Instanz wurde zurückgespielt",
+      code: COLLAB_REJECT_REASON.restoreEpoch,
+    },
+    { status: 409, headers: { "Cache-Control": "no-store" } },
+  );
+}
 
 /**
  * Stellt ein kurzlebiges Ticket für den Collab-WebSocket aus.
@@ -39,8 +56,26 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Ungültige Herkunft" }, { status: 403 });
   }
 
+  // Body vor der Anmeldung lesen: die Restore-Epoche entscheidet auch
+  // ohne gueltige Sitzung (siehe unten).
+  const body = (await req.json().catch(() => null)) as {
+    pageId?: unknown;
+    epoch?: unknown;
+  } | null;
+  /** Neue Editoren schicken das Feld immer (Text oder null); fehlt es, ist
+   *  es ein Tab mit Code von vor der Restore-Epoche. */
+  const hasEpoch = !!body && typeof body === "object" && "epoch" in body;
+  const clientEpoch = typeof body?.epoch === "string" ? body.epoch : null;
+
   const user = await getCurrentUser();
   if (!user) {
+    // Nach einem Restore sind alle Sitzungen widerrufen. Ein offener Tab
+    // soll dann "neu laden" zeigen, nicht "kein Zugriff": weicht seine
+    // Epoche ab, ist das der Grund, und die Anmeldung kommt nach dem
+    // Neuladen. Nur mit mitgeschickter Epoche (eine Abfrage auf eine Zeile).
+    if (hasEpoch && clientEpoch !== (await currentRestoreEpoch(prisma))) {
+      return restoredResponse();
+    }
     return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   }
 
@@ -69,13 +104,16 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Zu viele Anfragen" }, { status: 429 });
   }
 
-  const body = (await req.json().catch(() => null)) as {
-    pageId?: unknown;
-  } | null;
   const pageId = typeof body?.pageId === "string" ? body.pageId : "";
   if (!pageId) {
     return NextResponse.json({ error: "pageId fehlt" }, { status: 400 });
   }
+
+  // Vor dem Laden der Seite: eine erst nach der Sicherung angelegte Seite
+  // gibt es nach dem Restore nicht mehr, der Tab soll "neu laden" zeigen,
+  // nicht "nicht gefunden". Ein Tab ohne Feld epoch gilt als null.
+  const epoch = await currentRestoreEpoch(prisma);
+  if (clientEpoch !== epoch) return restoredResponse();
 
   const page = await prisma.page.findFirst({
     where: { id: pageId, deletedAt: null },
@@ -98,6 +136,7 @@ export async function POST(req: Request) {
     tokenVersion: user.tokenVersion,
     sessionId: user.sessionId,
     pageId: page.id,
+    restoreEpoch: epoch,
   });
   return NextResponse.json(
     { ticket, expiresIn: COLLAB_TICKET_TTL_SEC },

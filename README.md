@@ -159,8 +159,8 @@ Danach:
 - Die erste Registrierung wird automatisch Instanz-Admin; danach ist die
   Anmeldung nur noch per Einladung möglich.
 - Status: `docker compose ps` · Logs: `docker compose logs -f app`
-- Stoppen: `docker compose down` (Daten bleiben) — Update:
-  `git pull && docker compose up -d --build`
+- Stoppen: `docker compose down` (Daten bleiben). Update und Rückweg:
+  siehe „Update und Rückweg“ unten.
 
 Hinweise:
 
@@ -242,9 +242,9 @@ Die Datei nur einbinden, wenn der Server IPv6 hat, sonst startet der
 Proxy nicht. Welche Adressen der Proxy tatsächlich belegt, zeigt
 `docker compose ps proxy` in der Spalte `PORTS`.
 
-Dann `docker compose up -d`. Aktualisiert wird wie im Schnellstart mit
-`git pull && docker compose up -d --build`; weil keine versionierte Datei
-geändert ist, läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
+Dann `docker compose up -d`. Aktualisiert wird wie im Abschnitt „Update
+und Rückweg“ beschrieben; weil keine versionierte Datei geändert ist,
+läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
 `APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
 alle bestehenden Sitzungen).
 Weitere Optionen — SMTP für Einladungs- und
@@ -307,8 +307,7 @@ der Container kann dabei kurz als „unhealthy“ erscheinen. Sicherungen
 werden grösser, weil der Suchvektor etwa so viel Platz braucht wie der
 Text selbst oder etwas mehr.
 
-**Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
-(Restore-Befehle gibt das Skript aus).
+**Backups:** siehe „Sicherung und Rückweg“ unten.
 
 **Verwaiste Uploads:** Der Web-Prozess räumt alle
 `UPLOAD_SWEEP_INTERVAL_H` Stunden (Default 6, erlaubt 1 bis 168, `0`
@@ -351,6 +350,84 @@ Import oder Vorlagen bekommen erst beim Bearbeiten Abschnitte. Mehrere
 Instanzen stimmen sich per Redis-Sperre ab; ist Redis nicht erreichbar,
 arbeitet jede für sich (höchstens doppelte Anfragen an Voyage). Log mit
 `component: "ai-indexer"`.
+
+### Sicherung und Rückweg
+
+`./scripts/backup.sh` sichert Datenbank und Uploads nach `backups/`
+(`db-<Zeitstempel>.dump` und `uploads-<Zeitstempel>.tar.gz`, nur für das
+eigene Konto lesbar). Das `APP_SECRET` ist nicht dabei: mit ihm sind die
+Zwei-Faktor-Geheimnisse versiegelt, und eine Sicherung allein soll nicht
+genügen, um sie zu lesen. Wer kein eigenes `APP_SECRET` in der `.env`
+setzt, sichert das automatisch erzeugte einmal getrennt, ausserhalb des
+Repositorys und nicht bei den Sicherungen:
+
+    (umask 077; docker compose exec -T app cat /app/data/app_secret > ~/dokunc-app_secret)
+
+Zurückgespielt wird mit `./scripts/restore.sh <Zeitstempel>`. Das Skript
+
+1. prüft Dump und Archiv, bevor es etwas ändert,
+2. sichert den aktuellen Stand mit `backup.sh`,
+3. spielt den Dump in eine frische Datenbank ein und bricht ab, wenn die
+   Sicherung Migrationen enthält, die der ausgecheckte Code nicht kennt,
+4. hält die App an und tauscht die frische Datenbank gegen die bisherige
+   (die bisherige bleibt als `dokunc_vor_<Datum>_<Zeit>` liegen),
+5. ersetzt den Inhalt des Upload-Volumes,
+6. setzt fehlende Migrationen nach, beendet alle Sitzungen und vergibt
+   eine neue Restore-Epoche,
+7. startet die App und wartet, bis sie bereit ist.
+
+Optionen: `--ja` fragt nicht nach (für Skripte), `--ohne-vorsicherung`
+lässt Schritt 2 aus, `--secret DATEI` legt ein getrennt gesichertes
+`APP_SECRET` ins Volume `app_data` (neuer Host oder neu angelegtes
+Volume; ohne passendes Secret kommen Personen mit Zwei-Faktor nur noch
+mit Wiederherstellungscodes herein).
+
+Nach dem Restore gilt:
+
+- Alle müssen sich neu anmelden.
+- Alles seit der Sicherung ist zurückgenommen und sollte geprüft werden:
+  Sperren von Konten, Passwortwechsel, Rollen, **widerrufene
+  Freigabelinks (sie gelten wieder)**, angenommene Einladungen (wieder
+  offen), benutzte Wiederherstellungscodes und Reset-Links (wieder
+  gültig, soweit nicht abgelaufen).
+- Offene Tabs übertragen nichts mehr und bitten darum, die Seite neu zu
+  laden. Kopien im Browser aus der Zeit vor dem Restore werden nicht mehr
+  geladen und beim nächsten Öffnen einer Seite gelöscht. Was seit der
+  Sicherung geschrieben wurde, kommt also nicht zurück, auch nicht aus
+  einem Browser.
+- Benachrichtigungen, die zur Zeit der Sicherung noch nicht per Mail
+  verschickt waren, bekommen keine Mail mehr; in der App stehen sie weiter.
+
+Die Abschlussmeldung nennt die Datenbanken mit früheren Ständen samt
+Löschbefehl, etwa
+`docker compose exec db dropdb -U dokunc dokunc_vor_20260925_143512`.
+
+### Update und Rückweg
+
+Migrationen laufen beim Start automatisch und nur vorwärts. Vor jedem
+Update deshalb sichern und den bisherigen Stand notieren:
+
+    ./scripts/backup.sh                 # Zeitstempel notieren
+    git rev-parse --short HEAD          # bisherigen Stand notieren
+    git fetch
+    git diff --stat HEAD origin/main -- packages/db/prisma/migrations
+    git pull && docker compose up -d --build --wait
+
+Die vierte Zeile zeigt, welche Migrationen das Update mitbringt. Startet
+die neue Version nicht (der Container startet immer wieder neu,
+`docker compose logs app` nennt die gescheiterte Migration) oder zeigt sie
+einen Fehler, geht es zurück auf den notierten Stand:
+
+    git checkout <bisheriger Stand>
+    test -x scripts/restore.sh || { git show main:scripts/restore.sh > scripts/restore.sh && chmod +x scripts/restore.sh; }
+    docker compose build app
+    ./scripts/restore.sh <Zeitstempel>
+
+Erst der alte Code, dann die Sicherung: `restore.sh` setzt die Migrationen
+des ausgecheckten Stands nach, und nur die Sicherung von vor dem Update
+passt zu ihm. Die zweite Zeile holt das Skript, falls der alte Stand es
+noch nicht kennt (erstes Update über diese Version). Später wieder
+aktualisieren mit `git checkout main` und den Schritten oben.
 
 ## Lokale Entwicklung (ohne Docker)
 
@@ -480,6 +557,9 @@ Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
 Server) und erwartet Postgres + Redis aus `.env`. In Umgebungen mit
 vorinstalliertem Chromium: `PW_EXECUTABLE_PATH=/pfad/zu/chromium` setzen.
 CI führt alle diese Suiten automatisch aus (`.github/workflows/ci.yml`).
+Der Docker-Job spielt dabei eine Sicherung zurück, einmal auf demselben
+und einmal auf einem frisch angelegten Stack, und prüft Datenbank,
+Uploads, Secret, Sitzungen und Restore-Epoche.
 
 ## Sicherheit
 

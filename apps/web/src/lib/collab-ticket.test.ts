@@ -33,4 +33,15 @@ describe("issueCollabTicket", () => {
     expect(a.jti).toMatch(/^[0-9a-f-]{36}$/);
     expect(b.jti).not.toBe(a.jti);
   });
+
+  // Der Collab-Server vergleicht ep mit der aktuellen Restore-Epoche.
+  // Ohne Angabe traegt das Ticket null (nie zurueckgespielt), nicht
+  // "kein Claim": sonst fiele ein fehlender Claim nicht auf.
+  it("traegt die Restore-Epoche als ep, null ohne Angabe", async () => {
+    const ohne = decodeJwt(await issueCollabTicket(OPTS));
+    expect(ohne).toHaveProperty("ep", null);
+    const E = "0123456789abcdef0123456789abcdef";
+    const mit = decodeJwt(await issueCollabTicket({ ...OPTS, restoreEpoch: E }));
+    expect(mit.ep).toBe(E);
+  });
 });

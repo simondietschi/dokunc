@@ -563,3 +563,17 @@ model CollabDocument {
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
 }
+
+/// Zustand der Instanz als Ganzes. Genau eine Zeile (id = 1, per CHECK in
+/// der Migration). Fehlt sie, gilt alles als nicht gesetzt.
+model InstanceState {
+  id           Int       @id @default(1)
+  /// Kennung des letzten Zurueckspielens einer Sicherung (scripts/restore.sh),
+  /// 32 Hex-Zeichen, bei jedem Restore neu. null = nie zurueckgespielt.
+  /// Browser benennen ihre lokale Kopie eines Dokuments danach
+  /// (dokunc:<epoche>:<pageId>), damit eine Kopie aus der Zeit vor dem
+  /// Restore nicht in den zurueckgespielten Stand zurueckwandert.
+  restoreEpoch String?
+  /// Zeitpunkt dieses Restores (von restore.sh gesetzt, zur Diagnose per SQL).
+  restoredAt   DateTime?
+}

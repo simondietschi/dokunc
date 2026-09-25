@@ -13,6 +13,7 @@ import * as Y from "yjs";
 import {
   canSeePage,
   canSeePageWithGrant,
+  currentRestoreEpoch,
   effectiveSpaceRole,
   indexPageChunks,
   prisma,
@@ -207,6 +208,8 @@ type Ticket = {
   jti: string;
   /** Restlaufzeit (s): so lange muss der Verbrauch gemerkt bleiben. */
   ttlSec: number;
+  /** Restore-Epoche, gegen die das Ticket ausgestellt ist (Claim `ep`). */
+  restoreEpoch: string | null;
 };
 
 /**
@@ -255,6 +258,7 @@ async function verifyTicket(
     sessionId,
     jti: String(payload.jti),
     ttlSec: Number(payload.exp) - Math.floor(Date.now() / 1000),
+    restoreEpoch: typeof payload.ep === "string" ? payload.ep : null,
   };
 }
 
@@ -306,7 +310,8 @@ async function checkTicketAccess(
 }
 
 /**
- * Ablehnung an einer Grenze, mit Grund fuer den Editor.
+ * Ablehnung an einer Grenze oder wegen einer veralteten Restore-Epoche,
+ * mit Grund fuer den Editor.
  *
  * Bewusst kein Error: Hocuspocus schreibt die Meldung jedes geworfenen
  * Errors ungebremst auf stderr, und wer an einer Grenze abprallt,
@@ -571,6 +576,21 @@ const server = new Server({
 
     try {
       const { readOnly } = await checkTicketAccess(ticket, pageId);
+      // Zweite Linie hinter der Ticket-Route: ein Ticket gilt nur fuer die
+      // Restore-Epoche, gegen die es ausgestellt wurde. Nach restore.sh
+      // scheitert ein altes Ticket meist schon am Sitzungswiderruf; diese
+      // Pruefung haelt auch, wenn Sitzungen einmal nicht widerrufen werden.
+      if (ticket.restoreEpoch !== (await currentRestoreEpoch(prisma))) {
+        log.warn(
+          {
+            userId: ticket.userId,
+            pageId,
+            grund: COLLAB_REJECT_REASON.restoreEpoch,
+          },
+          "Collab-Verbindung abgewiesen",
+        );
+        throw limitRejection(COLLAB_REJECT_REASON.restoreEpoch);
+      }
       // Verbraucht wird erst, wenn alles andere passt: eine Anmeldung,
       // die an einer Grenze oder am Zugriff scheitert, hat nichts
       // eingeloest. Zwei gleichzeitige Anmeldungen mit demselben Ticket

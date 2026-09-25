@@ -125,12 +125,13 @@ export type DocResetOutcome =
 export type DocResetAck = { ok: boolean; outcome: string };
 
 /**
- * Gruende, mit denen der Collab-Server eine Verbindung wegen einer
- * seiner Grenzen abweist. Sie gehen als Grund der Ablehnung an den
- * Editor (`onAuthenticationFailed({ reason })`), der damit eine
- * passende Meldung zeigen kann statt "kein Zugriff". Andere Ablehnungen
- * (ungueltiges Ticket, kein Zugriff) tragen weiter den Standardgrund
- * von Hocuspocus, "permission-denied".
+ * Gruende, mit denen der Collab-Server eine Verbindung abweist, wenn
+ * nicht der Zugriff fehlt: an einer seiner Grenzen, bei einem schon
+ * eingeloesten Ticket oder einer veralteten Restore-Epoche. Sie gehen
+ * als Grund der Ablehnung an den Editor (`onAuthenticationFailed({ reason })`),
+ * der damit eine passende Meldung zeigen kann statt "kein Zugriff".
+ * Andere Ablehnungen (ungueltiges Ticket, kein Zugriff) tragen weiter
+ * den Standardgrund von Hocuspocus, "permission-denied".
  */
 export const COLLAB_REJECT_REASON = {
   /** Zu viele gleichzeitige Verbindungen dieser Person. */
@@ -139,6 +140,11 @@ export const COLLAB_REJECT_REASON = {
   rateLimited: "rate-limited",
   /** Das Ticket wurde schon einmal eingeloest. */
   ticketUsed: "ticket-used",
+  /**
+   * Die Instanz wurde aus einer Sicherung zurueckgespielt; der Tab haelt
+   * einen Stand von vorher. Auch Fehlercode der Ticket-Route (409).
+   */
+  restoreEpoch: "restore-epoch",
 } as const;
 
 /**

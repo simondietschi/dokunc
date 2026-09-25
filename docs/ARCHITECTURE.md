@@ -49,7 +49,7 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 │  ├─ editor/   TipTap-Schema und Collab-Protokoll (Web + Collab)
 │  └─ mail/     E-Mail-Versand und Benachrichtigungsplanung (Web + Collab)
 ├─ e2e/         Playwright-E2E-Tests
-├─ scripts/     backup.sh, docker-entrypoint.sh
+├─ scripts/     backup.sh, restore.sh, docker-entrypoint.sh
 ├─ docs/ARCHITECTURE.md
 ├─ Caddyfile            Proxy: TLS (CADDY_TLS), /collab an Hocuspocus
 ├─ Dockerfile           Image der App (Web + Collab, Debian trixie)
@@ -80,6 +80,9 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   verkürzt), position, timestamps.
 - **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit.
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
+- **InstanceState**: genau eine Zeile mit `restoreEpoch` (32 Hex-Zeichen,
+  von `scripts/restore.sh` bei jedem Zurückspielen neu vergeben, sonst
+  null) und `restoredAt`.
 - **Attachment** — spaceId, pageId?, uploaderId?, storedName (zufälliger
   Name auf der Platte, unique), name (Originalname), mimeType, size.
   Bindet jede hochgeladene Datei an einen Space; `/api/files/<storedName>`
@@ -280,6 +283,25 @@ dagegen eine neue Linie, und die alten Einträge aus diesen Kopien
 stünden danach wieder im Dokument. Ohne Quittung verwirft die Web-App
 `CollabDocument` (der nächste Start baut aus `Page.content`) und zeigt
 einen Hinweis.
+
+**Zurückspielen einer Sicherung.** Der Collab-Server schreibt beim
+Speichern seinen Stand zurück, `scripts/restore.sh` hält die App deshalb
+an. Browser halten Kopien (y-indexeddb), offene Tabs einen Stand im
+Speicher; beide liegen auf derselben Yjs-Linie und brächten beim
+Verbinden alle späteren Updates mit. Dagegen steht die Restore-Epoche in
+`InstanceState`: `restore.sh` vergibt sie nach dem Einspielen neu; die
+Seite gibt sie dem Editor, der seine Kopie `dokunc:<epoche>:<pageId>`
+nennt (ohne Epoche wie bisher `dokunc:<pageId>`), sie beim Ticket-Abruf
+mitschickt und bei 409 `restore-epoch` endgültig trennt. Die Ticket-Route
+antwortet so auch ohne Sitzung, weil `restore.sh` alle Sitzungen
+widerruft. Das Ticket trägt die Epoche als `ep`, der Collab-Server prüft
+sie als zweite Linie. Nach dem ersten angenommenen Ticket löscht der
+Browser Kopien mit fremder Epoche. Eingespielt wird in eine frische
+Datenbank, die gegen die bisherige getauscht wird (`pg_restore --clean`
+liesse Tabellen späterer Migrationen stehen). Ohne Compose gelten
+dieselben Schritte von Hand: frische Datenbank, Migrationsliste prüfen,
+alle Instanzen anhalten, tauschen, Uploads, `migrate deploy`, Epoche,
+Sitzungen und Mails per SQL (wie Schritt 12 in `restore.sh`), starten.
 
 **KI-Index.** Welche Seiten neue Chunks brauchen, halten die Trigger in
 `AiIndexQueue` fest (siehe §4). Der Speicherlauf (`onStoreDocument`)
@@ -494,6 +516,8 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 - [x] Seite folgen meldet Änderungen (PAGE_UPDATED mit dem Snapshot,
       Mitwirkende im Zeitfenster über Redis, höchstens eine ungelesene je
       Seite, Link auf den Vergleich)
+- [x] Sicherung und Rückweg (`backup.sh`, `restore.sh`, Restore-Epoche, im
+      Docker-Job der CI zurückgespielt)
 - [ ] Ausbaustufen: S3, vollständige i18n, Prompt→Dialog-UI,
       pgvector, sobald die Warnung der KI-Suche (ab 20 000 Abschnitten
       je Frage) regelmässig erscheint
@@ -506,6 +530,9 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 ```bash
 docker compose up -d --build     # https://localhost:7891 (Proxy), Migrationen automatisch
 ```
+
+Sichern und zurückspielen: `./scripts/backup.sh`,
+`./scripts/restore.sh <Zeitstempel>` (README „Sicherung und Rückweg“).
 
 **Lokal (ohne Docker):**
 

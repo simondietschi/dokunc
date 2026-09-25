@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { headers } from "next/headers";
 import { after } from "next/server";
 import { Link2 } from "lucide-react";
-import { prisma } from "@dokunc/db";
+import { currentRestoreEpoch, prisma } from "@dokunc/db";
 import { loadSpace } from "@/lib/space-context";
 import { visiblePageWhere } from "@/lib/page-access";
 import type {
@@ -146,6 +146,7 @@ export default async function PageView({
     shares,
     attachments,
     childCount,
+    restoreEpoch,
   ] =
     await Promise.all([
     prisma.pageLink.findMany({
@@ -210,6 +211,9 @@ export default async function PageView({
     prisma.page.count({
       where: { parentId: page.id, deletedAt: null },
     }),
+    // Benennt die lokale Kopie im Browser (lib/local-doc) und geht mit
+    // jedem Ticket-Abruf an den Server.
+    currentRestoreEpoch(prisma),
   ]);
   const ancestors = await ancestorsPromise;
 
@@ -298,6 +302,7 @@ export default async function PageView({
         }))}
         access={access}
         breadcrumbs={{ spaceName: space.name, ancestors }}
+        restoreEpoch={restoreEpoch}
         hasChildren={childCount > 0}
       />
 
