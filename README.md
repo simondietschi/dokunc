@@ -45,7 +45,7 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   Seite folgt (Glocke im Seitenkopf), erfährt von neuen Kommentaren und von
   Änderungen am Inhalt. Ein Klick auf eine Benachrichtigung, in der App oder
   in der Mail, markiert sie als gelesen und führt bei Kommentaren direkt zum
-  Thread, auch wenn er erledigt ist. Die übrigen ungelesenen Meldungen zu
+  Thread, auch wenn er erledigt ist oder man sich zuerst anmelden muss. Die übrigen ungelesenen Meldungen zu
   diesem Thread gelten damit ebenfalls als gelesen, und ihre noch
   ausstehenden Mails entfallen. Ist der Kommentar inzwischen gelöscht, sagt
   die Seite das. Mail-Links führen über die Benachrichtigung selbst: ist sie

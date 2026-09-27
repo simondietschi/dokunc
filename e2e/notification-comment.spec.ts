@@ -59,6 +59,7 @@ const R2 = crypto.randomUUID();
 const N1 = `${TAG}-n1`;
 const N2 = `${TAG}-n2`;
 const N3 = `${TAG}-n3`;
+const N4 = `${TAG}-n4`;
 let client: Client;
 let userId: string;
 
@@ -116,7 +117,7 @@ test.afterAll(async () => {
   if (!client) return;
   try {
     await client.query(`DELETE FROM "Notification" WHERE id = ANY($1)`, [
-      [N1, N2, N3],
+      [N1, N2, N3, N4],
     ]);
     // Kommentare, CollabDocument und Warteschlange haengen per Kaskade.
     await client.query(`DELETE FROM "Page" WHERE id = $1`, [P]);
@@ -201,4 +202,36 @@ test("Gelöschter Kommentar zeigt einen Hinweis", async ({ page }) => {
   await expect(page.getByText(`Absatz ${ABSAETZE}`, { exact: true })).toBeAttached();
   await expect(hinweis).toBeInViewport();
   expect(await readAt(client, N3)).not.toBeNull();
+});
+
+test("Mail-Link ohne Sitzung führt nach der Anmeldung zum Thread", async ({
+  page,
+}) => {
+  // Neue, ungelesene Meldung auf denselben (erledigten) Thread.
+  await client.query(
+    `INSERT INTO "Notification" (id, "userId", type, "pageId", "commentId", "emailedAt")
+     VALUES ($1, $2, 'COMMENT', $3, $4, now())`,
+    [N4, userId, P, T],
+  );
+
+  // 1. Ohne Sitzung zur Anmeldung, das Ziel steht in `next`.
+  await resetLoginRateLimit();
+  await page.goto(`/notifications/${N4}`);
+  await page.waitForURL(/\/login\?next=/);
+  expect(await readAt(client, N4)).toBeNull();
+
+  // 2. Nach der Anmeldung zurueck ueber die Route, mit Anker. Die
+  //    Server Action darf das Ziel nicht selbst abholen: sonst bliebe
+  //    die Adresse /notifications/<id>, ohne Sprung zum Thread.
+  await page.fill('input[name="email"]', EMAIL);
+  await page.fill('input[name="password"]', PASS);
+  await page.click('button[type="submit"]');
+  await page.waitForURL(`**/p/${P}#comment-thread-${T}`, { timeout: 30_000 });
+  expect(new URL(page.url()).hash).toBe(`#comment-thread-${T}`);
+
+  const thread = page.locator(`[id="comment-thread-${T}"]`);
+  await expect(thread).toHaveAttribute("aria-current", "true");
+  await expect(thread).toBeFocused();
+  await expect(thread).toContainText("Wieder öffnen");
+  expect(await readAt(client, N4)).not.toBeNull();
 });

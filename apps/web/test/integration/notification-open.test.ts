@@ -285,6 +285,29 @@ describe("/notifications/<id>", () => {
     );
     expect(await gelesen(id)).toBe(false);
   });
+
+  it("antwortet einem RSC-Abruf leer, ohne Umleitung und ohne zu lesen", async () => {
+    // So holt Next das Ziel einer Server Action ab (Anmeldung mit
+    // `next`). Folgte dieser Abruf der Umleitung, ginge der Anker
+    // verloren; der Client soll stattdessen hart navigieren.
+    const pageId = await neueSeite();
+    const id = await meldung({ pageId, type: "MENTION" });
+    for (const actor of [me, null]) {
+      mocks.actor = actor;
+      const res = await GET(
+        new Request(`http://localhost/notifications/${id}`, {
+          headers: { rsc: "1" },
+        }),
+        { params: Promise.resolve({ id }) },
+      );
+      expect(res.status).toBe(204);
+      expect(res.headers.get("content-type")).toBeNull();
+      expect(await gelesen(id)).toBe(false);
+    }
+    mocks.actor = me;
+    expect(await oeffne(id)).toBe(`/s/${slug}/p/${pageId}`);
+    expect(await gelesen(id)).toBe(true);
+  });
 });
 
 describe("markPageUpdatesRead", () => {
