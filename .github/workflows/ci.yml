@@ -2,10 +2,53 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # Dependabot-Branches laufen ueber pull_request, nicht doppelt.
+    branches-ignore: ["dependabot/**"]
   pull_request:
+  # Montags auch ohne Push: neue Advisories (pnpm audit, Trivy) und neue
+  # Basis- oder Dienst-Images fallen so innert einer Woche auf. Laeuft
+  # auf dem Standardbranch; die Fehlermail geht an die Person, die die
+  # cron-Zeile zuletzt geaendert hat.
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+# Kein Job schreibt ins Repository, in Issues oder Pakete. Caches und
+# Artefakte laufen ueber das Laufzeit-Token von Actions.
+permissions:
+  contents: read
 
 jobs:
+  # Eigener Job: eine neue Advisory soll Lint, Tests und Build nicht
+  # verdecken. Ausnahmen mit Begruendung: pnpm-workspace.yaml
+  # (auditConfig) und .trivyignore.yaml (nur die betroffene Version).
+  audit:
+    name: Bekannte Luecken (pnpm audit, Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: pnpm installieren
+        run: npm install -g pnpm@11.27.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      # Liest nur das Lockfile, kein pnpm install noetig
+      - name: pnpm audit
+        run: pnpm audit --prod --audit-level high
+      # ignoreGhsas gilt fuer alle Versionen eines Pakets; Trivy mit purls
+      # meldet eine andere verwundbare Version desselben Pakets weiter.
+      - name: Lockfile auf Luecken pruefen (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: pnpm-lock.yaml
+          version: v0.74.0
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore.yaml
+
   build-test:
     runs-on: ubuntu-latest
     env:
@@ -33,7 +76,7 @@ jobs:
       # bevor irgendetwas installiert ist. Muss vor setup-node stehen,
       # weil `cache: pnpm` den Store-Pfad über ein laufendes pnpm sucht.
       - name: pnpm installieren
-        run: npm install -g pnpm@11.13.1
+        run: npm install -g pnpm@11.27.1
 
       - uses: actions/setup-node@v7
         with:
@@ -75,8 +118,10 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     services:
+      # Images wie in docker-compose.yml (db, redis); lieferkette.test.ts
+      # haelt beide gleich, Dependabot pflegt nur die Compose-Datei.
       postgres:
-        image: postgres:18
+        image: postgres:18-trixie
         env:
           POSTGRES_USER: dokunc
           POSTGRES_PASSWORD: dokunc
@@ -115,7 +160,7 @@ jobs:
       # bevor irgendetwas installiert ist. Muss vor setup-node stehen,
       # weil `cache: pnpm` den Store-Pfad über ein laufendes pnpm sucht.
       - name: pnpm installieren
-        run: npm install -g pnpm@11.13.1
+        run: npm install -g pnpm@11.27.1
 
       - uses: actions/setup-node@v7
         with:
@@ -166,6 +211,7 @@ jobs:
         run: test ! -f .env
 
       - name: Stack bauen und starten
+        id: start
         run: docker compose up -d --build --wait --wait-timeout 600
 
       # Caddy stellt beim ersten Start sein internes Zertifikat aus; bis
@@ -196,6 +242,26 @@ jobs:
       - name: APP_SECRET wurde automatisch erzeugt
         run: |
           docker compose exec -T app sh -c 'test -s /app/data/app_secret'
+
+      # Die Update-Befehle aus dem README ("Update und Rueckweg") ohne
+      # git pull, als Kette wie dort. Belegt, dass sie laufen und der Stack
+      # danach gesund ist; dass build --pull das Basis-Image neu holt, zeigt
+      # nur ein Versuch mit einem nicht vorhandenen Basis-Image (plan-3.md).
+      # Die zweite Zeile: pull scheitert ohne --ignore-buildable, sobald eine
+      # override-Datei der App ein image: gibt.
+      # Beide Zeilen prueft apps/web/src/lieferkette.test.ts gegen das README.
+      - name: Update-Weg aus dem README
+        run: |
+          set -euo pipefail
+          docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d --wait
+          printf 'services:\n  app:\n    image: dokunc-app-nur-lokal\n' > "$RUNNER_TEMP/app-image.yml"
+          docker compose -f docker-compose.yml -f "$RUNNER_TEMP/app-image.yml" pull --ignore-buildable
+          for i in $(seq 1 30); do
+            curl -fsSk "https://localhost:${APP_PORT:-7891}/api/health" | grep -q '"status":"ok"' && exit 0
+            sleep 2
+          done
+          echo "Nach dem Update antwortet der Proxy nicht"
+          exit 1
 
       # Ohne .env nimmt der Proxy nur auf dem Loopback an (APP_BIND,
       # Vorgabe 127.0.0.1). Die Schritte oben sehen das nicht: sie fragen
@@ -417,6 +483,28 @@ jobs:
           docker compose exec -T app sh -c 'printf "\n" >> /app/data/app_secret'
           WARNUNG=$(./scripts/backup.sh 2>&1 >/dev/null)
           test -z "$WARNUNG" || { echo "$WARNUNG" >&2; false; }
+
+      # Nur das eigene Image: Postgres, Redis, Caddy und Gotenberg haben
+      # fast immer offene Meldungen, die erst ein neues Upstream-Image behebt
+      # (das holt der Update-Befehl). Laeuft auch, wenn der Rundlauf
+      # scheitert, solange der Stack gebaut wurde. Compose nennt das
+      # gebaute Image <Projektname>-app; es ueberlebt down -v im Rundlauf.
+      - name: Image der App ermitteln
+        id: bild
+        if: ${{ !cancelled() && steps.start.outcome == 'success' }}
+        run: echo "ref=$(docker compose config --format json | jq -r .name)-app" >> "$GITHUB_OUTPUT"
+
+      - name: Image der App auf Luecken pruefen (Trivy)
+        if: ${{ !cancelled() && steps.start.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.bild.outputs.ref }}
+          version: v0.74.0
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore.yaml
 
       - name: Zustand und Logs bei Fehlschlag
         if: failure()

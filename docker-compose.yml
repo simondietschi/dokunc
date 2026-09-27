@@ -183,7 +183,10 @@ services:
       - render
 
   db:
-    image: postgres:18
+    # Auf das Debian-Release festgelegt: ein neues Release bringt eine neue
+    # C-Bibliothek und damit eine andere Sortierung von Text (README, Update
+    # und Rückweg).
+    image: postgres:18-trixie
     restart: unless-stopped
     environment:
       POSTGRES_USER: dokunc

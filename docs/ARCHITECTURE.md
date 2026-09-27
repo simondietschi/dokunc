@@ -634,6 +634,10 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 - [x] Export abgeschottet: Export-HTML mit eigener CSP (nur `data:`-Bilder,
       Inline-Stile, Einbettungen wie in der App; `lib/csp.ts`), Gotenberg
       mit `--chromium-allow-list` nur im internen Netz `render` mit der App
+- [x] Lieferkette: Update holt neue Images (`compose pull`, `build --pull`,
+      verkettet), Dependabot, `pnpm audit` und Trivy (Lockfile, App-Image)
+      in der CI, wöchentlicher Lauf, Postgres auf das Debian-Release
+      festgelegt
 
 ## 7. Setup
 
@@ -646,7 +650,9 @@ docker compose up -d --build     # https://localhost:7891 (Proxy), Migrationen a
 Sichern und zurückspielen: `./scripts/backup.sh` (einmal
 `./scripts/backup.sh --secret-sichern ~/dokunc-app_secret`),
 `./scripts/restore.sh <Zeitstempel>` (README „Sicherung und Rückweg“,
-„Secret wechseln“).
+„Secret wechseln“). Aktualisieren: README „Update und Rückweg“ (holt
+mit `docker compose pull --ignore-buildable` und
+`docker compose build --pull` auch neue Images).
 
 **Lokal (ohne Docker):**
 

@@ -334,7 +334,9 @@ git pull
 ```
 
 Danach `APP_BIND`, `APP_PORT`, `COMPOSE_FILE` und `CADDY_TLS` wie oben in
-die `.env` setzen und `docker compose up -d --build`. Ohne `APP_BIND`
+die `.env` setzen und
+`docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d --wait`
+(wie in „Update und Rückweg“). Ohne `APP_BIND`
 fällt der Proxy auf `127.0.0.1` zurück: die Instanz ist von aussen still
 nicht mehr erreichbar, und die Zertifikatserneuerung scheitert. Ohne
 `COMPOSE_FILE` fehlt Port 80. Ohne `CADDY_TLS` stellt Caddy wieder ein
@@ -683,13 +685,38 @@ Update deshalb sichern und den bisherigen Stand notieren:
     git rev-parse --short HEAD          # bisherigen Stand notieren
     git fetch
     git diff --stat HEAD origin/main -- packages/db/prisma/migrations
-    git pull && docker compose up -d --build --wait
+    git pull && docker compose pull --ignore-buildable \
+      && docker compose build --pull && docker compose up -d --wait
 
 Die vierte Zeile zeigt, welche Migrationen das Update mitbringt.
 Mit `BACKUP_KEEP_DAYS` löscht ein späterer Lauf auch diese Sicherung,
 sobald sie die Frist erreicht und nicht mehr zu den drei jüngsten
 gehört; wer sich den Rückweg länger offenhalten will, kopiert den Satz
 aus `backups/` an einen anderen Ort.
+
+`docker compose pull --ignore-buildable` holt neue Fassungen von Proxy,
+Datenbank, Redis und Gotenberg, jeweils innerhalb ihres Tags
+(`caddy:2`, `postgres:18-trixie`, `redis:8`, `gotenberg/gotenberg:8`).
+`docker compose build --pull` baut die App auf dem neusten
+Node-Basis-Image. Ohne diese zwei Befehle bleiben die
+Sicherheitskorrekturen aus: `--pull always` bei `up` holt zwar die
+Images der Dienste, das Node-Basis-Image der App aber nicht. Die Befehle
+lohnen sich auch ohne neuen Stand im Repository, etwa monatlich und mit
+Sicherung vorher:
+`docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d --wait`.
+Ohne Zugang zu Docker Hub scheitert die Kette, und nichts wird neu
+gestartet; den neuen Code allein bringt dann
+`git pull && docker compose up -d --build --wait`. Nicht mehr gebrauchte
+Images entfernt `docker image prune`, aber erst, wenn der neue Stand
+läuft: bis dahin liegt die vorige Fassung eines Dienstes noch als
+unbenanntes Image vor.
+
+Das Postgres-Image ist auf das Debian-Release festgelegt (`18-trixie`).
+Ein neues Release bringt eine neue C-Bibliothek, die Text anders
+sortieren kann; Indizes auf Text wären danach inkonsistent. Den Wechsel
+auf `18-<neues Release>` deshalb wie eine Hauptversion behandeln:
+sichern, Image ändern, starten, dann
+`docker compose exec db reindexdb -U dokunc dokunc`.
 
 Bei grossem Bestand (grob ab 100 000 Seiten) laufen die Migrationen
 länger als die gut drei Minuten, die der Healthcheck der App beim Start
@@ -718,7 +745,10 @@ aktualisieren mit `git checkout main` und den Schritten oben. Hat die
 zweite Zeile das Skript geholt (`git status` zeigt
 `?? scripts/restore.sh`), vorher `rm scripts/restore.sh`, sonst bricht
 `git checkout main` ab, weil es die unversionierte Datei überschreiben
-müsste.
+müsste. Macht ein neu geholtes Image eines Dienstes Probleme, lässt sich
+die vorige Fassung über ihre ID wieder einsetzen, solange sie nicht
+entfernt ist: vor dem Update `docker compose images` notieren, dann
+`docker tag <ID> <Image:Tag>` und `docker compose up -d <Dienst>`.
 
 ## Lokale Entwicklung (ohne Docker)
 
@@ -927,6 +957,36 @@ Fehlerausgabe schreibt. Er prüft ausserdem, dass Gotenberg weder
 Datenbank noch Redis noch das Internet erreicht und beim Umwandeln keine
 fremden Adressen lädt.
 
+Ein eigener Job prüft die Laufzeitabhängigkeiten mit
+`pnpm audit --prod --audit-level high` und das Lockfile mit Trivy. Der
+Docker-Job führt die Update-Befehle aus „Update und Rückweg“ aus und
+prüft das gebaute Image der App mit Trivy (hoch und kritisch, nur Lücken
+mit verfügbarer Korrektur). Die CI läuft zusätzlich jeden Montag, damit
+neue Meldungen auch ohne Push auffallen, und Dependabot schlägt
+wöchentlich Updates vor (`.github/dependabot.yml`).
+
+**Meldet `pnpm audit` oder Trivy eine Lücke**, der Reihe nach: das
+Elternpaket aktualisieren; sonst in `pnpm-workspace.yaml` ein Override
+innerhalb der Hauptversion; nur wenn es keinen Weg innerhalb der
+Hauptversion gibt, die Lücke ausnehmen, mit Begründung, in
+`pnpm-workspace.yaml` (`auditConfig.ignoreGhsas`, GHSA-Kennung) und in
+`.trivyignore.yaml` (Kennung aus der Trivy-Ausgabe, `purls` mit genau
+der betroffenen Paketversion, `expired_at`, `statement` mit der
+GHSA-Kennung). Eine Ausnahme in `ignoreGhsas` gilt für alle Versionen
+eines Pakets; ob ein Override noch nötig ist, zeigt deshalb Trivy, nicht
+`pnpm audit`. Nach `expired_at` meldet Trivy die Lücke wieder. Die
+Schwelle wird nie gesenkt. Treffer in Postgres, Redis, Caddy oder
+Gotenberg prüft die CI nicht: sie kommen mit dem nächsten
+Upstream-Image und dem Update-Befehl. Meldet Trivy im Image der App eine
+Lücke in einem Debian-Paket, deren Korrektur das offizielle Node-Image
+noch nicht enthält, zuerst einige Tage abwarten und die CI erneut
+starten; erst danach befristet ausnehmen, mit `purls` auf genau diese
+Paketversion (Feld `PkgIdentifier.PURL` aus `trivy image --format json`).
+Kein `apt-get upgrade` im Dockerfile. Tiptap hebt Dependabot nicht an,
+auch nicht bei Sicherheitsmeldungen (Override auf genau eine Version);
+es wird von Hand zusammen mit dem Override aktualisiert, Lücken darin
+melden `pnpm audit` und Trivy.
+
 ## Sicherheit
 
 Kurz, was die App bewusst tut:
@@ -1023,6 +1083,10 @@ Kurz, was die App bewusst tut:
   eine Seite des Space sie verwendet (Inhalt, Titelbild oder eine
   erhaltene Version) und die Person jede dieser Seiten
   sehen darf; Freigabelinks liefern sie gar nicht aus.
+- **Lieferkette**: `pnpm audit` und Trivy (Lockfile und Image der App) in
+  jeder CI und jeden Montag, Dependabot für npm, Docker, Compose und
+  Actions, der Workflow nur mit Leserechten. Der Update-Befehl holt auch
+  neue Images der mitlaufenden Dienste.
 
 ## Projektstruktur
 
