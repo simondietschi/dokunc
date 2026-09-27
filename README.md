@@ -190,9 +190,19 @@ CADDY_TLS=admin@example.com
 APP_BIND=0.0.0.0
 APP_PORT=443
 COMPOSE_FILE=docker-compose.yml:docker-compose.domain.yml
-APP_SECRET=<openssl rand -base64 48>
 POSTGRES_PASSWORD=<eigenes Passwort>
 ```
+
+`APP_SECRET` gehört nicht in diese Liste: das beim ersten Start erzeugte
+Secret im Volume `app_data` gilt für die Domain genauso. Ein eigenes
+braucht es nur, wenn mehrere Instanzen dasselbe Secret teilen sollen.
+Läuft die Instanz schon, dann den bestehenden Wert übernehmen, nie einen
+neuen erzeugen (er steht in
+`docker compose exec -T app cat /app/data/app_secret`): ein neuer Wert
+meldet alle ab und sperrt die Zwei-Faktor-Anmeldung (siehe „Secret
+wechseln“). Mit dem Secret in der `.env` diese nur für das eigene Konto
+lesbar machen (`chmod 600 .env`) und getrennt von den Sicherungen
+aufbewahren.
 
 `SITE_ADDRESS` und `APP_URL` müssen denselben Namen tragen: `APP_URL`
 entscheidet allein, welche Herkunft die Route-Handler (Upload, Import,
@@ -250,8 +260,9 @@ Proxy nicht. Welche Adressen der Proxy tatsächlich belegt, zeigt
 Dann `docker compose up -d`. Aktualisiert wird wie im Abschnitt „Update
 und Rückweg“ beschrieben; weil keine versionierte Datei geändert ist,
 läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
-`APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
-alle bestehenden Sitzungen).
+`APP_SECRET` hat Vorrang vor dem automatisch erzeugten; ein anderer Wert
+als bisher meldet alle ab und sperrt die Zwei-Faktor-Anmeldung (siehe
+„Secret wechseln“).
 Weitere Optionen — SMTP für Einladungs- und
 Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
 `ANTHROPIC_API_KEY` für die KI-Funktionen, `VOYAGE_API_KEY` für die
@@ -416,13 +427,97 @@ unschädlich ist). Jeder Lauf loggt seine Zahlen unter
 
 `./scripts/backup.sh` sichert Datenbank und Uploads nach `backups/`
 (`db-<Zeitstempel>.dump` und `uploads-<Zeitstempel>.tar.gz`, nur für das
-eigene Konto lesbar). Das `APP_SECRET` ist nicht dabei: mit ihm sind die
+eigene Konto lesbar). Der Dienst `db` muss laufen, die App darf
+angehalten sein. Die Uploads werden direkt aus dem Volume gepackt, ohne
+Zwischenkopie. Vor dem Ablegen prüft das Skript den Dump
+(Inhaltsverzeichnis mit `_prisma_migrations`, einmal vollständig
+gelesen) und das Archiv (`tar tzf`). Scheitert ein Schritt, endet es mit
+einer Meldung `✗ …` und einem Exit-Code ungleich 0, und in `backups/`
+entsteht nichts, auch keine halbe Datei. Fortschritt steht auf der
+Standardausgabe, Fehler und Warnungen auf der Fehlerausgabe.
+
+Nicht gesichert, und nicht nötig: `redis_data` (Bremsen und Sperren,
+flüchtig) und `caddy_data` (Zertifikate, stellt Caddy neu aus; bei sehr
+häufigen Neuinstallationen derselben Domain greift die Wochengrenze von
+Let's Encrypt für doppelte Zertifikate).
+
+Das `APP_SECRET` ist nicht dabei: mit ihm sind die
 Zwei-Faktor-Geheimnisse versiegelt, und eine Sicherung allein soll nicht
 genügen, um sie zu lesen. Wer kein eigenes `APP_SECRET` in der `.env`
 setzt, sichert das automatisch erzeugte einmal getrennt, ausserhalb des
 Repositorys und nicht bei den Sicherungen:
 
-    (umask 077; docker compose exec -T app cat /app/data/app_secret > ~/dokunc-app_secret)
+    ./scripts/backup.sh --secret-sichern ~/dokunc-app_secret
+
+Das Skript schreibt nur ausserhalb des Repositorys, überschreibt keine
+Datei mit einem anderen Secret und legt in `backups/.app_secret-merkmal`
+ein Prüfmerkmal ab (ein Hash mit eigenem Präfix, weder das Secret noch
+der Schlüssel daraus). Danach meldet jede Sicherung nur noch „getrennt
+gesichert“. Wer das Secret schon früher mit dem bisherigen Befehl nach
+`~/dokunc-app_secret` gesichert hat, ruft den Befehl oben einmal mit
+derselben Datei auf: sie bleibt, wie sie ist, und das Merkmal kommt
+dazu. Ändert sich das Secret im Volume später, etwa weil `app_data` neu
+angelegt wurde, warnt jede Sicherung, bis das neue getrennt gesichert
+ist. Steht `APP_SECRET` in der `.env`, gehört stattdessen die `.env`
+getrennt gesichert; sie enthält auch `POSTGRES_PASSWORD` und die übrigen
+Zugangsdaten.
+
+**Aufbewahrung:** Mit `BACKUP_KEEP_DAYS` (in der Umgebung des Aufrufs
+oder in der `.env`, die Umgebung hat Vorrang) löscht jede erfolgreiche
+Sicherung danach die Sätze in `backups/`, deren Zeitstempel älter als so
+viele Tage ist. Die drei jüngsten Sätze bleiben immer, auch nach einer
+langen Pause. Vorgabe `0`: nie löschen. Gelöscht wird nur, was dem
+Namensmuster entspricht; ein ungültiger Wert löscht nichts und erzeugt
+eine Warnung. `restore.sh` löscht bei seiner Vorsicherung nie.
+
+**Zeitplan:** mit cron (Konto, dem das Repository gehört und das Docker
+bedienen darf):
+
+    MAILTO=admin@example.com
+    17 3 * * * cd /srv/dokunc && BACKUP_KEEP_DAYS=14 ./scripts/backup.sh >/dev/null
+
+`>/dev/null` verwirft den Fortschritt; cron mailt dann nur Fehler und
+Warnungen (dafür muss auf dem Server ein Mailversand eingerichtet sein).
+Liegt `docker` nicht in `/usr/bin`, in der crontab `PATH` setzen. Oder
+mit einem systemd-Timer, dann stehen die Läufe im Journal:
+
+    # /etc/systemd/system/dokunc-backup.service
+    [Unit]
+    Description=dokunc Sicherung
+    Wants=docker.service
+    After=docker.service
+
+    [Service]
+    Type=oneshot
+    User=dokunc
+    WorkingDirectory=/srv/dokunc
+    Environment=BACKUP_KEEP_DAYS=14
+    ExecStart=/srv/dokunc/scripts/backup.sh
+
+    # /etc/systemd/system/dokunc-backup.timer
+    [Unit]
+    Description=dokunc Sicherung täglich
+
+    [Timer]
+    OnCalendar=*-*-* 03:17
+    RandomizedDelaySec=15min
+    Persistent=true
+
+    [Install]
+    WantedBy=timers.target
+
+Einschalten mit
+`sudo systemctl daemon-reload && sudo systemctl enable --now dokunc-backup.timer`.
+Nächster Lauf: `systemctl list-timers dokunc-backup.timer`; Ausgabe:
+`journalctl -u dokunc-backup.service`. Ein gescheiterter Lauf erscheint
+in `systemctl --failed`. `User=` braucht Zugriff auf Docker (Gruppe
+`docker`) und muss Besitzer des Repositorys sein.
+
+**Kopie ausser Haus:** `backups/` liegt auf demselben Server. Nach der
+Sicherung etwa `rsync -a backups/ sicherung@anderer-host:dokunc/` oder
+`rclone sync backups/ ziel:dokunc` anhängen (in der cron-Zeile mit `&&`,
+im Service als zweites `ExecStart=`). Das Secret und die `.env` gehören
+nicht an dasselbe Ziel.
 
 Zurückgespielt wird mit `./scripts/restore.sh <Zeitstempel>`. Das Skript
 
@@ -468,6 +563,67 @@ Die Abschlussmeldung nennt die Datenbanken mit früheren Ständen samt
 Löschbefehl, etwa
 `docker compose exec db dropdb -U dokunc dokunc_vor_20260925_143512`.
 
+### Secret wechseln
+
+`APP_SECRET` signiert Sitzungen, Collab-Tickets, den Zwischenschritt der
+Zwei-Faktor-Anmeldung und den Ablauf der SSO-Anmeldung. Aus ihm entsteht
+auch der Schlüssel, mit dem die Zwei-Faktor-Geheimnisse in der Datenbank
+verschlüsselt sind. Einen Übergang, in dem altes und neues Secret
+gelten, gibt es nicht. Ein neuer Wert hat deshalb sofort diese Folgen:
+
+- Alle sind abgemeldet, begonnene Anmeldungen (auch über SSO) müssen neu
+  beginnen, offene Tabs verbinden den Editor erst nach der neuen
+  Anmeldung wieder.
+- Wer die Zwei-Faktor-Anmeldung eingeschaltet hat, kommt mit dem Code aus
+  der Authenticator-App nicht mehr hinein. Die Anmeldung meldet „Der
+  zweite Faktor lässt sich zurzeit nicht prüfen“, das Log
+  `totp secret unreadable`, das Audit-Log den Grund
+  `totp_secret_unreadable`. Zurück geht es mit einem
+  Wiederherstellungscode; danach im Konto die Zwei-Faktor-Anmeldung
+  abschalten und neu einrichten. Ohne Code setzt die Administration sie
+  in der Verwaltung zurück („Zwei-Faktor zurücksetzen“).
+- Sicherungen von vor dem Wechsel enthalten Zwei-Faktor-Geheimnisse, die
+  nur das alte Secret lesen kann. Das alte deshalb aufbewahren, solange
+  es solche Sicherungen gibt. Wer eine davon zurückspielt, setzt wieder
+  das alte Secret (in der `.env`, oder mit `restore.sh --secret <Datei>`,
+  wenn keines in der `.env` steht) und behält es; sonst müssen die
+  Betroffenen die Zwei-Faktor-Anmeldung neu einrichten.
+
+Wie viele Konten betroffen wären:
+
+    docker compose exec -T db psql -U dokunc -d dokunc -Atc 'SELECT count(*) FROM "User" WHERE "totpEnabledAt" IS NOT NULL'
+
+Gewechselt wird nur, wenn das Secret in fremde Hände geraten sein kann.
+Wer vom automatisch erzeugten Secret auf eines in der `.env` umsteigt,
+wechselt nicht, sondern übernimmt den bestehenden Wert (siehe „Eigene
+Domain“). Ablauf eines Wechsels:
+
+1. Sichern (`./scripts/backup.sh`) und das bisherige Secret aufbewahren
+   (`--secret-sichern` bzw. die bisherige `.env`).
+2. In der `.env` `APP_SECRET` auf einen neuen Wert setzen
+   (`openssl rand -base64 48`).
+3. `docker compose up -d`: die App startet mit dem neuen Secret neu.
+4. Alle mit Zwei-Faktor-Anmeldung informieren.
+5. Wer das automatisch erzeugte Secret nutzte: `./scripts/backup.sh`
+   meldet danach „APP_SECRET steht in der .env“; die `.env` getrennt
+   sichern.
+
+Hat die einzige Administration selbst keinen Wiederherstellungscode
+mehr, bleibt als letzter Ausweg die Datenbank (ohne Eintrag im
+Audit-Log). Die Adresse muss genau so geschrieben sein wie in der
+Verwaltung; gibt die Abfrage keine Zeile mit einer ID aus, war es die
+falsche Adresse, und es hat sich nichts geändert:
+
+    docker compose exec -T db psql -U dokunc -d dokunc -v ON_ERROR_STOP=1 -v email=admin@example.com <<'SQL'
+    BEGIN;
+    DELETE FROM "TotpRecoveryCode" WHERE "userId" = (SELECT id FROM "User" WHERE email = :'email');
+    UPDATE "User" SET "totpSecret" = NULL, "totpEnabledAt" = NULL, "totpLastStep" = NULL WHERE email = :'email' RETURNING id;
+    COMMIT;
+    SQL
+
+Das entspricht „Zwei-Faktor zurücksetzen“ in der Verwaltung
+(`resetUserTotpAction`).
+
 ### Update und Rückweg
 
 **Das Update auf die Version mit KI-Index, Aufbewahrung und
@@ -500,6 +656,10 @@ Update deshalb sichern und den bisherigen Stand notieren:
     git pull && docker compose up -d --build --wait
 
 Die vierte Zeile zeigt, welche Migrationen das Update mitbringt.
+Mit `BACKUP_KEEP_DAYS` löscht ein späterer Lauf auch diese Sicherung,
+sobald sie die Frist erreicht und nicht mehr zu den drei jüngsten
+gehört; wer sich den Rückweg länger offenhalten will, kopiert den Satz
+aus `backups/` an einen anderen Ort.
 
 Bei grossem Bestand (grob ab 100 000 Seiten) laufen die Migrationen
 länger als die gut drei Minuten, die der Healthcheck der App beim Start
@@ -727,7 +887,9 @@ vorinstalliertem Chromium: `PW_EXECUTABLE_PATH=/pfad/zu/chromium` setzen.
 CI führt alle diese Suiten automatisch aus (`.github/workflows/ci.yml`).
 Der Docker-Job spielt dabei eine Sicherung zurück, einmal auf demselben
 und einmal auf einem frisch angelegten Stack, und prüft Datenbank,
-Uploads, Secret, Sitzungen und Restore-Epoche.
+Uploads, Secret, Sitzungen und Restore-Epoche, dazu, dass `backup.sh`
+ein geändertes Secret bemerkt und bei passendem Secret nichts auf die
+Fehlerausgabe schreibt.
 
 ## Sicherheit
 
@@ -782,7 +944,8 @@ Kurz, was die App bewusst tut:
   damit keine Sitzung.
 - **Zwei-Faktor-Anmeldung** nach RFC 6238, pro Konto zuschaltbar. Das
   Geheimnis liegt mit AES-256-GCM verschlüsselt in der Datenbank (Schlüssel
-  aus `APP_SECRET`), Wiederherstellungscodes nur als SHA-256-Hash und jeder
+  aus `APP_SECRET`; ein Wechsel macht es unlesbar, siehe „Secret
+  wechseln“), Wiederherstellungscodes nur als SHA-256-Hash und jeder
   genau einmal gültig. Zwischen Passwort und Code steht ein eigenes,
   fünf Minuten gültiges Cookie — kein Sitzungscookie. Neue
   Wiederherstellungscodes gelten erst, wenn man einen davon zurück

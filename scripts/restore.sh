@@ -172,7 +172,10 @@ if [ "$VORSICHERUNG" -eq 1 ]; then
   # Sicherung, die gleich zurueckgespielt wird.
   if [ "$(date +%Y%m%d-%H%M%S)" = "$TS" ]; then sleep 1; fi
   echo "→ Vorsicherung des aktuellen Stands…"
-  if ! AUSGABE=$(./scripts/backup.sh); then
+  # BACKUP_KEEP_DAYS=0: die Vorsicherung loescht keine alten Saetze, sonst
+  # verschwaende unter Umstaenden genau die Sicherung, die gleich
+  # zurueckgespielt wird (Schritt 5 liest $DUMP erst danach).
+  if ! AUSGABE=$(BACKUP_KEEP_DAYS=0 ./scripts/backup.sh); then
     echo "Vorsicherung gescheitert, nichts verändert. Mit --ohne-vorsicherung überspringen." >&2
     exit 1
   fi

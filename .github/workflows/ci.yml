@@ -259,7 +259,9 @@ jobs:
             return 1
           }
           SECRET="$RUNNER_TEMP/app_secret"
-          (umask 077; docker compose exec -T app cat /app/data/app_secret > "$SECRET")
+          ./scripts/backup.sh --secret-sichern "$SECRET"
+          test "$(stat -c %a "$SECRET")" = 600
+          test -s backups/.app_secret-merkmal
           SUMME=$(secret_summe)
           MIGRATIONEN=$(sql 'SELECT count(*) FROM "_prisma_migrations"')
           test -z "$(sql 'SELECT "restoreEpoch" FROM "InstanceState"')"
@@ -274,8 +276,15 @@ jobs:
           test "$(sql 'SELECT count(*) FROM "Session" WHERE "revokedAt" IS NULL')" -ge 1
           test "$(sql 'SELECT count(*) FROM "Notification" WHERE "emailedAt" IS NULL')" -ge 1
           im_app 'echo vorher > /app/uploads/ci-vorher.txt'
-          TS=$(./scripts/backup.sh | sed -n 's#.*backups/db-\(.*\)\.dump$#\1#p')
+          TS=$(./scripts/backup.sh 2>"$RUNNER_TEMP/backup.err" | sed -n 's#.*backups/db-\(.*\)\.dump$#\1#p')
           test -n "$TS"
+          # Secret getrennt gesichert und passend: ein erfolgreicher Lauf
+          # schreibt nichts auf stderr (cron)
+          test ! -s "$RUNNER_TEMP/backup.err" || { cat "$RUNNER_TEMP/backup.err" >&2; false; }
+          # Archiv direkt aus dem Volume (compose run ... tar czf -). Erst in
+          # eine Datei: grep -q in einer Pipe liesse tar an SIGPIPE sterben.
+          tar tzf "backups/uploads-$TS.tar.gz" >"$RUNNER_TEMP/liste"
+          grep -qx './ci-vorher.txt' "$RUNNER_TEMP/liste"
           # Noch offen, also auch in der Sicherung offen
           test "$(sql "SELECT \"emailedAt\" IS NULL FROM \"Notification\" WHERE id = 'ci-rundlauf'")" = t
 
@@ -312,9 +321,23 @@ jobs:
           docker compose up -d --wait --wait-timeout 600
           sperre_mails
           test "$(secret_summe)" != "$SUMME"
+          # Das neue Secret erkennt backup.sh am Merkmal (echter node-Aufruf im
+          # Image). Erst in eine Variable: grep -q in einer Pipe liesse backup.sh
+          # an SIGPIPE sterben.
+          WARNUNG=$(./scripts/backup.sh 2>&1 >/dev/null)
+          grep -q 'ein anderes als bei der letzten getrennten Sicherung' <<<"$WARNUNG"
           ./scripts/restore.sh --ja --ohne-vorsicherung --secret "$SECRET" "$TS"
           pruefe_stand
           test "$(sql 'SELECT "restoreEpoch" FROM "InstanceState"')" != "$EPOCHE1"
+
+          # Nach dem Zuruecklegen passt das Merkmal wieder, auch wenn die Datei
+          # im Volume ein Zeilenende traegt (Editor): die App liest den Wert
+          # ohne, das Merkmal auch.
+          WARNUNG=$(./scripts/backup.sh 2>&1 >/dev/null)
+          test -z "$WARNUNG" || { echo "$WARNUNG" >&2; false; }
+          docker compose exec -T app sh -c 'printf "\n" >> /app/data/app_secret'
+          WARNUNG=$(./scripts/backup.sh 2>&1 >/dev/null)
+          test -z "$WARNUNG" || { echo "$WARNUNG" >&2; false; }
 
       - name: Zustand und Logs bei Fehlschlag
         if: failure()

@@ -574,7 +574,9 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       Mitwirkende im Zeitfenster über Redis, höchstens eine ungelesene je
       Seite, Link auf den Vergleich)
 - [x] Sicherung und Rückweg (`backup.sh`, `restore.sh`, Restore-Epoche, im
-      Docker-Job der CI zurückgespielt)
+      Docker-Job der CI zurückgespielt); `backup.sh` prüft Dump und Archiv
+      vor dem Ablegen, `BACKUP_KEEP_DAYS` mit Mindestbestand, Secret
+      getrennt mit `--secret-sichern` und Prüfmerkmal
 - [ ] Nachlauf-Snapshot: trifft ein Speicherlauf auf die belegte
       Snapshot-Drossel, einen Merker `dokunc:snapshot-pending:<pageId>`
       setzen; ein Zeitgeber schreibt nach Ablauf der Drossel für diese
@@ -602,8 +604,10 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 docker compose up -d --build     # https://localhost:7891 (Proxy), Migrationen automatisch
 ```
 
-Sichern und zurückspielen: `./scripts/backup.sh`,
-`./scripts/restore.sh <Zeitstempel>` (README „Sicherung und Rückweg“).
+Sichern und zurückspielen: `./scripts/backup.sh` (einmal
+`./scripts/backup.sh --secret-sichern ~/dokunc-app_secret`),
+`./scripts/restore.sh <Zeitstempel>` (README „Sicherung und Rückweg“,
+„Secret wechseln“).
 
 **Lokal (ohne Docker):**
 

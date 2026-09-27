@@ -1,7 +1,5 @@
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync,
-  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -11,8 +9,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import {
+  BEKANNTE_MIGRATION,
+  legeSkriptbaumAn,
+  skriptUmgebung,
+  uploadsArchiv,
+} from "../test/docker-attrappe";
 
 /**
  * scripts/restore.sh gegen ein gefaelschtes `docker`.
@@ -26,32 +29,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
  *
  * Aufbau wie im Repository: <tmp>/scripts/restore.sh (und backup.sh fuer
  * die Vorsicherung), <tmp>/backups/, <tmp>/packages/db/prisma/migrations.
- * Das gefaelschte `docker` steht vorne im PATH, schreibt jeden Aufruf mit
- * (bei psql ohne -c auch das Skript auf stdin) und antwortet je nach
- * Aufruf.
+ * Das gefaelschte `docker` (test/docker-attrappe.ts) steht vorne im PATH,
+ * schreibt jeden Aufruf mit (bei psql ohne -c auch das Skript auf stdin)
+ * und antwortet je nach Aufruf.
  */
 
-const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const TS = "20260101-120000";
-const BEKANNTE_MIGRATION = "20260519132107_init";
-
-const FAKE_DOCKER = `#!/usr/bin/env bash
-args="$*"
-if [[ "$args" == *psql* && "$args" != *" -c "* ]]; then
-  printf 'ARGS %s\\nSTDIN %s\\n' "$args" "$(cat)" >> "$FAKE_LOG"
-else
-  printf 'ARGS %s\\n' "$args" >> "$FAKE_LOG"
-fi
-case "$args" in
-  *"pg_restore -f /dev/null"*) cat >/dev/null; exit "\${FAKE_DUMP_EXIT:-0}" ;;
-  *"cat > /app/data/app_secret"*) printf 'SECRET %s\n' "$(cat)" >> "$FAKE_LOG"; exit 0 ;;
-  *"up -d --wait --wait-timeout 300"*) exit "\${FAKE_START_EXIT:-0}" ;;
-  *pg_dump*) echo "DUMP"; exit 0 ;;
-  *"compose cp "*) ziel="\${@: -1}"; mkdir -p "$ziel"; echo x > "$ziel/datei"; exit 0 ;;
-  *_prisma_migrations*) printf '%s\\n' $FAKE_MIGRATIONS; exit 0 ;;
-esac
-exit 0
-`;
 
 let dir: string;
 let log: string;
@@ -70,14 +53,11 @@ function run(
     // stdin ist eine Pipe, kein Terminal (wie in CI oder per ssh ohne -t)
     input: "",
     encoding: "utf8",
-    env: {
-      ...process.env,
-      PATH: `${join(dir, "bin")}:${process.env.PATH ?? ""}`,
-      FAKE_LOG: log,
+    env: skriptUmgebung(dir, log, {
       FAKE_MIGRATIONS: (opts.migrations ?? [BEKANNTE_MIGRATION]).join(" "),
       FAKE_DUMP_EXIT: String(opts.dumpExit ?? 0),
       FAKE_START_EXIT: String(opts.startExit ?? 0),
-    },
+    }),
   });
   return {
     status: res.status,
@@ -86,45 +66,18 @@ function run(
   };
 }
 
-/** Uploads-Archiv mit einer Datei, wie backup.sh es anlegt. */
-function uploadsArchiv(ts: string) {
-  const quelle = join(dir, "quelle");
-  mkdirSync(quelle, { recursive: true });
-  writeFileSync(join(quelle, "bild.png"), "x");
-  const r = spawnSync("tar", [
-    "czf",
-    join(dir, `backups/uploads-${ts}.tar.gz`),
-    "-C",
-    quelle,
-    ".",
-  ]);
-  expect(r.status).toBe(0);
-}
-
 function sicherung(ts = TS) {
   writeFileSync(join(dir, `backups/db-${ts}.dump`), "DUMP");
-  uploadsArchiv(ts);
+  uploadsArchiv(
+    join(dir, `backups/uploads-${ts}.tar.gz`),
+    join(dir, "uploads-quelle"),
+  );
 }
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "dokunc-restore-"));
   log = join(dir, "docker.log");
-  mkdirSync(join(dir, "scripts"));
-  mkdirSync(join(dir, "backups"));
-  mkdirSync(join(dir, "bin"));
-  mkdirSync(join(dir, "packages/db/prisma/migrations", BEKANNTE_MIGRATION), {
-    recursive: true,
-  });
-  writeFileSync(
-    join(dir, "packages/db/prisma/migrations/migration_lock.toml"),
-    'provider = "postgresql"\n',
-  );
-  for (const name of ["restore.sh", "backup.sh"]) {
-    copyFileSync(join(ROOT, "scripts", name), join(dir, "scripts", name));
-    chmodSync(join(dir, "scripts", name), 0o755);
-  }
-  writeFileSync(join(dir, "bin/docker"), FAKE_DOCKER);
-  chmodSync(join(dir, "bin/docker"), 0o755);
+  legeSkriptbaumAn(dir);
 });
 
 afterEach(() => {
@@ -267,5 +220,27 @@ describe("scripts/restore.sh", () => {
     );
     expect(r.status, r.out).toBe(0);
     expect(r.protokoll).toContain(`SECRET ${secret}`);
+  });
+
+  it("Vorsicherung loescht keine alten Sicherungen", () => {
+    const alt = "20200101-120000";
+    for (const ts of [
+      alt,
+      "20200102-120000",
+      "20200103-120000",
+      "20200104-120000",
+    ]) {
+      sicherung(ts);
+    }
+    // Mit dieser Frist loeschte ein normaler Lauf 20200101 und 20200102
+    // (die drei juengsten waeren Vorsicherung, 20200104, 20200103).
+    writeFileSync(join(dir, ".env"), "BACKUP_KEEP_DAYS=1\n");
+    const r = run(["--ja", alt]);
+    expect(r.status, r.out).toBe(0);
+    expect(existsSync(join(dir, `backups/db-${alt}.dump`))).toBe(true);
+    expect(existsSync(join(dir, `backups/uploads-${alt}.tar.gz`))).toBe(true);
+    expect(existsSync(join(dir, "backups/db-20200102-120000.dump"))).toBe(true);
+    expect(r.protokoll).toContain("pg_restore -U dokunc -d dokunc_restore");
+    expect(r.out).not.toContain("Gelöscht");
   });
 });
