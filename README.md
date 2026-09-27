@@ -183,7 +183,8 @@ Hinweise:
   importieren.
 - **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1:7891` (kein LAN-Zugriff;
   Adresse und Port über `APP_BIND` und `APP_PORT` in `.env` änderbar, s. u.).
-  App/DB/Redis sind nur im internen Docker-Netz erreichbar.
+  App, Datenbank, Redis und Gotenberg haben keine Host-Ports. Gotenberg hängt
+  zudem nur mit der App in einem eigenen Netz ohne Ausgang (siehe „Sicherheit“).
 - Der App-Container läuft als **non-root**. Daten liegen in den Volumes
   `db_data`, `redis_data`, `uploads`, `app_data`.
 
@@ -922,7 +923,9 @@ Der Docker-Job spielt dabei eine Sicherung zurück, einmal auf demselben
 und einmal auf einem frisch angelegten Stack, und prüft Datenbank,
 Uploads, Secret, Sitzungen und Restore-Epoche, dazu, dass `backup.sh`
 ein geändertes Secret bemerkt und bei passendem Secret nichts auf die
-Fehlerausgabe schreibt.
+Fehlerausgabe schreibt. Er prüft ausserdem, dass Gotenberg weder
+Datenbank noch Redis noch das Internet erreicht und beim Umwandeln keine
+fremden Adressen lädt.
 
 ## Sicherheit
 
@@ -936,6 +939,19 @@ Kurz, was die App bewusst tut:
   Nur unter `pnpm dev` (`next dev`) ist die CSP der Seiten gelockert, und
   zwar nur um das, was Fast Refresh braucht: `'unsafe-eval'` und den
   HMR-WebSocket. `/api` bleibt auch dort bei der strengen Fassung.
+- **Export ohne Nachladen**: Exportiertes HTML und PDF bringen ihre eigene
+  Content-Security-Policy mit. Sie laden nur eingebettete Bilder (`data:`)
+  und Videos von YouTube wie in der App, sonst keine Adresse aus dem
+  Seiteninhalt. Bilder von fremden Adressen fehlen deshalb im Export, wie
+  sie schon im Editor fehlen. Der PDF-Dienst Gotenberg lädt zusätzlich nur
+  seine eigene Arbeitsdatei (`--chromium-allow-list`); Meldungen „blocked
+  for …“ in `docker compose logs gotenberg` sind erwartet.
+- **PDF-Dienst abgeschottet**: Gotenberg hängt nur mit der App in einem
+  eigenen Netz ohne Ausgang (`render`). Sein Chromium erreicht damit weder
+  Datenbank noch Redis, das LAN oder das Internet. Eigene Dienste in einer
+  `docker-compose.override.yml` bleiben ohne Angabe im Standardnetz wie
+  bisher; wer einen davon Gotenberg nutzen lässt, gibt ihm
+  `networks: [default, render]`.
 - **Space-Bindung** aller Schreibzugriffe: IDs aus Formularen werden gegen
   den Space geprüft, in dem die Person tatsächlich Rechte hat — und gegen
   das, was sie dort sehen darf.

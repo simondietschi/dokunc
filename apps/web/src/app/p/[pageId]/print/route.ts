@@ -41,6 +41,8 @@ export async function GET(
     title: page.title,
     spaceName: page.space.name,
     contentHtml: contentToHtml(page.content),
+    // Die Antwort traegt die CSP der Middleware; eine Export-CSP sperrte die Bilder aus /api/files.
+    target: "print",
   }).replace(
     "</body>",
     `<script>window.addEventListener("load",()=>setTimeout(()=>window.print(),300));</script></body>`,

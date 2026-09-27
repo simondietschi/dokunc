@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  EMBED_FRAME_SOURCES,
   collabOrigin,
   contentSecurityPolicy,
   createNonce,
   cspMode,
   devServerSocket,
+  exportContentSecurityPolicy,
 } from "./csp";
 
 // collabOrigin() und damit connect-src lesen NEXT_PUBLIC_COLLAB_URL aus
@@ -190,5 +192,37 @@ describe("createNonce()", () => {
 
   it("liefert nur Zeichen, die im Header zulaessig sind", () => {
     expect(createNonce()).toMatch(/^[0-9a-f]{32}$/);
+  });
+});
+
+describe("exportContentSecurityPolicy()", () => {
+  it("laesst nur data:-Bilder, Inline-Stile und die Einbettungen der App zu", () => {
+    expect(exportContentSecurityPolicy()).toBe(
+      "default-src 'none'; img-src data:; style-src 'unsafe-inline'; frame-src https://www.youtube-nocookie.com https://www.youtube.com https://embed.diagrams.net; base-uri 'none'; form-action 'none'",
+    );
+  });
+
+  it("nennt nirgends 'self', http:, https: als Schema oder *", () => {
+    // 'self' waere in einer per file:// geoeffneten Datei das
+    // Dateisystem; ein blankes Schema oder * gaebe jede Adresse frei.
+    const tokens = exportContentSecurityPolicy().split(/[ ;]+/);
+    for (const verboten of ["'self'", "http:", "https:", "*"]) {
+      expect(tokens, verboten).not.toContain(verboten);
+    }
+  });
+
+  it("frame-src wie in der App", () => {
+    // Ein Video, das im Editor spielt, spielt auch im Download, und
+    // keine der beiden Richtlinien darf mehr.
+    const erwartet = `frame-src ${EMBED_FRAME_SOURCES.join(" ")}`;
+    expect(direktive(exportContentSecurityPolicy(), "frame-src")).toBe(
+      erwartet,
+    );
+    expect(direktive(contentSecurityPolicy(), "frame-src")).toBe(erwartet);
+  });
+
+  it("steht roh im Attribut", () => {
+    // pageToPrintHtml setzt den Wert ohne Kodierung in content="...".
+    expect(exportContentSecurityPolicy()).not.toMatch(/["&<]/);
   });
 });

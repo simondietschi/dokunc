@@ -234,6 +234,85 @@ jobs:
           test "$(CADDY_TLS= tls)" = internal
           test "$(CADDY_TLS=admin@example.com tls)" = admin@example.com
 
+      # Gotenberg nur im internen Netz render mit der App (docker-compose.yml,
+      # networks). Fuer docker-compose.yml allein und mit beiden Zusaetzen,
+      # weil jede Datei die Dienste erweitern kann.
+      - name: Netze getrennt (Konfiguration)
+        run: |
+          set -euo pipefail
+          ALLE=docker-compose.yml:docker-compose.domain.yml:docker-compose.ipv6.yml
+          for dateien in docker-compose.yml "$ALLE"; do
+            cfg=$(COMPOSE_FILE=$dateien docker compose config --format json)
+            test "$(jq -cS '.services | map_values(.networks | keys)' <<<"$cfg")" \
+              = '{"app":["default","render"],"db":["default"],"gotenberg":["render"],"proxy":["default"],"redis":["default"]}'
+            test "$(jq -cS '.networks | map_values(.internal // false)' <<<"$cfg")" \
+              = '{"default":false,"render":true}'
+          done
+
+      # Am laufenden Stack: Gotenberg kennt Datenbank und Redis nicht und
+      # kommt nicht ins Internet; die App erreicht Gotenberg und hat Ausgang.
+      # Die ersten zwei Zeilen zeigen, dass getent und curl im Image laufen.
+      # curl -k: es geht um die Verbindung, nicht um das Zertifikat.
+      - name: Netze getrennt (am Stack)
+        run: |
+          set -euo pipefail
+          docker compose exec -T gotenberg getent hosts app >/dev/null
+          docker compose exec -T gotenberg curl -fsS -o /dev/null --max-time 10 http://app:3000/api/health
+          for dienst in db redis; do
+            if docker compose exec -T gotenberg getent hosts "$dienst"; then
+              echo "Gotenberg sieht $dienst"; exit 1
+            fi
+          done
+          if docker compose exec -T gotenberg curl -ksS -o /dev/null --max-time 10 https://registry.npmjs.org/; then
+            echo "Gotenberg erreicht das Internet"; exit 1
+          fi
+          docker compose exec -T app node -e 'fetch("http://gotenberg:3000/health").then(r=>process.exit(r.ok?0:1),()=>process.exit(1))'
+          docker compose exec -T app node -e 'fetch("https://registry.npmjs.org/",{method:"HEAD"}).then(()=>process.exit(0),()=>process.exit(1))'
+
+      # Gotenbergs Allow-List: ein Horchposten in der App (im selben Netz
+      # wie Gotenberg, also erreichbar), dann ein PDF aus HTML, das ihn per
+      # Bild und per CSS nennt. Das PDF muss entstehen und das eingebettete
+      # data:-Bild enthalten, der Horchposten darf ausser der Kontrolle
+      # nichts sehen. Per IP, nicht per Name: Chromium stuft http mit
+      # Hostnamen auf https hoch und scheitert dann am TLS, die Probe sagte
+      # sonst nichts. Eine IP nutzt auch ein Angreifer. Das HTML hat
+      # bewusst keine Meta-CSP: der Schritt prueft allein die Allow-List.
+      - name: PDF-Dienst laedt keine fremden Adressen
+        run: |
+          set -euo pipefail
+          FALLE=$(docker compose exec -T gotenberg getent hosts app | awk '{print $1}')
+          test -n "$FALLE"
+          docker compose exec -T app rm -f /tmp/falle.log
+          docker compose exec -d -T app node -e 'require("node:http").createServer((q,s)=>{require("node:fs").appendFileSync("/tmp/falle.log",q.url+"\n");s.end()}).listen(3999)'
+          bereit=
+          for i in $(seq 1 10); do
+            if docker compose exec -T gotenberg curl -fsS -o /dev/null "http://$FALLE:3999/kontrolle"; then bereit=1; break; fi
+            sleep 1
+          done
+          test -n "$bereit"
+          # Gotenberg hat keinen Healthcheck, auf den `up --wait` warten
+          # koennte: vor dem POST auf seine API warten
+          for i in $(seq 1 10); do docker compose exec -T app node -e 'fetch("http://gotenberg:3000/health").then(r=>process.exit(r.ok?0:1),()=>process.exit(1))' && break; sleep 1; done
+          PNG=iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==
+          HTML="<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><p>Probe</p><img src=\"data:image/png;base64,$PNG\"><img alt=\"\" src=\"http://$FALLE:3999/bild\"><p style=\"background-image:url(http://$FALLE:3999/stil)\">x</p></body></html>"
+          printf '%s' "$HTML" | docker compose exec -T app node -e '
+            const html = require("node:fs").readFileSync(0, "utf8");
+            const form = new FormData();
+            form.set("files", new File([html], "index.html", { type: "text/html" }));
+            fetch("http://gotenberg:3000/forms/chromium/convert/html", { method: "POST", body: form })
+              .then(async (r) => {
+                if (!r.ok) process.exit(1);
+                process.stdout.write(Buffer.from(await r.arrayBuffer()));
+              }, () => process.exit(1));' >"$RUNNER_TEMP/probe.pdf"
+          test "$(head -c 5 "$RUNNER_TEMP/probe.pdf")" = "%PDF-"
+          # Das eingebettete data:-Bild ist im PDF (sperrte die Liste auch data:,
+          # fehlten alle Upload-Bilder und Diagramme in jedem PDF). Die Falle
+          # traegt alt="": sonst zeichnete Chromium fuer das gesperrte Bild ein
+          # Symbol, das im PDF ebenfalls als Bild zaehlt.
+          test "$(grep -ac '/Subtype /Image' "$RUNNER_TEMP/probe.pdf")" -ge 1
+          sleep 1
+          test "$(docker compose exec -T app cat /tmp/falle.log)" = "/kontrolle"
+
       # Sicherung und Rueckweg mit genau den Befehlen aus dem README. Einmal
       # auf demselben Stack, einmal auf einem frisch angelegten (wie nach
       # einem Plattenausfall, mit getrennt gesichertem APP_SECRET).
@@ -344,7 +423,7 @@ jobs:
         run: |
           docker compose ps -a
           docker compose logs --no-color --tail 80 app
-          docker compose logs --no-color --tail 30 proxy db
+          docker compose logs --no-color --tail 30 proxy db gotenberg
 
       - name: Aufräumen
         if: always()

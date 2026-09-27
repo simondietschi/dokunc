@@ -176,6 +176,11 @@ services:
     # kleinen Hosts kann der Wert gesenkt werden.
     mem_limit: 2g
     cpus: 1.5
+    # Standardnetz für Proxy, Datenbank, Redis und Ausgang (SMTP, OIDC,
+    # KI-Dienste); render nur für Gotenberg (siehe networks: unten).
+    networks:
+      - default
+      - render
 
   db:
     image: postgres:18
@@ -195,14 +200,22 @@ services:
       timeout: 5s
       retries: 10
 
-  # HTML -> PDF (Seiten-Export). Nur intern erreichbar.
+  # HTML -> PDF (Seiten-Export). Nur die App erreicht ihn, und er selbst
+  # erreicht nichts ausser der App: im Netz render ohne Ausgang, und sein
+  # Chromium lädt nur die eigene Arbeitsdatei unter /tmp und eingebettete
+  # data:-Bilder. Ohne diese Liste lud es jede Bildadresse aus dem
+  # Seiteninhalt, auch Adressen im Docker-Netz oder im LAN. Das exportierte
+  # HTML sperrt dasselbe zusätzlich mit einer eigenen CSP (lib/csp.ts).
   gotenberg:
     image: gotenberg/gotenberg:8
     restart: unless-stopped
     command:
       - gotenberg
       - --chromium-disable-javascript=true
+      - "--chromium-allow-list=^(file:///tmp/|data:)"
       - --api-timeout=30s
+    networks:
+      - render
 
   redis:
     image: redis:8
@@ -215,6 +228,16 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+# Gotenberg hängt nur im Netz render, zusammen mit der App. render ist
+# intern (ohne Ausgang): das Chromium des PDF-Dienstes erreicht damit
+# weder Datenbank noch Redis, das LAN oder das Internet. Alle anderen
+# Dienste, auch solche aus einer docker-compose.override.yml ohne eigene
+# networks-Angabe, bleiben im Standardnetz. Wer in einer override-Datei
+# einen Dienst Gotenberg nutzen lässt, gibt ihm networks: [default, render].
+networks:
+  render:
+    internal: true
 
 volumes:
   db_data:

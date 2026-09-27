@@ -631,6 +631,9 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 - [x] Freigabelinks mit Integrationstests: jede Absage einheitlich,
       Unterbaum nicht durch Papierkorb oder fremden Space, doppelte
       Suchparameter abgelehnt
+- [x] Export abgeschottet: Export-HTML mit eigener CSP (nur `data:`-Bilder,
+      Inline-Stile, Einbettungen wie in der App; `lib/csp.ts`), Gotenberg
+      mit `--chromium-allow-list` nur im internen Netz `render` mit der App
 
 ## 7. Setup
 
