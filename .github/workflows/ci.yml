@@ -37,7 +37,10 @@ jobs:
         run: pnpm audit --prod --audit-level high
       # ignoreGhsas gilt fuer alle Versionen eines Pakets; Trivy mit purls
       # meldet eine andere verwundbare Version desselben Pakets weiter.
+      # Laeuft auch nach einem roten pnpm audit, sonst bliebe ein Befund,
+      # den nur Trivy sieht, bis zur Behebung der Advisory verdeckt.
       - name: Lockfile auf Luecken pruefen (Trivy)
+        if: ${{ !cancelled() }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
@@ -245,15 +248,21 @@ jobs:
 
       # Die Update-Befehle aus dem README ("Update und Rueckweg") ohne
       # git pull, als Kette wie dort. Belegt, dass sie laufen und der Stack
-      # danach gesund ist; dass build --pull das Basis-Image neu holt, zeigt
-      # nur ein Versuch mit einem nicht vorhandenen Basis-Image (plan-3.md).
+      # danach gesund ist. "|| exit 1" ist noetig: set -e bricht in einer
+      # &&-Liste nur ab, wenn das letzte Glied scheitert. Ohne es liefe der
+      # Schritt nach einem gescheiterten pull oder build --pull weiter und
+      # faende den alten Stack gesund.
+      # Dass build --pull das Basis-Image neu holt, zeigt dieser Schritt
+      # nicht, nur ein Versuch mit einem Basis-Image, das es nur lokal gibt:
+      # up --build baut damit ohne Pull, build --pull scheitert mit "pull
+      # access denied" (Commit 91285f0).
       # Die zweite Zeile: pull scheitert ohne --ignore-buildable, sobald eine
       # override-Datei der App ein image: gibt.
       # Beide Zeilen prueft apps/web/src/lieferkette.test.ts gegen das README.
       - name: Update-Weg aus dem README
         run: |
           set -euo pipefail
-          docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d --wait
+          docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d --wait || exit 1
           printf 'services:\n  app:\n    image: dokunc-app-nur-lokal\n' > "$RUNNER_TEMP/app-image.yml"
           docker compose -f docker-compose.yml -f "$RUNNER_TEMP/app-image.yml" pull --ignore-buildable
           for i in $(seq 1 30); do

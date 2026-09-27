@@ -5,9 +5,13 @@
 #
 # Bei gleitenden Tags (caddy:2, node:26-trixie-slim, postgres:18-trixie,
 # redis:8, gotenberg/gotenberg:8) schlaegt Dependabot nur neue
-# Hauptversionen bzw. Debian-Releases vor; Patches innerhalb des Tags
-# kommen ueber den Update-Befehl im README ("Update und Rueckweg"), das
-# Image der App prueft Trivy im CI-Job docker.
+# Hauptversionen mit demselben Suffix vor. Fuer node, postgres und redis
+# sind die Hauptversionen unten ausgenommen; Vorschlaege kommen also nur
+# fuer caddy und gotenberg. Ein neues Debian-Release (trixie auf das
+# naechste) schlaegt Dependabot nie vor, der Wechsel ist Handarbeit
+# (README "Update und Rueckweg"). Patches innerhalb des Tags kommen ueber
+# den Update-Befehl im README, das Image der App prueft Trivy im CI-Job
+# docker.
 #
 # Die Service-Images des CI-Jobs e2e pflegt kein Oekosystem;
 # apps/web/src/lieferkette.test.ts haelt sie gleich mit docker-compose.yml.

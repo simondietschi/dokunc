@@ -142,7 +142,11 @@ describe("Lieferkette", () => {
     const zeilen = runZeilen(schritt);
     const ohneGitPull = KETTE.replace(/^git pull && /, "");
     expect(ohneGitPull).not.toBe(KETTE);
-    expect(zeilen).toContain(ohneGitPull);
+    // set -e bricht in einer &&-Liste nur ab, wenn das letzte Glied
+    // scheitert. Ohne "|| exit 1" liefe der Schritt nach einem
+    // gescheiterten pull oder build --pull weiter und faende den alten
+    // Stack gesund.
+    expect(zeilen).toContain(`${ohneGitPull} || exit 1`);
     // Mit einer override-Datei, die der App ein image: gibt, scheitert
     // pull ohne --ignore-buildable ("pull access denied").
     expect(
@@ -200,6 +204,9 @@ describe("Lieferkette", () => {
       expect(w["ignore-unfixed"], s.name).toBe(true);
       expect(w.trivyignores, s.name).toBe(".trivyignore.yaml");
       expect(s["continue-on-error"], s.name).toBeUndefined();
+      // Auch nach einem roten Schritt davor (pnpm audit, Rundlauf) zeigt
+      // Trivy sein Ergebnis, sonst bleibt ein zweiter Befund verdeckt.
+      expect(String(s.if ?? ""), s.name).toMatch(/!cancelled\(\)/);
     }
     expect(existsSync(join(ROOT, ".trivyignore.yaml"))).toBe(true);
     // Lockfile (auch Pakete, die nicht im Image landen) und Image der App

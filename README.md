@@ -697,6 +697,7 @@ Update deshalb sichern und den bisherigen Stand notieren:
     git rev-parse --short HEAD          # bisherigen Stand notieren
     git fetch
     git diff --stat HEAD origin/main -- packages/db/prisma/migrations
+    docker compose images               # IDs für den Rückweg notieren
     git pull && docker compose pull --ignore-buildable \
       && docker compose build --pull && docker compose up -d --wait
 
@@ -718,17 +719,33 @@ Sicherung vorher:
 `docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d --wait`.
 Ohne Zugang zu Docker Hub scheitert die Kette, und nichts wird neu
 gestartet; den neuen Code allein bringt dann
-`git pull && docker compose up -d --build --wait`. Nicht mehr gebrauchte
-Images entfernt `docker image prune`, aber erst, wenn der neue Stand
-läuft: bis dahin liegt die vorige Fassung eines Dienstes noch als
-unbenanntes Image vor.
+`git pull && docker compose up -d --build --wait`. Nach dem Update
+liegt die vorige Fassung jedes neu geholten Images nur noch als
+unbenanntes Image vor, und `docker image prune` entfernt genau diese.
+Deshalb erst aufräumen, wenn sich der neue Stand bewährt hat: bis dahin
+ist die vorige Fassung der Rückweg (siehe Ende dieses Abschnitts).
 
 Das Postgres-Image ist auf das Debian-Release festgelegt (`18-trixie`).
 Ein neues Release bringt eine neue C-Bibliothek, die Text anders
 sortieren kann; Indizes auf Text wären danach inkonsistent. Den Wechsel
 auf `18-<neues Release>` deshalb wie eine Hauptversion behandeln:
-sichern, Image ändern, starten, dann
-`docker compose exec db reindexdb -U dokunc dokunc`.
+sichern (`./scripts/backup.sh`), das Image in `docker-compose.yml`
+ändern und zuerst nur die Datenbank starten, damit die App nicht auf
+den alten Indizes schreibt:
+
+    docker compose up -d --wait db
+    docker compose exec db reindexdb -U dokunc dokunc
+    docker compose exec db psql -U dokunc -d dokunc \
+      -c 'ALTER DATABASE dokunc REFRESH COLLATION VERSION' \
+      -c 'ALTER DATABASE postgres REFRESH COLLATION VERSION' \
+      -c 'ALTER DATABASE template1 REFRESH COLLATION VERSION'
+    docker compose up -d --wait
+
+Postgres vermerkt die Version der Kollation je Datenbank und warnt bei
+jeder Verbindung, solange sie nicht zur neuen C-Bibliothek passt;
+`reindexdb` allein setzt sie nicht nach, erst die drei `ALTER DATABASE`.
+Daran erinnert kein Werkzeug: Dependabot schlägt nur Tags mit demselben
+Suffix vor, also nie den Wechsel von `-trixie` auf ein neues Release.
 
 Bei grossem Bestand (grob ab 100 000 Seiten) laufen die Migrationen
 länger als die gut drei Minuten, die der Healthcheck der App beim Start
@@ -758,8 +775,9 @@ zweite Zeile das Skript geholt (`git status` zeigt
 `?? scripts/restore.sh`), vorher `rm scripts/restore.sh`, sonst bricht
 `git checkout main` ab, weil es die unversionierte Datei überschreiben
 müsste. Macht ein neu geholtes Image eines Dienstes Probleme, lässt sich
-die vorige Fassung über ihre ID wieder einsetzen, solange sie nicht
-entfernt ist: vor dem Update `docker compose images` notieren, dann
+die vorige Fassung über die vor dem Update notierte ID (Zeile
+`docker compose images` im Block oben) wieder einsetzen, solange sie
+nicht mit `docker image prune` entfernt ist:
 `docker tag <ID> <Image:Tag>` und `docker compose up -d <Dienst>`.
 
 ## Lokale Entwicklung (ohne Docker)
@@ -774,6 +792,15 @@ cp .env.example .env     # Werte anpassen
 pnpm db:migrate          # Schema + Migrationen
 pnpm dev                 # web :3000 + collab :3001
 ```
+
+`pnpm dev` mit Ctrl+C beenden. Die pnpm-Version des Projekts
+(11.27.1) startet ihre Skripte in einer eigenen Sitzung: Wird
+stattdessen das Terminal oder die SSH-Sitzung geschlossen, laufen
+`next dev` und der Collab-Server weiter und belegen die Ports 3000 und
+3001. Das nächste `pnpm dev`
+scheitert dann mit „EADDRINUSE“, und `pnpm test:e2e` nutzt still die
+verwaisten Server. Finden lassen sie sich mit
+`lsof -i :3000 -i :3001`, beenden mit `kill <PID>`.
 
 ## Collab-Server
 
