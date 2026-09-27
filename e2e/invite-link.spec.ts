@@ -89,3 +89,46 @@ test("Einladen ohne Mailserver: Link weitergeben und beitreten", async ({
     page.locator('h2:has-text("Offene Einladungen") + ul').getByText(gast),
   ).toHaveCount(0);
 });
+
+test("Ohne Zwischenablage: der Kopierhinweis gilt nur für seinen Link", async ({
+  page,
+}) => {
+  // Wie auf einer Instanz über http ausserhalb von localhost: ohne
+  // navigator.clipboard markiert der Knopf das Feld und zeigt den Hinweis.
+  await page.addInitScript(() => {
+    Object.defineProperty(Navigator.prototype, "clipboard", {
+      configurable: true,
+      get: () => undefined,
+    });
+  });
+  await login(page);
+  const slug = await firstSpaceSlug(page);
+  await page.goto(`/s/${slug}/members`);
+
+  const feld = page.getByLabel("Einladungslink");
+  const kopieren = page.getByRole("button", { name: "Link kopieren" });
+  const hinweis = page.getByText("Der Link ist markiert");
+  const zeit = Date.now();
+
+  await page.fill('input[name="email"]', `kopie-a-${zeit}@dokunc.dev`);
+  await page.getByRole("button", { name: "Einladen" }).click();
+  await expect(feld).toBeVisible({ timeout: 40_000 });
+  const linkA = await feld.inputValue();
+  await kopieren.click();
+  await expect(hinweis).toBeVisible();
+
+  // Der zweite Link erscheint ohne den Hinweis des ersten: markiert ist
+  // nichts, Strg+C kopierte sonst weiter den Link für a.
+  const b = `kopie-b-${zeit}@dokunc.dev`;
+  await page.fill('input[name="email"]', b);
+  await page.getByRole("button", { name: "Einladen" }).click();
+  await expect(page.getByText(`Link für ${b}`)).toBeVisible({
+    timeout: 40_000,
+  });
+  await expect(feld).not.toHaveValue(linkA);
+  await expect(hinweis).toHaveCount(0);
+
+  // Positivkontrolle: der Knopf zeigt den Hinweis für den neuen Link.
+  await kopieren.click();
+  await expect(hinweis).toBeVisible();
+});

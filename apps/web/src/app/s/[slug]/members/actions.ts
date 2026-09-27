@@ -167,6 +167,21 @@ export async function inviteMemberAction(
     };
   }
 
+  if (!sent && !linkAllowed && previousValid) {
+    // Ohne Mailserver erreicht der neue Link niemanden, weil diese Person
+    // ihn nicht sehen darf. Den Hash zu ersetzen, entwertete aber einen
+    // Link, den eine Admin-Person vielleicht schon weitergegeben hat. Also
+    // wie beim Transportfehler: der fruehere Stand gilt weiter, auch seine
+    // Rolle, und die Meldung sagt das offen.
+    await prisma.spaceInvitation.update({
+      where: { id: invitation.id },
+      data: previous,
+    });
+    return {
+      error: `Es ist kein Mailserver eingerichtet, und für ${email} gibt es schon eine gültige Einladung. Sie bleibt unverändert; ändern oder neu aussprechen kann sie eine Admin-Person der Instanz, die diesen Space verwaltet.`,
+    };
+  }
+
   const delivery = sent ? "mail" : linkAllowed ? "link" : "none";
   await inviteAudit(user.id, space.id, invitation.id, email, role, delivery);
   revalidatePath(`/s/${space.slug}/members`);

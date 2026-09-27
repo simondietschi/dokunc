@@ -69,6 +69,8 @@ const TRANSPORT_FEHLER =
   "Einladung gespeichert, aber E-Mail-Versand fehlgeschlagen. SMTP prüfen.";
 const BISHERIGE_GILT =
   "E-Mail-Versand fehlgeschlagen. SMTP prüfen — die bisherige Einladung bleibt gültig.";
+const bleibtUnveraendert = (email: string) =>
+  `Es ist kein Mailserver eingerichtet, und für ${email} gibt es schon eine gültige Einladung. Sie bleibt unverändert; ändern oder neu aussprechen kann sie eine Admin-Person der Instanz, die diesen Space verwaltet.`;
 
 /** Legt eine Person mit dieser Rolle in einem neuen Space an; sie handelt. */
 async function spaceMit(
@@ -97,6 +99,27 @@ async function spaceMit(
   });
   spaceIds.push(space.id);
   return space;
+}
+
+/** Weitere Person mit dieser Rolle im selben Space; sie handelt ab jetzt. */
+async function zweitePerson(
+  spaceId: string,
+  rolle: SpaceRole,
+  { isAdmin }: { isAdmin: boolean },
+): Promise<Actor> {
+  const person = await prisma.user.create({
+    data: {
+      email: `${TAG}-zweite-${userIds.length}@example.test`,
+      name: `Zweite ${userIds.length}`,
+      passwordHash: "x",
+      isAdmin,
+      memberships: { create: { spaceId, role: rolle } },
+    },
+    select: { id: true, email: true, name: true, isAdmin: true },
+  });
+  userIds.push(person.id);
+  mocks.actor = person;
+  return person;
 }
 
 function formular(slug: string, email: string, role = "MEMBER"): FormData {
@@ -378,6 +401,55 @@ describe("inviteMemberAction ohne Mailserver", () => {
       select: { id: true },
     });
     expect(await einladungsAudit(zweite.id)).toHaveLength(0);
+  });
+
+  it("laesst einen weitergegebenen Link stehen, wenn eine Verwaltung ohne Link-Recht erneut einlaedt", async () => {
+    const space = await spaceMit("OWNER", { isAdmin: true });
+    const admin = mocks.actor!;
+    const email = adresse();
+    const erste = await inviteMemberAction(undefined, formular(space.slug, email));
+    const link1 = erste?.link?.url ?? "";
+    const id = idAus(link1);
+    expect(verifyToken(tokenAus(link1), await tokenHash(id))).toBe(true);
+
+    // Eine zweite Owner-Person ohne Admin-Recht laedt dieselbe Adresse mit
+    // anderer Rolle ein. Ihren Link saehe niemand.
+    await zweitePerson(space.id, "OWNER", { isAdmin: false });
+    const state = await inviteMemberAction(
+      undefined,
+      formular(space.slug, email, "ADMIN"),
+    );
+
+    expect(state).toEqual({ error: bleibtUnveraendert(email) });
+    const row = await prisma.spaceInvitation.findUniqueOrThrow({
+      where: { id },
+      select: { tokenHash: true, role: true, invitedById: true },
+    });
+    expect(verifyToken(tokenAus(link1), row.tokenHash)).toBe(true);
+    expect(row.role).toBe("MEMBER");
+    expect(row.invitedById).toBe(admin.id);
+    // Nur der Eintrag der ersten Einladung.
+    expect(await einladungsAudit(id)).toHaveLength(1);
+
+    // Ist die fruehere Einladung abgelaufen, gibt es nichts zu schuetzen:
+    // die neue Zeile gilt, gemeldet wird "nicht zugestellt".
+    await prisma.spaceInvitation.update({
+      where: { id },
+      data: { expiresAt: new Date(Date.now() - 60_000) },
+    });
+    const danach = await inviteMemberAction(
+      undefined,
+      formular(space.slug, email, "ADMIN"),
+    );
+    expect(danach?.link).toBeUndefined();
+    expect(danach?.error).toContain("nicht zugestellt");
+    const neu = await prisma.spaceInvitation.findUniqueOrThrow({
+      where: { id },
+      select: { tokenHash: true, role: true, expiresAt: true },
+    });
+    expect(neu.role).toBe("ADMIN");
+    expect(neu.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(verifyToken(tokenAus(link1), neu.tokenHash)).toBe(false);
   });
 
   it("gibt mit INVITE_LINK_WITHOUT_MAIL=managers auch Owner ohne Admin-Recht den Link", async () => {

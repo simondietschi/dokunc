@@ -292,7 +292,9 @@ eingerichtet ist, der Versand aber scheitert und es für die Adresse keine
 gültige Einladung gab. Den Link sehen nach Vorgabe nur Admin-Personen der
 Instanz, in Spaces, die sie verwalten (`INVITE_LINK_WITHOUT_MAIL=admins`);
 andere Space-Verwaltende erfahren, dass die Einladung nicht zugestellt
-wurde. Mit `INVITE_LINK_WITHOUT_MAIL=managers` sehen ihn alle, die einen
+wurde. Gibt es für die Adresse schon eine gültige Einladung, lässt ihr
+erneutes Einladen diese unverändert, auch die Rolle: ein Link, den eine
+Admin-Person schon weitergegeben hat, bleibt so gültig. Mit `INVITE_LINK_WITHOUT_MAIL=managers` sehen ihn alle, die einen
 Space verwalten; jeder andere Wert gilt als `admins`, mit einer Warnung im
 Log. Weil jede angemeldete Person einen eigenen Space anlegen
 kann, kann dann jede Person Konten für beliebige Adressen anlegen; mit SSO

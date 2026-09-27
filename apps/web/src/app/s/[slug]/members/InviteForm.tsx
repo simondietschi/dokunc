@@ -79,9 +79,15 @@ export function InviteForm({
         )}
       </form>
       {/* Ausserhalb des Formulars: siehe OneTimeLink. Der Link lebt nur im
-          Zustand von useActionState, nie in localStorage oder der URL. */}
+          Zustand von useActionState, nie in localStorage oder der URL.
+          key: jeder neue Link erscheint mit frischem Zustand, sonst stuende
+          beim zweiten Link noch der Kopierhinweis des ersten. */}
       {state?.link && (
-        <OneTimeLink url={state.link.url} label="Einladungslink">
+        <OneTimeLink
+          key={state.link.url}
+          url={state.link.url}
+          label="Einladungslink"
+        >
           <p className="text-[13px] font-medium text-ink">
             Link für {state.link.email}
           </p>
