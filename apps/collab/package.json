@@ -13,16 +13,16 @@
     "@dokunc/db": "workspace:*",
     "@dokunc/editor": "workspace:*",
     "@dokunc/mail": "workspace:*",
-    "@hocuspocus/extension-redis": "4.4.0",
-    "@hocuspocus/server": "4.4.0",
-    "@hocuspocus/transformer": "4.4.0",
+    "@hocuspocus/extension-redis": "4.7.0",
+    "@hocuspocus/server": "4.7.0",
+    "@hocuspocus/transformer": "4.7.0",
     "@tiptap/core": "3.31.3",
     "dotenv": "17.4.2",
     "ioredis": "5.11.1",
     "jose": "6.2.12",
     "pino": "10.3.1",
     "tsx": "4.23.1",
-    "yjs": "13.6.31"
+    "yjs": "13.6.33"
   },
   "devDependencies": {
     "@types/node": "26.1.1",
