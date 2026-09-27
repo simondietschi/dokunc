@@ -1016,11 +1016,28 @@ Kurz, was die App bewusst tut:
   und Videos von YouTube wie in der App, sonst keine Adresse aus dem
   Seiteninhalt. Bilder von fremden Adressen fehlen deshalb im Export, wie
   sie schon im Editor fehlen. Der PDF-Dienst Gotenberg lädt zusätzlich nur
-  seine eigene Arbeitsdatei (`--chromium-allow-list`); Meldungen „blocked
-  for …“ in `docker compose logs gotenberg` sind erwartet.
+  seine eigene Arbeitsdatei (`--chromium-allow-list`); Warnungen „blocked
+  for …“ oder „does not match any expression from the allowed list“ in
+  `docker compose logs gotenberg` sind erwartet (letztere etwa für
+  eingebettete Videos).
 - **PDF-Dienst abgeschottet**: Gotenberg hängt nur mit der App in einem
   eigenen Netz ohne Ausgang (`render`). Sein Chromium erreicht damit weder
-  Datenbank noch Redis, das LAN oder das Internet. Eigene Dienste in einer
+  Datenbank noch Redis, das LAN oder das Internet, nur die App und den
+  Docker-Host selbst über die Gateway-Adresse von `render` (Dienste des
+  Servers, die auf allen Adressen lauschen). Ab Docker Engine 28.0 schliesst
+  auch diesen Weg eine `docker-compose.override.yml` mit
+
+  ```yaml
+  networks:
+    render:
+      driver_opts:
+        com.docker.network.bridge.gateway_mode_ipv4: isolated
+  ```
+
+  (`docker compose up -d` legt das Netz dann neu an und startet App und
+  Gotenberg neu). Ältere Engines kennen den Wert nicht (27.x bricht mit
+  „unknown gateway mode isolated“ ab), darum steht er nicht in
+  `docker-compose.yml`. Eigene Dienste in einer
   `docker-compose.override.yml` bleiben ohne Angabe im Standardnetz wie
   bisher; wer einen davon Gotenberg nutzen lässt, gibt ihm
   `networks: [default, render]`.
