@@ -22,7 +22,7 @@ process.env.UPLOAD_DIR = uploadDir;
 const { GET } = await import("@/app/api/share/[id]/files/[name]/route");
 const { default: SharedPage } = await import("@/app/share/[id]/page");
 const { resolveShare } = await import("@/lib/share");
-const { generateInviteToken } = await import("@/lib/invitations");
+const { generateInviteToken, hashToken } = await import("@/lib/invitations");
 const { setPageRestricted } = await import("@/lib/page-access");
 const { uploadDir: aktivesUploadDir } = await import("@/lib/uploads");
 const { renderToStaticMarkup } = await import("react-dom/server");
@@ -45,7 +45,7 @@ const seite = {} as Record<SeitenName, string>;
 
 type FreigabeName =
   | "nurSeite" | "mitKindern" | "andere" | "zurueckgezogen" | "abgelaufen"
-  | "laeuftNoch" | "spaeterGeschuetzt" | "imKorb";
+  | "laeuftNoch" | "spaeterGeschuetzt" | "imKorb" | "kodiert";
 type Freigabe = { id: string; token: string };
 const frei = {} as Record<FreigabeName, Freigabe>;
 
@@ -88,8 +88,11 @@ async function neueFreigabe(
   name: FreigabeName,
   pageId: string,
   data: { includeChildren?: boolean; expiresAt?: Date; revokedAt?: Date } = {},
+  eigenesToken?: string,
 ) {
-  const { token, tokenHash } = generateInviteToken();
+  const { token, tokenHash } = eigenesToken
+    ? { token: eigenesToken, tokenHash: hashToken(eigenesToken) }
+    : generateInviteToken();
   const share = await prisma.pageShare.create({
     data: { pageId, tokenHash, createdById: userId, ...data },
     select: { id: true },
@@ -160,6 +163,9 @@ beforeAll(async () => {
   });
   await neueFreigabe("spaeterGeschuetzt", spaeter, { includeChildren: true });
   await neueFreigabe("imKorb", imKorb, { includeChildren: true });
+  // Echte Tokens sind base64url und aendern sich beim Kodieren nicht.
+  // Dieses muss kodiert werden, sonst wird aus + ein Leerzeichen.
+  await neueFreigabe("kodiert", wurzel, { includeChildren: true }, "a+b/c=&d");
 
   // Erst nach dem Teilen: geschuetzt bzw. geloescht.
   await setPageRestricted(kindGeschuetzt, true, userId);
@@ -181,11 +187,15 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await prisma.space.deleteMany({ where: { id: { in: [spaceId, otherSpaceId] } } });
-  await prisma.user.deleteMany({ where: { id: userId } });
+  // Zuerst das, was ohne Datenbank geht: scheiterte beforeAll, wirft das
+  // Loeschen unten, und das Verzeichnis bliebe sonst liegen.
   rmSync(uploadDir, { recursive: true, force: true });
   if (uploadDirVorher === undefined) delete process.env.UPLOAD_DIR;
   else process.env.UPLOAD_DIR = uploadDirVorher;
+  // Nur, was tatsaechlich angelegt wurde (undefined lehnt Prisma ab).
+  const spaces = [spaceId, otherSpaceId].filter(Boolean);
+  if (spaces.length > 0) await prisma.space.deleteMany({ where: { id: { in: spaces } } });
+  if (userId) await prisma.user.deleteMany({ where: { id: userId } });
 });
 
 // ---------------------------------------------------------------------------
@@ -218,6 +228,14 @@ describe("resolveShare", () => {
     const f = frei.mitKindern;
     expect(await oeffnet(f, undefined, [f.token, f.token])).toBeNull();
     expect(await oeffnet(f, [seite.kind, seite.enkel])).toBeNull();
+  });
+
+  it("lehnt ein NUL-Byte in Freigabe oder Seite ab, statt an Postgres zu scheitern", async () => {
+    const f = frei.mitKindern;
+    expect(await oeffnet(f, "\0")).toBeNull();
+    expect(await oeffnet(f, `${seite.kind}\0`)).toBeNull();
+    expect(await resolveShare("\0", f.token)).toBeNull();
+    expect(await oeffnet(f, seite.kind)).toBe(seite.kind);
   });
 
   it("lehnt zurueckgezogene und abgelaufene Freigaben ab", async () => {
@@ -335,6 +353,8 @@ describe("Datei-Route der Freigabe", () => {
     ["Seite unter einer Zwischenseite eines anderen Space", () => ueber(frei.mitKindern, "unterFremder")],
     ["Datei fehlt auf der Platte", () => ueber(frei.mitKindern, "ohneDatei")],
     ["unbekannter Dateiname", () => hole(frei.mitKindern.id, `${"0".repeat(32)}.png`, frei.mitKindern.token)],
+    // %00 im Pfad: Next dekodiert Pfadparameter mit decodeURIComponent.
+    ["NUL-Byte als Freigabe", () => hole("\0", datei.wurzel, frei.mitKindern.token)],
   ];
   it.each(absagen)("%s: dieselbe 404", async (_fall, abruf) => {
     expect(await abruf()).toEqual(absage);
@@ -377,11 +397,21 @@ describe("Geteilte Seite", () => {
     const f = frei.mitKindern;
     expect(await zeige(f, { token: f.token, page: seite.kind })).toContain(`>${titel("kind")}</h1>`);
     expect(await zeige(f, { token: f.token, page: seite.enkel })).toContain(`>${titel("enkel")}</h1>`);
-    // Die Links der Unterseitenliste tragen Seite und kodiertes Token.
+    // Die Links der Unterseitenliste tragen Token und Seite.
     const html = await zeige(f);
-    expect(html).toContain(
-      `href="/share/${f.id}?token=${encodeURIComponent(f.token)}&amp;page=${seite.kind}"`,
-    );
+    expect(html).toContain(`href="/share/${f.id}?token=${f.token}&amp;page=${seite.kind}"`);
+  });
+
+  it("kodiert das Token in den Links der Unterseitenliste", async () => {
+    const f = frei.kodiert;
+    const html = await zeige(f);
+    const href = `/share/${f.id}?token=a%2Bb%2Fc%3D%26d&amp;page=${seite.kind}`;
+    expect(html).toContain(`href="${href}"`);
+    // Rundlauf: der Link oeffnet die Unterseite so, wie Next ihn liest.
+    const url = new URL(href.replaceAll("&amp;", "&"), "http://localhost");
+    const sp = { token: url.searchParams.get("token") ?? "", page: url.searchParams.get("page") ?? "" };
+    expect(sp.token).toBe(f.token);
+    expect(await zeige(f, sp)).toContain(`>${titel("kind")}</h1>`);
   });
 
   it("listet ohne includeChildren keine Unterseiten", async () => {
@@ -397,6 +427,8 @@ describe("Geteilte Seite", () => {
     ["ohne Token", () => zeige(f(), {})],
     ["Token als Liste", () => zeige(f(), { token: [f().token, "b"] })],
     ["Seite als Liste", () => zeige(f(), { token: f().token, page: [seite.kind, seite.enkel] })],
+    ["NUL-Byte als Seite", () => zeige(f(), { token: f().token, page: "\0" })],
+    ["NUL-Byte als Freigabe", () => zeige({ id: "\0", token: f().token })],
     ["zurueckgezogen", () => zeige(frei.zurueckgezogen)],
     ["abgelaufen", () => zeige(frei.abgelaufen)],
     ["Seite im Papierkorb", () => zeige(frei.imKorb)],

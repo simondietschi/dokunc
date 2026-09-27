@@ -43,6 +43,10 @@ export async function resolveShare(
   // Freigabe gedeckt, auch wenn die Datei-Route das selbst schon prueft.
   if (!shareId || typeof token !== "string" || !token) return null;
   if (pageId !== undefined && typeof pageId !== "string") return null;
+  // Ein NUL-Byte (%00 im Pfad oder in ?page=) lehnt Postgres in jedem
+  // Textparameter ab; die Abfrage warf, statt nichts zu finden (500 und
+  // ein Fehlerlog je Aufruf, auch ohne Token). Keine ID enthaelt eines.
+  if (shareId.includes("\0") || pageId?.includes("\0")) return null;
 
   const share = await prisma.pageShare.findUnique({
     where: { id: shareId },
