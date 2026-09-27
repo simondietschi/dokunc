@@ -226,6 +226,11 @@ model Page {
   content     Json?
   /// Flacher Text für Suche & History
   textContent String   @default("")
+  /// Suchvektor aus Titel und textContent. Gepflegt von den Triggern
+  /// "Page_searchVector_insert" und "Page_searchVector_update" (Migration
+  /// 20260925110000), nie von Hand schreiben. Prisma liest und schreibt
+  /// ihn nicht (Unsupported).
+  searchVector Unsupported("tsvector")?
   position    Int      @default(0)
   /// Geschuetzt: nur Eingetragene (plus Space-Verwaltung) sehen sie.
   /// Der Schutz vererbt sich auf alle Unterseiten.
@@ -254,6 +259,7 @@ model Page {
   incomingLinks PageLink[] @relation("LinkTarget")
   comments      Comment[]
   chunks        PageChunk[]
+  aiIndexQueue  AiIndexQueue?
   subscriptions PageSubscription[]
   favorites     Favorite[]
   visits        PageVisit[]
@@ -264,6 +270,8 @@ model Page {
   @@index([parentId])
   @@index([spaceId, isTemplate])
   @@index([accessRootId])
+  @@index([searchVector], type: Gin)
+  @@index([title(ops: raw("gin_trgm_ops"))], type: Gin, map: "Page_title_trgm_idx")
 }
 
 /// Bilder werden inline ausgeliefert, alles andere als Download.
@@ -402,6 +410,9 @@ enum NotificationType {
   MENTION
   COMMENT
   COMMENT_REPLY
+  /// Eine Seite, der die Person folgt, wurde geaendert. Entsteht im
+  /// Collab-Server zusammen mit einem Snapshot (PageVersion).
+  PAGE_UPDATED
 }
 
 model Notification {
@@ -411,6 +422,11 @@ model Notification {
   type      NotificationType
   pageId    String?
   commentId String?
+  /// Nur PAGE_UPDATED: die Version, die mit der Aenderung entstand. Bewusst
+  /// ohne Fremdschluessel (wie pageId): das Ausduennen alter Versionen darf
+  /// Benachrichtigungen weder loeschen noch blockieren. Fehlt die Version,
+  /// sucht /notifications/<id> ueber createdAt die naechstaeltere.
+  versionId String?
   readAt    DateTime?
   /// Gesetzt, sobald die Benachrichtigung per Mail zugestellt (oder
   /// bewusst übersprungen) wurde. NULL = noch offen für den Dispatcher.
@@ -422,22 +438,42 @@ model Notification {
 
   @@index([userId, readAt])
   @@index([emailedAt, createdAt])
+  /// Loeschbedingung des Aufbewahrungsjobs (gelesen vor der Frist).
+  @@index([readAt])
 }
 
 /// Text-Chunk einer Seite für die KI-Suche ("Frag dein Wiki").
-/// embedding: Float32-Vektor (Bytes) — optional, nur mit Embedding-Key.
+/// embedding: Float32-Vektor (Bytes), optional, nur mit
+/// Embedding-Schluessel; embeddingModel nennt das Modell.
 model PageChunk {
-  id         String   @id @default(cuid())
-  pageId     String
-  chunkIndex Int
-  text       String
-  embedding  Bytes?
-  updatedAt  DateTime @updatedAt
+  id             String   @id @default(cuid())
+  pageId         String
+  chunkIndex     Int
+  text           String
+  embedding      Bytes?
+  /// Modell, mit dem `embedding` entstand (EMBEDDING_MODEL). Null ohne
+  /// Embedding und bei Altbestand von vor 20260925100000.
+  embeddingModel String?
+  updatedAt      DateTime @updatedAt
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   @@unique([pageId, chunkIndex])
   @@index([pageId])
+  @@index([embeddingModel])
+}
+
+/// Seiten, deren KI-Index (PageChunk) nicht mehr zum textContent passt.
+/// Zeilen legen die Trigger "Page_aiIndexQueue_insert" und
+/// "Page_aiIndexQueue_update" an (Migration 20260925100000_ai_index), bei
+/// jeder neuen Seite und jeder echten Aenderung von textContent, gleich auf
+/// welchem Weg. Entfernt nur von indexPageChunks (@dokunc/db, src/ai-index.ts).
+/// Nie von Hand schreiben.
+model AiIndexQueue {
+  pageId   String   @id
+  queuedAt DateTime @default(now())
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
 }
 
 model PageVersion {
@@ -447,12 +483,17 @@ model PageVersion {
   content     Json?
   textContent String   @default("")
   authorId    String?
+  /// Vom Ausduennen ausgenommen (lib/version-thinning): die Quelle einer
+  /// Wiederherstellung und der Stand unmittelbar davor. Gesetzt von
+  /// restoreVersionAction, fuer den Bestand aus dem Audit-Log nachgetragen.
+  pinned      Boolean  @default(false)
   createdAt   DateTime @default(now())
 
   page   Page  @relation(fields: [pageId], references: [id], onDelete: Cascade)
   author User? @relation(fields: [authorId], references: [id], onDelete: SetNull)
 
-  @@index([pageId])
+  /// Verlauf (Cursor auf createdAt, id), neueste Version, Ausduennen je Seite.
+  @@index([pageId, createdAt])
 }
 
 /// Tokenbasierte E-Mail-Einladung in einen Space.
@@ -483,6 +524,8 @@ model AuditLog {
   actorId   String?
   /// Stabiler Ereignisschluessel, z. B. "member.role_changed".
   action    String
+  /// Wird beim Loeschen des Space NULL; der Eintrag bleibt, space.deleted
+  /// traegt Name und Slug.
   spaceId   String?
   /// Kennung des betroffenen Objekts (Seite, Nutzer, Einladung).
   targetId  String?
@@ -492,7 +535,7 @@ model AuditLog {
   createdAt DateTime @default(now())
 
   actor User?  @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
-  space Space? @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  space Space? @relation(fields: [spaceId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
   @@index([spaceId, createdAt])
@@ -528,4 +571,18 @@ model CollabDocument {
   updatedAt DateTime @updatedAt
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+}
+
+/// Zustand der Instanz als Ganzes. Genau eine Zeile (id = 1, per CHECK in
+/// der Migration). Fehlt sie, gilt alles als nicht gesetzt.
+model InstanceState {
+  id           Int       @id @default(1)
+  /// Kennung des letzten Zurueckspielens einer Sicherung (scripts/restore.sh),
+  /// 32 Hex-Zeichen, bei jedem Restore neu. null = nie zurueckgespielt.
+  /// Browser benennen ihre lokale Kopie eines Dokuments danach
+  /// (dokunc:<epoche>:<pageId>), damit eine Kopie aus der Zeit vor dem
+  /// Restore nicht in den zurueckgespielten Stand zurueckwandert.
+  restoreEpoch String?
+  /// Zeitpunkt dieses Restores (von restore.sh gesetzt, zur Diagnose per SQL).
+  restoredAt   DateTime?
 }

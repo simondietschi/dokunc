@@ -88,6 +88,10 @@ services:
       COLLAB_MAX_CONNECTIONS_PER_USER: ${COLLAB_MAX_CONNECTIONS_PER_USER:-}
       COLLAB_MAX_ATTEMPTS_PER_IP: ${COLLAB_MAX_ATTEMPTS_PER_IP:-}
       COLLAB_MAX_ATTEMPTS_PER_USER: ${COLLAB_MAX_ATTEMPTS_PER_USER:-}
+      # Grössengrenzen in MB (Vorgabe 16 und 17). Die App liest
+      # COLLAB_MAX_DOC_MB für die Liste unter /admin/documents.
+      COLLAB_MAX_DOC_MB: ${COLLAB_MAX_DOC_MB:-}
+      COLLAB_MAX_MESSAGE_MB: ${COLLAB_MAX_MESSAGE_MB:-}
       NODE_ENV: production
       # Reverse-Proxys vor der App (hier: Caddy). Bestimmt, wie die
       # Ratenbegrenzung die Client-IP aus X-Forwarded-For liest. Gilt auch
@@ -120,6 +124,14 @@ services:
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-50}
       # Aufraeumer fuer verwaiste Uploads: Abstand in Stunden (1 bis 168), 0 = aus
       UPLOAD_SWEEP_INTERVAL_H: ${UPLOAD_SWEEP_INTERVAL_H:-6}
+      # Aufbewahrung (taeglich, Einzelheiten in .env.example). 0 = unbegrenzt.
+      SESSION_RETENTION_DAYS: ${SESSION_RETENTION_DAYS:-30}
+      TOKEN_RETENTION_DAYS: ${TOKEN_RETENTION_DAYS:-30}
+      NOTIFICATION_RETENTION_DAYS: ${NOTIFICATION_RETENTION_DAYS:-90}
+      AUDIT_RETENTION_DAYS: ${AUDIT_RETENTION_DAYS:-365}
+      TRASH_RETENTION_DAYS: ${TRASH_RETENTION_DAYS:-0}
+      # Versionen ausduennen: standard oder off
+      VERSION_RETENTION: ${VERSION_RETENTION:-standard}
       # Import (Markdown/Confluence/Notion): Upload-Limit pro Import in MB
       IMPORT_MAX_MB: ${IMPORT_MAX_MB:-100}
       # Import: gleichzeitige Importe (alle Konten; je Konto hoechstens 1)
@@ -131,6 +143,11 @@ services:
       AI_MODEL: ${AI_MODEL:-}
       VOYAGE_API_KEY: ${VOYAGE_API_KEY:-}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      # KI-Index im Collab-Prozess: Abstand der Laeufe in Sekunden (10 bis
+      # 3600, 0 = aus, dann wird kein Seitentext mehr eingebettet) und
+      # Abschnitte je Anfrage an Voyage (1 bis 256, siehe .env.example)
+      AI_INDEX_INTERVAL_S: ${AI_INDEX_INTERVAL_S:-60}
+      AI_INDEX_EMBED_BATCH: ${AI_INDEX_EMBED_BATCH:-64}
       # PDF-Export über den mitlaufenden Gotenberg-Service
       GOTENBERG_URL: ${GOTENBERG_URL:-http://gotenberg:3000}
     volumes:

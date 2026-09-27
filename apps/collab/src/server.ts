@@ -3,7 +3,7 @@ import "./env";
 import { randomUUID } from "node:crypto";
 import { STATUS_CODES } from "node:http";
 import type { Duplex } from "node:stream";
-import { Server, type Connection } from "@hocuspocus/server";
+import { Server, type Connection, type Document } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
 import { jwtVerify, type JWTPayload } from "jose";
 import { Redis } from "ioredis";
@@ -13,9 +13,13 @@ import * as Y from "yjs";
 import {
   canSeePage,
   canSeePageWithGrant,
+  countCollabDocumentsOver,
+  currentRestoreEpoch,
   effectiveSpaceRole,
+  indexPageChunks,
   prisma,
   strongestSpaceRole,
+  usersWhoCanSeePage,
   type SpaceRole,
 } from "@dokunc/db";
 import {
@@ -40,13 +44,23 @@ import {
   isPageAccessMessage,
   extractWikiLinkIds,
   extractMentionIds,
-  chunkText,
+  chunkForAiIndex,
+  readDocSizeLimits,
+  encodeDocSizeNotice,
   type DocResetMessage,
 } from "@dokunc/editor";
 import { startMailDispatcher } from "./mail-dispatcher";
+import { startAiIndexer } from "./ai-indexer";
 import { createDocResetHandler, type ResetContent } from "./doc-reset";
 import { resolveAppSecret } from "./secret";
 import { StoreWatch } from "./store-watch";
+import { DocSizeTracker, roleNeedsReconnect } from "./doc-size";
+import { PageEditors, redisEditorStore } from "./page-editors";
+import {
+  contentChanged,
+  pageUpdateCandidates,
+  withoutOpenUpdates,
+} from "./page-updates";
 import {
   ATTEMPT_WINDOW_SEC,
   AuthDeadlines,
@@ -121,6 +135,18 @@ const sockets = new SocketGate(
   limits.maxConnectionsPerIp,
 );
 const authDeadlines = new AuthDeadlines(UNAUTHENTICATED_TIMEOUT_MS);
+
+/*
+ * Groessengrenzen (Vorgaben in @dokunc/editor collab-size und README).
+ * maxMessageBytes geht als maxPayload an ws; die Dokumentgrenze setzt
+ * DocSizeTracker um (./doc-size).
+ */
+const sizeLimits = readDocSizeLimits(process.env, (detail, msg) =>
+  log.warn(detail, msg),
+);
+const docSizes = new DocSizeTracker<Document>(sizeLimits);
+/** Schreibverbindungen, die nur wegen der Dokumentgroesse lesen. */
+const sizeLocked = new WeakSet<Connection>();
 
 /**
  * Kopfzeile, ueber die onAuthenticate die Anmeldefrist seines Sockets
@@ -198,6 +224,8 @@ type Ticket = {
   jti: string;
   /** Restlaufzeit (s): so lange muss der Verbrauch gemerkt bleiben. */
   ttlSec: number;
+  /** Restore-Epoche, gegen die das Ticket ausgestellt ist (Claim `ep`). */
+  restoreEpoch: string | null;
 };
 
 /**
@@ -246,6 +274,7 @@ async function verifyTicket(
     sessionId,
     jti: String(payload.jti),
     ttlSec: Number(payload.exp) - Math.floor(Date.now() / 1000),
+    restoreEpoch: typeof payload.ep === "string" ? payload.ep : null,
   };
 }
 
@@ -297,7 +326,8 @@ async function checkTicketAccess(
 }
 
 /**
- * Ablehnung an einer Grenze, mit Grund fuer den Editor.
+ * Ablehnung an einer Grenze oder wegen einer veralteten Restore-Epoche,
+ * mit Grund fuer den Editor.
  *
  * Bewusst kein Error: Hocuspocus schreibt die Meldung jedes geworfenen
  * Errors ungebremst auf stderr, und wer an einer Grenze abprallt,
@@ -375,6 +405,134 @@ function refuseUpgrade(
 const storeWatch = new StoreWatch();
 
 /**
+ * Wer zuletzt an einer Seite mitgeschrieben hat, ueber alle Instanzen
+ * (./page-editors). lastContext kennt nur die letzte Person dieser
+ * Instanz; wer davor oder auf einer anderen Instanz schrieb, bekaeme
+ * sonst eine Meldung ueber die eigene Aenderung. Das Fenster umfasst
+ * zwei Snapshot-Intervalle: wer darin schrieb, arbeitet an dieser
+ * Bearbeitung mit; wer davor zuletzt schrieb, soll von der neuen
+ * Aenderung erfahren.
+ */
+const pageEditors = new PageEditors(redisEditorStore(redis), {
+  windowMs: 2 * VERSION_INTERVAL_MS,
+  warn: (err, msg) => log.warn({ err }, msg),
+});
+
+/** Stateless-Nachricht mit Stufe und Groesse des Dokuments. */
+function sizeNotice(document: Document): string {
+  return encodeDocSizeNotice({
+    level: docSizes.level(document),
+    bytes: docSizes.bytes(document) ?? 0,
+    limitBytes: sizeLimits.maxDocBytes,
+  });
+}
+
+/** Schreibverbindung sperren und benachrichtigen; Lesende und schon Gesperrte bleiben. */
+function lockForSize(connection: Connection): void {
+  if (connection.readOnly) return;
+  connection.readOnly = true;
+  sizeLocked.add(connection);
+  connection.sendStateless(sizeNotice(connection.document));
+}
+
+/** Echte Groesse uebernehmen und auf einen Stufenwechsel reagieren. */
+function applyDocSize(
+  document: Document,
+  bytes: number,
+  quelle: "laden" | "speichern" | "aenderung" | "nachmessung",
+): void {
+  const change = docSizes.measured(document, bytes);
+  if (!change) return;
+  const detail = {
+    pageId: document.name,
+    bytes,
+    grenze: sizeLimits.maxDocBytes,
+    quelle,
+  };
+  // Beim Laden eines Altbestands jedes Mal: nur Info (der Startlog nennt
+  // den Bestand ohnehin); waehrend der Bearbeitung eine Warnung.
+  const melde = quelle === "laden" ? log.info.bind(log) : log.warn.bind(log);
+  if (change.level === "frozen") {
+    melde(detail, "Collab-Dokument ueber der Groessengrenze, nur noch lesbar");
+  } else if (change.previous === "frozen") {
+    log.info(
+      detail,
+      "Collab-Dokument wieder unter der Groessengrenze, wieder beschreibbar",
+    );
+  } else if (change.level === "warn") {
+    melde(
+      { ...detail, warnschwelle: sizeLimits.warnDocBytes },
+      "Collab-Dokument ueber der Warnschwelle",
+    );
+  }
+  for (const connection of Array.from(document.getConnections())) {
+    if (change.level === "frozen") {
+      lockForSize(connection);
+      continue;
+    }
+    if (sizeLocked.has(connection)) {
+      // Hinweis zuerst, dann neu aufbauen lassen: zwischen Sperre und
+      // Hinweis kann der Editor noch Aenderungen geschickt haben, die der
+      // Server verworfen hat. Erst der Abgleich beim Neuverbinden
+      // (SyncStep1/2) bringt beide Seiten wieder zusammen.
+      connection.sendStateless(sizeNotice(document));
+      closeConnection(connection, "Seite wieder beschreibbar");
+      continue;
+    }
+    if (!connection.readOnly) connection.sendStateless(sizeNotice(document));
+  }
+}
+
+function measureDocSize(
+  document: Document,
+  quelle: "laden" | "aenderung" | "nachmessung",
+): void {
+  applyDocSize(document, Y.encodeStateAsUpdate(document).byteLength, quelle);
+}
+
+/** Aus onChange: Schaetzung fortschreiben, bei Bedarf messen. */
+function noteDocUpdate(document: Document, updateBytes: number): void {
+  const next = docSizes.grew(document, updateBytes);
+  if (!next) return;
+  if (next.messen === "jetzt") {
+    measureDocSize(document, "aenderung");
+    return;
+  }
+  setTimeout(() => {
+    try {
+      // Inzwischen entladen oder neu geladen: das neue Dokument misst sich selbst.
+      if (server.hocuspocus.documents.get(document.name) !== document) return;
+      measureDocSize(document, "nachmessung");
+    } catch (e) {
+      log.warn({ err: e, pageId: document.name }, "Groesse nicht nachgemessen");
+    }
+  }, next.inMs).unref();
+}
+
+/**
+ * Eine zu grosse Nachricht schliesst ws selbst (1009), Hocuspocus
+ * schreibt dazu nur eine Rohzeile. Fuer ein Log mit Seite und Person
+ * haengt sich der Server an den Socket (crossws reicht once durch).
+ */
+function watchMessageLimit(connection: Connection, pageId: string): void {
+  const ws = connection.webSocket as unknown as {
+    once?: (event: "error", cb: (err: { code?: string }) => void) => unknown;
+  };
+  if (typeof ws.once !== "function") return;
+  ws.once("error", (err) => {
+    if (err?.code !== "WS_ERR_UNSUPPORTED_MESSAGE_LENGTH") return;
+    log.warn(
+      {
+        pageId,
+        userId: (connection.context as { userId?: string } | null)?.userId,
+        grenze: sizeLimits.maxMessageBytes,
+      },
+      "Collab-Nachricht ueber der Groessengrenze, Verbindung geschlossen",
+    );
+  });
+}
+
+/**
  * "Instanz voll" und "Adresse voll" hoechstens alle zehn Sekunden
  * melden: wer an einer vollen Grenze steht, versucht es weiter, und das
  * Log liefe mit.
@@ -408,6 +566,13 @@ const haExtension = new HocuspocusRedis({
 const server = new Server({
   port: PORT,
   extensions: [haExtension],
+  // Groesster Frame, den ws annimmt; groessere schliesst ws mit 1009
+  // (watchMessageLimit schreibt dazu das Log). Die Vorgabe liegt 1 MB
+  // ueber der Dokumentgrenze: hat der Server den Stand einer erlaubten
+  // Seite nicht (verlorene CollabDocument-Zeile), schickt ein Browser mit
+  // Kopie ihn im SyncStep2 in einer Nachricht. 0 heisst bei ws "keine
+  // Grenze".
+  websocketOptions: { maxPayload: sizeLimits.maxMessageBytes },
 
   /**
    * Vor dem WebSocket-Handshake: Versuche je IP, offene Sockets der
@@ -548,6 +713,21 @@ const server = new Server({
 
     try {
       const { readOnly } = await checkTicketAccess(ticket, pageId);
+      // Zweite Linie hinter der Ticket-Route: ein Ticket gilt nur fuer die
+      // Restore-Epoche, gegen die es ausgestellt wurde. Nach restore.sh
+      // scheitert ein altes Ticket meist schon am Sitzungswiderruf; diese
+      // Pruefung haelt auch, wenn Sitzungen einmal nicht widerrufen werden.
+      if (ticket.restoreEpoch !== (await currentRestoreEpoch(prisma))) {
+        log.warn(
+          {
+            userId: ticket.userId,
+            pageId,
+            grund: COLLAB_REJECT_REASON.restoreEpoch,
+          },
+          "Collab-Verbindung abgewiesen",
+        );
+        throw limitRejection(COLLAB_REJECT_REASON.restoreEpoch);
+      }
       // Verbraucht wird erst, wenn alles andere passt: eine Anmeldung,
       // die an einer Grenze oder am Zugriff scheitert, hat nichts
       // eingeloest. Zwei gleichzeitige Anmeldungen mit demselben Ticket
@@ -585,6 +765,61 @@ const server = new Server({
   // (establishedConnections); die Vormerkung aus onAuthenticate endet.
   async connected(data) {
     userSlots.settle(slotKey(data.socketId, data.documentName));
+    try {
+      const { connection } = data;
+      // Jede Schreibverbindung bekommt beim Verbinden ihre Stufe, auch "ok":
+      // nach einem Neustart mit hoeherer Grenze oder einer Freigabe auf
+      // einer anderen Instanz verschwindet so ein veralteter Hinweis.
+      if (docSizes.level(connection.document) === "frozen") {
+        lockForSize(connection);
+      } else if (!connection.readOnly) {
+        connection.sendStateless(sizeNotice(connection.document));
+      }
+      watchMessageLimit(connection, data.documentName);
+    } catch (e) {
+      log.warn(
+        { err: e, pageId: data.documentName },
+        "Groessenhinweis nicht gesendet",
+      );
+    }
+  },
+
+  // Der Riegel fuer jede Sync-Nachricht, auch fuer die, die Hocuspocus
+  // vor `connected` aus dem Puffer weitergibt: nach beforeSync prueft es
+  // readOnly fuer SyncStep2 und Update und verwirft sie dann.
+  async beforeSync({ connection, document }) {
+    if (docSizes.level(document) === "frozen") lockForSize(connection);
+  },
+
+  // Jedes Update einer angemeldeten Verbindung oder einer Direktverbindung
+  // mit Person (Wiederherstellen) zaehlt als Mitwirken. Updates aus Redis
+  // tragen keinen Kontext; gemerkt hat sie die Instanz, bei der sie
+  // entstanden. Lesende Verbindungen senden keine Updates. Hocuspocus
+  // wartet diesen Hook nicht ab und faengt nichts: jeder Aufruf hier steht
+  // in einem eigenen try/catch (eine Ablehnung beendete den Prozess).
+  async onChange(data) {
+    try {
+      const userId = (data.context as { userId?: string } | null)?.userId;
+      if (userId) pageEditors.note(data.documentName, userId);
+    } catch (e) {
+      log.warn(
+        { err: e, pageId: data.documentName },
+        "Mitwirkende nicht gemerkt",
+      );
+    }
+    // Groesse: auf jeder Instanz, auch fuer Updates aus Redis.
+    try {
+      noteDocUpdate(data.document, data.update.byteLength);
+    } catch (e) {
+      log.warn(
+        { err: e, pageId: data.documentName },
+        "Groesse nicht fortgeschrieben",
+      );
+    }
+  },
+
+  async afterUnloadDocument(data) {
+    pageEditors.forget(data.documentName);
   },
 
   async onLoadDocument(data) {
@@ -595,6 +830,7 @@ const server = new Server({
 
     if (existing) {
       Y.applyUpdate(data.document, new Uint8Array(existing.state));
+      applyDocSize(data.document, existing.state.byteLength, "laden");
       return data.document;
     }
 
@@ -625,7 +861,10 @@ const server = new Server({
         select: { state: true },
       });
       Y.applyUpdate(data.document, new Uint8Array(row.state));
+      applyDocSize(data.document, row.state.byteLength, "laden");
+      return data.document;
     }
+    measureDocSize(data.document, "laden");
     return data.document;
   },
 
@@ -638,6 +877,10 @@ const server = new Server({
     // Austausch nicht (siehe ./store-watch).
     const marke = storeWatch.current(data.document);
     const state = Buffer.from(Y.encodeStateAsUpdate(data.document));
+    // Groesse vor allem Weiteren (auch vor shouldSnapshot) uebernehmen.
+    // Der Lauf, der die Grenze ueberschreitet, speichert trotzdem ganz:
+    // die Sperre ist keine harte Obergrenze.
+    applyDocSize(data.document, state.byteLength, "speichern");
 
     // Der Yjs-Zustand zuerst und für sich. Er ist das Einzige, woraus
     // onLoadDocument das Dokument wieder aufbaut; alles Weitere (Inhalt
@@ -666,7 +909,7 @@ const server = new Server({
     // Alten Inhalt VOR dem Update lesen (für den Mention-Diff).
     const before = await prisma.page.findUnique({
       where: { id: pageId },
-      select: { content: true, spaceId: true, title: true },
+      select: { content: true, spaceId: true, title: true, deletedAt: true },
     });
 
     // Neue Erwähnungen werden gegen genau diesen alten Stand bestimmt, und
@@ -734,21 +977,99 @@ const server = new Server({
       await syncWikiLinks(pageId, before.spaceId, json).catch((e) =>
         log.warn({ err: e, pageId, editorId }, "wikiLink sync fehlgeschlagen"),
       );
-      await indexChunks(pageId, textContent).catch((e) =>
+      // Scheitert es, bleibt die Seite in AiIndexQueue, und der KI-Index
+      // (./ai-indexer) holt sie im naechsten Lauf nach. Ohne skipLocked:
+      // haelt der Job die Seite gerade, wartet der Speicherlauf kurz.
+      // textContent liest indexPageChunks selbst unter der Zeilensperre.
+      await indexPageChunks(pageId, { chunk: chunkForAiIndex }).catch((e) =>
         log.warn({ err: e, pageId, editorId }, "chunk indexing fehlgeschlagen"),
       );
     }
 
     if (await shouldSnapshot(pageId)) {
-      try {
-        await prisma.pageVersion.create({
-          data: {
+      // Mitwirkende der laufenden Bearbeitung, dazu die Person dieses Laufs.
+      const recent = await pageEditors.recent(pageId);
+      const contributors = new Set(recent.map((r) => r.userId));
+      if (editorId) contributors.add(editorId);
+      const actorId = editorId ?? recent.at(-1)?.userId ?? null;
+
+      // Wer davon erfahren soll. Scheitert das, entsteht der Snapshot
+      // trotzdem: die Versionsgeschichte wiegt schwerer als eine Meldung.
+      // Ohne Mitwirkende (kein Mensch hat geschrieben) keine Meldung, fuer
+      // Seiten im Papierkorb ebenfalls nicht.
+      let candidates: string[] = [];
+      if (before && !before.deletedAt && contributors.size > 0) {
+        try {
+          candidates = await pageUpdateRecipients(
             pageId,
-            title: before?.title ?? "Untitled",
-            content: json,
-            textContent,
-            authorId: editorId,
-          },
+            contributors,
+            mentioned,
+          );
+        } catch (e) {
+          log.warn(
+            { err: e, pageId, editorId },
+            "Folgende nicht ermittelt, keine Aenderungsmeldung",
+          );
+        }
+      }
+
+      let notified: string[];
+      try {
+        notified = await prisma.$transaction(async (tx) => {
+          // Die neueste Version VOR dem Anlegen lesen, und nur, wenn es
+          // jemanden zu benachrichtigen gibt (spart das JSON bei Seiten
+          // ohne Folgende).
+          const previous =
+            candidates.length > 0
+              ? await tx.pageVersion.findFirst({
+                  where: { pageId },
+                  orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+                  select: { content: true },
+                })
+              : null;
+          const version = await tx.pageVersion.create({
+            data: {
+              pageId,
+              title: before?.title ?? "Untitled",
+              content: json,
+              textContent,
+              authorId: editorId,
+            },
+            select: { id: true },
+          });
+          if (candidates.length === 0) return [];
+          // Nur bei echter Inhaltsaenderung: eine blosse Kommentar-Markierung
+          // meldet sich als COMMENT, nicht als Bearbeitung.
+          if (previous && !contentChanged(previous.content, json)) return [];
+          // Hoechstens eine ungelesene Meldung je Person und Seite: der Link
+          // zeigt beim Oeffnen ohnehin alles bis jetzt. Doppelte Laeufe fuer
+          // dieselbe Seite verhindert die Snapshot-Drossel (ein Snapshot je
+          // Fenster, instanzuebergreifend in Redis).
+          const open = await tx.notification.findMany({
+            where: {
+              userId: { in: candidates },
+              pageId,
+              type: "PAGE_UPDATED",
+              readAt: null,
+            },
+            select: { userId: true },
+          });
+          const recipients = withoutOpenUpdates(
+            candidates,
+            open.map((n) => n.userId),
+          );
+          if (recipients.length > 0) {
+            await tx.notification.createMany({
+              data: recipients.map((userId) => ({
+                userId,
+                actorId,
+                type: "PAGE_UPDATED" as const,
+                pageId,
+                versionId: version.id,
+              })),
+            });
+          }
+          return recipients;
         });
       } catch (e) {
         // Die Drossel ist schon belegt, der Snapshot aber nicht
@@ -759,6 +1080,15 @@ const server = new Server({
         await releaseSnapshot(pageId);
         throw e;
       }
+
+      // Glocke erst nach dem Commit (wie bei den Erwaehnungen).
+      await Promise.all(
+        notified.map((userId) =>
+          redis
+            .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
+            .catch(() => undefined),
+        ),
+      );
     }
   },
 });
@@ -810,6 +1140,9 @@ async function syncWikiLinks(
  * er kennt das Sammelfenster, den Tagesdigest und
  * `User.emailNotifications`. Beim Speichern entsteht nur die Zeile —
  * zwei Versandwege nebeneinander hiessen zwei Mails pro Erwähnung.
+ *
+ * Meldungen über Änderungen an gefolgten Seiten (PAGE_UPDATED) entstehen
+ * dagegen nur mit dem Snapshot (siehe `pageUpdateRecipients`).
  */
 async function newMentionRecipients(
   pageId: string,
@@ -867,47 +1200,29 @@ async function newMentionRecipients(
   return reachable.filter((userId) => !alreadyOpen.has(userId));
 }
 
-/** Chunk-Größe für die KI-Indexierung (Zeichen). */
-const CHUNK_SIZE = 1200;
-
 /**
- * Zerlegt den Seitentext in Chunks und speichert sie für die KI-Suche.
- * Embeddings werden (falls konfiguriert) vom Retrieval-Layer der Web-App
- * nachgezogen — hier wird nur der Text aktuell gehalten.
+ * Wer eine PAGE_UPDATED bekommen kann: Folgende mit aktivem Konto, ohne
+ * Mitwirkende und neu Erwaehnte (./page-updates), die die Seite heute
+ * sehen duerfen (usersWhoCanSeePage). Ob sie schon eine ungelesene
+ * haben, prueft die Transaktion, die die Zeilen anlegt.
  */
-async function indexChunks(pageId: string, text: string): Promise<void> {
-  const chunks = chunkText(text, CHUNK_SIZE);
-  // Nur geänderte Chunks anfassen. Wer bei jedem Speichern ALLE
-  // Embeddings verwirft, lässt nach jedem Tastendruck-Batch die ganze
-  // Seite neu einbetten — kostenpflichtige API-Aufrufe für Text, der
-  // sich gar nicht geändert hat, und bis dahin fehlt sie der Suche.
-  const existing = await prisma.pageChunk.findMany({
-    where: { pageId },
-    select: { chunkIndex: true, text: true },
+async function pageUpdateRecipients(
+  pageId: string,
+  contributors: ReadonlySet<string>,
+  mentioned: readonly string[],
+): Promise<string[]> {
+  const followers = await prisma.pageSubscription.findMany({
+    where: { pageId, user: { isActive: true } },
+    orderBy: { createdAt: "asc" },
+    select: { userId: true },
   });
-  const before = new Map(existing.map((c) => [c.chunkIndex, c.text]));
-
-  const writes = chunks
-    .map((chunk, i) => ({ chunk, i }))
-    .filter(({ chunk, i }) => before.get(i) !== chunk)
-    .map(({ chunk, i }) =>
-      prisma.pageChunk.upsert({
-        where: { pageId_chunkIndex: { pageId, chunkIndex: i } },
-        // embedding auf null: Text hat sich geändert -> neu einbetten.
-        create: { pageId, chunkIndex: i, text: chunk },
-        update: { text: chunk, embedding: null },
-      }),
-    );
-
-  const stale = existing.some((c) => c.chunkIndex >= chunks.length);
-  if (writes.length === 0 && !stale) return;
-
-  await prisma.$transaction([
-    prisma.pageChunk.deleteMany({
-      where: { pageId, chunkIndex: { gte: chunks.length } },
-    }),
-    ...writes,
-  ]);
+  const candidates = pageUpdateCandidates(
+    followers.map((f) => f.userId),
+    contributors,
+    mentioned,
+  );
+  if (candidates.length === 0) return [];
+  return usersWhoCanSeePage(pageId, candidates);
 }
 
 /** Plain-Text aus ProseMirror-JSON ziehen (für Suche/History). */
@@ -1428,8 +1743,16 @@ async function enforceRevocations(): Promise<void> {
         !role ||
         !sichtbar ||
         // Herabstufung auf VIEWER: die Verbindung darf nicht mehr
-        // schreiben, also muss sie neu aufgebaut werden.
-        (role === "VIEWER") !== connection.readOnly;
+        // schreiben, also muss sie neu aufgebaut werden. Eine wegen der
+        // Dokumentgroesse gesperrte Schreibverbindung ist kein
+        // Widerspruch: sonst schloesse diese Runde sie, und beim
+        // Neuverbinden wuerde sie wieder gesperrt (eine Schleife im
+        // Minutentakt).
+        roleNeedsReconnect(
+          role,
+          connection.readOnly,
+          sizeLocked.has(connection),
+        );
 
       if (revoked) {
         log.info({ pageId, userId: ctx.userId }, "Verbindung getrennt: Zugriff entzogen");
@@ -1536,8 +1859,33 @@ server
   .listen()
   .then(() => {
     log.info({ port: PORT }, "Hocuspocus läuft");
+    log.info(
+      {
+        dokumentGrenze: sizeLimits.maxDocBytes,
+        warnschwelle: sizeLimits.warnDocBytes,
+        nachrichtenGrenze: sizeLimits.maxMessageBytes,
+      },
+      "Groessengrenzen",
+    );
+    if (sizeLimits.maxDocBytes > 0) {
+      void countCollabDocumentsOver(sizeLimits.maxDocBytes)
+        .then((anzahl) => {
+          if (anzahl > 0) {
+            log.warn(
+              { anzahl, grenze: sizeLimits.maxDocBytes },
+              "Collab-Dokumente ueber der Groessengrenze, nur lesbar (Liste unter /admin/documents)",
+            );
+          }
+        })
+        .catch((e) =>
+          log.warn({ err: e }, "Groesse der Collab-Dokumente nicht geprueft"),
+        );
+    }
     // Mail-Versand von Benachrichtigungen (periodisch, Redis-gelockt).
     startMailDispatcher({ redis, log });
+    // KI-Index: Chunks fuer Seiten aus allen Schreibwegen, Embeddings im
+    // Hintergrund (periodisch, Redis-Sperre, siehe ./ai-indexer).
+    startAiIndexer({ redis, log });
     startDocResetListener();
     setInterval(() => {
       void enforceRevocations().catch((e) =>

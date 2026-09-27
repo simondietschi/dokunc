@@ -1,4 +1,4 @@
-import { COLLAB_REJECT_REASON } from "@dokunc/editor";
+import { COLLAB_REJECT_REASON, type DocSizeLevel } from "@dokunc/editor";
 
 /**
  * Verbindungsstatus des Editors (app/s/[slug]/p/[pageId]/
@@ -9,13 +9,21 @@ import { COLLAB_REJECT_REASON } from "@dokunc/editor";
  * - offline: der Browser meldet kein Netz
  * - unauthorized: der Collab-Server hat die Anmeldung abgelehnt
  * - limited: der Collab-Server hat an einer Grenze abgewiesen
+ * - restored: die Instanz wurde zurückgespielt; dieser Tab verbindet
+ *   nicht mehr (endgültig)
+ * - too-large: der Collab-Server hat eine Nachricht als zu gross
+ *   abgewiesen; die Verbindung ist endgültig getrennt
+ *
+ * Vorrang: restored > too-large > unauthorized/limited > Rest.
  */
 export type EditorStatus =
   | "connecting"
   | "connected"
   | "offline"
   | "unauthorized"
-  | "limited";
+  | "limited"
+  | "restored"
+  | "too-large";
 
 /**
  * Status nach einer abgelehnten Anmeldung (`onAuthenticationFailed`,
@@ -27,11 +35,14 @@ export type EditorStatus =
  * Unter "Kein Zugriff" mit der Bitte, sich neu anzumelden, suchte die
  * Person den Fehler an der falschen Stelle. "ticket-used" bleibt bei
  * "unauthorized": ein normaler Client schickt nie ein verbrauchtes
- * Ticket, er holt vor jedem Versuch ein neues.
+ * Ticket, er holt vor jedem Versuch ein neues. "restore-epoch" heisst:
+ * die Instanz wurde aus einer Sicherung zurueckgespielt, der Tab haelt
+ * einen Stand von vorher ("restored", endgueltig).
  */
 export function statusAfterRejection(
   reason: string,
-): "limited" | "unauthorized" {
+): "limited" | "unauthorized" | "restored" {
+  if (reason === COLLAB_REJECT_REASON.restoreEpoch) return "restored";
   return reason === COLLAB_REJECT_REASON.tooManyConnections ||
     reason === COLLAB_REJECT_REASON.rateLimited
     ? "limited"
@@ -42,10 +53,21 @@ export function statusAfterRejection(
  * Status nach einem Trennen oder einem Statuswechsel ausser "verbunden".
  * Nach einer Ablehnung meldet der Provider noch ein Trennen; ohne den
  * Vorrang der Ablehnung stuende gleich wieder "Verbinde…". Erst der
- * naechste gelungene Abgleich (`onSynced`) loest sie ab.
+ * naechste gelungene Abgleich (`onSynced`) loest sie ab. "restored"
+ * und "too-large" bleiben immer stehen.
  */
 export function statusAfterDisconnect(prev: EditorStatus): EditorStatus {
-  return prev === "unauthorized" || prev === "limited" ? prev : "connecting";
+  return prev === "unauthorized" ||
+    prev === "limited" ||
+    prev === "restored" ||
+    prev === "too-large"
+    ? prev
+    : "connecting";
+}
+
+/** Endgueltige Status: kein Rueckruf des Providers verlaesst sie. */
+function isFinal(status: EditorStatus): boolean {
+  return status === "restored" || status === "too-large";
 }
 
 /**
@@ -74,17 +96,55 @@ export type SetEditorStatus = (
  *   ein Trennen; ohne den Vorrang der Ablehnung (`statusAfterDisconnect`)
  *   stuende gleich wieder "Verbinde…". Ein Statuswechsel auf "connected"
  *   aendert nichts, "Live" setzt nur onSynced.
+ * - "restored" verlaesst kein Rueckruf mehr (nur Neuladen): nach dem
+ *   abgewiesenen Ticket meldet der Provider noch eine Ablehnung mit
+ *   eigenem Grund, und ein spaeter Abgleich darf den Tab nicht wieder
+ *   als "Live" zeigen.
+ * - onClose mit Code 1009: der Collab-Server hat eine Nachricht als zu
+ *   gross abgewiesen ("too-large"). Der Aufrufer trennt dann endgueltig
+ *   (`onMessageTooLarge`): sonst verbaende der Provider nach einer
+ *   Sekunde neu, schickte dieselbe Aenderung wieder und verbrauchte je
+ *   Runde ein Ticket und einen Versuch der Person. "too-large" verlaesst
+ *   nur der Vorrang von "restored"; einen Rueckweg ohne Neuladen gibt es
+ *   nicht (Rueckgaengig verkleinert den Yjs-Stand nicht, und die Kopie im
+ *   Browser haelt die Aenderung schon). Der Provider 4.4 ruft onClose je
+ *   Ereignis zweimal auf (am Socket und am Provider registriert); beides
+ *   ist wiederholbar, ein zweites Trennen aendert nichts.
  */
-export function statusHandlers(setStatus: SetEditorStatus) {
+export function statusHandlers(
+  setStatus: SetEditorStatus,
+  opts?: { onMessageTooLarge?: () => void },
+) {
   return {
-    onSynced: () => setStatus("connected"),
+    onSynced: () =>
+      setStatus((prev) => (isFinal(prev) ? prev : "connected")),
     onAuthenticationFailed: ({ reason }: { reason: string }) =>
-      setStatus(statusAfterRejection(reason)),
+      setStatus((prev) =>
+        isFinal(prev) ? prev : statusAfterRejection(reason),
+      ),
     onStatus: ({ status }: { status: string }) => {
       if (status !== "connected") setStatus(statusAfterDisconnect);
     },
     onDisconnect: () => setStatus(statusAfterDisconnect),
+    onClose: ({ event }: { event?: { code?: number } }) => {
+      if (event?.code !== 1009) return;
+      setStatus((prev) => (prev === "restored" ? prev : "too-large"));
+      opts?.onMessageTooLarge?.();
+    },
   };
+}
+
+/**
+ * Darf der Editor gerade bearbeitet werden? Rolle, Verbindung (inkl.
+ * Erst-Sync) und Groessensperre. `connected` ist `status === "connected"`;
+ * damit sperren auch "restored" und "too-large" den Editor.
+ */
+export function editorEditable(o: {
+  editable: boolean;
+  connected: boolean;
+  sizeLevel: DocSizeLevel | null;
+}): boolean {
+  return o.editable && o.connected && o.sizeLevel !== "frozen";
 }
 
 /**
@@ -100,7 +160,9 @@ export function visibleStatus(
   if (
     status === "connected" ||
     status === "unauthorized" ||
-    status === "limited"
+    status === "limited" ||
+    status === "restored" ||
+    status === "too-large"
   ) {
     return status;
   }
@@ -135,5 +197,17 @@ export function statusLabel(status: EditorStatus): {
       };
     case "connecting":
       return { text: "Verbinde…" };
+    case "restored":
+      return {
+        text: "Neu laden nötig",
+        title:
+          "Die Instanz wurde aus einer Sicherung zurückgespielt. Änderungen aus diesem Tab werden nicht mehr übertragen. Bitte die Seite neu laden.",
+      };
+    case "too-large":
+      return {
+        text: "Änderung zu gross",
+        title:
+          "Eine Änderung war grösser, als der Server in einer Nachricht annimmt, und wurde nicht übertragen. Die Verbindung ist getrennt; der Hinweis über der Seite erklärt, wie es weitergeht.",
+      };
   }
 }

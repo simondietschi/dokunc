@@ -30,3 +30,7 @@ dump.rdb
 
 # Eigene Compose-Anpassungen des Betreibers (s. README zu COMPOSE_FILE)
 docker-compose.override.yml
+
+# Getrennt gesichertes APP_SECRET (README "Sicherung und Rückweg"): nie
+# ins Repository und nie ins Image (Dockerfile: COPY . .).
+app_secret

@@ -62,7 +62,22 @@ export type AuditEntry = {
   spaceId?: string | null;
   targetId?: string | null;
   metadata?: Record<string, unknown> | null;
+  /**
+   * Fehlt das Feld, gilt die Adresse der Anfrage; ausserhalb einer
+   * Anfrage null. Ein Hintergrundjob setzt null ausdruecklich.
+   */
+  ip?: string | null;
 };
+
+/** clientIp() wirft ausserhalb einer Anfrage (headers()); ein Eintrag aus
+ *  einem Hintergrundjob soll deshalb nicht verloren gehen. */
+async function requestIpOrNull(): Promise<string | null> {
+  try {
+    return await clientIp();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Schreibt einen Audit-Eintrag.
@@ -80,7 +95,7 @@ export async function audit(entry: AuditEntry): Promise<void> {
         spaceId: entry.spaceId ?? null,
         targetId: entry.targetId ?? null,
         metadata: (entry.metadata ?? undefined) as never,
-        ip: await clientIp(),
+        ip: entry.ip !== undefined ? entry.ip : await requestIpOrNull(),
       },
     });
   } catch (e) {

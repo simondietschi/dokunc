@@ -195,4 +195,9 @@ test("Seite duplizieren, als Vorlage speichern, Seite aus Vorlage", async ({
   await expect(
     page.locator("aside").getByText("Meeting-Notizen", { exact: true }).first(),
   ).toBeVisible();
+  // "Zuletzt bearbeitet" kommt aus Page.lastEditedBy: die Seite hat noch
+  // keine Version, nur den Eintrag aus der Vorlagen-Aktion.
+  await expect(
+    page.getByText(/^Zuletzt bearbeitet .* von E2E Tester$/),
+  ).toBeVisible();
 });

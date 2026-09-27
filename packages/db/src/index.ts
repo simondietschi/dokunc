@@ -47,3 +47,8 @@ export const prisma: PrismaClient = new Proxy({} as PrismaClient, {
 
 export * from "./generated/prisma/client";
 export * from "./access";
+export * from "./vector";
+export * from "./embeddings";
+export * from "./ai-index";
+export * from "./restore-epoch";
+export * from "./doc-sizes";

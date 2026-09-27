@@ -23,7 +23,7 @@ S3-Storage, E-Mail, SSO/OAuth, Enterprise-Features.
 | Sprache        | TypeScript                        | End-to-end Typsicherheit |
 | Runtime        | Node.js 26                        | Neueste Version (`.nvmrc`, `engines`, Docker-Image) |
 | Framework      | Next.js 16 (App Router), React 19 | Ein Framework für Front- & Backend (Server Actions, Route Handler) |
-| DB             | PostgreSQL 16                     | Relationale Daten + nativer Volltext (`tsvector`) |
+| DB             | PostgreSQL 18 mit `pg_trgm`       | Relationale Daten + nativer Volltext (`tsvector`), Trigramm-Index für Titel |
 | ORM            | Prisma 7 (+ `@prisma/adapter-pg`) | Typsichere Queries, Migrationen; v7 nutzt Driver-Adapter + `prisma.config.ts` |
 | Auth           | Eigene JWT-Session (jose + bcrypt, httpOnly-Cookie) | Schlank, keine Beta-Abhängigkeit, lehrreich |
 | Editor         | TipTap 3 (+ StarterKit)           | ProseMirror-basiert, identisch zu Docmost |
@@ -49,7 +49,7 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 │  ├─ editor/   TipTap-Schema und Collab-Protokoll (Web + Collab)
 │  └─ mail/     E-Mail-Versand und Benachrichtigungsplanung (Web + Collab)
 ├─ e2e/         Playwright-E2E-Tests
-├─ scripts/     backup.sh, docker-entrypoint.sh
+├─ scripts/     backup.sh, restore.sh, docker-entrypoint.sh
 ├─ docs/ARCHITECTURE.md
 ├─ Caddyfile            Proxy: TLS (CADDY_TLS), /collab an Hocuspocus
 ├─ Dockerfile           Image der App (Web + Collab, Debian trixie)
@@ -74,9 +74,16 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 - **PageGrant** — Zugriffseintrag einer geschützten Seite: entweder eine
   Person oder eine Gruppe.
 - **Page** — id, spaceId, parentId (Baum), title, content (TipTap-JSON),
-  textContent (für Suche/History), `searchVector` (tsvector), position, timestamps.
-- **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit.
+  textContent (für Suche/History), `searchVector` (tsvector, von Triggern
+  gepflegt aus Titel (Gewicht A) und den ersten 250 000 Zeichen von
+  textContent, deutsch gestemmt und unverändert; bei übergrossen Seiten
+  verkürzt), position, timestamps.
+- **PageVersion** — Snapshot (title, content, textContent) + Autor + Zeit,
+  `pinned` für Wiederherstellungspunkte; ausgedünnt vom Aufbewahrungsjob.
 - **CollabDocument** — pageId, Yjs-State (bytea) — von Hocuspocus verwaltet.
+- **InstanceState**: genau eine Zeile mit `restoreEpoch` (32 Hex-Zeichen,
+  von `scripts/restore.sh` bei jedem Zurückspielen neu vergeben, sonst
+  null) und `restoredAt`.
 - **Attachment** — spaceId, pageId?, uploaderId?, storedName (zufälliger
   Name auf der Platte, unique), name (Originalname), mimeType, size.
   Bindet jede hochgeladene Datei an einen Space; `/api/files/<storedName>`
@@ -86,6 +93,32 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   Datensatz, die nirgends mehr verwendet werden, räumt der Web-Prozess
   periodisch weg (`lib/upload-sweeper.ts`, gestartet aus
   `instrumentation.ts`, siehe README „Verwaiste Uploads“).
+- **PageChunk**: pageId, chunkIndex, text, embedding (Float32-Bytes),
+  embeddingModel (Modell, mit dem das Embedding entstand; null ohne
+  Embedding und beim Altbestand von vor der Migration `20260925100000`).
+- **AiIndexQueue**: Seiten, deren Chunks nicht zum Text passen (pageId,
+  queuedAt). Nur Trigger fügen ein, nur `indexPageChunks` entfernt.
+- **Notification**: userId, actorId, type (MENTION, COMMENT,
+  COMMENT_REPLY, PAGE_UPDATED), pageId, commentId, versionId (nur
+  PAGE_UPDATED, ohne Fremdschlüssel), readAt, emailedAt.
+- **PageSubscription**: Person folgt Seite (Kommentare und Änderungen).
+- **AuditLog**: sicherheitsrelevante Ereignisse; `spaceId` wird beim
+  Löschen des Space NULL, der Eintrag bleibt.
+
+**Trigger in der Datenbank:** `Page_aiIndexQueue_insert` und
+`Page_aiIndexQueue_update` (Funktion `dokunc_ai_index_enqueue`, beide
+AFTER) stellen jede neue Seite und jede echte Änderung von `textContent`
+in die `AiIndexQueue`, gleich auf welchem Weg der Text entstand (Editor,
+Import, Vorlage, Kopie, Wiederherstellen, rohes SQL). `Page` selbst wird
+dabei nicht beschrieben. `Page_searchVector_insert` und
+`Page_searchVector_update` (Funktion `dokunc_page_search_vector_set`,
+beide BEFORE) setzen den Suchvektor bei jeder neuen Seite und bei jeder
+echten Änderung von Titel oder `textContent`. Prisma kennt Trigger nicht:
+sie stehen nur in den Migrationen `20260925100000_ai_index` und
+`20260925110000_search_german_trgm`, `prisma migrate dev` lässt sie
+stehen, und `prisma migrate diff` zeigt sie nicht. `pg_restore` legt
+Trigger erst nach den Daten an; Warteschlange, Suchvektoren und Chunks
+kommen dort aus demselben Snapshot.
 
 Die **wirksame Rolle** einer Person in einem Space ist die stärkste aus
 eigener Mitgliedschaft und allen Gruppen, die dem Space zugeordnet sind
@@ -129,10 +162,73 @@ lädt eingebettete Bilder über dieselbe Prüfung (`uploadLoaderFor`).
 
 Die Regel selbst steht an genau einer Stelle und wird überall
 hineingereicht: als Prisma-Bedingung (`visiblePageWhere`,
-`visiblePagesAcrossSpaces`), als SQL-Baustein für die beiden
-Volltextabfragen (`visiblePageSql`), als Einzelprüfung (`canSeePage`,
+`visiblePagesAcrossSpaces`), als SQL-Baustein für die Suche
+(`lib/page-search.ts`), die Pfade der Treffer und den Rückgriff der KI
+(`visiblePageSql`), als Einzelprüfung (`canSeePage`,
 auch im Collab-Server) und als Filter für Benachrichtigungen
-(`filterByPageAccess`).
+(`filterByPageAccess`, im Collab-Server gebündelt über
+`usersWhoCanSeePage`).
+
+**Hintergrundjobs der Web-App.** Aus `instrumentation.ts` starten der
+Upload-Aufräumer (`lib/upload-sweeper.ts`) und die Aufbewahrung
+(`lib/retention.ts`). Beide nutzen dieselbe Sperrlogik (`lib/job-lock.ts`:
+`SET NX PX`, läuft ab statt freigegeben zu werden; ist Redis eingerichtet,
+aber weg, setzt der Lauf aus; ohne `REDIS_URL` läuft jede Instanz selbst),
+jeder mit eigenem Schlüssel: Sie schliessen nur Läufe desselben Jobs auf
+anderen Instanzen aus, nicht einander.
+Die Aufbewahrung löscht einmal täglich in Stapeln zu 5000 Zeilen mit kurzen
+Pausen und beginnt nach 60 Minuten keinen neuen Stapel mehr. Fristen und
+Hinweistexte liegen getrennt in `lib/retention-config.ts`, damit Seiten sie
+anzeigen können. Das Ausdünnen der Versionen (`lib/version-thinning.ts`)
+rankt je Seite alle Versionen in einer Abfrage; Zeitpunkte gehen als
+ISO-Parameter mit `AT TIME ZONE 'UTC'` hinein, die Sitzungszeitzone wirkt
+also nicht, und `now()` kommt in der Abfrage nicht vor. Beim Papierkorb
+wird jede Wurzel für sich gelöscht (`purgeTrashedTree` in
+`lib/page-guards.ts`): scheitert ein Ast, steht das im Log, und die übrigen
+laufen weiter. Der KI-Index läuft im Collab-Prozess mit eigener Sperre.
+
+**Suche.** Palette (`/api/search`) und Space-Suche (`/s/[slug]/search`)
+stellen dieselbe Abfrage (`searchPages` in `lib/page-search.ts`), den Plan
+dazu baut `planSearch` in `lib/search-query.ts`.
+
+- Der Inhalt liegt als gespeicherte Spalte `Page.searchVector` vor, mit
+  GIN-Index. Kein Ausdrucksindex: `ts_rank` braucht den Vektor jeder
+  passenden Seite, und aus einem Ausdrucksindex liest Postgres ihn nicht,
+  es berechnet ihn neu (bei einem häufigen Wort oder einem kurzen Präfix
+  beim Tippen für fast alle Seiten). Keine GENERATED-Spalte, weil Prisma
+  den Generierungsausdruck als Default liest und Drift meldet; die
+  Trigger aus der Migration `20260925110000_search_german_trgm` pflegen
+  sie.
+- Der Vektor trägt Titel (Gewicht A) und Text zweimal: `german` findet
+  andere Wortformen (Rechnung, Rechnungen; Haus, Häuser), `simple`
+  behält, was der Stemmer abschneidet oder als Stoppwort verwirft
+  („Bearbeitu“ beim Tippen, „will“). Der Text zählt bis 250 000 Zeichen.
+  Überschreitet der Vektor trotzdem die Grenze von 1 MB (viele
+  verschiedene Wörter aus Zeichen mit 4 Byte), fällt die Funktion auf
+  `simple` über 100 000 Zeichen zurück, im äussersten Fall auf den Titel.
+  So scheitert weder ein Speicherlauf noch die Migration.
+- Titel per `pg_trgm` (`Page_title_trgm_idx`): ab drei Zeichen als
+  Teilwort (`ILIKE '%q%'`).
+- Unter drei Zeichen (Kurzmodus) nur Titelanfang und Wortanfang im Titel;
+  bei genau zwei Buchstaben oder Ziffern zusätzlich das exakte Wort im
+  Vektor, damit Kürzel wie KI, HR oder IT auffindbar bleiben. Alles davon
+  ist indexgestützt.
+- Die Anfrage entsteht aus `websearch_to_tsquery` in beiden Sprachen
+  („Phrase“, `or`, `-Ausschluss`; das deutsche „oder“ wird zu `or`), das
+  letzte Wort zusätzlich als Präfix (`to_tsquery(... ':*')`, nur für
+  Wörter aus Buchstaben und Ziffern). Ein Ausschluss gilt in beiden
+  Sprachen („-Entwürfe“ schliesst auch „Entwurf“ aus) und auch für
+  Titeltreffer. Bleibt vom Ausschluss nach dem Textparser nichts übrig
+  („-½“, „-²“), entfällt er, statt jeden Treffer zu verwerfen.
+- Rang: erst Titeltreffer, dann `ts_rank`, dann das Änderungsdatum, zuletzt
+  die ID, damit die Seiten beim Blättern stabil bleiben. Schnipsel
+  (`ts_headline`, deutsch) nur für die ausgelieferten Zeilen. Jeder
+  Treffer bringt seinen Pfad (`loadAncestorPaths`, eine rekursive Abfrage
+  für alle Treffer, endet an der ersten verborgenen oder gelöschten
+  Elternseite) und sein Änderungsdatum mit.
+- Der Rückgriff der KI ohne Voyage (`lib/retrieval.ts`) fragt die Chunks
+  ebenfalls `german` ab; der Ausdruck ist zeichengleich zum Index
+  `PageChunk_fulltext_german_idx`.
 
 ## 5. Realtime-Fluss
 
@@ -150,10 +246,75 @@ auch im Collab-Server) und als Filter für Benachrichtigungen
    (Session-Revocation) und Schreibrecht, begrenzt Versuche und
    Verbindungen je Person und verbraucht das Ticket (SET NX in Redis).
    Vorgaben und Begründungen der Grenzen: `apps/collab/src/limits.ts`.
+   Frames über `COLLAB_MAX_MESSAGE_MB` (`maxPayload` von ws) schliesst ws
+   mit 1009; der Editor zeigt dann „Änderung zu gross“ und trennt
+   endgültig. Der Editor startet den Provider erst, wenn seine lokale
+   Kopie (y-indexeddb) geladen ist (höchstens drei Sekunden,
+   `lib/local-copy.ts`), und schickt so beim Abgleich nur die Differenz
+   statt der ganzen Kopie als ein Update.
 4. `onLoadDocument` lädt Yjs-State aus `CollabDocument` (oder seeded aus `Page.content`).
 5. Edits werden als Yjs-Updates zwischen Clients gemerged (CRDT, konfliktfrei).
 6. `onStoreDocument` (debounced) schreibt Yjs-State + extrahierten Text/JSON
    zurück in `Page` und erzeugt periodisch `PageVersion`-Snapshots.
+   Mit jedem Snapshot entstehen PAGE_UPDATED-Meldungen für Folgende
+   (siehe unten). Ältere Snapshots dünnt der Aufbewahrungsjob der Web-App
+   aus; der Verlauf blättert per Cursor.
+7. Die Grösse des Yjs-Stands misst der Server beim Laden, beim Speichern
+   und gedrosselt bei Änderungen (`onChange` auf jeder Instanz, auch für
+   Updates aus Redis; über der Warnschwelle höchstens alle 64 KB bzw.
+   10 Sekunden). Ab der Hälfte von `COLLAB_MAX_DOC_MB` gibt es einen
+   Hinweis, darüber werden alle Schreibverbindungen `readOnly` (der Riegel
+   sitzt in `beforeSync`, das Hocuspocus auch für gepufferte Nachrichten
+   vor `connected` abwartet). Jede Schreibverbindung bekommt beim
+   Verbinden und bei jedem Stufenwechsel die stateless-Nachricht
+   `dokunc:doc-size` mit Stufe, Grösse und Grenze, auch „ok“, damit ein
+   veralteter Hinweis verschwindet. Wird das Dokument wieder kleiner
+   (Version wiederherstellen), werden die gesperrten Verbindungen
+   geschlossen und gleichen beim Neuverbinden ab. Die Minutenrunde
+   (`enforceRevocations`) behandelt eine wegen der Grösse gesperrte
+   Schreibverbindung nicht als Rollenwiderspruch (`roleNeedsReconnect`).
+   Vorgaben: `packages/editor/src/collab-size.ts`, Logik:
+   `apps/collab/src/doc-size.ts`, Liste der grössten Seiten:
+   `/admin/documents` (`octet_length` auf `CollabDocument.state`, ohne
+   Migration).
+
+**Änderungsmeldungen.** Wer einer Seite folgt, erfährt von Änderungen
+anderer. Jedes Update einer angemeldeten Verbindung (oder der
+Direktverbindung beim Wiederherstellen) meldet die Person in `onChange`
+nach Redis, gedrosselt auf einmal je fünf Sekunden: ein ZSET
+`dokunc:page-editors:<pageId>` mit dem Zeitpunkt des letzten Mitwirkens
+(`apps/collab/src/page-editors.ts`). Schreibt der Speicherlauf einen
+Snapshot, zählen als Mitwirkende alle, die in den letzten zwei
+Snapshot-Intervallen (vier Minuten) geschrieben haben, über alle
+Instanzen, dazu die Person dieses Laufs; nichts wird dabei verbraucht.
+`lastContext` allein genügte nicht: er kennt nur die letzte Person der
+speichernden Instanz. Empfänger sind die Folgenden mit aktivem Konto ohne
+Mitwirkende und ohne die im selben Lauf neu Erwähnten, soweit sie die
+Seite heute sehen dürfen (`usersWhoCanSeePage`). In derselben
+Transaktion wie die neue Version liest der Lauf die bisher neueste
+Version und meldet nur, wenn sich der Inhalt ohne Kommentar-Marken
+geändert hat (`contentChanged` in `apps/collab/src/page-updates.ts`,
+unabhängig von der Reihenfolge der Schlüssel, die jsonb umstellt). Wer
+zu dieser Seite schon eine ungelesene Meldung hat, bekommt keine zweite;
+doppelte Läufe verhindert die Snapshot-Drossel. Die Glocke erfährt es
+nach dem Commit, die Mail kommt vom Dispatcher. Der Link führt über
+`/notifications/<id>`: die Route setzt die Meldung auf gelesen und leitet
+auf den Vergleich der letzten Version VOR der gemeldeten gegen den
+aktuellen Stand. Der Snapshot entsteht am Anfang einer Bearbeitung; so
+zeigt der Vergleich alles, was seither dazukam, auch nach dem Ausdünnen
+alter Versionen (dann die nächstältere). Wer die Seite selbst öffnet, hat
+den aktuellen Stand gesehen: offene Änderungsmeldungen dazu werden nach
+dem Rendern gelesen, und die nächste Änderung darf wieder melden.
+Grenze dieser Bindung an den Snapshot: Was nach dem Lesen der Meldung im
+selben Zwei-Minuten-Fenster noch geschrieben wird, meldet erst die
+nächste Bearbeitung der Seite. Jeder Speicherlauf in diesem Fenster
+trifft auf die Drossel, und beim Trennen der letzten Verbindung führt
+Hocuspocus nur einen schon anstehenden Speicherlauf aus; endet die
+Bearbeitung im Fenster, bekommt ihr Nachlauf weder Snapshot noch
+Meldung. Verloren geht nichts: der Vergleich der nächsten Meldung
+beginnt vor deren Snapshot und zeigt den Nachlauf mit. Dieselbe Lücke
+hat die Versionsgeschichte auch ohne Meldungen (siehe Roadmap,
+Nachlauf-Snapshot).
 
 **Wiederherstellen einer Version** muss an diesem Zwischenspeicher vorbei,
 und zwar auf derselben Yjs-Linie. Die Web-App schreibt den Inhalt der
@@ -180,6 +341,46 @@ stünden danach wieder im Dokument. Ohne Quittung verwirft die Web-App
 `CollabDocument` (der nächste Start baut aus `Page.content`) und zeigt
 einen Hinweis.
 
+**Zurückspielen einer Sicherung.** Der Collab-Server schreibt beim
+Speichern seinen Stand zurück, `scripts/restore.sh` hält die App deshalb
+an. Browser halten Kopien (y-indexeddb), offene Tabs einen Stand im
+Speicher; beide liegen auf derselben Yjs-Linie und brächten beim
+Verbinden alle späteren Updates mit. Dagegen steht die Restore-Epoche in
+`InstanceState`: `restore.sh` vergibt sie nach dem Einspielen neu; die
+Seite gibt sie dem Editor, der seine Kopie `dokunc:<epoche>:<pageId>`
+nennt (ohne Epoche wie bisher `dokunc:<pageId>`), sie beim Ticket-Abruf
+mitschickt und bei 409 `restore-epoch` endgültig trennt. Die Ticket-Route
+antwortet so auch ohne Sitzung, weil `restore.sh` alle Sitzungen
+widerruft. Das Ticket trägt die Epoche als `ep`, der Collab-Server prüft
+sie als zweite Linie. Nach dem ersten angenommenen Ticket löscht der
+Browser Kopien mit fremder Epoche. Eingespielt wird in eine frische
+Datenbank, die gegen die bisherige getauscht wird (`pg_restore --clean`
+liesse Tabellen späterer Migrationen stehen). Ohne Compose gelten
+dieselben Schritte von Hand: frische Datenbank, Migrationsliste prüfen,
+alle Instanzen anhalten, tauschen, Uploads, `migrate deploy`, Epoche,
+Sitzungen und Mails per SQL (wie Schritt 12 in `restore.sh`), starten.
+
+**KI-Index.** Welche Seiten neue Chunks brauchen, halten die Trigger in
+`AiIndexQueue` fest (siehe §4). Der Speicherlauf (`onStoreDocument`)
+gleicht die eben gespeicherte Seite sofort ab (`indexPageChunks` aus
+`@dokunc/db`): nur wenn sie ansteht, unter der Zeilensperre
+`FOR NO KEY UPDATE`, mit Diff je `chunkIndex`, sodass unveränderte
+Abschnitte ihr Embedding behalten. Alles andere (Import, Vorlagen, Kopien,
+Wiederherstellen) holt der Hintergrundjob `apps/collab/src/ai-indexer.ts`
+nach, alle `AI_INDEX_INTERVAL_S` Sekunden unter einer Redis-Sperre
+(`dokunc:ai-index:lock`; ist Redis nicht erreichbar, läuft er ohne
+Sperre, doppelte Läufe sind durch `SKIP LOCKED` und bedingtes Schreiben
+unschädlich). Mit `VOYAGE_API_KEY` und `ANTHROPIC_API_KEY` bettet derselbe
+Job Chunks ohne Embedding des aktuellen Modells in Stapeln ein und
+schreibt je Chunk das Modell mit, nur solange der Text unverändert ist;
+Papierkorb und Vorlagen bleiben aussen vor. Nach einem Wechsel von
+`EMBEDDING_MODEL` baut er so den Bestand neu auf. Die Web-App
+(`lib/retrieval.ts`) bettet nur noch die Frage ein: Sie vergleicht alle
+Chunks der für die Person sichtbaren Seiten, stapelweise und ohne Deckel,
+behält die besten acht und warnt ab 20 000 Chunks je Frage im Log. Gibt
+es sichtbare Chunks ohne passendes Embedding, mischt sie Volltexttreffer
+aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
+
 ## 6. Roadmap / Status
 
 - [x] Architektur & Plan
@@ -189,7 +390,8 @@ einen Hinweis.
 - [x] Spaces + Mitgliedschaften + Rollen/Permissions
 - [x] Seitenbaum + CRUD + TipTap-Editor
 - [x] Realtime-Co-Editing (Yjs/Hocuspocus) + Live-Cursor
-- [x] Volltextsuche (Postgres `tsvector`)
+- [x] Suche mit deutschen Wortformen, Wortanfängen und Operatoren,
+      Trigramm-Index für Titel, Treffer mit Pfad und Änderungsdatum
 - [x] Page-History (Snapshots + Wiederherstellen, Redis-gethrottelt)
 - [x] Mitgliederverwaltung + tokenbasierte E-Mail-Einladungen (SHA-256-Hash,
       Konstantzeit-Vergleich, Ablauf, Einmaligkeit, E-Mail-Bindung)
@@ -216,7 +418,9 @@ einen Hinweis.
       Collab-Server, Thread-Antworten)
 - [x] KI-Layer: "Frag dein Wiki" (RAG mit Quellenangaben; Retrieval
       semantisch via Voyage-Embeddings, FTS-Fallback ohne Key;
-      Chunk-Indexierung im Collab-Server) + KI-Aktionen im Editor
+      Chunk-Index für alle Schreibwege (Queue per Trigger,
+      Hintergrundjob im Collab-Prozess), Embeddings mit Modell je
+      Chunk) + KI-Aktionen im Editor
       (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) über
       Claude API (claude-opus-4-8, adaptive thinking, Prompt-Caching);
       graceful deaktiviert ohne ANTHROPIC_API_KEY
@@ -366,9 +570,29 @@ einen Hinweis.
       den Subject-Claim, E-Mail-Verknüpfung nur bei `email_verified`;
       Kontoanlage nur mit `OIDC_ALLOW_SIGNUP`; der zweite Faktor gilt
       auch hier, damit er nicht an der Sicherheit des Anbieters hängt
+- [x] Seite folgen meldet Änderungen (PAGE_UPDATED mit dem Snapshot,
+      Mitwirkende im Zeitfenster über Redis, höchstens eine ungelesene je
+      Seite, Link auf den Vergleich)
+- [x] Sicherung und Rückweg (`backup.sh`, `restore.sh`, Restore-Epoche, im
+      Docker-Job der CI zurückgespielt)
+- [ ] Nachlauf-Snapshot: trifft ein Speicherlauf auf die belegte
+      Snapshot-Drossel, einen Merker `dokunc:snapshot-pending:<pageId>`
+      setzen; ein Zeitgeber schreibt nach Ablauf der Drossel für diese
+      Seiten einen Snapshot aus `Page.content` und meldet dabei wie der
+      Speicherlauf. Schliesst die Lücke, dass der Nachlauf eines
+      Zwei-Minuten-Fensters weder Version noch Änderungsmeldung bekommt.
+      Braucht eine eigene Spezifikation (Versionsgeschichte, mehrere
+      Instanzen)
 - [ ] Ausbaustufen: S3, vollständige i18n, Prompt→Dialog-UI,
-      pgvector ab ~10k Seiten
-- [ ] Offene Härtung: Größenlimit für Yjs-Dokumente
+      pgvector, sobald die Warnung der KI-Suche (ab 20 000 Abschnitten
+      je Frage) regelmässig erscheint
+- [x] Grössengrenzen für Collab-Nachrichten und Yjs-Dokumente
+      (`COLLAB_MAX_MESSAGE_MB`, `COLLAB_MAX_DOC_MB`), Liste der grössten
+      Seiten unter `/admin/documents`
+- [x] Aufbewahrung: täglicher Job mit Fristen per Umgebung, Versionen
+      ausdünnen (24 h alle, 30 Tage stündlich, dann täglich,
+      Wiederherstellungspunkte gepinnt), Verlauf mit Cursor, Audit-Spur
+      bleibt beim Löschen eines Space
 
 ## 7. Setup
 
@@ -377,6 +601,9 @@ einen Hinweis.
 ```bash
 docker compose up -d --build     # https://localhost:7891 (Proxy), Migrationen automatisch
 ```
+
+Sichern und zurückspielen: `./scripts/backup.sh`,
+`./scripts/restore.sh <Zeitstempel>` (README „Sicherung und Rückweg“).
 
 **Lokal (ohne Docker):**
 

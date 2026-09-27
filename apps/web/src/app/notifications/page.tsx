@@ -1,10 +1,15 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, AtSign, MessageSquare, Bell } from "lucide-react";
-import { prisma } from "@dokunc/db";
+import {
+  ArrowLeft,
+  AtSign,
+  MessageSquare,
+  Bell,
+  PencilLine,
+} from "lucide-react";
+import { notificationPath } from "@dokunc/mail";
 import { requireUser } from "@/lib/current-user";
-import { accessibleSpaces } from "@/lib/space-access";
-import { visiblePagesAcrossSpaces } from "@/lib/page-access";
+import { loadNotificationList } from "@/lib/notification-list";
 import { Avatar } from "@/components/ui/Avatar";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/cn";
@@ -12,49 +17,21 @@ import { markAllReadAction } from "./actions";
 
 export const metadata: Metadata = {
   title: "Benachrichtigungen",
-  description: "Erwähnungen und Antworten auf deine Kommentare.",
+  description: "Erwähnungen, Kommentare und Änderungen an Seiten, denen du folgst.",
 };
 
 const TYPE_TEXT: Record<string, string> = {
   MENTION: "hat dich erwähnt",
   COMMENT: "hat kommentiert",
   COMMENT_REPLY: "hat in einem Thread geantwortet",
+  PAGE_UPDATED: "hat bearbeitet",
 };
 
 export default async function NotificationsPage() {
   const user = await requireUser();
-
-  const all = await prisma.notification.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "desc" },
-    take: 50,
-    include: { actor: { select: { name: true } } },
-  });
-
-  const pageIds = [
-    ...new Set(all.map((n) => n.pageId).filter((id): id is string => !!id)),
-  ];
-  // Nur Seiten, die diese Person heute noch sehen darf: eine alte
-  // Benachrichtigung aus einem verlassenen Space, nach einem Rechteentzug
-  // oder nach nachträglichem Schutz soll den Titel nicht mehr verraten.
-  // Die Sichtbarkeit geht über die Zugriffsschicht, damit auch Zugang
-  // über eine Gruppe zählt.
-  const pages = pageIds.length
-    ? await prisma.page.findMany({
-        where: {
-          id: { in: pageIds },
-          deletedAt: null,
-          ...visiblePagesAcrossSpaces(user.id, await accessibleSpaces(user.id)),
-        },
-        select: { id: true, title: true },
-      })
-    : [];
-  const titleById = new Map(pages.map((p) => [p.id, p.title]));
-  const notifications = all.filter(
-    (n) => !n.pageId || titleById.has(n.pageId),
+  const { items: notifications, unreadTotal } = await loadNotificationList(
+    user.id,
   );
-
-  const unread = notifications.filter((n) => !n.readAt).length;
 
   return (
     <div className="mx-auto max-w-xl px-6 py-12 animate-[rise_0.4s_ease]">
@@ -69,7 +46,7 @@ export default async function NotificationsPage() {
         <h1 className="text-2xl font-semibold tracking-tight">
           Benachrichtigungen
         </h1>
-        {unread > 0 && (
+        {unreadTotal > 0 && (
           <form action={markAllReadAction}>
             <Button variant="secondary" size="sm" type="submit">
               Alle als gelesen markieren
@@ -80,37 +57,55 @@ export default async function NotificationsPage() {
 
       <ul className="mt-8 space-y-2">
         {notifications.map((n) => {
-          const Icon = n.type === "MENTION" ? AtSign : MessageSquare;
-          const title = n.pageId
-            ? (titleById.get(n.pageId) ?? "Seite")
-            : "Seite";
+          const Icon =
+            n.type === "MENTION"
+              ? AtSign
+              : n.type === "PAGE_UPDATED"
+                ? PencilLine
+                : MessageSquare;
+          const title = n.pageTitle ?? "Seite";
+          const href = n.pageId
+            ? notificationPath({ id: n.id, type: n.type, pageId: n.pageId })
+            : "#";
+          const className = cn(
+            "flex items-center gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-soft transition-colors hover:border-line-strong",
+            !n.readAt && "border-accent/40 bg-accent-soft/30",
+          );
+          const body = (
+            <>
+              <Avatar name={n.actor?.name ?? "System"} size={32} />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm">
+                  <span className="font-medium">
+                    {n.actor?.name ?? "Jemand"}
+                  </span>{" "}
+                  {TYPE_TEXT[n.type] ?? "Aktivität"} —{" "}
+                  <span className="font-medium">{title}</span>
+                </p>
+                <p className="text-xs text-faint">
+                  {n.createdAt.toLocaleString("de-DE", {
+                    dateStyle: "medium",
+                    timeStyle: "short",
+                  })}
+                </p>
+              </div>
+              <Icon className="h-4 w-4 shrink-0 text-faint" />
+            </>
+          );
           return (
             <li key={n.id}>
-              <Link
-                href={n.pageId ? `/p/${n.pageId}` : "#"}
-                className={cn(
-                  "flex items-center gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-soft transition-colors hover:border-line-strong",
-                  !n.readAt && "border-accent/40 bg-accent-soft/30",
-                )}
-              >
-                <Avatar name={n.actor?.name ?? "System"} size={32} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm">
-                    <span className="font-medium">
-                      {n.actor?.name ?? "Jemand"}
-                    </span>{" "}
-                    {TYPE_TEXT[n.type] ?? "Aktivität"} —{" "}
-                    <span className="font-medium">{title}</span>
-                  </p>
-                  <p className="text-xs text-faint">
-                    {n.createdAt.toLocaleString("de-DE", {
-                      dateStyle: "medium",
-                      timeStyle: "short",
-                    })}
-                  </p>
-                </div>
-                <Icon className="h-4 w-4 shrink-0 text-faint" />
-              </Link>
+              {n.type === "PAGE_UPDATED" && n.pageId ? (
+                // Schlichter Link statt <Link>: die Route setzt die Meldung
+                // auf gelesen, ein Prefetch darf sie nicht ausloesen, und
+                // die volle Navigation liefert Glocke und Liste frisch.
+                <a href={href} className={className}>
+                  {body}
+                </a>
+              ) : (
+                <Link href={href} className={className}>
+                  {body}
+                </Link>
+              )}
             </li>
           );
         })}
@@ -123,7 +118,7 @@ export default async function NotificationsPage() {
           </div>
           <p className="mt-4 font-medium">Alles ruhig</p>
           <p className="mt-1 text-sm text-muted">
-            Erwähnungen und Kommentar-Antworten landen hier.
+            Erwähnungen, Kommentare und Änderungen an Seiten, denen du folgst, landen hier.
           </p>
         </div>
       )}

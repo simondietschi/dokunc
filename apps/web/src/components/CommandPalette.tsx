@@ -24,6 +24,7 @@ import {
   isAuthPath,
   matchesQuery,
   normalizeQuery,
+  pageHint,
   spaceSlugFromPath,
   splitHighlights,
 } from "@/lib/palette";
@@ -32,6 +33,7 @@ import type { SearchResponse } from "@/app/api/search/route";
 import type { FavoritesResponse } from "@/app/api/favorites/route";
 import { createPageAction } from "@/app/s/[slug]/actions";
 import { pageTitle } from "@/lib/page-title";
+import { relativeTime } from "@/lib/relative-time";
 import { useBackdropClose, useModal } from "@/components/ui/use-modal";
 import {
   EVENT_OPEN_PALETTE,
@@ -53,6 +55,8 @@ type Item = {
   snippet?: string;
   /** Kleines Badge hinter dem Label (z. B. "Vorlage"). */
   badge?: string;
+  /** Rechts in der Zeile, etwa das Änderungsdatum eines Seitentreffers. */
+  meta?: string;
   run: () => void;
 };
 
@@ -83,7 +87,10 @@ export function CommandPalette() {
   // Escape hing vorher am Suchfeld: wer in der Ergebnisliste stand, kam
   // mit der Taste nicht heraus, und eine Fokusfalle gab es nicht.
   // Ohne initialFocus: das erste fokussierbare Element im Geruest ist
-  // das Suchfeld, und das traegt bereits autoFocus.
+  // das Suchfeld. Bewusst ohne autoFocus daran: das setzte den Fokus schon
+  // beim Commit, vor dem Effekt von useModal. Der merkte sich dann das
+  // Suchfeld statt des Ausloesers als Ziel der Fokus-Rueckgabe, und sein
+  // Fokus einen Frame spaeter holte einen schnellen Tab ins Suchfeld zurueck.
   const { mounted } = useModal({ open, onClose: close, panel: panelRef });
   const onBackdrop = useBackdropClose(panelRef, close);
 
@@ -218,9 +225,11 @@ export function CommandPalette() {
       group: "Seiten",
       icon: <FileText className="h-4 w-4" />,
       label: pageTitle(p.title),
-      hint: p.spaceName,
+      hint: pageHint(p.spaceName, p.path),
       snippet: p.snippet,
       badge: p.isTemplate ? "Vorlage" : undefined,
+      // Die Palette rendert nur im Client: kein Hydrieren, "jetzt" ist hier.
+      meta: relativeTime(p.updatedAt),
       run: () => go(`/s/${p.slug}/p/${p.id}`),
     });
   }
@@ -382,7 +391,6 @@ export function CommandPalette() {
             aria-activedescendant={
               items[clamped] ? `cmdk-option-${clamped}` : undefined
             }
-            autoFocus
             className="h-13 w-full bg-transparent py-4 text-[15px] text-ink outline-none placeholder:text-faint"
           />
           <kbd className="shrink-0 rounded border border-line-strong bg-subtle px-1.5 py-0.5 font-mono text-[10.5px] text-faint">
@@ -459,7 +467,7 @@ export function CommandPalette() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex items-baseline gap-2">
-                      <span className="truncate text-[14px] font-medium">
+                      <span className="min-w-0 truncate text-[14px] font-medium">
                         {item.label}
                       </span>
                       {item.badge && (
@@ -468,7 +476,7 @@ export function CommandPalette() {
                         </span>
                       )}
                       {item.hint && (
-                        <span className="shrink-0 text-[11.5px] text-faint">
+                        <span className="min-w-0 truncate text-[11.5px] text-faint">
                           {item.hint}
                         </span>
                       )}
@@ -490,6 +498,11 @@ export function CommandPalette() {
                       </span>
                     )}
                   </span>
+                  {item.meta && (
+                    <span className="shrink-0 self-start pt-0.5 text-[11px] text-faint">
+                      {item.meta}
+                    </span>
+                  )}
                 </button>
               </li>
             );

@@ -34,6 +34,7 @@ import { TableTools } from "@/components/editor/TableMenu";
 import type { PromptRequest } from "@/components/editor/SlashCommands";
 import { normalizeLinkInput } from "@/lib/editor-text";
 import { HIGHLIGHT_COLORS } from "@/lib/brand";
+import { cn } from "@/lib/cn";
 
 /** Markieren mit Farbwahl (Highlight ist multicolor konfiguriert). */
 function HighlightPicker({ editor }: { editor: Editor }) {
@@ -198,13 +199,21 @@ function readState(editor: Editor) {
  * Aktion baut ihre Command-Chain erst beim Klick — eine beim Rendern
  * erzeugte Chain hängt an einem veralteten State und wirft
  * "Applying a mismatched transaction".
+ *
+ * `gesperrt`: der Inhalt darf gerade nicht geaendert werden (noch nicht
+ * verbunden, getrennt, Groessensperre). Die Befehle der Leiste fragen
+ * `editor.isEditable` nicht ab und dispatchen auch in einen gesperrten
+ * Editor; deshalb schaltet ein deaktiviertes fieldset alle Knoepfe samt
+ * offener Untermenues ab.
  */
 export function EditorToolbar({
   editor,
   onPrompt,
+  gesperrt = false,
 }: {
   editor: Editor | null;
   onPrompt: (request: PromptRequest) => void;
+  gesperrt?: boolean;
 }) {
   const s = useEditorState({
     editor,
@@ -218,94 +227,106 @@ export function EditorToolbar({
     <div
       role="toolbar"
       aria-label="Textformatierung"
-      className="flex flex-wrap items-center gap-0.5 rounded-xl border border-line bg-surface/80 p-1 shadow-soft backdrop-blur"
+      aria-disabled={gesperrt || undefined}
+      className={cn(
+        "rounded-xl border border-line bg-surface/80 p-1 shadow-soft backdrop-blur",
+        gesperrt && "[&_button]:cursor-not-allowed",
+      )}
     >
-      {/* Undo/Redo kommen aus der Collaboration-Extension (Yjs-UndoManager),
-          StarterKit-History ist bei Kollaboration bewusst deaktiviert. */}
-      <EditorButton
-        label="Rückgängig"
-        on={() => c().undo().run()}
-        disabled={!s.canUndo}
+      <fieldset
+        disabled={gesperrt}
+        className={cn(
+          "m-0 flex min-w-0 flex-wrap items-center gap-0.5 border-0 p-0",
+          gesperrt && "opacity-50",
+        )}
       >
-        <Undo2 className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton
-        label="Wiederholen"
-        on={() => c().redo().run()}
-        disabled={!s.canRedo}
-      >
-        <Redo2 className="h-4 w-4" />
-      </EditorButton>
-      <EditorSeparator />
-      <EditorButton label="Überschrift 1" on={() => c().toggleHeading({ level: 1 }).run()} active={s.h1}>
-        <Heading1 className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Überschrift 2" on={() => c().toggleHeading({ level: 2 }).run()} active={s.h2}>
-        <Heading2 className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Überschrift 3" on={() => c().toggleHeading({ level: 3 }).run()} active={s.h3}>
-        <Heading3 className="h-4 w-4" />
-      </EditorButton>
-      <EditorSeparator />
-      <EditorButton label="Fett" on={() => c().toggleBold().run()} active={s.bold}>
-        <Bold className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Kursiv" on={() => c().toggleItalic().run()} active={s.italic}>
-        <Italic className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Unterstrichen" on={() => c().toggleUnderline().run()} active={s.underline}>
-        <UnderlineIcon className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Durchgestrichen" on={() => c().toggleStrike().run()} active={s.strike}>
-        <Strikethrough className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Code" on={() => c().toggleCode().run()} active={s.code}>
-        <Code className="h-4 w-4" />
-      </EditorButton>
-      <HighlightPicker editor={editor} />
-      <EditorButton
-        label={s.link ? "Link entfernen" : "Link"}
-        on={() => editLink(editor, onPrompt)}
-        active={s.link}
-      >
-        <Link2 className="h-4 w-4" />
-      </EditorButton>
-      <EditorSeparator />
-      <EditorButton label="Aufzählung" on={() => c().toggleBulletList().run()} active={s.bulletList}>
-        <List className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Nummerierte Liste" on={() => c().toggleOrderedList().run()} active={s.orderedList}>
-        <ListOrdered className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Aufgabenliste" on={() => c().toggleTaskList().run()} active={s.taskList}>
-        <ListChecks className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Zitat" on={() => c().toggleBlockquote().run()} active={s.blockquote}>
-        <Quote className="h-4 w-4" />
-      </EditorButton>
-      <EditorButton label="Codeblock" on={() => c().toggleCodeBlock().run()} active={s.codeBlock}>
-        <Code2 className="h-4 w-4" />
-      </EditorButton>
-      <EditorSeparator />
-      <TableTools editor={editor} />
-      <EditorButton label="Trennlinie" on={() => c().setHorizontalRule().run()}>
-        <Minus className="h-4 w-4" />
-      </EditorButton>
-      <EditorSeparator />
-      <EditorButton
-        label={
-          s.hasSelection
-            ? "Auswahl kommentieren"
-            : "Zum Kommentieren zuerst Text markieren"
-        }
-        on={() => startCommentThread(editor)}
-        active={s.comment}
-        disabled={!s.hasSelection}
-      >
-        <MessageSquarePlus className="h-4 w-4" />
-      </EditorButton>
-      <EditorSeparator />
-      <AiMenu editor={editor} />
+        {/* Undo/Redo kommen aus der Collaboration-Extension (Yjs-UndoManager),
+            StarterKit-History ist bei Kollaboration bewusst deaktiviert. */}
+        <EditorButton
+          label="Rückgängig"
+          on={() => c().undo().run()}
+          disabled={!s.canUndo}
+        >
+          <Undo2 className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton
+          label="Wiederholen"
+          on={() => c().redo().run()}
+          disabled={!s.canRedo}
+        >
+          <Redo2 className="h-4 w-4" />
+        </EditorButton>
+        <EditorSeparator />
+        <EditorButton label="Überschrift 1" on={() => c().toggleHeading({ level: 1 }).run()} active={s.h1}>
+          <Heading1 className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Überschrift 2" on={() => c().toggleHeading({ level: 2 }).run()} active={s.h2}>
+          <Heading2 className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Überschrift 3" on={() => c().toggleHeading({ level: 3 }).run()} active={s.h3}>
+          <Heading3 className="h-4 w-4" />
+        </EditorButton>
+        <EditorSeparator />
+        <EditorButton label="Fett" on={() => c().toggleBold().run()} active={s.bold}>
+          <Bold className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Kursiv" on={() => c().toggleItalic().run()} active={s.italic}>
+          <Italic className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Unterstrichen" on={() => c().toggleUnderline().run()} active={s.underline}>
+          <UnderlineIcon className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Durchgestrichen" on={() => c().toggleStrike().run()} active={s.strike}>
+          <Strikethrough className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Code" on={() => c().toggleCode().run()} active={s.code}>
+          <Code className="h-4 w-4" />
+        </EditorButton>
+        <HighlightPicker editor={editor} />
+        <EditorButton
+          label={s.link ? "Link entfernen" : "Link"}
+          on={() => editLink(editor, onPrompt)}
+          active={s.link}
+        >
+          <Link2 className="h-4 w-4" />
+        </EditorButton>
+        <EditorSeparator />
+        <EditorButton label="Aufzählung" on={() => c().toggleBulletList().run()} active={s.bulletList}>
+          <List className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Nummerierte Liste" on={() => c().toggleOrderedList().run()} active={s.orderedList}>
+          <ListOrdered className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Aufgabenliste" on={() => c().toggleTaskList().run()} active={s.taskList}>
+          <ListChecks className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Zitat" on={() => c().toggleBlockquote().run()} active={s.blockquote}>
+          <Quote className="h-4 w-4" />
+        </EditorButton>
+        <EditorButton label="Codeblock" on={() => c().toggleCodeBlock().run()} active={s.codeBlock}>
+          <Code2 className="h-4 w-4" />
+        </EditorButton>
+        <EditorSeparator />
+        <TableTools editor={editor} />
+        <EditorButton label="Trennlinie" on={() => c().setHorizontalRule().run()}>
+          <Minus className="h-4 w-4" />
+        </EditorButton>
+        <EditorSeparator />
+        <EditorButton
+          label={
+            s.hasSelection
+              ? "Auswahl kommentieren"
+              : "Zum Kommentieren zuerst Text markieren"
+          }
+          on={() => startCommentThread(editor)}
+          active={s.comment}
+          disabled={!s.hasSelection}
+        >
+          <MessageSquarePlus className="h-4 w-4" />
+        </EditorButton>
+        <EditorSeparator />
+        <AiMenu editor={editor} />
+      </fieldset>
     </div>
   );
 }

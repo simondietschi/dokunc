@@ -9,6 +9,10 @@ import { Button } from "@/components/ui/Button";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { restorePageAction, purgePageAction } from "../actions";
 import { pageTitle } from "@/lib/page-title";
+import {
+  currentRetentionConfig,
+  retentionNotes,
+} from "@/lib/retention-config";
 
 export const metadata: Metadata = {
   title: "Papierkorb",
@@ -33,6 +37,7 @@ export default async function TrashPage({
     orderBy: { deletedAt: "desc" },
     select: { id: true, title: true, deletedAt: true, isTemplate: true },
   });
+  const frist = retentionNotes(currentRetentionConfig()).papierkorb;
 
   return (
     <div className="mx-auto max-w-2xl px-8 py-14 animate-[rise_0.4s_ease]">
@@ -44,6 +49,7 @@ export default async function TrashPage({
         Gelöschte Seiten in „{space.name}". Wiederherstellen stellt auch
         Unterseiten wieder her.
       </p>
+      {frist && <p className="mt-1 text-sm text-muted">{frist}</p>}
 
       <ul className="mt-8 space-y-2">
         {pages.map((p) => (

@@ -6,7 +6,11 @@ import { ACCENT, escapeHtml, mailButton, mailLayout } from "./index";
  * damit weder Namen noch Seitentitel HTML in die Mail schleusen können.
  */
 
-type NotificationMailType = "MENTION" | "COMMENT" | "COMMENT_REPLY";
+export type NotificationMailType =
+  | "MENTION"
+  | "COMMENT"
+  | "COMMENT_REPLY"
+  | "PAGE_UPDATED";
 
 export type NotificationMailItem = {
   type: NotificationMailType;
@@ -28,6 +32,8 @@ export function describeNotification(type: NotificationMailType): string {
       return "hat kommentiert";
     case "COMMENT_REPLY":
       return "hat auf deinen Kommentar geantwortet";
+    case "PAGE_UPDATED":
+      return "hat bearbeitet";
   }
 }
 
@@ -40,7 +46,23 @@ function singleSubject(item: NotificationMailItem): string {
       return `${item.actorName} hat ${item.pageTitle} kommentiert`;
     case "COMMENT_REPLY":
       return `${item.actorName} hat auf deinen Kommentar geantwortet`;
+    case "PAGE_UPDATED":
+      return `${item.actorName} hat ${item.pageTitle} bearbeitet`;
   }
+}
+
+/**
+ * Pfad, unter dem eine Benachrichtigung geoeffnet wird. Aenderungen laufen
+ * ueber /notifications/<id>: die Route setzt sie auf gelesen (sonst kaeme
+ * zu dieser Seite nie wieder eine) und sucht den Stand vor der Aenderung.
+ * Die uebrigen Typen fuehren wie bisher direkt zur Seite.
+ */
+export function notificationPath(n: {
+  id: string;
+  type: NotificationMailType;
+  pageId: string;
+}): string {
+  return n.type === "PAGE_UPDATED" ? `/notifications/${n.id}` : `/p/${n.pageId}`;
 }
 
 /** Auszug auf eine handliche Länge kürzen (eine Zeile, ohne Umbrüche). */
@@ -115,7 +137,14 @@ export function notificationMail(opts: {
       <ul style="list-style:none;padding:0;margin:0 0 8px">${items
         .map(itemHtml)
         .join("")}</ul>
-      ${items.length === 1 ? mailButton(items[0].url, "Seite öffnen") : ""}`;
+      ${
+        items.length === 1
+          ? mailButton(
+              items[0].url,
+              items[0].type === "PAGE_UPDATED" ? "Änderungen ansehen" : "Seite öffnen",
+            )
+          : ""
+      }`;
 
   return {
     subject,

@@ -236,17 +236,18 @@ export async function deleteSpaceAction(form: FormData) {
   });
   if (!space) return;
 
-  // Der Audit-Eintrag muss VOR der Löschung stehen: AuditLog.spaceId
-  // kaskadiert mit dem Space, sonst verschwindet der Beleg mit ihm.
+  // Harte Löschung inkl. Kaskaden (Seiten, Mitglieder, Einladungen) —
+  // und der hochgeladenen Dateien, die sonst verwaist liegen bleiben.
+  await deleteSpaceWithUploads(space.id);
+  // Nach der Loeschung: scheitert sie (Zeitgrenze), steht kein falscher
+  // Eintrag im Log. Die Eintraege des Space bleiben (AuditLog.spaceId wird
+  // NULL), space.deleted traegt Name und Slug.
   await audit({
     action: "space.deleted",
     actorId: me.id,
     targetId: space.id,
     metadata: { name: space.name, slug: space.slug },
   });
-  // Harte Löschung inkl. Kaskaden (Seiten, Mitglieder, Einladungen) —
-  // und der hochgeladenen Dateien, die sonst verwaist liegen bleiben.
-  await deleteSpaceWithUploads(space.id);
   backToAdmin();
 }
 

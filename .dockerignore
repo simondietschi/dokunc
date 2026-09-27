@@ -28,3 +28,7 @@ playwright.config.ts
 **/vitest.integration.config.ts
 # Bilddateien, die nur Tests lesen (Metadaten-Entfernung).
 **/test/fixtures
+
+# Ein versehentlich hier abgelegtes APP_SECRET kaeme sonst mit COPY . .
+# ins Image.
+app_secret

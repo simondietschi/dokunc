@@ -12,6 +12,8 @@
  * sich fuer sich pruefen laesst. Die Verdrahtung steht in server.ts.
  */
 
+import { readWholeNumber, type EnvWarn } from "@dokunc/editor";
+
 /** Fenster der Versuchsbremsen (s). */
 export const ATTEMPT_WINDOW_SEC = 60;
 
@@ -110,21 +112,17 @@ const ENV_NAMES: Record<keyof ConnectionLimits, string> = {
  */
 export function readConnectionLimits(
   env: Record<string, string | undefined>,
-  warn: (detail: { variable: string; wert: string }, msg: string) => void,
+  warn: EnvWarn,
 ): ConnectionLimits {
   const limits = { ...DEFAULT_LIMITS };
   for (const key of Object.keys(ENV_NAMES) as (keyof ConnectionLimits)[]) {
-    const variable = ENV_NAMES[key];
-    const raw = env[variable]?.trim();
-    if (!raw) continue;
-    if (/^\d+$/.test(raw)) {
-      limits[key] = Number(raw);
-    } else {
-      warn(
-        { variable, wert: raw.slice(0, 40) },
-        "Ungueltige Verbindungsgrenze, Vorgabe gilt",
-      );
-    }
+    const value = readWholeNumber(
+      env,
+      ENV_NAMES[key],
+      warn,
+      "Ungueltige Verbindungsgrenze, Vorgabe gilt",
+    );
+    if (value !== undefined) limits[key] = value;
   }
   return limits;
 }

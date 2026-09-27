@@ -276,11 +276,29 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
   await input.fill("Willkommen");
   const hit = page.getByRole("option").filter({ hasText: "Willkommen" });
   await expect(hit.first()).toBeVisible();
+  // Treffer tragen das Aenderungsdatum (auch bei wiederverwendeter
+  // Datenbank, dann aelter).
+  await expect(hit.first()).toContainText(
+    /gerade eben|vor \d+ (Min\.|Std\.)|gestern|vor \d+ Tagen|\d{2}\.\d{2}\.\d{4}/,
+  );
   await hit.first().click();
   await page.waitForURL(/\/s\/[^/]+\/p\/[a-z0-9]+/);
 
-  // Aktion: Palette erneut öffnen, "Alle Spaces" wählen
-  await page.keyboard.press("ControlOrMeta+k");
+  // Die Space-Suche zeigt denselben Treffer mit Pfad und Datum.
+  const slug = new URL(page.url()).pathname.split("/")[2];
+  await page.goto(`/s/${slug}/search?q=Willkommen`);
+  const result = page
+    .getByRole("link")
+    .filter({ hasText: "Willkommen" })
+    .filter({ hasText: "Geändert" });
+  await expect(result.first()).toBeVisible();
+
+  // Aktion: Palette erneut öffnen, "Alle Spaces" wählen. Nach dem
+  // Seitenaufruf kann die Hydration noch laufen, wie oben.
+  await expect(async () => {
+    await page.keyboard.press("ControlOrMeta+k");
+    await expect(input).toBeVisible({ timeout: 1_000 });
+  }).toPass({ timeout: 15_000 });
   await page.getByPlaceholder("Suchen oder springen…").fill("alle spaces");
   await page
     .getByRole("option", { name: "Alle Spaces", exact: true })
@@ -304,7 +322,9 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
   // Erst wenn das Suchfeld den Fokus hat: useModal setzt ihn einen Frame
   // nach dem Oeffnen. Ein Tab davor holt die Fokusfalle aufs erste
   // Element, also ebenfalls ins Suchfeld, und der Test sahe dort einen
-  // Fehler, wo keiner ist.
+  // Fehler, wo keiner ist. Das Warten traegt nur, weil allein useModal
+  // fokussiert: mit autoFocus am Suchfeld war es sofort erfuellt, und ein
+  // spaeter Frame holte den Fokus nach dem Tab ins Suchfeld zurueck.
   await expect(feld).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(feld).not.toBeFocused();
@@ -314,6 +334,18 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
   ).toHaveCount(1);
   await page.keyboard.press("Escape");
   await expect(feld).toBeHidden();
+
+  // Beim Schliessen geht der Fokus an den Ausloeser zurueck. Mit autoFocus
+  // am Suchfeld merkte sich useModal das Suchfeld als Rueckgabeziel, und
+  // der Fokus landete nach Escape im Nichts.
+  const knopf = page.getByRole("button", {
+    name: "Suchen oder springen (⌘K)",
+  });
+  await knopf.click();
+  await expect(feld).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(feld).toBeHidden();
+  await expect(knopf).toBeFocused();
 });
 
 test("Datei-Auslieferung verlangt Anmeldung", async ({ page }) => {

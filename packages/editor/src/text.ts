@@ -16,6 +16,19 @@ export function chunkText(text: string, size: number): string[] {
 }
 
 /**
+ * Chunk-Groesse der KI-Indexierung (Zeichen), vorher CHUNK_SIZE in
+ * apps/collab/src/server.ts. Wer sie aendert, braucht zugleich eine
+ * Migration, die alle Seiten in "AiIndexQueue" eintraegt; erst dann
+ * zerlegt der KI-Index den Bestand neu (und bettet ihn neu ein).
+ */
+export const AI_CHUNK_SIZE = 1200;
+
+/** Zerlegung, die der KI-Index (Speicherlauf und Hintergrundjob) verwendet. */
+export function chunkForAiIndex(text: string): string[] {
+  return chunkText(text, AI_CHUNK_SIZE);
+}
+
+/**
  * Anker-Kennung aus einem Überschriftentext.
  *
  * Bewusst schlicht und ohne Eindeutigkeitsgarantie: zwei gleich

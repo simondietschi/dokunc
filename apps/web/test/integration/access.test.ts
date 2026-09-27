@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { prisma } from "@dokunc/db";
+import { prisma, usersWhoCanSeePage } from "@dokunc/db";
 import { effectiveRole, accessibleSpaces } from "@/lib/space-access";
 import {
   canSeePage,
@@ -509,5 +509,66 @@ describe("Guards für Vorlagen, Duplizieren und Favoriten", () => {
     expect(await sichtbar(admin())).toEqual(
       [openPageId, secretPageId, secretChildId].sort(),
     );
+  });
+});
+
+// Der Collab-Server prueft damit alle Folgenden einer Seite auf einmal
+// (Aenderungsmeldungen). Dieselbe Regel wie canSeePage, nur gebuendelt.
+describe("usersWhoCanSeePage", () => {
+  it("laesst auf einer offenen Seite Mitglieder und Gruppenmitglieder durch, Fremde nicht", async () => {
+    const stranger = await makeUser("uwcsp-fremd");
+    try {
+      expect(
+        await usersWhoCanSeePage(openPageId, [plain, stranger, viaGroup]),
+      ).toEqual([plain, viaGroup]);
+    } finally {
+      await prisma.user.delete({ where: { id: stranger } });
+    }
+  });
+
+  it("laesst auf einer geschuetzten Seite nur Eingetragene und die Verwaltung durch", async () => {
+    // plain steht selbst drin (hat den Schutz gesetzt), manager und both
+    // verwalten den Space, viaGroup hat keine Freigabe.
+    const alle = [viaGroup, plain, manager, both];
+    expect(await usersWhoCanSeePage(secretPageId, alle)).toEqual([
+      plain,
+      manager,
+      both,
+    ]);
+    expect(await usersWhoCanSeePage(secretChildId, alle)).toEqual([
+      plain,
+      manager,
+      both,
+    ]);
+
+    // Freigabe fuer die Gruppe: jetzt auch viaGroup, auf der Seite und
+    // auf der Unterseite (gleiche Schutzwurzel).
+    await prisma.pageGrant.create({ data: { pageId: secretPageId, groupId } });
+    try {
+      expect(await usersWhoCanSeePage(secretChildId, alle)).toEqual(alle);
+    } finally {
+      await prisma.pageGrant.deleteMany({
+        where: { pageId: secretPageId, groupId },
+      });
+    }
+  });
+
+  it("liefert fuer eine Seite im Papierkorb niemanden", async () => {
+    const page = await prisma.page.create({
+      data: { spaceId, title: "Weg", deletedAt: new Date() },
+      select: { id: true },
+    });
+    try {
+      expect(await usersWhoCanSeePage(page.id, [plain, manager])).toEqual([]);
+      expect(await usersWhoCanSeePage("gibt-es-nicht", [plain])).toEqual([]);
+    } finally {
+      await prisma.page.delete({ where: { id: page.id } });
+    }
+  });
+
+  it("nennt Doppelte nur einmal, in der Reihenfolge der Eingabe", async () => {
+    expect(
+      await usersWhoCanSeePage(openPageId, [viaGroup, plain, viaGroup, plain]),
+    ).toEqual([viaGroup, plain]);
   });
 });

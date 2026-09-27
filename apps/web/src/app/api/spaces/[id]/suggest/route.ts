@@ -34,8 +34,10 @@ export async function GET(
   // Der Editor fragt bei JEDEM Tastendruck, ohne Entprellung — das
   // Fenster liegt deshalb weit ueber dem, was Tippen erzeugt. Ohne
   // Bremse laesst sich die Abfrage (zwei `contains` mit fuehrendem
-  // Platzhalter, also ohne Index) beliebig oft wiederholen; alle
-  // anderen teuren Endpunkte haben eine.
+  // Platzhalter) beliebig oft wiederholen; alle anderen teuren
+  // Endpunkte haben eine. Der Titel-contains (ILIKE '%q%') kann ab drei
+  // Zeichen Page_title_trgm_idx nutzen; die Namenssuche bleibt ohne
+  // Index.
   if (!(await rateLimit(
       `suggest:${user.id}`,
       RATE_LIMITS.suggest.versuche,

@@ -5,6 +5,7 @@ import {
   likeEscape,
   normalizeQuery,
   matchesQuery,
+  pageHint,
   spaceSlugFromPath,
   splitHighlights,
 } from "./palette";
@@ -115,5 +116,29 @@ describe("normalizeQuery()", () => {
     // Wert sehen, sonst gilt jede Antwort als veraltet.
     expect(normalizeQuery(null)).toBe("");
     expect(normalizeQuery(undefined)).toBe("");
+  });
+});
+
+describe("pageHint", () => {
+  it("nennt ohne Elternseite nur den Space", () => {
+    expect(pageHint("Team", [])).toBe("Team");
+  });
+
+  it("nennt die Elternseite", () => {
+    expect(pageHint("Team", [{ title: "Übersicht" }])).toBe("Team › Übersicht");
+  });
+
+  it("kuerzt tiefere Pfade auf Space und Elternseite", () => {
+    expect(
+      pageHint("Team", [
+        { title: "Wurzel" },
+        { title: "Mitte" },
+        { title: "Protokolle" },
+      ]),
+    ).toBe("Team › … › Protokolle");
+  });
+
+  it("zeigt einen leeren Elterntitel als Ohne Titel", () => {
+    expect(pageHint("Team", [{ title: "" }])).toBe("Team › Ohne Titel");
   });
 });

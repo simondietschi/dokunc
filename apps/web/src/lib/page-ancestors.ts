@@ -1,8 +1,8 @@
 import "server-only";
-import { prisma, type SpaceRole } from "@dokunc/db";
+import { Prisma, prisma, type SpaceRole } from "@dokunc/db";
 import { seesEverything, visiblePageSql } from "./page-access";
 
-type Ancestor = { id: string; title: string };
+export type Ancestor = { id: string; title: string };
 
 /**
  * Vorfahren einer Seite (Wurzel zuerst, Elternseite zuletzt) per
@@ -44,4 +44,58 @@ export async function loadAncestors(
     SELECT id, title, depth FROM anc ORDER BY depth DESC
   `;
   return rows.map((r) => ({ id: r.id, title: r.title }));
+}
+
+/**
+ * Vorfahren fuer viele Seiten auf einmal (Suchtreffer): eine rekursive
+ * Abfrage statt einer je Treffer. Dieselben Regeln wie loadAncestors:
+ * Kette endet an geloeschten und an nicht sichtbaren Elternseiten,
+ * Eltern nur aus demselben Space, hoechstens 64 Stufen.
+ *
+ * `openSpaceIds` sind die Spaces mit Verwaltungsrolle (visiblePageSql).
+ * Seiten ohne Elternseite fehlen in der Map.
+ */
+export async function loadAncestorPaths(
+  pages: readonly { id: string; parentId: string | null; spaceId: string }[],
+  userId: string,
+  openSpaceIds: readonly string[],
+): Promise<Map<string, Ancestor[]>> {
+  const out = new Map<string, Ancestor[]>();
+  const withParent = pages.filter(
+    (p): p is { id: string; parentId: string; spaceId: string } =>
+      p.parentId !== null,
+  );
+  if (withParent.length === 0) return out;
+  const visible = visiblePageSql(userId, openSpaceIds);
+  const rows = await prisma.$queryRaw<
+    { hitId: string; id: string; title: string; depth: number }[]
+  >`
+    WITH RECURSIVE hit(id, "parentId", "spaceId") AS (
+      VALUES ${Prisma.join(
+        withParent.map(
+          (p) =>
+            Prisma.sql`(${p.id}::text, ${p.parentId}::text, ${p.spaceId}::text)`,
+        ),
+      )}
+    ),
+    anc AS (
+      SELECT h.id AS "hitId", p.id, p.title, p."parentId", p."spaceId", 0 AS depth
+      FROM hit h
+      JOIN "Page" p ON p.id = h."parentId" AND p."spaceId" = h."spaceId"
+      WHERE p."deletedAt" IS NULL AND ${visible}
+      UNION ALL
+      SELECT anc."hitId", p.id, p.title, p."parentId", p."spaceId", anc.depth + 1
+      FROM anc
+      JOIN "Page" p ON p.id = anc."parentId" AND p."spaceId" = anc."spaceId"
+      WHERE p."deletedAt" IS NULL AND anc.depth < 64 AND ${visible}
+    )
+    SELECT "hitId", id, title, depth FROM anc ORDER BY "hitId", depth DESC
+  `;
+  for (const r of rows) {
+    const list = out.get(r.hitId);
+    const entry = { id: r.id, title: r.title };
+    if (list) list.push(entry);
+    else out.set(r.hitId, [entry]);
+  }
+  return out;
 }

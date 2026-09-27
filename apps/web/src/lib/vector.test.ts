@@ -1,10 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  vectorToBytes,
-  bytesToVector,
-  cosineSimilarity,
-} from "./vector";
-import { chunkText } from "@dokunc/editor";
+import { vectorToBytes, bytesToVector, cosineSimilarity } from "@dokunc/db";
+import { chunkForAiIndex, chunkText } from "@dokunc/editor";
 
 describe("vector utils", () => {
   it("Bytes-Roundtrip erhält Werte (Float32-Präzision)", () => {
@@ -63,5 +59,13 @@ describe("chunkText()", () => {
     const chunks = chunkText(text, 100);
     expect(chunks.join("")).toHaveLength(500);
     expect(chunks.every((c) => c.length <= 101)).toBe(true);
+  });
+});
+
+describe("chunkForAiIndex()", () => {
+  it("zerlegt wie chunkText mit 1200 Zeichen", () => {
+    const text = Array.from({ length: 400 }, (_, i) => `Satz ${i} ueber etwas.`).join(" ");
+    expect(chunkForAiIndex(text)).toEqual(chunkText(text, 1200));
+    expect(chunkForAiIndex(text).length).toBeGreaterThan(1);
   });
 });

@@ -128,6 +128,18 @@ export function AiMenu({ editor }: { editor: Editor }) {
         return;
       }
 
+      // Waehrend der Anfrage gesperrt (Groessensperre, getrennt): nicht
+      // einfuegen, die Aenderung bliebe sonst nur in diesem Browser liegen.
+      if (editor.isDestroyed || !editor.isEditable) {
+        toast({
+          title: "Ergebnis nicht eingefügt",
+          description:
+            "Die Seite kann gerade nicht bearbeitet werden. Versuche es später noch einmal.",
+          variant: "info",
+        });
+        return;
+      }
+
       // Auf den aktuellen Stand umgerechnete Positionen.
       const mappedFrom = mapping.map(from, 1);
       const mappedTo = mapping.map(to, -1);

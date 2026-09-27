@@ -1,20 +1,13 @@
 import { NextResponse } from "next/server";
-import { Prisma, prisma } from "@dokunc/db";
+import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
 import { rateLimit } from "@/lib/rate-limit";
-import {
-  HL_START,
-  HL_STOP,
-  likeEscape,
-  normalizeQuery,
-} from "@/lib/palette";
+import { likeEscape, normalizeQuery } from "@/lib/palette";
 import { accessibleSpaces } from "@/lib/space-access";
 import { RATE_LIMITS } from "@/lib/rate-limits";
-import {
-  seesEverything,
-  visiblePagesAcrossSpaces,
-  visiblePageSql,
-} from "@/lib/page-access";
+import { seesEverything, visiblePagesAcrossSpaces } from "@/lib/page-access";
+import { loadAncestorPaths } from "@/lib/page-ancestors";
+import { searchPages } from "@/lib/page-search";
 
 export type SearchPage = {
   id: string;
@@ -23,6 +16,10 @@ export type SearchPage = {
   spaceName: string;
   snippet: string;
   isTemplate: boolean;
+  /** Sichtbare Vorfahren, Wurzel zuerst (Hinweis "Space › Elternseite"). */
+  path: Array<{ id: string; title: string }>;
+  /** Letzte Aenderung, ISO. */
+  updatedAt: string;
 };
 
 export type SearchResponse = {
@@ -43,11 +40,12 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   }
 
-  // Bremse wie bei den anderen teuren Leseendpunkten: jede Anfrage
-  // kostet ILIKE, ts_rank und ts_headline ueber alle sichtbaren Seiten.
-  // Die Palette fragt entprellt und je Tastendruck hoechstens einmal;
-  // dieses Fenster liegt weit ueber dem, was Tippen erzeugt, und trifft
-  // nur den, der die Abfrage in Schleife wiederholt.
+  // Bremse wie bei den anderen Leseendpunkten. Die Suche selbst ist
+  // indexgestuetzt (lib/page-search.ts), ts_rank kostet aber weiter
+  // einen Schritt je Treffer, bei einem haeufigen Wort also viele. Die
+  // Palette fragt entprellt und je Tastendruck hoechstens einmal; dieses
+  // Fenster liegt weit ueber dem, was Tippen erzeugt, und trifft nur den,
+  // der die Abfrage in Schleife wiederholt.
   if (!(await rateLimit(
       `search:${user.id}`,
       RATE_LIMITS.search.versuche,
@@ -80,10 +78,10 @@ export async function GET(req: Request) {
   body.spaces = await prisma.space.findMany({
     where: {
       id: { in: spaceIds },
-      // Dieselbe Eingabe, dieselbe Behandlung wie unten in der
-      // Rohabfrage: `contains` baut ein LIKE-Muster, ohne % und _ zu
-      // maskieren. Ohne likeEscape faende eine Suche nach "%" alle
-      // Spaces, aber keine einzige Seite — zwei Trefferlisten aus
+      // Dieselbe Eingabe, dieselbe Behandlung wie in der Seitensuche
+      // (lib/page-search.ts): `contains` baut ein LIKE-Muster, ohne % und
+      // _ zu maskieren. Ohne likeEscape faende eine Suche nach "%" alle
+      // Spaces, aber keine einzige Seite: zwei Trefferlisten aus
       // derselben Eingabe.
       ...(q
         ? { name: { contains: likeEscape(q), mode: "insensitive" } }
@@ -106,9 +104,13 @@ export async function GET(req: Request) {
         id: true,
         title: true,
         isTemplate: true,
+        updatedAt: true,
+        parentId: true,
+        spaceId: true,
         space: { select: { slug: true, name: true } },
       },
     });
+    const paths = await loadAncestorPaths(recent, user.id, openSpaceIds);
     body.pages = recent.map((p) => ({
       id: p.id,
       title: p.title,
@@ -116,45 +118,32 @@ export async function GET(req: Request) {
       spaceName: p.space.name,
       snippet: "",
       isTemplate: p.isTemplate,
+      path: paths.get(p.id) ?? [],
+      updatedAt: p.updatedAt.toISOString(),
     }));
     return NextResponse.json(body);
   }
 
-  const like = `%${likeEscape(q)}%`;
-  // Titel-Treffer (auch Wortanfänge) UND Volltext (FTS) in einem Rutsch;
-  // Titel-Treffer ranken vor reinen Inhaltstreffern. Die Marker für die
-  // Hervorhebung sind kein HTML — der Client zerlegt sie sicher.
-  body.pages = await prisma.$queryRaw<SearchPage[]>`
-    SELECT p.id, p.title, s.slug, s.name AS "spaceName",
-      p."isTemplate",
-      CASE
-        WHEN to_tsvector('simple', coalesce(p."textContent", ''))
-             @@ plainto_tsquery('simple', ${q})
-        THEN ts_headline('simple', p."textContent",
-          plainto_tsquery('simple', ${q}),
-          ${`StartSel=${HL_START},StopSel=${HL_STOP},MaxFragments=1,MaxWords=16,MinWords=4`})
-        ELSE ''
-      END AS snippet
-    FROM "Page" p
-    JOIN "Space" s ON s.id = p."spaceId"
-    WHERE p."spaceId" IN (${Prisma.join(spaceIds)})
-      AND p."deletedAt" IS NULL
-      -- Geschuetzte Seiten nur dort, wo sie freigegeben sind.
-      AND ${visiblePageSql(user.id, openSpaceIds)}
-      AND (
-        p.title ILIKE ${like}
-        OR to_tsvector('simple',
-             coalesce(p.title, '') || ' ' || coalesce(p."textContent", ''))
-           @@ plainto_tsquery('simple', ${q})
-      )
-    ORDER BY (p.title ILIKE ${like}) DESC,
-      ts_rank(
-        to_tsvector('simple',
-          coalesce(p.title, '') || ' ' || coalesce(p."textContent", '')),
-        plainto_tsquery('simple', ${q})
-      ) DESC,
-      p."updatedAt" DESC
-    LIMIT 10
-  `;
+  // Titel, Inhalt (deutsche Wortformen, Wortanfaenge, Operatoren) und
+  // Kurzmodus: dieselbe Abfrage wie die Space-Suche. Die Marker fuer die
+  // Hervorhebung sind kein HTML, der Client zerlegt sie sicher.
+  const hits = await searchPages({
+    userId: user.id,
+    spaceIds,
+    openSpaceIds,
+    q,
+    limit: 10,
+    snippet: "short",
+  });
+  body.pages = hits.map((h) => ({
+    id: h.id,
+    title: h.title,
+    slug: h.spaceSlug,
+    spaceName: h.spaceName,
+    snippet: h.snippet,
+    isTemplate: h.isTemplate,
+    path: h.path,
+    updatedAt: h.updatedAt.toISOString(),
+  }));
   return NextResponse.json(body);
 }

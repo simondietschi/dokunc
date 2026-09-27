@@ -17,7 +17,12 @@ import { Placeholder } from "@tiptap/extensions";
 import Collaboration from "@tiptap/extension-collaboration";
 import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
-import { COLLAB_FIELD, richExtensions } from "@dokunc/editor";
+import {
+  COLLAB_FIELD,
+  parseDocSizeNotice,
+  richExtensions,
+  type DocSizeNotice,
+} from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
@@ -76,11 +81,20 @@ import { PromptDialog } from "@/components/ui/PromptDialog";
 import { useToast } from "@/components/ui/Toast";
 import { caretColorFor } from "@/lib/caret-color";
 import {
+  editorEditable,
   statusHandlers,
   statusLabel,
   visibleStatus,
   type EditorStatus,
 } from "@/lib/editor-status";
+import { requestCollabTicket } from "@/lib/collab-ticket-client";
+import { localDocName, removeForeignLocalDocs } from "@/lib/local-doc";
+import { afterLocalCopy } from "@/lib/local-copy";
+import {
+  TOO_LARGE_DISCARD_LABEL,
+  TOO_LARGE_NOTICE,
+} from "@/lib/doc-size-notice";
+import { DocSizeBanner } from "@/components/editor/DocSizeBanner";
 import { looksLikeMarkdown, markdownToHtml } from "@/lib/markdown-paste";
 import { relativeTime } from "@/lib/relative-time";
 import { cn } from "@/lib/cn";
@@ -174,23 +188,17 @@ const LinkClick = Extension.create({
 });
 
 /**
- * Holt eine kurzlebige Eintrittskarte für den Collab-Server.
- * Wirft bei Ablehnung — der Provider behandelt das als
- * fehlgeschlagene Authentifizierung und versucht es später erneut.
+ * Fuer welche Restore-Epoche dieser Tab die lokalen Kopien schon
+ * aufgeraeumt hat (einmal je Tab und Epoche). undefined: noch nie.
  */
-async function fetchCollabTicket(pageId: string): Promise<string> {
-  const res = await fetch("/api/collab/ticket", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pageId }),
-  });
-  if (!res.ok) throw new Error(`Ticket abgelehnt (${res.status})`);
-  const { ticket } = (await res.json()) as { ticket: string };
-  return ticket;
-}
+let cleanedEpoch: string | null | undefined;
 
 type Peer = { name: string; color: string };
-type Conn = { ydoc: Y.Doc; provider: HocuspocusProvider };
+type Conn = {
+  ydoc: Y.Doc;
+  provider: HocuspocusProvider;
+  persistence: IndexeddbPersistence | null;
+};
 
 export function CollaborativeEditor({
   slug,
@@ -216,6 +224,7 @@ export function CollaborativeEditor({
   access,
   breadcrumbs,
   hasChildren = false,
+  restoreEpoch,
 }: {
   slug: string;
   spaceId: string;
@@ -253,6 +262,8 @@ export function CollaborativeEditor({
   breadcrumbs: { spaceName: string; ancestors: Crumb[] };
   /** Für "Duplizieren": Option "Unterseiten mitkopieren" nur bei Bedarf. */
   hasChildren?: boolean;
+  /** Restore-Epoche der Instanz (InstanceState). Benennt die lokale Kopie. */
+  restoreEpoch: string | null;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
   // "connected" heisst hier: authentifiziert UND erstmalig synchronisiert.
@@ -260,6 +271,13 @@ export function CollaborativeEditor({
   // wer da schon tippt, schreibt in ein Dokument, dessen Inhalt gleich
   // erst eintrifft, und der Text landet an der falschen Stelle.
   const [status, setStatus] = useState<EditorStatus>("connecting");
+  // Symbol und Titelbild liegen nicht im Yjs-Dokument. Nach einem Restore
+  // sperrt sie der Tab trotzdem: er zeigt einen Stand von vorher.
+  const metaEditable = editable && status !== "restored";
+  // Stufe und Groesse der Seite, wie der Collab-Server sie meldet
+  // (Dokumentgrenze). Titel, Symbol und Titelbild liegen nicht im
+  // Yjs-Dokument und bleiben bei einer Groessensperre bearbeitbar.
+  const [sizeNotice, setSizeNotice] = useState<DocSizeNotice | null>(null);
   const [peers, setPeers] = useState<Peer[]>([]);
   const [titleValue, setTitleValue] = useState(title);
   const [prompt, setPrompt] = useState<PromptRequest | null>(null);
@@ -321,6 +339,9 @@ export function CollaborativeEditor({
     // Merker gleicht).
     const next = titleRef.current?.value ?? titleValue;
     if (!editable || next === lastSavedTitle.current) return;
+    // Nach einem Restore traegt dieser Tab nichts mehr ein, auch nicht
+    // den Titel (er stammt aus dem Stand von vorher).
+    if (status === "restored") return;
     if (savingTitle.current === next) return; // schon unterwegs
     savingTitle.current = next;
     announceTitle(next);
@@ -424,39 +445,83 @@ export function CollaborativeEditor({
   useEffect(() => {
     const ydoc = new Y.Doc();
     setStatus("connecting");
+    setSizeNotice(null);
     /**
      * Lokaler Puffer. Ohne ihn lebte das Yjs-Dokument nur im Speicher des
      * Tabs: wer bei Netzausfall weiterschrieb und dann neu lud, verlor
      * alles.
+     *
+     * Der Name traegt die Restore-Epoche (lib/local-doc): eine Kopie aus
+     * der Zeit vor einem Restore wird so nie geladen und bringt ihre
+     * spaeteren Updates nicht in den zurueckgespielten Stand zurueck.
      */
     const persistence =
       typeof indexedDB === "undefined"
         ? null
-        : new IndexeddbPersistence(`dokunc:${pageId}`, ydoc);
+        : new IndexeddbPersistence(localDocName(pageId, restoreEpoch), ydoc);
     // Die Status-Callbacks gehoeren in den Konstruktor: der Provider
     // verbindet sofort, ein spaeter registrierter Listener koennte den
     // ersten Sync oder eine Ablehnung verpassen. Was sie mit dem Status tun
     // ("Live" erst nach dem Erst-Sync, eine Ablehnung ueberdauert das
     // Trennen), steht in lib/editor-status (statusHandlers, dort
     // getestet).
-    const provider = new HocuspocusProvider({
-      url: collabUrl,
-      name: pageId,
-      document: ydoc,
-      // Vor JEDEM Verbindungsversuch ein frisches Ticket holen. Die
-      // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
-      // HTML gelangt nichts Wiederverwendbares.
-      token: () => fetchCollabTicket(pageId),
-      ...statusHandlers(setStatus),
+    let provider: HocuspocusProvider | null = null;
+    let cancelled = false;
+    // Erst die lokale Kopie laden, dann verbinden (lib/local-copy): so
+    // gleicht der Provider ueber SyncStep1/2 ab und schickt nur, was dem
+    // Server fehlt, statt die ganze Kopie als ein Update.
+    void afterLocalCopy(persistence).then(() => {
+      if (cancelled) return;
+      provider = new HocuspocusProvider({
+        url: collabUrl,
+        name: pageId,
+        document: ydoc,
+        // Vor JEDEM Verbindungsversuch ein frisches Ticket holen. Die
+        // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
+        // HTML gelangt nichts Wiederverwendbares. Die Restore-Epoche geht
+        // mit: weicht sie ab, wurde die Instanz inzwischen zurueckgespielt.
+        token: async () => {
+          const result = await requestCollabTicket(pageId, restoreEpoch);
+          if (result.kind === "restored") {
+            setStatus("restored");
+            // Endgueltig trennen: jede weitere Verbindung spielte den Stand
+            // dieses Tabs in den zurueckgespielten hoch. Der Microtask laeuft
+            // noch vor dem catch in sendToken; danach gesendete Nachrichten
+            // gehen an einen geschlossenen Socket.
+            queueMicrotask(() => provider?.disconnect());
+            throw new Error("Instanz wurde zurückgespielt");
+          }
+          // Die Epoche ist jetzt vom Server bestaetigt: Kopien einer anderen
+          // Epoche stammen aus der Zeit vor einem Restore. Erst jetzt, weil ein
+          // veralteter Tab (Prop aus dem Router-Cache) sonst die Kopien der
+          // aktuellen Epoche loeschte.
+          if (cleanedEpoch !== restoreEpoch) {
+            cleanedEpoch = restoreEpoch;
+            void removeForeignLocalDocs(restoreEpoch);
+          }
+          return result.ticket;
+        },
+        // Groessenhinweis des Collab-Servers (Stufe der Dokumentgrenze).
+        onStateless: ({ payload }: { payload: string }) => {
+          const notice = parseDocSizeNotice(payload);
+          if (notice) setSizeNotice(notice);
+        },
+        ...statusHandlers(setStatus, {
+          // Nach 1009 endgueltig trennen: jeder weitere Versuch schickte
+          // dieselbe zu grosse Aenderung wieder.
+          onMessageTooLarge: () => provider?.disconnect(),
+        }),
+      });
+      setConn({ ydoc, provider, persistence });
     });
-    setConn({ ydoc, provider });
     return () => {
+      cancelled = true;
       setConn(null);
-      provider.destroy();
+      provider?.destroy();
       void persistence?.destroy();
       ydoc.destroy();
     };
-  }, [collabUrl, pageId]);
+  }, [collabUrl, pageId, restoreEpoch]);
 
   const color = useMemo(() => caretColorFor(userId), [userId]);
 
@@ -512,11 +577,27 @@ export function CollaborativeEditor({
     [spaceId],
   );
 
+  /**
+   * Darf der Inhalt gerade geaendert werden (Rolle, Verbindung,
+   * Groessensperre)? Gilt fuer alles, was ins Yjs-Dokument schreibt:
+   * den Editor selbst, die Formatierungsleiste, den Blockgriff, das
+   * Auswahlmenue und das Entfernen von Kommentar-Markierungen. Die Leiste
+   * pruefte das vorher nicht: ihre Befehle dispatchen auch in einen
+   * gesperrten Editor, und bei einer Groessensperre blieb die Aenderung
+   * dann nur in diesem Browser liegen (der Server verwirft sie) und kam
+   * erst nach dem Aufheben der Sperre nachtraeglich an.
+   */
+  const inhaltBearbeitbar = editorEditable({
+    editable,
+    connected: !!conn && status === "connected",
+    sizeLevel: sizeNotice?.level ?? null,
+  });
+
   const editor = useEditor(
     {
     // Vor dem Erst-Sync ist der Editor nur Platzhalter: nicht editierbar
     // (das Yjs-Dokument ist noch leer), ohne Collaboration-Extensions.
-    editable: editable && !!conn && status === "connected",
+    editable: inhaltBearbeitbar,
     immediatelyRender: false,
     extensions: [
       ...richExtensions({
@@ -614,8 +695,8 @@ export function CollaborativeEditor({
   // nachziehen, statt den Editor dafuer neu aufzubauen.
   useEffect(() => {
     if (!editor || editor.isDestroyed) return;
-    editor.setEditable(editable && !!conn && status === "connected", false);
-  }, [editor, editable, conn, status]);
+    editor.setEditable(inhaltBearbeitbar, false);
+  }, [editor, inhaltBearbeitbar]);
 
   /**
    * Der Blockgriff kommt erst, wenn der Editor einmal den Fokus hatte.
@@ -646,33 +727,56 @@ export function CollaborativeEditor({
   }, [editor, griffBereit]);
 
   // CommentsPanel bittet darum, eine Kommentar-Markierung zu entfernen
-  // (Thread verworfen oder aufgelöst).
+  // (Thread verworfen oder aufgelöst). Ist der Inhalt gerade gesperrt
+  // (Groessensperre, getrennt), wartet die Bitte, bis er wieder
+  // bearbeitbar ist: sofort ausgefuehrt, bliebe die Aenderung nur in
+  // diesem Browser liegen. Ein Neuladen vorher verliert sie; die
+  // Markierung bleibt dann stehen.
+  const offeneMarkenRef = useRef(new Set<string>());
+  const entferneOffeneMarken = useCallback(() => {
+    const offen = offeneMarkenRef.current;
+    if (!editor || editor.isDestroyed || !editor.isEditable || !offen.size) {
+      return;
+    }
+    const { state } = editor;
+    const markType = state.schema.marks.commentMark;
+    if (!markType) return;
+    const tr = state.tr;
+    state.doc.descendants((node, pos) => {
+      for (const mark of node.marks) {
+        if (
+          mark.type === markType &&
+          offen.has(String(mark.attrs.commentId))
+        ) {
+          tr.removeMark(pos, pos + node.nodeSize, markType);
+        }
+      }
+    });
+    offen.clear();
+    if (tr.docChanged) editor.view.dispatch(tr);
+  }, [editor]);
   useEffect(() => {
     if (!editor) return;
     return onBrowserEvent(EVENT_REMOVE_COMMENT_MARK, ({ id }) => {
-      if (editor.isDestroyed) return;
-      const { state } = editor;
-      const markType = state.schema.marks.commentMark;
-      if (!markType) return;
-      const tr = state.tr;
-      state.doc.descendants((node, pos) => {
-        for (const mark of node.marks) {
-          if (mark.type === markType && mark.attrs.commentId === id) {
-            tr.removeMark(pos, pos + node.nodeSize, markType);
-          }
-        }
-      });
-      if (tr.docChanged) editor.view.dispatch(tr);
+      offeneMarkenRef.current.add(id);
+      entferneOffeneMarken();
     });
-  }, [editor]);
+  }, [editor, entferneOffeneMarken]);
+  // Nach dem setEditable-Effekt oben: erst dann ist der Editor wieder frei.
+  useEffect(() => {
+    if (inhaltBearbeitbar) entferneOffeneMarken();
+  }, [inhaltBearbeitbar, entferneOffeneMarken]);
 
   // Verwaiste Kommentar-Markierungen aufräumen: ein abgebrochener Entwurf
   // (Navigation, Reload, Absturz) setzt den Mark bereits im Yjs-Dokument,
   // bevor der Thread in der DB existiert. Einmal nach dem Sync durchgehen
-  // und alle Marks ohne zugehörigen Thread entfernen.
+  // und alle Marks ohne zugehörigen Thread entfernen. Erst wenn der
+  // Inhalt bearbeitbar ist, sonst ginge auch das nur in diesen Browser.
   useEffect(() => {
     const provider = conn?.provider;
-    if (!editor || !editable || !provider || sweptRef.current) return;
+    if (!editor || !inhaltBearbeitbar || !provider || sweptRef.current) {
+      return;
+    }
     const valid = new Set(commentThreadIds);
 
     const sweep = () => {
@@ -705,7 +809,7 @@ export function CollaborativeEditor({
     return () => {
       provider.off("synced", sweep);
     };
-  }, [editor, editable, conn, commentThreadIds]);
+  }, [editor, inhaltBearbeitbar, conn, commentThreadIds]);
 
   // Vom CommentsPanel angestossen: zur markierten Textstelle scrollen.
   useEffect(() => {
@@ -852,6 +956,53 @@ export function CollaborativeEditor({
           </div>
         </div>
       </header>
+      {status === "restored" && (
+        <div
+          role="alert"
+          className="mx-auto mt-4 max-w-[760px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink"
+        >
+          <p>
+            Die Instanz wurde aus einer Sicherung zurückgespielt. Dieser Tab
+            zeigt noch den Stand von vorher, und Änderungen daraus werden
+            nicht mehr übertragen.
+          </p>
+          <p className="mt-1.5">
+            Lade die Seite neu. Was seit der Sicherung hier geschrieben
+            wurde, ist danach nicht mehr da. Kopiere es vorher, falls du es
+            noch brauchst.
+          </p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-subtle hover:text-ink"
+          >
+            Neu laden
+          </button>
+        </div>
+      )}
+      {status === "too-large" && (
+        <div
+          role="alert"
+          className="mx-auto mt-4 max-w-[760px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink"
+        >
+          <p>{TOO_LARGE_NOTICE}</p>
+          <button
+            type="button"
+            onClick={async () => {
+              // Ueber die Instanz dieses Effekts, nie ueber den Namen: so
+              // trifft es genau die Kopie, die die Aenderung haelt.
+              await conn?.persistence?.clearData();
+              window.location.reload();
+            }}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-subtle hover:text-ink"
+          >
+            {TOO_LARGE_DISCARD_LABEL}
+          </button>
+        </div>
+      )}
+      {status !== "restored" && status !== "too-large" && editable && (
+        <DocSizeBanner notice={sizeNotice} />
+      )}
       {moveOpen && (
         <MovePageDialog
           slug={slug}
@@ -863,7 +1014,7 @@ export function CollaborativeEditor({
 
       <PageCover
         coverUrl={coverValue}
-        editable={editable}
+        editable={metaEditable}
         onPick={pickCover}
         onRemove={() => void saveCover("")}
       />
@@ -886,10 +1037,10 @@ export function CollaborativeEditor({
         <div className="mb-1 flex items-center gap-1">
           <PageIcon
             icon={iconValue}
-            editable={editable}
+            editable={metaEditable}
             onChange={(next) => void saveIcon(next)}
           />
-          {editable && !coverValue && (
+          {metaEditable && !coverValue && (
             <PageCover
               coverUrl={null}
               editable
@@ -904,7 +1055,7 @@ export function CollaborativeEditor({
           aria-label="Seitentitel"
           value={titleValue}
           onChange={(e) => setTitleValue(e.target.value)}
-          readOnly={!editable}
+          readOnly={!editable || status === "restored"}
           onBlur={() => void saveTitle()}
           onKeyDown={(e) => {
             // Enter/Pfeil nach unten: in den Text springen (wie in Notion).
@@ -919,12 +1070,18 @@ export function CollaborativeEditor({
         />
       </div>
 
-      {editable && griffBereit && <BlockHandle editor={editor} />}
+      {inhaltBearbeitbar && griffBereit && <BlockHandle editor={editor} />}
 
-      {/* Toolbar */}
+      {/* Toolbar. Sie steht fuer alle mit Schreibrecht und bleibt an
+          ihrem Platz, damit der Text beim Verbinden nicht springt; solange
+          der Inhalt gesperrt ist, sind ihre Knoepfe aus. */}
       {editable && (
         <div className="sticky top-14 z-10 mx-auto mt-4 max-w-[760px] px-6">
-          <EditorToolbar editor={editor} onPrompt={openPrompt} />
+          <EditorToolbar
+            editor={editor}
+            onPrompt={openPrompt}
+            gesperrt={!inhaltBearbeitbar}
+          />
         </div>
       )}
 
@@ -937,7 +1094,7 @@ export function CollaborativeEditor({
       </div>
 
       {/* Formatieren direkt an der Auswahl. */}
-      {editable && editor && (
+      {inhaltBearbeitbar && editor && (
         <SelectionMenu editor={editor} onPrompt={openPrompt} />
       )}
 
@@ -949,7 +1106,13 @@ export function CollaborativeEditor({
         label={prompt?.label ?? ""}
         placeholder={prompt?.placeholder}
         submitLabel={prompt?.submitLabel}
-        onSubmit={(value) => prompt?.onSubmit(value)}
+        onSubmit={(value) => {
+          // Alle Rueckfragen hier schreiben ins Dokument (Link, Video).
+          // Wurde der Inhalt gesperrt, waehrend der Dialog offen war,
+          // bliebe die Aenderung nur in diesem Browser liegen.
+          if (!editor?.isEditable) return;
+          prompt?.onSubmit(value);
+        }}
         onClose={() => setPrompt(null)}
       />
     </div>

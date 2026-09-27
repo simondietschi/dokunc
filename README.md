@@ -41,9 +41,15 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   Seite, bearbeitbar, mit Benachrichtigung an Beteiligte; auch die
   VIEWER-Rolle darf mitreden. Dazu **@-Mentions** und die Glocke, die
   sich live aktualisiert. Optional **per Mail**, sofort gebündelt oder
-  als tägliche Zusammenfassung, pro Person im Konto einstellbar; Seiten
-  lassen sich einzeln abonnieren
-- **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) + KI-Aktionen
+  als tägliche Zusammenfassung, pro Person im Konto einstellbar. Wer einer
+  Seite folgt (Glocke im Seitenkopf), erfährt von neuen Kommentaren und von
+  Änderungen am Inhalt. Eine Änderung meldet dokunc höchstens alle zwei
+  Minuten je Seite und nur einmal, bis die Meldung oder die Seite geöffnet
+  ist; die Meldung führt zum Vergleich mit dem Stand davor. Was nach dem
+  Lesen der Meldung im selben Zwei-Minuten-Fenster noch geschrieben wird,
+  meldet erst die nächste Bearbeitung der Seite
+- **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) über den ganzen
+  Bestand, auch gleich nach einem Import, + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
   optional, aktiviert per `ANTHROPIC_API_KEY`
 - **Anhänge** beliebigen Typs (PDF, Office, Archive, Medien) per
@@ -55,9 +61,13 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   (Meeting-Notizen, ADR, Runbook, Projektbrief, Wochenbericht), Picker
   neben „Neue Seite", **Seiten duplizieren** (optional mit Unterseiten),
   „Als Vorlage speichern"
-- Postgres-Volltextsuche, **Versionsverlauf** mit Versionsvergleich
+- **Volltextsuche** mit deutschen Wortformen (Rechnung findet Rechnungen),
+  Wortanfängen und Operatoren („genaue Folge“, oder, -Wort ausschliessen);
+  Treffer zeigen Pfad und Änderungsdatum
+- **Versionsverlauf** mit Versionsvergleich
   (Zeilen- und Wort-Diff gegen den aktuellen Stand oder die vorherige
-  Version, Vorschau vor dem Wiederherstellen), Papierkorb
+  Version, Vorschau vor dem Wiederherstellen, seitenweise durch den ganzen
+  Verlauf blätterbar), Papierkorb (auf Wunsch mit Frist)
 - **Favoriten** (Stern in der Seitenkopfzeile, Abschnitt in der Sidebar,
   Sprungziele in der Palette), **Zuletzt besucht** und ein
   **Space-Dashboard** (Kennzahlen, zuletzt besuchte, favorisierte und
@@ -68,6 +78,8 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   Beitreten
 - **Audit-Log** über sicherheitsrelevante Ereignisse (Anmeldungen,
   Rollenwechsel, Einladungen, Löschungen) mit Ansicht unter `/admin/audit`
+- **Grössengrenzen** für die gemeinsame Bearbeitung: sehr grosse Seiten
+  werden nur noch lesbar, die grössten listet `/admin/documents`
 - **Angemeldete Geräte** einzeln beenden, „angemeldet bleiben" optional
 - **Zwei-Faktor-Anmeldung** (TOTP) mit QR-Code für Authenticator-Apps
   und einmalig gültigen Wiederherstellungscodes
@@ -152,8 +164,8 @@ Danach:
 - Die erste Registrierung wird automatisch Instanz-Admin; danach ist die
   Anmeldung nur noch per Einladung möglich.
 - Status: `docker compose ps` · Logs: `docker compose logs -f app`
-- Stoppen: `docker compose down` (Daten bleiben) — Update:
-  `git pull && docker compose up -d --build`
+- Stoppen: `docker compose down` (Daten bleiben). Update und Rückweg:
+  siehe „Update und Rückweg“ unten.
 
 Hinweise:
 
@@ -235,16 +247,19 @@ Die Datei nur einbinden, wenn der Server IPv6 hat, sonst startet der
 Proxy nicht. Welche Adressen der Proxy tatsächlich belegt, zeigt
 `docker compose ps proxy` in der Spalte `PORTS`.
 
-Dann `docker compose up -d`. Aktualisiert wird wie im Schnellstart mit
-`git pull && docker compose up -d --build`; weil keine versionierte Datei
-geändert ist, läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
+Dann `docker compose up -d`. Aktualisiert wird wie im Abschnitt „Update
+und Rückweg“ beschrieben; weil keine versionierte Datei geändert ist,
+läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
 `APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
 alle bestehenden Sitzungen).
 Weitere Optionen — SMTP für Einladungs- und
 Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
-`ANTHROPIC_API_KEY` für die KI-Funktionen, `MAX_UPLOAD_MB` für das
+`ANTHROPIC_API_KEY` für die KI-Funktionen, `VOYAGE_API_KEY` für die
+semantische Suche von „Frag dein Wiki“, `AI_INDEX_INTERVAL_S` für den
+KI-Index, `MAX_UPLOAD_MB` für das
 Upload-Limit, `UPLOAD_SWEEP_INTERVAL_H` für den Aufräumer verwaister
-Uploads, `SESSION_IDLE_TIMEOUT` für die Abmeldung nach Untätigkeit
+Uploads, die Fristen der Aufbewahrung (`SESSION_RETENTION_DAYS` und
+weitere), `SESSION_IDLE_TIMEOUT` für die Abmeldung nach Untätigkeit
 (empfohlen für geteilte Geräte) — siehe `.env.example`.
 
 Ohne SMTP steht der Link aus Reset- und Einladungsmails nur ausserhalb
@@ -286,8 +301,19 @@ Zertifikat seiner internen CA aus, und jeder Browser warnt.
 `docker compose port proxy 443` muss danach `0.0.0.0:443` zeigen,
 `docker compose port proxy 80` `0.0.0.0:80`.
 
-**Backups:** `./scripts/backup.sh` sichert Datenbank + Uploads nach `backups/`
-(Restore-Befehle gibt das Skript aus).
+**Datenbank:** Die Migrationen legen die Erweiterung `pg_trgm` an (Suche
+in Titeln). Bei einer fremd verwalteten Datenbank ohne Besitzrechte muss
+sie vorher eine Administratorin oder ein Administrator anlegen:
+`CREATE EXTENSION pg_trgm;` (je nach Distribution im Paket
+`postgresql-contrib`). Das Update mit der neuen Suche füllt einmal den
+Suchvektor aller Seiten, grob 1 s je 500 bis 1000 Seiten (gemessen:
+20 000 Seiten mit 50 MB Text in 30 s). So lange ist die Seitentabelle
+gesperrt, weitere Instanzen warten, und der erste Start dauert länger;
+der Container kann dabei kurz als „unhealthy“ erscheinen. Sicherungen
+werden grösser, weil der Suchvektor etwa so viel Platz braucht wie der
+Text selbst oder etwas mehr.
+
+**Backups:** siehe „Sicherung und Rückweg“ unten.
 
 **Verwaiste Uploads:** Der Web-Prozess räumt alle
 `UPLOAD_SWEEP_INTERVAL_H` Stunden (Default 6, erlaubt 1 bis 168, `0`
@@ -311,9 +337,203 @@ ohne etwas zu löschen, und meldet das im Log; meist passen dann
 Dateien gelten 24 Stunden lang als neu, Datenbank und Uploads also
 innerhalb dieser Frist einspielen.
 
+**KI-Index:** Der Collab-Prozess zerlegt alle `AI_INDEX_INTERVAL_S`
+Sekunden (Vorgabe 60, erlaubt 10 bis 3600) neue und geänderte Seiten in
+Abschnitte, gleich auf welchem Weg der Text entstand (Editor, Import,
+Vorlage, Kopie, Wiederherstellen). Mit `VOYAGE_API_KEY` und
+`ANTHROPIC_API_KEY` bettet er sie in Stapeln ein (`AI_INDEX_EMBED_BATCH`,
+Vorgabe 64) und merkt sich je Abschnitt das Modell; nach einem Wechsel von
+`EMBEDDING_MODEL` baut er neu auf. **Damit geht der Text aller Seiten
+ausser Papierkorb und Vorlagen an Voyage AI, auch geschützte Seiten, und
+Kosten entstehen für den ganzen Bestand, nicht nur beim Fragen.** Solange
+Abschnitte ohne Embedding sind, mischt „Frag dein Wiki“ Volltexttreffer
+bei; eine frisch importierte Seite ist bis zum nächsten Lauf noch nicht
+dabei. Die Suche vergleicht alle Abschnitte, die die fragende Person sehen
+darf; ab 20 000 je Frage steht eine Warnung im Log.
+`AI_INDEX_INTERVAL_S=0` schaltet den Index ab: dann wird kein Seitentext
+mehr eingebettet, und Seiten aus Import oder Vorlagen bekommen erst beim
+Bearbeiten Abschnitte. „Frag dein Wiki“ nutzt vorhandene Embeddings des
+aktuellen Modells weiter, geänderte Abschnitte kommen nur noch über den
+Volltext dazu, und solange `VOYAGE_API_KEY` gesetzt ist, geht jede Frage
+weiter an Voyage AI. Wer gar nichts mehr an Voyage senden will, leert
+`VOYAGE_API_KEY`. Mehrere Instanzen stimmen sich per Redis-Sperre ab; ist
+Redis nicht erreichbar, arbeitet jede für sich (höchstens doppelte
+Anfragen an Voyage). Log mit `component: "ai-indexer"`.
+
+Beim Update auf die Version mit dem KI-Index stehen alle Seiten einmal
+an. Ein Lauf schafft rund 2000 Seiten, 10 000 Seiten sind also nach rund
+fünf Minuten durch; so lange warten auch neu importierte Seiten und neue
+Seiten aus Vorlagen hinter dem Bestand. Embeddings von vor diesem Update
+tragen kein Modell: Der erste Lauf, der etwas einbettet, ordnet sie dem
+dabei verwendeten Modell zu, sofern die Vektorlänge passt (Log
+„KI-Index: vorhandene Embeddings dem Modell zugeordnet“). Deshalb
+`EMBEDDING_MODEL` nicht zusammen mit diesem Update wechseln, sondern erst,
+wenn
+`SELECT count(*) FROM "PageChunk" WHERE embedding IS NOT NULL AND "embeddingModel" IS NULL`
+0 ergibt; sonst gelten die alten Vektoren als Vektoren des neuen Modells
+und werden nie neu eingebettet. Ist das schon geschehen, erzwingt
+`UPDATE "PageChunk" SET embedding = NULL, "embeddingModel" = NULL` den
+Neuaufbau (der ganze Bestand geht dann noch einmal an Voyage AI).
+
+**Aufbewahrung:** Ein täglicher Job im Web-Prozess löscht, was seine Frist
+hinter sich hat, und dünnt den Versionsverlauf aus. Abgelaufene oder
+widerrufene Sitzungen fallen 30 Tage nach Ablauf bzw. Widerruf
+(`SESSION_RETENTION_DAYS`), Passwort-Reset-Links und Einladungen 30 Tage
+nach Ablauf, Einlösung oder Annahme (`TOKEN_RETENTION_DAYS`), gelesene
+Benachrichtigungen 90 Tage nach dem Lesen (`NOTIFICATION_RETENTION_DAYS`,
+ungelesene bleiben), Audit-Einträge nach einem Jahr
+(`AUDIT_RETENTION_DAYS=365`). Seiten im Papierkorb entfernt er nur, wenn
+`TRASH_RETENTION_DAYS` grösser als 0 ist (Vorgabe 0: nie automatisch); ein
+später einzeln gelöschter Unterast wartet, bis auch er seine Frist erreicht
+hat, und lebende Unterseiten wandern an die oberste Ebene. Jede Frist in
+ganzen Tagen, `0` heisst unbegrenzt. Versionen (`VERSION_RETENTION=standard`,
+`off` schaltet ab): aus den letzten 24 Stunden bleibt jede, bis 30 Tage die
+letzte je Stunde, danach die letzte je Tag (UTC). Immer bleiben die erste
+Version einer Seite, die Quelle jeder Wiederherstellung und der Stand
+unmittelbar davor. Der erste Lauf folgt 15 Minuten nach dem Start, danach
+alle 24 Stunden; gelöscht wird in Stapeln, nach einer Stunde endet der Lauf
+und der Rest folgt am nächsten Tag. Mehrere Instanzen stimmen sich wie beim
+Aufräumer über eine Redis-Sperre ab (ohne Redis läuft jede für sich, was
+unschädlich ist). Jeder Lauf loggt seine Zahlen unter
+„Aufbewahrung: Lauf beendet“. Hinweise:
+
+1. **Der erste Lauf nach dem Update wendet alle Fristen auf den ganzen
+   Bestand an: er dünnt Versionen aus, löscht Audit-Einträge älter als ein
+   Jahr und alte Sitzungen. Vorher eine Sicherung ziehen. Wer den Bestand
+   unverändert behalten will, setzt vorher `VERSION_RETENTION=off` und
+   `AUDIT_RETENTION_DAYS=0`.**
+2. Postgres gibt den frei gewordenen Platz nicht sofort ans Dateisystem
+   zurück, verwendet ihn aber wieder; Sicherungen werden sofort kleiner.
+3. Uploads ohne Datensatz, die nur in ausgedünnten Versionen standen,
+   räumt danach der Aufräumer verwaister Uploads.
+4. Die Einträge eines gelöschten Space bleiben im Audit-Log, nur ohne
+   Bezug zum Space; „Space gelöscht“ nennt Name und Slug.
+5. Nach dem Zurückspielen einer alten Sicherung dünnt der nächste Lauf
+   deren Versionen aus. Soll der alte Verlauf vollständig bleiben, vorher
+   `VERSION_RETENTION=off` setzen.
+
+### Sicherung und Rückweg
+
+`./scripts/backup.sh` sichert Datenbank und Uploads nach `backups/`
+(`db-<Zeitstempel>.dump` und `uploads-<Zeitstempel>.tar.gz`, nur für das
+eigene Konto lesbar). Das `APP_SECRET` ist nicht dabei: mit ihm sind die
+Zwei-Faktor-Geheimnisse versiegelt, und eine Sicherung allein soll nicht
+genügen, um sie zu lesen. Wer kein eigenes `APP_SECRET` in der `.env`
+setzt, sichert das automatisch erzeugte einmal getrennt, ausserhalb des
+Repositorys und nicht bei den Sicherungen:
+
+    (umask 077; docker compose exec -T app cat /app/data/app_secret > ~/dokunc-app_secret)
+
+Zurückgespielt wird mit `./scripts/restore.sh <Zeitstempel>`. Das Skript
+
+1. prüft Dump und Archiv, bevor es etwas ändert,
+2. sichert den aktuellen Stand mit `backup.sh`,
+3. spielt den Dump in eine frische Datenbank ein und bricht ab, wenn die
+   Sicherung Migrationen enthält, die der ausgecheckte Code nicht kennt,
+4. hält die App an und tauscht die frische Datenbank gegen die bisherige
+   (die bisherige bleibt als `dokunc_vor_<Datum>_<Zeit>` liegen),
+5. ersetzt den Inhalt des Upload-Volumes,
+6. setzt fehlende Migrationen nach, beendet alle Sitzungen und vergibt
+   eine neue Restore-Epoche,
+7. startet die App und wartet, bis sie bereit ist.
+
+Optionen: `--ja` fragt nicht nach (für Skripte), `--ohne-vorsicherung`
+lässt Schritt 2 aus, `--secret DATEI` legt ein getrennt gesichertes
+`APP_SECRET` ins Volume `app_data` (neuer Host oder neu angelegtes
+Volume; ohne passendes Secret kommen Personen mit Zwei-Faktor nur noch
+mit Wiederherstellungscodes herein).
+
+Nach dem Restore gilt:
+
+- Alle müssen sich neu anmelden.
+- Alles seit der Sicherung ist zurückgenommen und sollte geprüft werden:
+  Sperren von Konten, Passwortwechsel, Rollen, **widerrufene
+  Freigabelinks (sie gelten wieder)**, angenommene Einladungen (wieder
+  offen), benutzte Wiederherstellungscodes und Reset-Links (wieder
+  gültig, soweit nicht abgelaufen).
+- Offene Tabs übertragen nichts mehr und bitten darum, die Seite neu zu
+  laden. Kopien im Browser aus der Zeit vor dem Restore werden nicht mehr
+  geladen und beim nächsten Öffnen einer Seite gelöscht. Was seit der
+  Sicherung geschrieben wurde, kommt also nicht zurück, auch nicht aus
+  einem Browser.
+- Benachrichtigungen, die zur Zeit der Sicherung noch nicht per Mail
+  verschickt waren, bekommen keine Mail mehr; in der App stehen sie weiter.
+- Den vorherigen Stand holt `./scripts/restore.sh <Zeitstempel der
+  Vorsicherung>` vollständig zurück. Die Datenbank `dokunc_vor_…` enthält
+  dazu noch, was zwischen Vorsicherung und Anhalten geschrieben wurde,
+  aber keine passenden Uploads: die ersetzt Schritt 5. Mit
+  `--ohne-vorsicherung` fehlen dort alle bisherigen Uploads.
+
+Die Abschlussmeldung nennt die Datenbanken mit früheren Ständen samt
+Löschbefehl, etwa
+`docker compose exec db dropdb -U dokunc dokunc_vor_20260925_143512`.
+
+### Update und Rückweg
+
+**Das Update auf die Version mit KI-Index, Aufbewahrung und
+Dokumentgrenze ändert beim ersten Start ohne weiteres Zutun vier Dinge.
+Wer das bisherige Verhalten behalten will, setzt die genannte Variable
+vor dem Update in die `.env`, denn die ersten Läufe folgen 15 Sekunden
+bzw. 15 Minuten nach dem Start:**
+
+- Aufbewahrung (oben, Hinweis 1): 15 Minuten nach dem Start dünnt der
+  erste Lauf die Versionen aus und löscht Audit-Einträge älter als ein
+  Jahr. Behalten mit `VERSION_RETENTION=off` und `AUDIT_RETENTION_DAYS=0`.
+- KI-Index (oben): Sind `VOYAGE_API_KEY` und `ANTHROPIC_API_KEY` gesetzt,
+  geht ab dem ersten Lauf 15 Sekunden nach dem Start der Text aller Seiten
+  an Voyage AI, auch der geschützten. Abschalten mit
+  `AI_INDEX_INTERVAL_S=0`.
+- Dokumentgrenze (unter „Collab-Server“): Seiten über 16 MB sind danach
+  nur noch lesbar. Vorher mit der Abfrage dort prüfen und nötigenfalls
+  `COLLAB_MAX_DOC_MB` höher setzen.
+- Datenbank (oben): Die Migrationen brauchen die Erweiterung `pg_trgm` und
+  füllen einmal den Suchvektor aller Seiten, der erste Start dauert
+  entsprechend länger (siehe unten zu „unhealthy“).
+
+Migrationen laufen beim Start automatisch und nur vorwärts. Vor jedem
+Update deshalb sichern und den bisherigen Stand notieren:
+
+    ./scripts/backup.sh                 # Zeitstempel notieren
+    git rev-parse --short HEAD          # bisherigen Stand notieren
+    git fetch
+    git diff --stat HEAD origin/main -- packages/db/prisma/migrations
+    git pull && docker compose up -d --build --wait
+
+Die vierte Zeile zeigt, welche Migrationen das Update mitbringt.
+
+Bei grossem Bestand (grob ab 100 000 Seiten) laufen die Migrationen
+länger als die gut drei Minuten, die der Healthcheck der App beim Start
+abwartet. Dann bricht die letzte Zeile mit „container … is unhealthy“ ab,
+und der Proxy bleibt aus, obwohl die Migrationen noch laufen. Das ist
+kein Grund für den Rückweg: in `docker compose logs -f app` abwarten, bis
+die Migrationen durch sind und die App startet, dann
+`docker compose up -d --wait` erneut ausführen. Ein höheres
+`--wait-timeout` hilft hier nicht, der Abbruch kommt beim ersten
+„unhealthy“.
+
+Startet die neue Version nicht (der Container startet immer wieder neu,
+`docker compose logs app` nennt die gescheiterte Migration) oder zeigt sie
+einen Fehler, geht es zurück auf den notierten Stand:
+
+    git checkout <bisheriger Stand>
+    test -x scripts/restore.sh || { git show main:scripts/restore.sh > scripts/restore.sh && chmod +x scripts/restore.sh; }
+    docker compose build app
+    ./scripts/restore.sh <Zeitstempel>
+
+Erst der alte Code, dann die Sicherung: `restore.sh` setzt die Migrationen
+des ausgecheckten Stands nach, und nur die Sicherung von vor dem Update
+passt zu ihm. Die zweite Zeile holt das Skript, falls der alte Stand es
+noch nicht kennt (erstes Update über diese Version). Später wieder
+aktualisieren mit `git checkout main` und den Schritten oben. Hat die
+zweite Zeile das Skript geholt (`git status` zeigt
+`?? scripts/restore.sh`), vorher `rm scripts/restore.sh`, sonst bricht
+`git checkout main` ab, weil es die unversionierte Datei überschreiben
+müsste.
+
 ## Lokale Entwicklung (ohne Docker)
 
-Voraussetzungen: Node 26 (`.nvmrc`), pnpm, lokal laufendes PostgreSQL 16 + Redis.
+Voraussetzungen: Node 26 (`.nvmrc`), pnpm, lokal laufendes PostgreSQL 16
+mit pg_trgm (bei manchen Distributionen im Paket postgresql-contrib) + Redis.
 
 ```bash
 nvm use                 # Node 26
@@ -337,11 +557,17 @@ Umgebungsvariablen des Collab-Servers (Vorgabe in Klammern):
 (redis://localhost:6379; Abgleich mehrerer Instanzen, Wiederherstellen,
 Bremsen, Sperren), `TRUSTED_PROXY_HOPS` (0; in docker-compose 1), die
 fünf Verbindungsgrenzen `COLLAB_MAX_…` (siehe nächster Absatz),
+`COLLAB_MAX_DOC_MB` (16) und `COLLAB_MAX_MESSAGE_MB` (Dokumentgrenze
+plus 1), siehe unten,
 `MAIL_DISPATCH_INTERVAL_S` (30, mindestens 5), `DIGEST_HOUR_UTC` (6),
 `SMTP_HOST`, `SMTP_PORT` (587), `SMTP_SECURE` (false), `SMTP_USERNAME`,
 `SMTP_PASSWORD`, `MAIL_FROM_ADDRESS` (für Benachrichtigungs-Mails; ohne
 `SMTP_HOST` gibt es Benachrichtigungen nur in der App), `APP_URL`
-(http://localhost:3000; Links in Mails), `LOG_LEVEL` (info), `DEBUG_DB`
+(http://localhost:3000; Links in Mails), `VOYAGE_API_KEY` (leer; ohne
+ihn keine Embeddings), `ANTHROPIC_API_KEY` (hier nur Schalter fürs
+Einbetten: ohne ihn bettet der KI-Index nichts ein), `EMBEDDING_MODEL`
+(voyage-3.5-lite), `AI_INDEX_INTERVAL_S` (60, 0 = aus),
+`AI_INDEX_EMBED_BATCH` (64), `LOG_LEVEL` (info), `DEBUG_DB`
 (leer; gesetzt protokolliert Prisma jede Abfrage).
 
 Der Collab-Server begrenzt offene Verbindungen (je Instanz, je
@@ -365,6 +591,83 @@ abprallt, sieht im Editor „Zu viele Verbindungen“ (mit dem Hinweis,
 andere Tabs zu schliessen) statt „Kein Zugriff“; an den Grenzen vor dem
 Handshake (je Adresse, je Instanz) bleibt es bei „Verbinde…“. In beiden
 Fällen versucht der Editor es von selbst erneut.
+
+**Grössengrenzen:** Der Collab-Server begrenzt die Grösse einer
+WebSocket-Nachricht und die Grösse des Bearbeitungsstands (Yjs) einer
+Seite, beide in MB (1 MB = 1024 × 1024 Bytes). Leer heisst Vorgabe,
+0 schaltet eine Grenze ab, ein ungültiger Wert gilt als leer und steht
+beim Start im Log. Alle Instanzen brauchen dieselben Werte.
+
+- Nachrichtengrenze `COLLAB_MAX_MESSAGE_MB` (Vorgabe: Dokumentgrenze
+  plus 1, also 17; ohne Dokumentgrenze 100 wie bisher): Eine grössere
+  Nachricht schliesst der Server mit Code 1009, im Log steht
+  `Collab-Nachricht ueber der Groessengrenze, Verbindung geschlossen`
+  mit Seite und Person. Der Editor zeigt „Änderung zu gross“, trennt
+  endgültig (kein Neuverbinden im Sekundentakt) und bietet an, die lokale
+  Änderung zu verwerfen und neu zu laden. Mindestens Dokumentgrenze
+  plus 1 setzen, sonst warnt der Server beim Start: fehlt ihm der Stand
+  einer Seite, schickt ein Browser seine Kopie beim Abgleich in einer
+  Nachricht, und eine Seite kann die Dokumentgrenze um eine Änderung
+  überschreiten, bevor die Sperre greift. Dazu kommt der Rahmen des
+  Protokolls. Beim Öffnen
+  lädt der Editor zuerst seine Kopie aus IndexedDB (höchstens drei
+  Sekunden) und verbindet erst dann; so schickt er nur, was dem Server
+  fehlt, statt die ganze Kopie auf einmal.
+- Dokumentgrenze `COLLAB_MAX_DOC_MB` (Vorgabe 16, für Container mit 1 GB
+  eher 8): Der Server misst die Grösse beim Laden, beim Speichern und
+  gedrosselt bei Änderungen. Ab der Hälfte steht ein Hinweis über der
+  Seite und im Log `Collab-Dokument ueber der Warnschwelle`. Darüber
+  werden alle Schreibverbindungen nur lesend, der Editor sperrt sich und
+  erklärt es; im Log steht
+  `Collab-Dokument ueber der Groessengrenze, nur noch lesbar`. Titel,
+  Symbol und Titelbild bleiben bearbeitbar. Der Ausweg ist eine kleinere
+  Version aus dem Verlauf (die Sperre fällt dann von selbst, Log
+  `Collab-Dokument wieder unter der Groessengrenze, wieder beschreibbar`)
+  oder eine höhere Grenze mit Neustart des Collab-Servers. Die Sperre ist
+  keine harte Obergrenze: die Änderung, die sie überschreitet, wird noch
+  gespeichert.
+- Bestand: Seiten, die schon über der Grenze liegen, laden wie bisher,
+  sind aber nur lesbar. Beim Start nennt das Log ihre Zahl
+  (`Collab-Dokumente ueber der Groessengrenze`), die 20 grössten Seiten
+  listet die Administration unter `/admin/documents`. Die Web-App liest
+  dafür ebenfalls `COLLAB_MAX_DOC_MB`.
+
+Für bestehende Installationen: Seiten über 16 MB sind nach diesem Update
+nur noch lesbar. Startlog und `/admin/documents` gibt es erst mit dem
+Update. Wer vorher wissen will, ob es solche Seiten gibt, fragt die
+Datenbank:
+
+```bash
+docker compose exec db psql -U dokunc dokunc -c \
+  'SELECT count(*) FROM "CollabDocument" WHERE octet_length("state") > 16 * 1024 * 1024;'
+```
+
+Ist die Zahl grösser als 0, vor dem Update `COLLAB_MAX_DOC_MB` höher
+setzen. Wer erst nach dem Update prüft (Startlog, `/admin/documents`),
+hebt die Grenze dann an und startet den Collab-Server neu; bis dahin
+sind diese Seiten nur lesbar, verloren geht nichts.
+
+**Änderungsmeldungen:** Wer einer Seite folgt, bekommt eine Meldung, wenn
+andere ihren Inhalt ändern. Sie entsteht nur zusammen mit einem Snapshot
+der Versionsgeschichte (höchstens einer je Seite alle zwei Minuten) und nur,
+wenn sich der Inhalt gegenüber der letzten Version geändert hat; eine
+blosse Kommentar-Markierung zählt nicht. Empfänger sind die Folgenden mit
+aktivem Konto und Zugriff auf die Seite, ohne alle, die in den letzten vier
+Minuten mitgeschrieben haben (gesammelt in Redis unter
+`dokunc:page-editors:<Seite>`, über alle Instanzen), und ohne die im selben
+Lauf neu Erwähnten. Je Person und Seite bleibt höchstens eine Meldung
+ungelesen; gelesen ist sie, sobald die Meldung oder die Seite geöffnet
+wird. Der Snapshot entsteht beim ersten Speichern nach Ablauf der zwei
+Minuten, also am Anfang einer Bearbeitung. Was nach dem Lesen der
+Meldung im selben Zwei-Minuten-Fenster noch geschrieben wird, meldet
+erst die nächste Bearbeitung der Seite: endet die Bearbeitung in diesem
+Fenster, entsteht für diesen Nachlauf bis dahin weder ein Snapshot noch
+eine Meldung. Der Vergleich der nächsten Meldung zeigt ihn mit. Die Mail
+verschickt der Dispatcher wie bei Erwähnungen, sofort gebündelt oder im
+Tagesdigest. Wer hinter diese Version zurückrollt, entfernt vorher die
+Zeilen mit
+`DELETE FROM "Notification" WHERE type = 'PAGE_UPDATED'`: ein älterer Stand
+kann sie nicht lesen.
 
 Beim Wiederherstellen einer Version schreibt die App den Inhalt nach
 `Page.content` (Suche, Export) und bittet den Collab-Server, ihn im
@@ -409,12 +712,22 @@ Datensätze an (und wieder ab); sie leeren nichts. Einige starten dafür einen e
 Collab-Server (Port 3150 bis 3199, eigene Redis-Datenbank). Solange sie
 laufen, darf kein anderer Collab-Server an demselben Redis hängen, etwa
 aus `pnpm dev`: Pub/Sub gilt über alle Redis-Datenbanken hinweg, und er
-führte die Wiederherstellungen der Tests mit aus.
+führte die Wiederherstellungen der Tests mit aus. Der Prüf-Collab-Server
+läuft mit abgeschaltetem KI-Index. Die Integrationstests nicht neben einem
+laufenden `pnpm dev` starten: dessen Hintergrundjobs arbeiten auf derselben
+Datenbank. Die Integrationstests der Aufbewahrung arbeiten mit einem
+Zeitpunkt im Jahr 2001 und entfernen ihre eigenen Zeilen samt
+Audit-Einträgen. Die Nachträge aus der Migration der Aufbewahrung gelten
+für die ganze Datenbank; ihr Test führt sie darum in einer Transaktion
+aus, die er am Ende zurückrollt.
 
 Der E2E-Lauf startet Web + Collab selbst (bzw. nutzt bereits laufende
 Server) und erwartet Postgres + Redis aus `.env`. In Umgebungen mit
 vorinstalliertem Chromium: `PW_EXECUTABLE_PATH=/pfad/zu/chromium` setzen.
 CI führt alle diese Suiten automatisch aus (`.github/workflows/ci.yml`).
+Der Docker-Job spielt dabei eine Sicherung zurück, einmal auf demselben
+und einmal auf einem frisch angelegten Stack, und prüft Datenbank,
+Uploads, Secret, Sitzungen und Restore-Epoche.
 
 ## Sicherheit
 
@@ -435,7 +748,8 @@ Kurz, was die App bewusst tut:
   Export, Druck, KI-Antworten, Benachrichtigungen und die
   Editor-Verbindung fragen dieselbe Regel. Ein Freigabelink auf eine
   geschützte Seite entsteht gar nicht erst und ein bestehender endet,
-  sobald der Schutz gesetzt wird.
+  sobald der Schutz gesetzt wird. Die Pfadzeile eines Suchtreffers endet
+  an der ersten nicht sichtbaren Elternseite.
 - **Gruppen** geben Rollen, nehmen aber keine: die wirksame Rolle ist
   die stärkste aus eigener Mitgliedschaft und allen Gruppen. OWNER
   vergibt keine Gruppe — Eigentümerschaft bleibt persönlich.
@@ -447,6 +761,10 @@ Kurz, was die App bewusst tut:
   ausgeliefert.
 - **Sitzungen** sind einzeln widerrufbar; der Entzug wirkt auch auf
   offene Editor-Verbindungen, nicht erst beim nächsten Neuladen.
+- **Grössengrenzen im Collab-Server**: WebSocket-Nachrichten sind auf
+  `COLLAB_MAX_MESSAGE_MB` begrenzt (auch vor der Anmeldung, bisher galten
+  100 MB), Seiten über `COLLAB_MAX_DOC_MB` nur noch lesbar (siehe
+  „Collab-Server“, Absatz Grössengrenzen).
 - **Rate-Limits** pro Konto und pro IP. Die IP stammt aus
   `X-Forwarded-For`, ausgewertet gemäss `TRUSTED_PROXY_HOPS` — hinter dem
   mitgelieferten Caddy setzt der Proxy den Header selbst.
@@ -471,13 +789,16 @@ Kurz, was die App bewusst tut:
   eintippt: bei der Einrichtung ist der zweite Faktor erst danach aktiv,
   beim Erneuern gelten bis dahin die bisherigen Codes weiter.
   Unbestätigte Codes verfallen nach 30 Minuten.
-- **Audit-Log** für Anmeldungen, Rollenwechsel, Einladungen und Löschungen.
+- **Audit-Log** für Anmeldungen, Rollenwechsel, Einladungen und
+  Löschungen, mit Frist (`AUDIT_RETENTION_DAYS`, Vorgabe ein Jahr);
+  Einträge eines gelöschten Space bleiben erhalten.
 - **Anhänge geschützter Seiten**: Jede hochgeladene Datei hängt an
   ihrem Space und, wo bekannt, an ihrer Seite (`Attachment.pageId`).
   `/api/files` liefert sie nur aus, wenn die Person diese Seite sehen
   darf; der Export prüft dasselbe. Anhänge ohne Seitenbezug (ältere
   Uploads, Seiten endgültig gelöscht) sind nur lesbar, wenn mindestens
-  eine Seite des Space sie verwendet und die Person jede dieser Seiten
+  eine Seite des Space sie verwendet (Inhalt, Titelbild oder eine
+  erhaltene Version) und die Person jede dieser Seiten
   sehen darf; Freigabelinks liefern sie gar nicht aus.
 
 ## Projektstruktur

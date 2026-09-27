@@ -12,6 +12,7 @@ import {
   digestMail,
   isMailConfigured,
   notificationMail,
+  notificationPath,
   planDispatch,
   sendMail,
   type DispatchBatch,
@@ -19,7 +20,8 @@ import {
 } from "@dokunc/mail";
 
 /**
- * Mail-Dispatcher für Benachrichtigungen. Läuft im Collab-Prozess (der
+ * Mail-Dispatcher für Benachrichtigungen (Erwähnungen, Kommentare und
+ * Änderungen an gefolgten Seiten). Läuft im Collab-Prozess (der
  * langlebige Worker) und verarbeitet periodisch alle Notification-Zeilen
  * mit emailedAt = NULL:
  *  - INSTANT-Nutzer: Sammelmail, sobald die Einträge das Sammelfenster
@@ -382,7 +384,7 @@ export function startMailDispatcher(opts: {
           type: r.type,
           actorName: r.actor?.name ?? "Jemand",
           pageTitle: page.title,
-          url: `${appUrl()}/p/${r.pageId}`,
+          url: `${appUrl()}${notificationPath({ id: r.id, type: r.type, pageId: r.pageId })}`,
           excerpt: r.commentId ? (bodyById.get(r.commentId) ?? null) : null,
         },
       });
