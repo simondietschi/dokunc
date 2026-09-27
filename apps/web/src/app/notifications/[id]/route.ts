@@ -8,6 +8,10 @@ import { openNotification } from "@/lib/notification-target";
  * kein Ladezustand dazwischenkommt. Ohne Sitzung zur Anmeldung, danach
  * zurueck hierher (der Mail-Link behaelt sein Ziel).
  *
+ * Kommentarmeldungen fuehren auf den Thread (`#comment-thread-<id>`), die
+ * uebrigen ungelesenen Meldungen desselben Threads gelten damit ebenfalls
+ * als gelesen.
+ *
  * Ein fremder GET kann hoechstens eine eigene Meldung auf gelesen setzen,
  * und nur, wenn er ihre ID kennt.
  */

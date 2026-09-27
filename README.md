@@ -43,11 +43,20 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   sich live aktualisiert. Optional **per Mail**, sofort gebündelt oder
   als tägliche Zusammenfassung, pro Person im Konto einstellbar. Wer einer
   Seite folgt (Glocke im Seitenkopf), erfährt von neuen Kommentaren und von
-  Änderungen am Inhalt. Eine Änderung meldet dokunc höchstens alle zwei
-  Minuten je Seite und nur einmal, bis die Meldung oder die Seite geöffnet
-  ist; die Meldung führt zum Vergleich mit dem Stand davor. Was nach dem
-  Lesen der Meldung im selben Zwei-Minuten-Fenster noch geschrieben wird,
-  meldet erst die nächste Bearbeitung der Seite
+  Änderungen am Inhalt. Ein Klick auf eine Benachrichtigung, in der App oder
+  in der Mail, markiert sie als gelesen und führt bei Kommentaren direkt zum
+  Thread, auch wenn er erledigt ist. Die übrigen ungelesenen Meldungen zu
+  diesem Thread gelten damit ebenfalls als gelesen, und ihre noch
+  ausstehenden Mails entfallen. Ist der Kommentar inzwischen gelöscht, sagt
+  die Seite das. Mail-Links führen über die Benachrichtigung selbst: ist sie
+  nach der Aufbewahrungsfrist gelöscht (`NOTIFICATION_RETENTION_DAYS`,
+  Vorgabe 90 Tage nach dem Lesen) oder bist du mit einem anderen Konto
+  angemeldet, landest du in der Liste der Benachrichtigungen. Eine Änderung
+  meldet dokunc höchstens alle zwei Minuten je Seite und nur einmal, bis die
+  Meldung oder die Seite geöffnet ist; die Meldung führt zum Vergleich mit
+  dem Stand davor. Was nach dem Lesen der Meldung im selben
+  Zwei-Minuten-Fenster noch geschrieben wird, meldet erst die nächste
+  Bearbeitung der Seite
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) über den ganzen
   Bestand, auch gleich nach einem Import, + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —

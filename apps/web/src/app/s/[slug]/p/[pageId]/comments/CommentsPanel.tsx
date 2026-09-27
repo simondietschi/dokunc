@@ -19,6 +19,12 @@ import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import { useToast } from "@/components/ui/Toast";
 import { MAX_COMMENT_LENGTH } from "@/lib/comment-limits";
 import {
+  COMMENT_GONE_HINT_ID,
+  commentJumpFor,
+  commentThreadAnchor,
+} from "@/lib/comment-anchor";
+import { holdInView, scrollIntoViewFor } from "@/lib/hold-in-view";
+import {
   EVENT_FOCUS_COMMENT_THREAD,
   EVENT_NEW_COMMENT_THREAD,
   EVENT_REMOVE_COMMENT_MARK,
@@ -206,6 +212,94 @@ export function CommentsPanel({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showResolved, setShowResolved] = useState(false);
   const draftRef = useRef<HTMLDivElement>(null);
+  // Scrollen als Zustand statt direkt im Ereignis: so passiert es sicher
+  // erst, wenn ein erledigter Thread aufgeklappt im DOM steht. `seq`
+  // macht auch eine Wiederholung fuer denselben Thread zur Aenderung.
+  const [scrollRequest, setScrollRequest] = useState<{
+    id: string;
+    moveFocus: boolean;
+    behavior: ScrollBehavior;
+    hold: boolean;
+    seq: number;
+  } | null>(null);
+  // Thread, auf den die Adresse (#comment-thread-<id>) gezeigt hat: nur
+  // er bekommt tabIndex -1 und damit den Tastaturfokus.
+  const [jumpTarget, setJumpTarget] = useState<string | null>(null);
+  // Seite, auf der die Adresse auf einen geloeschten Kommentar zeigt.
+  const [goneHintFor, setGoneHintFor] = useState<string | null>(null);
+  const hashHandledFor = useRef<string | null>(null);
+  const holdStop = useRef<(() => void) | null>(null);
+
+  const stopHold = useCallback(() => {
+    holdStop.current?.();
+    holdStop.current = null;
+  }, []);
+
+  const focusThread = useCallback(
+    (
+      id: string,
+      how: { moveFocus: boolean; behavior: ScrollBehavior; hold: boolean },
+    ) => {
+      // Aufgelöste Threads sind eingeklappt: aufklappen, sonst zeigt der
+      // Sprung ins Leere.
+      if (threads.some((t) => t.id === id && t.resolved)) setShowResolved(true);
+      setActiveId(id);
+      setScrollRequest((r) => ({ id, ...how, seq: (r?.seq ?? 0) + 1 }));
+    },
+    [threads],
+  );
+
+  useEffect(() => {
+    if (!scrollRequest) return;
+    const el = document.getElementById(commentThreadAnchor(scrollRequest.id));
+    if (!el) return;
+    scrollIntoViewFor(el, scrollRequest.behavior);
+    if (scrollRequest.moveFocus) el.focus({ preventScroll: true });
+    if (scrollRequest.hold) {
+      stopHold();
+      holdStop.current = holdInView(el);
+    }
+  }, [scrollRequest, stopHold]);
+
+  // Festhalten endet mit der Seite (Wechsel oder Abbau).
+  useEffect(() => stopHold, [pageId, stopHold]);
+
+  // Anker aus der Adresse (Benachrichtigung, geteilter Link): einmal je
+  // Seite. Ein spaeteres router.refresh() liefert neue `threads`, springt
+  // aber nicht erneut. Einen Frame warten: kein setState synchron im
+  // Effekt, und der erste Baum steht.
+  useEffect(() => {
+    if (hashHandledFor.current === pageId) return;
+    const raf = requestAnimationFrame(() => {
+      hashHandledFor.current = pageId;
+      const jump = commentJumpFor(window.location.hash, threads);
+      if (!jump) return;
+      if (jump.kind === "gone") {
+        setGoneHintFor(pageId);
+        return;
+      }
+      setJumpTarget(jump.threadId);
+      focusThread(jump.threadId, {
+        moveFocus: true,
+        behavior: "auto",
+        hold: true,
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [pageId, threads, focusThread]);
+
+  // Hinweis "geloescht" anspringen, fokussieren (ein frisch eingefuegtes
+  // role="status" wird nicht zuverlaessig angesagt, der Fokus schon) und
+  // festhalten wie einen Thread: der Seiteninhalt darueber kommt erst noch.
+  useEffect(() => {
+    if (goneHintFor !== pageId) return;
+    const el = document.getElementById(COMMENT_GONE_HINT_ID);
+    if (!el) return;
+    scrollIntoViewFor(el, "auto");
+    el.focus({ preventScroll: true });
+    stopHold();
+    holdStop.current = holdInView(el);
+  }, [goneHintFor, pageId, stopHold]);
 
   // Editor-Toolbar meldet: neue Kommentar-Markierung angelegt
   // (Text markiert -> Thread).
@@ -219,21 +313,15 @@ export function CommentsPanel({
     });
   }, []);
 
-  // Klick auf eine markierte Textstelle im Editor: Thread hervorheben.
+  // Klick auf eine markierte Textstelle im Editor: Thread hervorheben,
+  // weich hinscrollen, der Fokus bleibt im Editor. Ein laufendes
+  // Festhalten aus der Adresse endet damit.
   useEffect(() => {
     return onBrowserEvent(EVENT_FOCUS_COMMENT_THREAD, ({ id }) => {
-      // Aufgelöste Threads sind eingeklappt: aufklappen, sonst zeigt der
-      // Sprung ins Leere.
-      if (threads.some((t) => t.id === id && t.resolved)) setShowResolved(true);
-      setActiveId(id);
-      // Nach dem Aufklappen rendern lassen, dann scrollen.
-      requestAnimationFrame(() => {
-        document
-          .getElementById(`comment-thread-${id}`)
-          ?.scrollIntoView({ block: "center", behavior: "smooth" });
-      });
+      stopHold();
+      focusThread(id, { moveFocus: false, behavior: "smooth", hold: false });
     });
-  }, [threads]);
+  }, [focusThread, stopHold]);
 
   const cancelDraft = useCallback(() => {
     // Ohne das bliebe eine verwaiste gelbe Markierung im Text stehen.
@@ -251,7 +339,9 @@ export function CommentsPanel({
 
   // Leerer Zustand: bisher rendert das Panel gar nichts, es gab also
   // keinen sichtbaren Einstieg in die Kommentarfunktion.
-  if (!draft && threads.length === 0 && !canComment) return null;
+  if (!draft && threads.length === 0 && !canComment && goneHintFor !== pageId) {
+    return null;
+  }
 
   return (
     <section className="mt-6 border-t border-line pt-6">
@@ -259,6 +349,17 @@ export function CommentsPanel({
         <MessageSquare className="h-3.5 w-3.5" />
         Kommentare ({open.length})
       </h2>
+
+      {goneHintFor === pageId && (
+        <p
+          id={COMMENT_GONE_HINT_ID}
+          tabIndex={-1}
+          role="status"
+          className="mt-2 rounded-lg border border-line bg-subtle px-3 py-2 text-[13px] text-muted outline-none"
+        >
+          Der Kommentar zu dieser Benachrichtigung wurde inzwischen gelöscht.
+        </p>
+      )}
 
       {threads.length === 0 && !draft && (
         <p className="mt-2 text-[13px] text-faint">
@@ -305,6 +406,7 @@ export function CommentsPanel({
             currentUserId={currentUserId}
             canComment={canComment}
             active={activeId === t.id}
+            jumpTarget={jumpTarget === t.id}
           />
         ))}
       </ul>
@@ -335,6 +437,7 @@ export function CommentsPanel({
                   currentUserId={currentUserId}
                   canComment={canComment}
                   active={activeId === t.id}
+                  jumpTarget={jumpTarget === t.id}
                 />
               ))}
             </ul>
@@ -408,12 +511,15 @@ function Thread({
   currentUserId,
   canComment,
   active,
+  jumpTarget,
 }: {
   thread: ThreadData;
   slug: string;
   currentUserId: string;
   canComment: boolean;
   active: boolean;
+  /** Ziel eines Sprungs aus der Adresse: nimmt den Tastaturfokus an. */
+  jumpTarget: boolean;
 }) {
   const router = useRouter();
   const [replying, setReplying] = useState(false);
@@ -430,9 +536,11 @@ function Thread({
 
   return (
     <li
-      id={`comment-thread-${thread.id}`}
+      id={commentThreadAnchor(thread.id)}
+      tabIndex={jumpTarget ? -1 : undefined}
+      aria-current={active ? "true" : undefined}
       className={cn(
-        "rounded-xl border bg-surface p-4 shadow-soft transition-colors duration-300",
+        "rounded-xl border bg-surface p-4 shadow-soft outline-none transition-colors duration-300",
         active ? "border-accent ring-2 ring-accent-soft" : "border-line",
         resolved && "opacity-60",
       )}

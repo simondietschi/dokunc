@@ -64,18 +64,22 @@ export default async function NotificationsPage() {
                 ? PencilLine
                 : MessageSquare;
           const title = n.pageTitle ?? "Seite";
-          const href = n.pageId
-            ? notificationPath({ id: n.id, type: n.type, pageId: n.pageId })
-            : "#";
+          const href = notificationPath({ id: n.id });
           const className = cn(
             "flex items-center gap-3 rounded-xl border border-line bg-surface p-3.5 shadow-soft transition-colors hover:border-line-strong",
             !n.readAt && "border-accent/40 bg-accent-soft/30",
           );
           const body = (
             <>
-              <Avatar name={n.actor?.name ?? "System"} size={32} />
+              {/* Die Initialen wiederholen nur den Namen daneben; ohne
+                  aria-hidden begaenne der Name des Links mit ihnen statt
+                  mit "Ungelesen:". */}
+              <span aria-hidden="true" className="flex shrink-0">
+                <Avatar name={n.actor?.name ?? "System"} size={32} />
+              </span>
               <div className="min-w-0 flex-1">
                 <p className="text-sm">
+                  {!n.readAt && <span className="sr-only">Ungelesen: </span>}
                   <span className="font-medium">
                     {n.actor?.name ?? "Jemand"}
                   </span>{" "}
@@ -89,23 +93,24 @@ export default async function NotificationsPage() {
                   })}
                 </p>
               </div>
+              {!n.readAt && (
+                <span
+                  aria-hidden="true"
+                  className="h-2 w-2 shrink-0 rounded-full bg-accent"
+                />
+              )}
               <Icon className="h-4 w-4 shrink-0 text-faint" />
             </>
           );
           return (
             <li key={n.id}>
-              {n.type === "PAGE_UPDATED" && n.pageId ? (
-                // Schlichter Link statt <Link>: die Route setzt die Meldung
-                // auf gelesen, ein Prefetch darf sie nicht ausloesen, und
-                // die volle Navigation liefert Glocke und Liste frisch.
-                <a href={href} className={className}>
-                  {body}
-                </a>
-              ) : (
-                <Link href={href} className={className}>
-                  {body}
-                </Link>
-              )}
+              {/* Schlichter Link statt <Link>, fuer alle Typen: die Route
+                  setzt die Meldung auf gelesen, ein Prefetch darf sie
+                  nicht ausloesen, und die volle Navigation liefert Glocke
+                  und Liste frisch. */}
+              <a href={href} className={className}>
+                {body}
+              </a>
             </li>
           );
         })}

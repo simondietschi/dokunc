@@ -100,7 +100,8 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   queuedAt). Nur Trigger fügen ein, nur `indexPageChunks` entfernt.
 - **Notification**: userId, actorId, type (MENTION, COMMENT,
   COMMENT_REPLY, PAGE_UPDATED), pageId, commentId, versionId (nur
-  PAGE_UPDATED, ohne Fremdschlüssel), readAt, emailedAt.
+  PAGE_UPDATED, ohne Fremdschlüssel), readAt, emailedAt. `commentId` ist
+  bei COMMENT der Thread, bei COMMENT_REPLY die Antwort.
 - **PageSubscription**: Person folgt Seite (Kommentare und Änderungen).
 - **AuditLog**: sicherheitsrelevante Ereignisse; `spaceId` wird beim
   Löschen des Space NULL, der Eintrag bleibt.
@@ -315,6 +316,32 @@ Meldung. Verloren geht nichts: der Vergleich der nächsten Meldung
 beginnt vor deren Snapshot und zeigt den Nachlauf mit. Dieselbe Lücke
 hat die Versionsgeschichte auch ohne Meldungen (siehe Roadmap,
 Nachlauf-Snapshot).
+
+**Benachrichtigung öffnen:** Alle Typen laufen über `/notifications/<id>`,
+in der Liste und in der Mail (`notificationPath` in `@dokunc/mail`); die
+Liste nutzt dafür schlichte Links ohne Prefetch. Die Route setzt die
+Meldung gelesen, auch wenn sie danach zur Liste führt. Bei
+Kommentarmeldungen prüft sie zuerst den Zugriff auf die Seite, löst dann
+den Thread über `parentId` auf (eine `commentId` einer anderen Seite gilt
+als gelöscht), setzt alle ungelesenen COMMENT- und COMMENT_REPLY-Meldungen
+der Person zu diesem Thread gelesen und leitet auf
+`#comment-thread-<id>`; fehlt der Kommentar, auf `#comment-deleted`.
+Erwähnungen und Änderungsmeldungen bleiben dabei unberührt. Hat sich
+etwas geändert, publiziert sie an die Glocke der Person (andere Tabs).
+Folge für den Mailversand: der Dispatcher überspringt gelesene Meldungen,
+ausstehende Sofortmails und Einträge der Tageszusammenfassung für die so
+mitgelesenen Meldungen entfallen. Das Kommentarpanel liest den Anker beim
+Laden (`lib/comment-anchor.ts`), klappt erledigte Threads auf, fokussiert
+den Thread und hält ihn mit `lib/hold-in-view.ts` im Bild, solange der
+Inhalt darüber wächst (höchstens 10 s, bis zur ersten Eingabe).
+Scroll-Anchoring genügt dafür nicht: bei Scrollposition 0 greift es nicht,
+und der wachsende Editor im sichtbaren Bereich ist selbst der Anker.
+Ebenso gleicht es Scrollbewegungen aus, die nicht von der Person kommen
+(Chromium verschiebt den Bereich beim Laden auch ohne Grössenänderung);
+eigene Eingaben beenden das Festhalten vorher. Den Hinweis auf einen
+gelöschten Kommentar hält es genauso fest. Das Öffnen einer Seite allein
+setzt Kommentarmeldungen nicht gelesen, denn die Kommentare stehen am Ende
+der Seite.
 
 **Wiederherstellen einer Version** muss an diesem Zwischenspeicher vorbei,
 und zwar auf derselben Yjs-Linie. Die Web-App schreibt den Inhalt der
@@ -598,6 +625,9 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       bleibt beim Löschen eines Space
 - [x] Einladen ohne Mailserver: Link statt „gesendet“, einmalig angezeigt,
       nach Vorgabe nur für Admin-Personen der Instanz; Audit mit `delivery`
+- [x] Benachrichtigung öffnen führt zum Kommentar-Thread (auch erledigt,
+      auch aus der Mail) und liest den ganzen Thread; ungelesen für
+      Screenreader hörbar
 
 ## 7. Setup
 

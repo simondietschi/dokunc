@@ -34,6 +34,7 @@ import { NewPageButton } from "@/components/space/NewPageButton";
 import { logoutAction } from "@/app/(auth)/actions";
 import { PaletteButton } from "@/components/CommandPalette";
 import { pageTitle } from "@/lib/page-title";
+import { bellLabel } from "@/lib/unread-label";
 
 type Props = {
   slug: string;
@@ -215,11 +216,15 @@ export function Sidebar({
           href="/notifications"
           active={false}
           icon={<Bell className="h-3.5 w-3.5" />}
+          ariaLabel={bellLabel(unreadCount)}
         >
           <span className="flex flex-1 items-center justify-between">
             Benachrichtigungen
             {unreadCount > 0 && (
-              <span className="ml-2 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent-contrast">
+              <span
+                aria-hidden="true"
+                className="ml-2 rounded-full bg-accent px-1.5 py-0.5 text-[10px] font-semibold leading-none text-accent-contrast"
+              >
                 {unreadCount > 9 ? "9+" : unreadCount}
               </span>
             )}
@@ -327,16 +332,20 @@ function NavLink({
   href,
   active,
   icon,
+  ariaLabel,
   children,
 }: {
   href: string;
   active: boolean;
   icon: React.ReactNode;
+  /** Zugaenglicher Name, wenn der sichtbare Text nicht genuegt (Glocke mit Zahl). */
+  ariaLabel?: string;
   children: React.ReactNode;
 }) {
   return (
     <Link
       href={href}
+      aria-label={ariaLabel}
       className={cn(
         "mx-3 flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium transition-colors",
         active

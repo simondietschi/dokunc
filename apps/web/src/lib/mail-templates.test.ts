@@ -11,13 +11,13 @@ const mention: NotificationMailItem = {
   type: "MENTION",
   actorName: "Kim Muster",
   pageTitle: "Onboarding",
-  url: "http://localhost:3000/p/abc",
+  url: "http://localhost:3000/notifications/n-mention",
 };
 const reply: NotificationMailItem = {
   type: "COMMENT_REPLY",
   actorName: "Alex",
   pageTitle: "Deployment",
-  url: "http://localhost:3000/p/def",
+  url: "http://localhost:3000/notifications/n-reply",
   excerpt: "Passt so, danke!",
 };
 const updated: NotificationMailItem = {
@@ -39,12 +39,19 @@ describe("describeNotification()", () => {
 });
 
 describe("notificationPath()", () => {
-  it("fuehrt Aenderungen ueber die Meldung, alles andere direkt zur Seite", () => {
-    expect(
-      notificationPath({ id: "n1", type: "PAGE_UPDATED", pageId: "p1" }),
-    ).toBe("/notifications/n1");
-    for (const type of ["MENTION", "COMMENT", "COMMENT_REPLY"] as const) {
-      expect(notificationPath({ id: "n1", type, pageId: "p1" })).toBe("/p/p1");
+  it("fuehrt jede Meldung ueber /notifications/<id>", () => {
+    // Die Route setzt sie gelesen und fuehrt zum Ziel (Thread, Vergleich,
+    // Seite); fuer jeden Typ derselbe Weg, auch aus der Mail.
+    for (const type of [
+      "PAGE_UPDATED",
+      "MENTION",
+      "COMMENT",
+      "COMMENT_REPLY",
+    ] as const) {
+      // Die ganze Meldung reicht hinein, wie beim Dispatcher: Typ und
+      // Seite duerfen am Weg nichts aendern.
+      const meldung = { id: "n1", type, pageId: "p1" };
+      expect(notificationPath(meldung), type).toBe("/notifications/n1");
     }
   });
 });
