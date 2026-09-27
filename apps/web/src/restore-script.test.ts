@@ -46,6 +46,7 @@ function run(
     dumpExit?: number;
     startExit?: number;
     cwd?: string;
+    env?: Record<string, string>;
   } = {},
 ) {
   const res = spawnSync("bash", [join(dir, "scripts/restore.sh"), ...args], {
@@ -57,6 +58,7 @@ function run(
       FAKE_MIGRATIONS: (opts.migrations ?? [BEKANNTE_MIGRATION]).join(" "),
       FAKE_DUMP_EXIT: String(opts.dumpExit ?? 0),
       FAKE_START_EXIT: String(opts.startExit ?? 0),
+      ...opts.env,
     }),
   });
   return {
@@ -189,6 +191,30 @@ describe("scripts/restore.sh", () => {
     expect(p).toContain('UPDATE "Notification" SET "emailedAt" = now()');
     expect(p.lastIndexOf("up -d --wait --wait-timeout 300")).toBeGreaterThan(
       epoche,
+    );
+    expect(r.out).toContain(`Zurückgespielt: Stand vom ${TS}`);
+  });
+
+  it("ersetzt die Uploads auch, wenn der Satz waehrend des Einspielens geloescht wird", () => {
+    // Die Aufbewahrung eines gleichzeitigen cron-Laufs loescht den Satz,
+    // waehrend pg_restore in die Zwischenablage laeuft. Schritt 9 liest
+    // das Archiv danach, nach dem Tausch der Datenbanken.
+    sicherung();
+    const dump = join(dir, `backups/db-${TS}.dump`);
+    const archiv = join(dir, `backups/uploads-${TS}.tar.gz`);
+    const r = run(["--ja", "--ohne-vorsicherung", TS], {
+      env: { FAKE_LOESCHEN_BEIM_EINSPIELEN: `${dump} ${archiv}` },
+    });
+    // Positivkontrolle: der Satz ist wirklich weg.
+    expect(existsSync(dump)).toBe(false);
+    expect(existsSync(archiv)).toBe(false);
+    expect(r.status, r.out).toBe(0);
+    expect(r.out).not.toContain("Abgebrochen");
+    const uploads = r.protokoll.match(/^UPLOADS .*$/gm) ?? [];
+    expect(uploads).toHaveLength(1);
+    expect(uploads[0]).toContain("./bild.png");
+    expect(r.protokoll.indexOf("UPLOADS ")).toBeGreaterThan(
+      r.protokoll.indexOf("ALTER DATABASE"),
     );
     expect(r.out).toContain(`Zurückgespielt: Stand vom ${TS}`);
   });

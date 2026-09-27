@@ -125,6 +125,12 @@ if ! tar tzf "$UPLOADS" >/dev/null 2>&1; then
   echo "Uploads-Archiv beschädigt: $UPLOADS" >&2
   exit 1
 fi
+# Das Archiv bleibt bis Schritt 9 offen: loescht die Aufbewahrung eines
+# gleichzeitigen cron-Laufs den Satz, waehrend der Dump eingespielt wird,
+# liest Schritt 9 trotzdem das gepruefte Archiv (ein offenes fd haelt die
+# Datei). Den Dump oeffnet Schritt 5 gleich zu Beginn; fehlt er schon
+# dann, bricht Schritt 5 ab, bevor etwas geaendert ist.
+exec 4<"$UPLOADS"
 if [ -n "$SECRET_DATEI" ]; then
   if [ ! -f "$SECRET_DATEI" ]; then
     echo "Secret-Datei fehlt: $SECRET_DATEI" >&2
@@ -250,7 +256,8 @@ PHASE="getauscht"
 SCHRITT="Uploads ersetzen"
 echo "→ Uploads ersetzen…"
 docker compose run --rm --no-deps -T --entrypoint sh app \
-  -c 'set -e; find /app/uploads -mindepth 1 -delete; tar xzf - -C /app/uploads' < "$UPLOADS"
+  -c 'set -e; find /app/uploads -mindepth 1 -delete; tar xzf - -C /app/uploads' <&4
+exec 4<&-
 
 # 10. APP_SECRET
 SCHRITT="APP_SECRET"

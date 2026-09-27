@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -371,6 +372,14 @@ describe("scripts/backup.sh: Aufbewahrung", () => {
     expect(hatSatz("20200103-120000")).toBe(true);
     expect(r.stdout).toContain("Gelöscht (älter als 7 Tage): 20200101-120000");
   });
+
+  it("schreibt bei einem Tag die Einzahl", () => {
+    for (const ts of [...ALTE, "20200103-120000", vorTagen(2)]) satz(ts);
+    const r = run([], { env: { BACKUP_KEEP_DAYS: "1" } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("Gelöscht (älter als 1 Tag): 20200101-120000");
+    expect(r.stdout).not.toContain("1 Tage");
+  });
 });
 
 describe("scripts/backup.sh: APP_SECRET", () => {
@@ -451,6 +460,32 @@ describe("scripts/backup.sh: APP_SECRET", () => {
     expect(gut.status, gut.stderr).toBe(0);
     expect(gut.protokoll).not.toBe("");
     expect(readFileSync(join(aussen, "x"), "utf8")).toBe(SECRET);
+  });
+
+  it("verweigert backups/ auch als Symlink auf einen Ordner ausserhalb", () => {
+    // Gaengige Einrichtung: backups liegt auf einer zweiten Platte.
+    const platte = join(aussen, "platte");
+    mkdirSync(join(platte, "backups"), { recursive: true });
+    rmSync(join(repo, "backups"), { recursive: true });
+    symlinkSync(join(platte, "backups"), join(repo, "backups"));
+    for (const ziel of [
+      "backups/app_secret",
+      join(platte, "backups/app_secret"),
+      join(platte, "backups/../backups/app_secret"),
+    ]) {
+      const r = run(["--secret-sichern", ziel], { env: secretEnv });
+      expect(r.status, ziel).toBe(1);
+      expect(r.stderr, ziel).toContain("nicht zu den Sicherungen");
+      expect(r.protokoll, ziel).toBe("");
+      expect(readdirSync(join(platte, "backups")), ziel).toEqual([]);
+    }
+
+    // Positivkontrolle: neben backups/ auf derselben Platte geht es.
+    const gut = run(["--secret-sichern", join(platte, "app_secret")], {
+      env: secretEnv,
+    });
+    expect(gut.status, gut.stderr).toBe(0);
+    expect(readFileSync(join(platte, "app_secret"), "utf8")).toBe(SECRET);
   });
 
   it("ueberschreibt kein anderes Secret", () => {

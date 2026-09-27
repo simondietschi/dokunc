@@ -65,8 +65,11 @@ services:
       REDIS_URL: redis://redis:6379
       # Leer = der Container erzeugt beim ersten Start ein zufälliges
       # Secret und legt es dauerhaft im Volume app_data ab. Ein eigenes
-      # (empfohlen, z. B. für mehrere Instanzen) hat immer Vorrang:
-      # APP_SECRET in .env setzen — openssl rand -base64 48
+      # in der .env hat immer Vorrang und ist nur nötig, wenn mehrere
+      # Instanzen dasselbe Secret teilen. Läuft die Instanz schon, den
+      # bestehenden Wert übernehmen, nie einen neuen erzeugen: ein neuer
+      # meldet alle ab und sperrt die Zwei-Faktor-Anmeldung (README
+      # „Secret wechseln“).
       APP_SECRET: ${APP_SECRET:-}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       # Abmeldung nach Untätigkeit, z. B. 12h. Leer = keine Grenze

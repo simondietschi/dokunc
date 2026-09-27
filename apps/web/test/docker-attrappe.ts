@@ -26,6 +26,12 @@ import { fileURLToPath } from "node:url";
  * - FAKE_LAGE_EXIT    Exit des node-Aufrufs (vorher "Image fehlt")
  * - FAKE_START_EXIT   Exit von up -d --wait --wait-timeout 300
  * - FAKE_MIGRATIONS   Migrationen in _prisma_migrations der Zwischenablage
+ * - FAKE_LOESCHEN_BEIM_EINSPIELEN  Dateien, die waehrend pg_restore in die
+ *                     Zwischenablage verschwinden (Aufbewahrung eines
+ *                     gleichzeitigen cron-Laufs)
+ *
+ * Das Ersetzen der Uploads (`tar xzf - -C /app/uploads`) schreibt den
+ * Inhalt des Archivs auf stdin als Zeile "UPLOADS <Eintraege>" mit.
  */
 export const FAKE_DOCKER = `#!/usr/bin/env bash
 args="$*"
@@ -64,6 +70,13 @@ case "$args" in
     fi
     exit "\${FAKE_TAR_EXIT:-0}" ;;
   *_prisma_migrations*) printf '%s\\n' $FAKE_MIGRATIONS; exit 0 ;;
+  *"pg_restore -U dokunc -d dokunc_restore"*)
+    cat >/dev/null
+    if [ -n "\${FAKE_LOESCHEN_BEIM_EINSPIELEN:-}" ]; then rm -f $FAKE_LOESCHEN_BEIM_EINSPIELEN; fi
+    exit 0 ;;
+  *"tar xzf - -C /app/uploads"*)
+    printf 'UPLOADS %s\\n' "$(tar tzf - 2>&1 | sort | tr '\\n' ' ')" >> "$FAKE_LOG"
+    exit 0 ;;
 esac
 exit 0
 `;

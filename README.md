@@ -547,9 +547,19 @@ in `systemctl --failed`. `User=` braucht Zugriff auf Docker (Gruppe
 
 **Kopie ausser Haus:** `backups/` liegt auf demselben Server. Nach der
 Sicherung etwa `rsync -a backups/ sicherung@anderer-host:dokunc/` oder
-`rclone sync backups/ ziel:dokunc` anhängen (in der cron-Zeile mit `&&`,
-im Service als zweites `ExecStart=`). Das Secret und die `.env` gehören
-nicht an dasselbe Ziel.
+`rclone copy backups/ ziel:dokunc` anhängen (in der cron-Zeile mit `&&`,
+im Service als zweites `ExecStart=`). Beide kopieren nur dazu und
+löschen am Ziel nichts. Nicht `rclone sync` und nicht `rsync --delete`
+nehmen: sie übertragen jede lokale Löschung auf das Ziel, die der
+Aufbewahrung ebenso wie ein leeres `backups/` (etwa auf einem neuen
+Host, auf dem die crontab schon wieder läuft, bevor die Sicherungen
+zurückgeholt sind). Damit wäre die Kopie ausser Haus genau dann weg, wenn
+sie gebraucht wird. Das Ziel braucht deshalb eine eigene Aufbewahrung,
+sonst wächst es unbegrenzt, etwa `rclone delete --min-age 60d ziel:dokunc`
+oder auf dem anderen Host `find ~/dokunc -type f -mtime +60 -delete`.
+Die Frist dort länger wählen als `BACKUP_KEEP_DAYS`; anders als
+`backup.sh` behält sie keine Mindestzahl an Sätzen. Das Secret und die
+`.env` gehören nicht an dasselbe Ziel.
 
 Zurückgespielt wird mit `./scripts/restore.sh <Zeitstempel>`. Das Skript
 

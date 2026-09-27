@@ -87,8 +87,12 @@ if [ -n "$SECRET_ZIEL" ]; then
   ZIEL_ORDNER=$(cd "$(dirname "$SECRET_ZIEL")" 2>/dev/null && pwd -P) \
     || scheitern "Ordner fehlt: $(dirname "$SECRET_ZIEL")"
   REPO=$(pwd -P)
+  # backups/ kann ein Symlink auf eine andere Platte sein: dann liegt das
+  # Ziel aufgeloest ausserhalb des Repositorys, aber neben den Dumps, und
+  # eine Kopie ausser Haus (rsync backups/) naehme es mit.
+  BACKUPS_ECHT=$(cd backups && pwd -P)
   case "$ZIEL_ORDNER/" in
-    "$REPO"/*) scheitern "Das Secret gehört nicht ins Repository und nicht zu den Sicherungen. Einen Pfad ausserhalb wählen, etwa ~/dokunc-app_secret." ;;
+    "$REPO"/*|"$BACKUPS_ECHT"/*) scheitern "Das Secret gehört nicht ins Repository und nicht zu den Sicherungen. Einen Pfad ausserhalb wählen, etwa ~/dokunc-app_secret." ;;
   esac
   ZIEL="$ZIEL_ORDNER/$(basename "$SECRET_ZIEL")"
   LAGE=$(secret_lage) || scheitern "APP_SECRET liess sich nicht lesen (docker compose run app gescheitert)." log
@@ -243,8 +247,10 @@ if [ "$TAGE" -gt 0 ]; then
     # Nur Zeitstempel, keine Dateinamen: die Zeile backups/db-<TS>.dump
     # oben muss die einzige ihrer Form bleiben (restore.sh, CI).
     # Wortzerlegung gewollt, wie oben.
+    EINHEIT=Tage
+    [ "$TAGE" -ne 1 ] || EINHEIT=Tag
     # shellcheck disable=SC2086
-    echo "Gelöscht (älter als $TAGE Tage): $(printf '%s\n' $GELOESCHT | sort -u | tr '\n' ' ' | sed 's/ $//')"
+    echo "Gelöscht (älter als $TAGE $EINHEIT): $(printf '%s\n' $GELOESCHT | sort -u | tr '\n' ' ' | sed 's/ $//')"
   fi
 fi
 
