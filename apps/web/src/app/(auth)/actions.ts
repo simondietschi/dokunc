@@ -162,7 +162,7 @@ export async function registerAction(
     return {
       error:
         "Registrierung ist nur über einen gültigen Einladungslink möglich. " +
-        "Öffne die Einladung aus deiner E-Mail.",
+        "Öffne den Einladungslink, den du per E-Mail oder direkt bekommen hast.",
     };
   }
   if (exists) {

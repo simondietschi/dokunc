@@ -394,7 +394,8 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       Trigramm-Index für Titel, Treffer mit Pfad und Änderungsdatum
 - [x] Page-History (Snapshots + Wiederherstellen, Redis-gethrottelt)
 - [x] Mitgliederverwaltung + tokenbasierte E-Mail-Einladungen (SHA-256-Hash,
-      Konstantzeit-Vergleich, Ablauf, Einmaligkeit, E-Mail-Bindung)
+      Konstantzeit-Vergleich, Ablauf, Einmaligkeit, E-Mail-Bindung), ohne
+      SMTP Link zur Weitergabe von Hand (`INVITE_LINK_WITHOUT_MAIL`)
 - [x] Unit-Tests (Vitest) + freundliche Error-Boundaries
 - [x] Rich-Editor: Slash-Menü („/"), Tabellen, Aufgabenlisten, Bilder
       (sicherer Upload), Callouts, Mermaid-Diagramme, YouTube-Embeds,
@@ -595,6 +596,8 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       ausdünnen (24 h alle, 30 Tage stündlich, dann täglich,
       Wiederherstellungspunkte gepinnt), Verlauf mit Cursor, Audit-Spur
       bleibt beim Löschen eines Space
+- [x] Einladen ohne Mailserver: Link statt „gesendet“, einmalig angezeigt,
+      nach Vorgabe nur für Admin-Personen der Instanz; Audit mit `delivery`
 
 ## 7. Setup
 

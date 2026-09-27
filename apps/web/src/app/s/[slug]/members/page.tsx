@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { Clock, Trash2, Users, X } from "lucide-react";
 import { prisma } from "@dokunc/db";
+import { isMailConfigured } from "@dokunc/mail";
 import { loadSpace } from "@/lib/space-context";
 import { can, GROUP_ROLES } from "@/lib/permissions";
 import {
@@ -11,7 +12,8 @@ import {
 } from "@/lib/role-policy";
 import { Avatar } from "@/components/ui/Avatar";
 import { ConfirmButton } from "@/components/ui/ConfirmButton";
-import { InviteForm } from "./InviteForm";
+import { inviteLinkMode, mayReceiveInviteLink } from "@/lib/invite-link";
+import { InviteForm, type InviteDelivery } from "./InviteForm";
 import { RoleSelect } from "./RoleSelect";
 import { AddSpaceGroupForm, GroupRoleSelect } from "./GroupRoleSelect";
 import {
@@ -78,6 +80,13 @@ export default async function MembersPage({
   const roles = assignableRoles(role);
   const assignedGroupIds = new Set(spaceGroups.map((g) => g.group.id));
   const availableGroups = allGroups.filter((g) => !assignedGroupIds.has(g.id));
+  // Dieselbe Regel wie in inviteMemberAction: ohne Mailserver sieht den
+  // Link nur, wer ihn nach INVITE_LINK_WITHOUT_MAIL bekommen darf.
+  const delivery: InviteDelivery = isMailConfigured()
+    ? "mail"
+    : mayReceiveInviteLink(user, inviteLinkMode())
+      ? "link"
+      : "none";
 
   return (
     <div className="mx-auto max-w-2xl px-8 py-14 animate-[rise_0.4s_ease]">
@@ -89,7 +98,7 @@ export default async function MembersPage({
       </p>
 
       <div className="mt-8">
-        <InviteForm slug={slug} />
+        <InviteForm slug={slug} delivery={delivery} />
       </div>
 
       <h2 className="mt-10 text-sm font-semibold text-muted">

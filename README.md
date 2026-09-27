@@ -273,7 +273,27 @@ Uploads, die Fristen der Aufbewahrung (`SESSION_RETENTION_DAYS` und
 weitere), `SESSION_IDLE_TIMEOUT` für die Abmeldung nach Untätigkeit
 (empfohlen für geteilte Geräte) — siehe `.env.example`.
 
-Ohne SMTP steht der Link aus Reset- und Einladungsmails nur ausserhalb
+Ohne SMTP zeigt die Mitgliederseite nach dem Einladen den Einladungslink
+an, einmalig und mit Knopf zum Kopieren. Er ist 7 Tage gültig und gehört
+nur an die eingeladene Person: wer ihn hat, kann mit der eingeladenen
+Adresse ein Konto anlegen. Ist er verloren, lädt man dieselbe Adresse
+erneut ein; der alte Link wird damit ungültig. Dasselbe gilt, wenn SMTP
+eingerichtet ist, der Versand aber scheitert und es für die Adresse keine
+gültige Einladung gab. Den Link sehen nach Vorgabe nur Admin-Personen der
+Instanz, in Spaces, die sie verwalten (`INVITE_LINK_WITHOUT_MAIL=admins`);
+andere Space-Verwaltende erfahren, dass die Einladung nicht zugestellt
+wurde. Mit `INVITE_LINK_WITHOUT_MAIL=managers` sehen ihn alle, die einen
+Space verwalten; jeder andere Wert gilt als `admins`, mit einer Warnung im
+Log. Weil jede angemeldete Person einen eigenen Space anlegen
+kann, kann dann jede Person Konten für beliebige Adressen anlegen; mit SSO
+in diesem Fall `OIDC_AUTO_LINK_BY_EMAIL=false` setzen, sonst landet die
+spätere SSO-Anmeldung der echten Person in diesem Konto. Der Link steht
+nie im Log der Produktion und nie im Audit-Log (dort steht
+`delivery: "mail"`, `"link"` oder `"none"`). Einladungen, die vor diesem
+Update ohne Mailserver ausgesprochen wurden, haben niemanden erreicht:
+erneut aussprechen, dann erscheint der Link.
+
+Der Link zum Zurücksetzen des Passworts steht ohne SMTP nur ausserhalb
 der Produktion im Log (`SMTP fehlt — … nur im Log`), in der Produktion
 nie; die Empfängeradresse steht in keinem Fall darin. Scheitert der
 Versand einer Mail zum Zurücksetzen des Passworts, oder fehlt in der
@@ -918,7 +938,10 @@ Kurz, was die App bewusst tut:
 - **Rollen**: die eigene Rolle lässt sich nicht ändern, OWNER vergibt nur
   ein OWNER, der letzte OWNER bleibt bestehen.
 - **Registrierung** ausschliesslich mit gültigem Einladungstoken; die
-  blosse Kenntnis einer eingeladenen Adresse genügt nicht.
+  blosse Kenntnis einer eingeladenen Adresse genügt nicht. Ohne
+  Mailserver erscheint der Einladungslink einmalig bei der einladenden
+  Person, nach Vorgabe nur bei Admin-Personen der Instanz
+  (`INVITE_LINK_WITHOUT_MAIL`), nie im Log.
 - **Uploads** gehören einem Space und werden nur an dessen Mitglieder
   ausgeliefert.
 - **Sitzungen** sind einzeln widerrufbar; der Entzug wirkt auch auf

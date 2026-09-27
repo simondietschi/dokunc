@@ -111,7 +111,10 @@ export async function sendPasswordResetEmail(opts: {
   return sent || logMissingSmtp("Reset-Link", opts.resetUrl);
 }
 
-/** Rückgabe wie bei `sendPasswordResetEmail`. */
+/**
+ * Liefert, ob die Mail per SMTP hinausging. Fehler des Transports werden
+ * geworfen.
+ */
 export async function sendInvitationEmail(opts: {
   to: string;
   spaceName: string;
@@ -135,5 +138,9 @@ export async function sendInvitationEmail(opts: {
   });
 
   const sent = await sendMail({ to: opts.to, subject, text, html });
-  return sent || logMissingSmtp("Einladungslink", opts.inviteUrl);
+  // Ohne SMTP: in der Entwicklung steht der Link im Log, in der Produktion
+  // nur sein Pfad. Zugestellt ist er so oder so nicht; die Mitgliederseite
+  // zeigt ihn dann der einladenden Person (inviteMemberAction).
+  if (!sent) logMissingSmtp("Einladungslink", opts.inviteUrl);
+  return sent;
 }
