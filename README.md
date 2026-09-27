@@ -895,7 +895,11 @@ Versuchen), dass neue Wiederherstellungscodes erst nach ihrer
 Bestätigung gelten und den alten Satz in einem Schritt ablösen (auch
 wenn zwei Fenster gleichzeitig daran arbeiten), und dass eine geschützte
 Seite genau denen sichtbar ist, die sie sehen dürfen — direkt, über eine
-Gruppe oder als Space-Verwaltung. Sie brauchen eine erreichbare
+Gruppe oder als Space-Verwaltung. Für Freigabelinks prüfen sie jede
+Absage einzeln an Seite und Datei-Route (zurückgezogen, abgelaufen, Seite
+gelöscht oder geschützt, Seite ausserhalb des freigegebenen Unterbaums,
+fremder oder seitenloser Anhang), dass alle dieselbe Antwort geben, und
+was die Unterseitenliste auslässt. Sie brauchen eine erreichbare
 Datenbank und ein erreichbares Redis aus `.env` und legen ihre eigenen
 Datensätze an (und wieder ab); sie leeren nichts. Einige starten dafür einen eigenen
 Collab-Server (Port 3150 bis 3199, eigene Redis-Datenbank). Solange sie
@@ -941,6 +945,14 @@ Kurz, was die App bewusst tut:
   geschützte Seite entsteht gar nicht erst und ein bestehender endet,
   sobald der Schutz gesetzt wird. Die Pfadzeile eines Suchtreffers endet
   an der ersten nicht sichtbaren Elternseite.
+- **Freigabelinks** öffnen genau die freigegebene Seite und, wenn beim
+  Teilen gewählt, ihre Unterseiten. Ein Link endet, sobald er
+  zurückgezogen wird, abläuft oder seine Seite im Papierkorb liegt.
+  Unterseiten zählen nur, solange der Weg zur freigegebenen Seite nicht
+  durch den Papierkorb oder einen anderen Space führt. Jede Absage ist
+  dieselbe Antwort „nicht gefunden“, auch bei doppelt angegebenen
+  Parametern: an der Antwort lässt sich nicht erkennen, warum ein Link
+  nicht öffnet.
 - **Gruppen** geben Rollen, nehmen aber keine: die wirksame Rolle ist
   die stärkste aus eigener Mitgliedschaft und allen Gruppen. OWNER
   vergibt keine Gruppe — Eigentümerschaft bleibt persönlich.

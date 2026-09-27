@@ -628,6 +628,9 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 - [x] Benachrichtigung öffnen führt zum Kommentar-Thread (auch erledigt,
       auch aus der Mail) und liest den ganzen Thread; ungelesen für
       Screenreader hörbar
+- [x] Freigabelinks mit Integrationstests: jede Absage einheitlich,
+      Unterbaum nicht durch Papierkorb oder fremden Space, doppelte
+      Suchparameter abgelehnt
 
 ## 7. Setup
 
