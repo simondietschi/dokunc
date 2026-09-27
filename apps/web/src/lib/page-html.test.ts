@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { contentToHtml, pageToPrintHtml, escapeHtml } from "./page-html";
 import { toBase64 } from "@dokunc/editor";
+import { exportContentSecurityPolicy } from "./csp";
 
 const doc = (content: unknown[]) => ({ type: "doc", content });
 
@@ -225,5 +226,60 @@ describe("escapeHtml()", () => {
     expect(escapeHtml(`<a href="x">&'`)).toBe(
       "&lt;a href=&quot;x&quot;&gt;&amp;&#39;",
     );
+  });
+});
+
+describe("Export-CSP", () => {
+  /** Inhalte aller CSP-Meta-Tags im Dokument. */
+  const cspMeta = (html: string) =>
+    [
+      ...html.matchAll(
+        /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/g,
+      ),
+    ].map((m) => m[1]);
+
+  it("Export-HTML bringt seine CSP mit: nur data:-Bilder und Inline-Stile", () => {
+    // Ohne sie lud Gotenbergs Chromium jede Bildadresse aus dem Inhalt,
+    // hier etwa die Datenbank im Docker-Netz.
+    const out = pageToPrintHtml({
+      title: "T",
+      contentHtml: '<img src="http://db:5432/">',
+    });
+    const meta = cspMeta(out);
+    expect(meta).toEqual([exportContentSecurityPolicy()]);
+    const teile = meta[0]!.split("; ");
+    expect(teile).toContain("img-src data:");
+    expect(teile).toContain("default-src 'none'");
+    // Die Richtlinie laesst font-src bewusst weg (bleibt ueber
+    // default-src 'none' zu). Das stimmt nur, solange das Druck-CSS
+    // Systemschriften nennt und nichts nachlaedt.
+    const stil = out.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
+    expect(stil).toContain("font-family");
+    expect(stil).not.toMatch(/url\(|@import|@font-face/);
+  });
+
+  it("CSP steht vor allem, was etwas laden koennte", () => {
+    // Eine Meta-CSP gilt nur fuer das, was nach ihr geparst wird.
+    const out = pageToPrintHtml({ title: "T", contentHtml: "<p>x</p>" });
+    const meta = out.indexOf('<meta http-equiv="Content-Security-Policy"');
+    expect(meta).toBeGreaterThan(out.indexOf("<meta charset"));
+    expect(out.indexOf("<meta charset")).toBeGreaterThanOrEqual(0);
+    expect(meta).toBeLessThan(out.indexOf("<style>"));
+    expect(meta).toBeLessThan(out.indexOf("<main>"));
+  });
+
+  it("Druckansicht bekommt keine eigene CSP (Bilder aus /api/files bleiben sichtbar)", () => {
+    const druck = pageToPrintHtml({
+      title: "T",
+      contentHtml: '<img src="/api/files/a.png">',
+      target: "print",
+    });
+    expect(cspMeta(druck)).toEqual([]);
+    const exportHtml = pageToPrintHtml({
+      title: "T",
+      contentHtml: '<img src="/api/files/a.png">',
+      target: "export",
+    });
+    expect(cspMeta(exportHtml)).toHaveLength(1);
   });
 });

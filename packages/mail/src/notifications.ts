@@ -52,17 +52,13 @@ function singleSubject(item: NotificationMailItem): string {
 }
 
 /**
- * Pfad, unter dem eine Benachrichtigung geoeffnet wird. Aenderungen laufen
- * ueber /notifications/<id>: die Route setzt sie auf gelesen (sonst kaeme
- * zu dieser Seite nie wieder eine) und sucht den Stand vor der Aenderung.
- * Die uebrigen Typen fuehren wie bisher direkt zur Seite.
+ * Pfad, unter dem eine Benachrichtigung geoeffnet wird, in der App und in
+ * der Mail: /notifications/<id> setzt sie auf gelesen und fuehrt zum Ziel
+ * (Kommentar-Thread, Vergleich vor der Aenderung, Seite). Ist die Meldung
+ * geloescht oder gehoert sie einem anderen Konto, landet man in der Liste.
  */
-export function notificationPath(n: {
-  id: string;
-  type: NotificationMailType;
-  pageId: string;
-}): string {
-  return n.type === "PAGE_UPDATED" ? `/notifications/${n.id}` : `/p/${n.pageId}`;
+export function notificationPath(n: { id: string }): string {
+  return `/notifications/${n.id}`;
 }
 
 /** Auszug auf eine handliche Länge kürzen (eine Zeile, ohne Umbrüche). */

@@ -15,11 +15,19 @@ vi.mock("@dokunc/mail", async (importOriginal) => {
 const { isTransientMailError, sendInvitationEmail, sendPasswordResetEmail } =
   await import("./mail");
 const { log } = await import("./log");
+const { sendMail } = await import("@dokunc/mail");
 
 const ADRESSE = "Kim.Muster@example.org";
 const TOKEN = "geheimes-token-123";
 const RESET_URL = `https://wiki.example.org/reset/reset-id-1?token=${TOKEN}`;
 const INVITE_URL = `https://wiki.example.org/invite/einl-id-1?token=${TOKEN}`;
+const EINLADUNG = {
+  to: ADRESSE,
+  spaceName: "Handbuch",
+  inviterName: "Alex",
+  role: "EDITOR",
+  inviteUrl: INVITE_URL,
+};
 
 let warn: ReturnType<typeof vi.spyOn>;
 
@@ -46,6 +54,10 @@ describe("ohne SMTP in der Produktion", () => {
     expect(
       await sendPasswordResetEmail({ to: ADRESSE, resetUrl: RESET_URL }),
     ).toBe(false);
+  });
+
+  it("meldet die Einladung als nicht zugestellt", async () => {
+    expect(await sendInvitationEmail(EINLADUNG)).toBe(false);
   });
 
   it("schreibt weder Adresse noch Token ins Log, nur den Pfad", async () => {
@@ -84,17 +96,28 @@ describe("ohne SMTP ausserhalb der Produktion", () => {
     expect(geloggt().toLowerCase()).not.toContain(ADRESSE.toLowerCase());
   });
 
-  it("gilt auch für Einladungen", async () => {
-    expect(
-      await sendInvitationEmail({
-        to: ADRESSE,
-        spaceName: "Handbuch",
-        inviterName: "Alex",
-        role: "EDITOR",
-        inviteUrl: INVITE_URL,
-      }),
-    ).toBe(true);
+  it("legt auch den Einladungslink ins Log, meldet ihn aber nicht als zugestellt", async () => {
+    // Zugestellt heisst hier: per SMTP hinaus. Das Log ersetzt das nicht,
+    // die Mitgliederseite zeigt den Link dann der einladenden Person.
+    expect(await sendInvitationEmail(EINLADUNG)).toBe(false);
     expect(warn.mock.calls[0][0]).toEqual({ url: INVITE_URL });
+  });
+});
+
+describe("mit SMTP", () => {
+  beforeEach(() => {
+    vi.stubEnv("NODE_ENV", "production");
+  });
+
+  it("meldet die Einladung als zugestellt und loggt keinen Link", async () => {
+    vi.mocked(sendMail).mockResolvedValueOnce(true);
+    expect(await sendInvitationEmail(EINLADUNG)).toBe(true);
+    expect(warn).not.toHaveBeenCalled();
+
+    // Positivkontrolle: ohne Zustellung liefert derselbe Aufruf false und
+    // die Warnung erscheint, der Spion greift also.
+    expect(await sendInvitationEmail(EINLADUNG)).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });
 

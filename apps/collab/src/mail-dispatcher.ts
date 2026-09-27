@@ -384,7 +384,7 @@ export function startMailDispatcher(opts: {
           type: r.type,
           actorName: r.actor?.name ?? "Jemand",
           pageTitle: page.title,
-          url: `${appUrl()}${notificationPath({ id: r.id, type: r.type, pageId: r.pageId })}`,
+          url: `${appUrl()}${notificationPath({ id: r.id })}`,
           excerpt: r.commentId ? (bodyById.get(r.commentId) ?? null) : null,
         },
       });

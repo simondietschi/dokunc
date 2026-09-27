@@ -16,6 +16,7 @@ import {
   verifyToken,
 } from "@/lib/invitations";
 import { buildInviteUrl, sendInvitationEmail } from "@/lib/mail";
+import { inviteLinkMode, mayReceiveInviteLink } from "@/lib/invite-link";
 import { rateLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
 import { log } from "@/lib/log";
@@ -24,7 +25,14 @@ import { changeMemberRole, removeSpaceMember } from "@/lib/member-changes";
 import { isGroupRole } from "@/lib/permissions";
 import { RATE_LIMITS } from "@/lib/rate-limits";
 
-export type FormState = { error?: string; success?: string } | undefined;
+/**
+ * Einladungslink zur Weitergabe von Hand. Nur in der Antwort an die
+ * einladende Person: nie loggen, nie in eine URL, nie speichern.
+ */
+export type InviteLink = { url: string; email: string };
+export type FormState =
+  | { error?: string; success?: string; link?: InviteLink }
+  | undefined;
 
 const inviteSchema = z.object({
   email: z.email("Bitte eine gültige E-Mail angeben"),
@@ -75,6 +83,9 @@ export async function inviteMemberAction(
   // Deshalb den bisherigen Stand merken: scheitert der Versand, haette die
   // eingeladene Person sonst gar keinen gueltigen Link mehr — der alte tot,
   // der neue nie zugestellt.
+  // Wiederhergestellt wird nur eine noch gueltige Einladung (nicht
+  // angenommen, nicht abgelaufen); sonst gilt die neue Zeile, und wer den
+  // Link sehen darf, bekommt ihn angezeigt.
   const previous = await prisma.spaceInvitation.findUnique({
     where: { spaceId_email: { spaceId: space.id, email } },
     select: {
@@ -106,13 +117,21 @@ export async function inviteMemberAction(
     },
   });
 
+  const inviteUrl = buildInviteUrl(invitation.id, token);
+  const linkAllowed = mayReceiveInviteLink(user, inviteLinkMode());
+  const previousValid =
+    previous !== null &&
+    previous.acceptedAt === null &&
+    previous.expiresAt.getTime() > Date.now();
+
+  let sent: boolean;
   try {
-    await sendInvitationEmail({
+    sent = await sendInvitationEmail({
       to: email,
       spaceName: space.name,
       inviterName: user.name,
       role,
-      inviteUrl: buildInviteUrl(invitation.id, token),
+      inviteUrl,
     });
   } catch (e) {
     // Ohne diesen Eintrag bliebe der Grund (Verbindung abgelehnt, Auth,
@@ -122,7 +141,7 @@ export async function inviteMemberAction(
       { err: String(e), spaceId: space.id, invitationId: invitation.id },
       "Einladungsmail konnte nicht gesendet werden",
     );
-    if (previous) {
+    if (previousValid) {
       await prisma.spaceInvitation.update({
         where: { id: invitation.id },
         data: previous,
@@ -132,21 +151,72 @@ export async function inviteMemberAction(
           "E-Mail-Versand fehlgeschlagen. SMTP prüfen — die bisherige Einladung bleibt gültig.",
       };
     }
+    if (!linkAllowed) {
+      return {
+        error:
+          "Einladung gespeichert, aber E-Mail-Versand fehlgeschlagen. SMTP prüfen.",
+      };
+    }
+    // Keine gueltige fruehere Einladung: ohne den Link waere diese tot.
+    await inviteAudit(user.id, space.id, invitation.id, email, role, "link");
+    revalidatePath(`/s/${space.slug}/members`);
     return {
       error:
         "Einladung gespeichert, aber E-Mail-Versand fehlgeschlagen. SMTP prüfen.",
+      link: { url: inviteUrl, email },
     };
   }
 
+  if (!sent && !linkAllowed && previousValid) {
+    // Ohne Mailserver erreicht der neue Link niemanden, weil diese Person
+    // ihn nicht sehen darf. Den Hash zu ersetzen, entwertete aber einen
+    // Link, den eine Admin-Person vielleicht schon weitergegeben hat. Also
+    // wie beim Transportfehler: der fruehere Stand gilt weiter, auch seine
+    // Rolle, und die Meldung sagt das offen.
+    await prisma.spaceInvitation.update({
+      where: { id: invitation.id },
+      data: previous,
+    });
+    return {
+      error: `Es ist kein Mailserver eingerichtet, und für ${email} gibt es schon eine gültige Einladung. Sie bleibt unverändert; ändern oder neu aussprechen kann sie eine Admin-Person der Instanz, die diesen Space verwaltet.`,
+    };
+  }
+
+  const delivery = sent ? "mail" : linkAllowed ? "link" : "none";
+  await inviteAudit(user.id, space.id, invitation.id, email, role, delivery);
+  revalidatePath(`/s/${space.slug}/members`);
+  if (sent) return { success: `Einladung an ${email} gesendet.` };
+  if (linkAllowed) {
+    return {
+      success: `Einladung für ${email} erstellt. Es wurde keine E-Mail verschickt, weil kein Mailserver eingerichtet ist.`,
+      link: { url: inviteUrl, email },
+    };
+  }
+  return {
+    error: `Einladung für ${email} erstellt, aber nicht zugestellt: Es ist kein Mailserver eingerichtet. Den Link zur Weitergabe von Hand sehen nur Admin-Personen der Instanz, die diesen Space verwalten.`,
+  };
+}
+
+/**
+ * Audit-Eintrag einer geltenden Einladung. `delivery` sagt, wie der Link
+ * hinausging: per Mail, als Link an die einladende Person, oder gar
+ * nicht. Nie die URL oder das Token.
+ */
+async function inviteAudit(
+  actorId: string,
+  spaceId: string,
+  invitationId: string,
+  email: string,
+  role: SpaceRole,
+  delivery: "mail" | "link" | "none",
+): Promise<void> {
   await audit({
     action: "member.invited",
-    actorId: user.id,
-    spaceId: space.id,
-    targetId: invitation.id,
-    metadata: { email, role },
+    actorId,
+    spaceId,
+    targetId: invitationId,
+    metadata: { email, role, delivery },
   });
-  revalidatePath(`/s/${space.slug}/members`);
-  return { success: `Einladung an ${email} gesendet.` };
 }
 
 export async function revokeInvitationAction(form: FormData) {

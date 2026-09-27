@@ -100,7 +100,8 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
   queuedAt). Nur Trigger fügen ein, nur `indexPageChunks` entfernt.
 - **Notification**: userId, actorId, type (MENTION, COMMENT,
   COMMENT_REPLY, PAGE_UPDATED), pageId, commentId, versionId (nur
-  PAGE_UPDATED, ohne Fremdschlüssel), readAt, emailedAt.
+  PAGE_UPDATED, ohne Fremdschlüssel), readAt, emailedAt. `commentId` ist
+  bei COMMENT der Thread, bei COMMENT_REPLY die Antwort.
 - **PageSubscription**: Person folgt Seite (Kommentare und Änderungen).
 - **AuditLog**: sicherheitsrelevante Ereignisse; `spaceId` wird beim
   Löschen des Space NULL, der Eintrag bleibt.
@@ -316,6 +317,32 @@ beginnt vor deren Snapshot und zeigt den Nachlauf mit. Dieselbe Lücke
 hat die Versionsgeschichte auch ohne Meldungen (siehe Roadmap,
 Nachlauf-Snapshot).
 
+**Benachrichtigung öffnen:** Alle Typen laufen über `/notifications/<id>`,
+in der Liste und in der Mail (`notificationPath` in `@dokunc/mail`); die
+Liste nutzt dafür schlichte Links ohne Prefetch. Die Route setzt die
+Meldung gelesen, auch wenn sie danach zur Liste führt. Bei
+Kommentarmeldungen prüft sie zuerst den Zugriff auf die Seite, löst dann
+den Thread über `parentId` auf (eine `commentId` einer anderen Seite gilt
+als gelöscht), setzt alle ungelesenen COMMENT- und COMMENT_REPLY-Meldungen
+der Person zu diesem Thread gelesen und leitet auf
+`#comment-thread-<id>`; fehlt der Kommentar, auf `#comment-deleted`.
+Erwähnungen und Änderungsmeldungen bleiben dabei unberührt. Hat sich
+etwas geändert, publiziert sie an die Glocke der Person (andere Tabs).
+Folge für den Mailversand: der Dispatcher überspringt gelesene Meldungen,
+ausstehende Sofortmails und Einträge der Tageszusammenfassung für die so
+mitgelesenen Meldungen entfallen. Das Kommentarpanel liest den Anker beim
+Laden (`lib/comment-anchor.ts`), klappt erledigte Threads auf, fokussiert
+den Thread und hält ihn mit `lib/hold-in-view.ts` im Bild, solange der
+Inhalt darüber wächst (höchstens 10 s, bis zur ersten Eingabe).
+Scroll-Anchoring genügt dafür nicht: bei Scrollposition 0 greift es nicht,
+und der wachsende Editor im sichtbaren Bereich ist selbst der Anker.
+Ebenso gleicht es Scrollbewegungen aus, die nicht von der Person kommen
+(Chromium verschiebt den Bereich beim Laden auch ohne Grössenänderung);
+eigene Eingaben beenden das Festhalten vorher. Den Hinweis auf einen
+gelöschten Kommentar hält es genauso fest. Das Öffnen einer Seite allein
+setzt Kommentarmeldungen nicht gelesen, denn die Kommentare stehen am Ende
+der Seite.
+
 **Wiederherstellen einer Version** muss an diesem Zwischenspeicher vorbei,
 und zwar auf derselben Yjs-Linie. Die Web-App schreibt den Inhalt der
 Version nach `Page.content` (Suche, Export) und schickt über Redis
@@ -394,7 +421,8 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       Trigramm-Index für Titel, Treffer mit Pfad und Änderungsdatum
 - [x] Page-History (Snapshots + Wiederherstellen, Redis-gethrottelt)
 - [x] Mitgliederverwaltung + tokenbasierte E-Mail-Einladungen (SHA-256-Hash,
-      Konstantzeit-Vergleich, Ablauf, Einmaligkeit, E-Mail-Bindung)
+      Konstantzeit-Vergleich, Ablauf, Einmaligkeit, E-Mail-Bindung), ohne
+      SMTP Link zur Weitergabe von Hand (`INVITE_LINK_WITHOUT_MAIL`)
 - [x] Unit-Tests (Vitest) + freundliche Error-Boundaries
 - [x] Rich-Editor: Slash-Menü („/"), Tabellen, Aufgabenlisten, Bilder
       (sicherer Upload), Callouts, Mermaid-Diagramme, YouTube-Embeds,
@@ -574,7 +602,9 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       Mitwirkende im Zeitfenster über Redis, höchstens eine ungelesene je
       Seite, Link auf den Vergleich)
 - [x] Sicherung und Rückweg (`backup.sh`, `restore.sh`, Restore-Epoche, im
-      Docker-Job der CI zurückgespielt)
+      Docker-Job der CI zurückgespielt); `backup.sh` prüft Dump und Archiv
+      vor dem Ablegen, `BACKUP_KEEP_DAYS` mit Mindestbestand, Secret
+      getrennt mit `--secret-sichern` und Prüfmerkmal
 - [ ] Nachlauf-Snapshot: trifft ein Speicherlauf auf die belegte
       Snapshot-Drossel, einen Merker `dokunc:snapshot-pending:<pageId>`
       setzen; ein Zeitgeber schreibt nach Ablauf der Drossel für diese
@@ -593,6 +623,21 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       ausdünnen (24 h alle, 30 Tage stündlich, dann täglich,
       Wiederherstellungspunkte gepinnt), Verlauf mit Cursor, Audit-Spur
       bleibt beim Löschen eines Space
+- [x] Einladen ohne Mailserver: Link statt „gesendet“, einmalig angezeigt,
+      nach Vorgabe nur für Admin-Personen der Instanz; Audit mit `delivery`
+- [x] Benachrichtigung öffnen führt zum Kommentar-Thread (auch erledigt,
+      auch aus der Mail) und liest den ganzen Thread; ungelesen für
+      Screenreader hörbar
+- [x] Freigabelinks mit Integrationstests: jede Absage einheitlich,
+      Unterbaum nicht durch Papierkorb oder fremden Space, doppelte
+      Suchparameter abgelehnt
+- [x] Export abgeschottet: Export-HTML mit eigener CSP (nur `data:`-Bilder,
+      Inline-Stile, Einbettungen wie in der App; `lib/csp.ts`), Gotenberg
+      mit `--chromium-allow-list` nur im internen Netz `render` mit der App
+- [x] Lieferkette: Update holt neue Images (`compose pull`, `build --pull`,
+      verkettet), Dependabot, `pnpm audit` und Trivy (Lockfile, App-Image)
+      in der CI, wöchentlicher Lauf, Postgres auf das Debian-Release
+      festgelegt
 
 ## 7. Setup
 
@@ -602,8 +647,12 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
 docker compose up -d --build     # https://localhost:7891 (Proxy), Migrationen automatisch
 ```
 
-Sichern und zurückspielen: `./scripts/backup.sh`,
-`./scripts/restore.sh <Zeitstempel>` (README „Sicherung und Rückweg“).
+Sichern und zurückspielen: `./scripts/backup.sh` (einmal
+`./scripts/backup.sh --secret-sichern ~/dokunc-app_secret`),
+`./scripts/restore.sh <Zeitstempel>` (README „Sicherung und Rückweg“,
+„Secret wechseln“). Aktualisieren: README „Update und Rückweg“ (holt
+mit `docker compose pull --ignore-buildable` und
+`docker compose build --pull` auch neue Images).
 
 **Lokal (ohne Docker):**
 

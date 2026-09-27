@@ -22,7 +22,8 @@ minimumReleaseAge: 1440
 # pinnen aber die verwundbare Version. Jeder Eintrag bleibt in seinem
 # Hauptversionsbereich, damit der Override keine fremde Schnittstelle
 # verschiebt. Fällt ein Eintrag aus `pnpm audit`, weil das Elternpaket
-# nachgezogen hat, darf er hier wieder raus.
+# nachgezogen hat, darf er hier wieder raus. Die CI prüft das in jedem
+# Lauf (Job audit).
 overrides:
   "@tiptap/*": "3.31.3"
   # GHSA-55q2-fjhq-7xh7: IN_PLACE-Hook lässt einen abgetrennten Teilbaum
@@ -33,6 +34,9 @@ overrides:
   lodash-es: "^4.17.24"
   # GHSA-2v37-7h3g-55p8 und GHSA-28wg-ghj8-5hjv: Endlosschleife bei
   # Grösse null oder negativ. Betrifft den 3er-Zweig aus Excalidraw.
+  # auditConfig.ignoreGhsas unten nimmt dieselben Kennungen fuer nanoid 4
+  # aus und gilt fuer alle Versionen: ob dieser Override noch noetig ist,
+  # zeigt Trivy (Job audit), nicht pnpm audit.
   nanoid@3: "^3.3.18"
   # GHSA-fxqj-rqcc-2cmp. Steckt in der Build-Kette (Tailwind/Next).
   postcss: "^8.5.23"
@@ -42,6 +46,13 @@ overrides:
   shell-quote: "^1.10.0"
   # GHSA-5qjj-4xww-7phc. Kommt über den Prisma-Client mit.
   valibot: "^1.4.2"
+  # GHSA-v2hh-gcrm-f6hx, -7p8r-x3mc-p8w7, -5jgf-p345-68v8, -f65p-4m7j-42xc,
+  # -fph4-wmhf-6fwf, -jqff-g426-hqxp (Host-Verwechslung, SSRF beim
+  # Normalisieren). Kommt über prisma > @prisma/dev > ajv.
+  fast-uri@3: "^3.1.6"
+  # GHSA-3f6p-5ww8-9rcr. prisma pinnt 3.15.3 (auch 7.10.0); dokunc lädt
+  # mysql2 nie (nur Postgres).
+  mysql2@3: "^3.22.0"
 
 # Erlaubte Postinstall-Build-Skripte (pnpm 11).
 allowBuilds:
@@ -49,3 +60,20 @@ allowBuilds:
   esbuild: true
   prisma: true
   sharp: true
+
+# Ausnahmen fuer `pnpm audit` (CI-Job audit). Nur wenn weder das
+# Elternpaket noch ein Override in der Hauptversion hilft; dieselbe Luecke
+# steht mit Ablaufdatum in .trivyignore.yaml. Jede Kennung mit Begruendung.
+# Gilt fuer alle Versionen; die genaue Ausnahme mit Paketversion steht in
+# .trivyignore.yaml.
+auditConfig:
+  ignoreGhsas:
+    # deepmerge-ts 7 aus @prisma/config (auch prisma 7.10.0), behoben erst in 8.
+    # Fuehrt nur Prismas eigene Konfiguration zusammen, keine fremden Graphen.
+    - GHSA-ggr8-5vv4-36mx
+    # nanoid 4 aus @excalidraw/mermaid-to-excalidraw, behoben erst in 5.
+    # Laeuft im Browser mit Vorgabelaenge; betroffen sind Laenge 0,
+    # negative und uebergrosse Laengen.
+    - GHSA-28wg-ghj8-5hjv
+    - GHSA-2v37-7h3g-55p8
+    - GHSA-xwg4-73v4-xw9w

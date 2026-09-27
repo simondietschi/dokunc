@@ -65,8 +65,11 @@ services:
       REDIS_URL: redis://redis:6379
       # Leer = der Container erzeugt beim ersten Start ein zufälliges
       # Secret und legt es dauerhaft im Volume app_data ab. Ein eigenes
-      # (empfohlen, z. B. für mehrere Instanzen) hat immer Vorrang:
-      # APP_SECRET in .env setzen — openssl rand -base64 48
+      # in der .env hat immer Vorrang und ist nur nötig, wenn mehrere
+      # Instanzen dasselbe Secret teilen. Läuft die Instanz schon, den
+      # bestehenden Wert übernehmen, nie einen neuen erzeugen: ein neuer
+      # meldet alle ab und sperrt die Zwei-Faktor-Anmeldung (README
+      # „Secret wechseln“).
       APP_SECRET: ${APP_SECRET:-}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
       # Abmeldung nach Untätigkeit, z. B. 12h. Leer = keine Grenze
@@ -116,6 +119,10 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-dokunc <no-reply@example.com>}
+      # Ohne Mailserver: wer den Einladungslink zur Weitergabe von Hand
+      # sieht (admins oder managers, Einzelheiten in .env.example). Leer =
+      # Vorgabe admins.
+      INVITE_LINK_WITHOUT_MAIL: ${INVITE_LINK_WITHOUT_MAIL:-}
       # Benachrichtigungs-Mails: Prüfintervall (s) und Digest-Stunde (UTC)
       MAIL_DISPATCH_INTERVAL_S: ${MAIL_DISPATCH_INTERVAL_S:-30}
       DIGEST_HOUR_UTC: ${DIGEST_HOUR_UTC:-6}
@@ -172,9 +179,17 @@ services:
     # kleinen Hosts kann der Wert gesenkt werden.
     mem_limit: 2g
     cpus: 1.5
+    # Standardnetz für Proxy, Datenbank, Redis und Ausgang (SMTP, OIDC,
+    # KI-Dienste); render nur für Gotenberg (siehe networks: unten).
+    networks:
+      - default
+      - render
 
   db:
-    image: postgres:18
+    # Auf das Debian-Release festgelegt: ein neues Release bringt eine neue
+    # C-Bibliothek und damit eine andere Sortierung von Text (README, Update
+    # und Rückweg).
+    image: postgres:18-trixie
     restart: unless-stopped
     environment:
       POSTGRES_USER: dokunc
@@ -191,14 +206,23 @@ services:
       timeout: 5s
       retries: 10
 
-  # HTML -> PDF (Seiten-Export). Nur intern erreichbar.
+  # HTML -> PDF (Seiten-Export). Nur die App erreicht ihn, und er selbst
+  # erreicht nur die App und den Docker-Host (über die Gateway-Adresse des
+  # Netzes render, siehe networks: unten): im Netz render ohne Ausgang, und
+  # sein Chromium lädt nur die eigene Arbeitsdatei unter /tmp und eingebettete
+  # data:-Bilder. Ohne diese Liste lud es jede Bildadresse aus dem
+  # Seiteninhalt, auch Adressen im Docker-Netz oder im LAN. Das exportierte
+  # HTML sperrt dasselbe zusätzlich mit einer eigenen CSP (lib/csp.ts).
   gotenberg:
     image: gotenberg/gotenberg:8
     restart: unless-stopped
     command:
       - gotenberg
       - --chromium-disable-javascript=true
+      - "--chromium-allow-list=^(file:///tmp/|data:)"
       - --api-timeout=30s
+    networks:
+      - render
 
   redis:
     image: redis:8
@@ -211,6 +235,22 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+# Gotenberg hängt nur im Netz render, zusammen mit der App. render ist
+# intern (ohne Ausgang): das Chromium des PDF-Dienstes erreicht damit
+# weder Datenbank noch Redis, das LAN oder das Internet. Erreichbar bleibt
+# der Docker-Host selbst über die Gateway-Adresse von render, also Dienste,
+# die dort auf allen Adressen lauschen. Das schliesst erst
+# driver_opts: {com.docker.network.bridge.gateway_mode_ipv4: isolated};
+# Docker Engine vor 28.0 kennt diesen Wert nicht (27.x bricht mit "unknown
+# gateway mode isolated" ab), darum steht er nicht hier, sondern als
+# Möglichkeit im README ("Sicherheit"). Alle anderen
+# Dienste, auch solche aus einer docker-compose.override.yml ohne eigene
+# networks-Angabe, bleiben im Standardnetz. Wer in einer override-Datei
+# einen Dienst Gotenberg nutzen lässt, gibt ihm networks: [default, render].
+networks:
+  render:
+    internal: true
 
 volumes:
   db_data:

@@ -110,6 +110,20 @@ export function devServerSocket(origin: string | undefined): string[] {
 }
 
 /**
+ * Ziele, die ein eingebettetes Video oder Diagramm laden darf (frame-src).
+ * Eine Liste fuer zwei Richtlinien, die der App und die des exportierten
+ * HTML: ein Video, das im Editor spielt, soll auch in der
+ * heruntergeladenen Datei spielen, und keine der beiden darf mehr. Der
+ * Export selbst erzeugt heute nur youtube-nocookie; die gemeinsame Liste
+ * haelt die Richtlinien trotzdem gleich.
+ */
+export const EMBED_FRAME_SOURCES = [
+  "https://www.youtube-nocookie.com",
+  "https://www.youtube.com",
+  "https://embed.diagrams.net",
+] as const;
+
+/**
  * Die Richtlinie als Header-Wert.
  *
  * `style-src 'unsafe-inline'` bleibt: Next und Tailwind setzen zur
@@ -148,12 +162,39 @@ export function contentSecurityPolicy(
     "style-src 'self' 'unsafe-inline'",
     script.join(" "),
     connect.join(" "),
-    "frame-src https://www.youtube-nocookie.com https://www.youtube.com https://embed.diagrams.net",
+    `frame-src ${EMBED_FRAME_SOURCES.join(" ")}`,
     "font-src 'self' data:",
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
+  ].join("; ");
+}
+
+/**
+ * Richtlinie fuer exportiertes HTML: den HTML-Download und die Vorlage,
+ * aus der Gotenberg das PDF rendert. Steht als Meta-Tag in der Datei
+ * selbst (siehe pageToPrintHtml), weil beide Wege ohne Antwort-Header
+ * gelesen werden: die Datei per file://, das PDF in Gotenbergs Chromium.
+ *
+ * Ohne sie lud Chromium jede Bildadresse aus dem Seiteninhalt, im PDF
+ * aus dem Docker-Netz heraus (Datenbank, Redis, LAN, Metadaten-Dienste)
+ * und im Download beim Oeffnen von fremden Servern. Erlaubt ist nur, was
+ * der Export braucht: eingebettete Bilder als data:, Inline-Stile (Kopf
+ * und style-Attribute) und eingebettete Videos wie in der App. Schriften
+ * sind Systemschriften und brauchen keine Freigabe. Kein 'self': in einer
+ * per file:// geoeffneten Datei waere das das Dateisystem.
+ *
+ * Enthaelt weder " noch &: der Wert steht roh im Attribut.
+ */
+export function exportContentSecurityPolicy(): string {
+  return [
+    "default-src 'none'",
+    "img-src data:",
+    "style-src 'unsafe-inline'",
+    `frame-src ${EMBED_FRAME_SOURCES.join(" ")}`,
+    "base-uri 'none'",
+    "form-action 'none'",
   ].join("; ");
 }
 

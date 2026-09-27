@@ -2,10 +2,56 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # Dependabot-Branches laufen ueber pull_request, nicht doppelt.
+    branches-ignore: ["dependabot/**"]
   pull_request:
+  # Montags auch ohne Push: neue Advisories (pnpm audit, Trivy) und neue
+  # Basis- oder Dienst-Images fallen so innert einer Woche auf. Laeuft
+  # auf dem Standardbranch; die Fehlermail geht an die Person, die die
+  # cron-Zeile zuletzt geaendert hat.
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+# Kein Job schreibt ins Repository, in Issues oder Pakete. Caches und
+# Artefakte laufen ueber das Laufzeit-Token von Actions.
+permissions:
+  contents: read
 
 jobs:
+  # Eigener Job: eine neue Advisory soll Lint, Tests und Build nicht
+  # verdecken. Ausnahmen mit Begruendung: pnpm-workspace.yaml
+  # (auditConfig) und .trivyignore.yaml (nur die betroffene Version).
+  audit:
+    name: Bekannte Luecken (pnpm audit, Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: pnpm installieren
+        run: npm install -g pnpm@11.27.1
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 26
+      # Liest nur das Lockfile, kein pnpm install noetig
+      - name: pnpm audit
+        run: pnpm audit --prod --audit-level high
+      # ignoreGhsas gilt fuer alle Versionen eines Pakets; Trivy mit purls
+      # meldet eine andere verwundbare Version desselben Pakets weiter.
+      # Laeuft auch nach einem roten pnpm audit, sonst bliebe ein Befund,
+      # den nur Trivy sieht, bis zur Behebung der Advisory verdeckt.
+      - name: Lockfile auf Luecken pruefen (Trivy)
+        if: ${{ !cancelled() }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: pnpm-lock.yaml
+          version: v0.74.0
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore.yaml
+
   build-test:
     runs-on: ubuntu-latest
     env:
@@ -33,7 +79,7 @@ jobs:
       # bevor irgendetwas installiert ist. Muss vor setup-node stehen,
       # weil `cache: pnpm` den Store-Pfad über ein laufendes pnpm sucht.
       - name: pnpm installieren
-        run: npm install -g pnpm@11.13.1
+        run: npm install -g pnpm@11.27.1
 
       - uses: actions/setup-node@v7
         with:
@@ -75,8 +121,10 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     services:
+      # Images wie in docker-compose.yml (db, redis); lieferkette.test.ts
+      # haelt beide gleich, Dependabot pflegt nur die Compose-Datei.
       postgres:
-        image: postgres:18
+        image: postgres:18-trixie
         env:
           POSTGRES_USER: dokunc
           POSTGRES_PASSWORD: dokunc
@@ -115,7 +163,7 @@ jobs:
       # bevor irgendetwas installiert ist. Muss vor setup-node stehen,
       # weil `cache: pnpm` den Store-Pfad über ein laufendes pnpm sucht.
       - name: pnpm installieren
-        run: npm install -g pnpm@11.13.1
+        run: npm install -g pnpm@11.27.1
 
       - uses: actions/setup-node@v7
         with:
@@ -166,6 +214,7 @@ jobs:
         run: test ! -f .env
 
       - name: Stack bauen und starten
+        id: start
         run: docker compose up -d --build --wait --wait-timeout 600
 
       # Caddy stellt beim ersten Start sein internes Zertifikat aus; bis
@@ -196,6 +245,32 @@ jobs:
       - name: APP_SECRET wurde automatisch erzeugt
         run: |
           docker compose exec -T app sh -c 'test -s /app/data/app_secret'
+
+      # Die Update-Befehle aus dem README ("Update und Rueckweg") ohne
+      # git pull, als Kette wie dort. Belegt, dass sie laufen und der Stack
+      # danach gesund ist. "|| exit 1" ist noetig: set -e bricht in einer
+      # &&-Liste nur ab, wenn das letzte Glied scheitert. Ohne es liefe der
+      # Schritt nach einem gescheiterten pull oder build --pull weiter und
+      # faende den alten Stack gesund.
+      # Dass build --pull das Basis-Image neu holt, zeigt dieser Schritt
+      # nicht, nur ein Versuch mit einem Basis-Image, das es nur lokal gibt:
+      # up --build baut damit ohne Pull, build --pull scheitert mit "pull
+      # access denied" (Commit 91285f0).
+      # Die zweite Zeile: pull scheitert ohne --ignore-buildable, sobald eine
+      # override-Datei der App ein image: gibt.
+      # Beide Zeilen prueft apps/web/src/lieferkette.test.ts gegen das README.
+      - name: Update-Weg aus dem README
+        run: |
+          set -euo pipefail
+          docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d --wait || exit 1
+          printf 'services:\n  app:\n    image: dokunc-app-nur-lokal\n' > "$RUNNER_TEMP/app-image.yml"
+          docker compose -f docker-compose.yml -f "$RUNNER_TEMP/app-image.yml" pull --ignore-buildable
+          for i in $(seq 1 30); do
+            curl -fsSk "https://localhost:${APP_PORT:-7891}/api/health" | grep -q '"status":"ok"' && exit 0
+            sleep 2
+          done
+          echo "Nach dem Update antwortet der Proxy nicht"
+          exit 1
 
       # Ohne .env nimmt der Proxy nur auf dem Loopback an (APP_BIND,
       # Vorgabe 127.0.0.1). Die Schritte oben sehen das nicht: sie fragen
@@ -234,6 +309,85 @@ jobs:
           test "$(CADDY_TLS= tls)" = internal
           test "$(CADDY_TLS=admin@example.com tls)" = admin@example.com
 
+      # Gotenberg nur im internen Netz render mit der App (docker-compose.yml,
+      # networks). Fuer docker-compose.yml allein und mit beiden Zusaetzen,
+      # weil jede Datei die Dienste erweitern kann.
+      - name: Netze getrennt (Konfiguration)
+        run: |
+          set -euo pipefail
+          ALLE=docker-compose.yml:docker-compose.domain.yml:docker-compose.ipv6.yml
+          for dateien in docker-compose.yml "$ALLE"; do
+            cfg=$(COMPOSE_FILE=$dateien docker compose config --format json)
+            test "$(jq -cS '.services | map_values(.networks | keys)' <<<"$cfg")" \
+              = '{"app":["default","render"],"db":["default"],"gotenberg":["render"],"proxy":["default"],"redis":["default"]}'
+            test "$(jq -cS '.networks | map_values(.internal // false)' <<<"$cfg")" \
+              = '{"default":false,"render":true}'
+          done
+
+      # Am laufenden Stack: Gotenberg kennt Datenbank und Redis nicht und
+      # kommt nicht ins Internet; die App erreicht Gotenberg und hat Ausgang.
+      # Die ersten zwei Zeilen zeigen, dass getent und curl im Image laufen.
+      # curl -k: es geht um die Verbindung, nicht um das Zertifikat.
+      - name: Netze getrennt (am Stack)
+        run: |
+          set -euo pipefail
+          docker compose exec -T gotenberg getent hosts app >/dev/null
+          docker compose exec -T gotenberg curl -fsS -o /dev/null --max-time 10 http://app:3000/api/health
+          for dienst in db redis; do
+            if docker compose exec -T gotenberg getent hosts "$dienst"; then
+              echo "Gotenberg sieht $dienst"; exit 1
+            fi
+          done
+          if docker compose exec -T gotenberg curl -ksS -o /dev/null --max-time 10 https://registry.npmjs.org/; then
+            echo "Gotenberg erreicht das Internet"; exit 1
+          fi
+          docker compose exec -T app node -e 'fetch("http://gotenberg:3000/health").then(r=>process.exit(r.ok?0:1),()=>process.exit(1))'
+          docker compose exec -T app node -e 'fetch("https://registry.npmjs.org/",{method:"HEAD"}).then(()=>process.exit(0),()=>process.exit(1))'
+
+      # Gotenbergs Allow-List: ein Horchposten in der App (im selben Netz
+      # wie Gotenberg, also erreichbar), dann ein PDF aus HTML, das ihn per
+      # Bild und per CSS nennt. Das PDF muss entstehen und das eingebettete
+      # data:-Bild enthalten, der Horchposten darf ausser der Kontrolle
+      # nichts sehen. Per IP, nicht per Name: Chromium stuft http mit
+      # Hostnamen auf https hoch und scheitert dann am TLS, die Probe sagte
+      # sonst nichts. Eine IP nutzt auch ein Angreifer. Das HTML hat
+      # bewusst keine Meta-CSP: der Schritt prueft allein die Allow-List.
+      - name: PDF-Dienst laedt keine fremden Adressen
+        run: |
+          set -euo pipefail
+          FALLE=$(docker compose exec -T gotenberg getent hosts app | awk '{print $1}')
+          test -n "$FALLE"
+          docker compose exec -T app rm -f /tmp/falle.log
+          docker compose exec -d -T app node -e 'require("node:http").createServer((q,s)=>{require("node:fs").appendFileSync("/tmp/falle.log",q.url+"\n");s.end()}).listen(3999)'
+          bereit=
+          for i in $(seq 1 10); do
+            if docker compose exec -T gotenberg curl -fsS -o /dev/null "http://$FALLE:3999/kontrolle"; then bereit=1; break; fi
+            sleep 1
+          done
+          test -n "$bereit"
+          # Gotenberg hat keinen Healthcheck, auf den `up --wait` warten
+          # koennte: vor dem POST auf seine API warten
+          for i in $(seq 1 10); do docker compose exec -T app node -e 'fetch("http://gotenberg:3000/health").then(r=>process.exit(r.ok?0:1),()=>process.exit(1))' && break; sleep 1; done
+          PNG=iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==
+          HTML="<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body><p>Probe</p><img src=\"data:image/png;base64,$PNG\"><img alt=\"\" src=\"http://$FALLE:3999/bild\"><p style=\"background-image:url(http://$FALLE:3999/stil)\">x</p></body></html>"
+          printf '%s' "$HTML" | docker compose exec -T app node -e '
+            const html = require("node:fs").readFileSync(0, "utf8");
+            const form = new FormData();
+            form.set("files", new File([html], "index.html", { type: "text/html" }));
+            fetch("http://gotenberg:3000/forms/chromium/convert/html", { method: "POST", body: form })
+              .then(async (r) => {
+                if (!r.ok) process.exit(1);
+                process.stdout.write(Buffer.from(await r.arrayBuffer()));
+              }, () => process.exit(1));' >"$RUNNER_TEMP/probe.pdf"
+          test "$(head -c 5 "$RUNNER_TEMP/probe.pdf")" = "%PDF-"
+          # Das eingebettete data:-Bild ist im PDF (sperrte die Liste auch data:,
+          # fehlten alle Upload-Bilder und Diagramme in jedem PDF). Die Falle
+          # traegt alt="": sonst zeichnete Chromium fuer das gesperrte Bild ein
+          # Symbol, das im PDF ebenfalls als Bild zaehlt.
+          test "$(grep -ac '/Subtype /Image' "$RUNNER_TEMP/probe.pdf")" -ge 1
+          sleep 1
+          test "$(docker compose exec -T app cat /tmp/falle.log)" = "/kontrolle"
+
       # Sicherung und Rueckweg mit genau den Befehlen aus dem README. Einmal
       # auf demselben Stack, einmal auf einem frisch angelegten (wie nach
       # einem Plattenausfall, mit getrennt gesichertem APP_SECRET).
@@ -259,7 +413,9 @@ jobs:
             return 1
           }
           SECRET="$RUNNER_TEMP/app_secret"
-          (umask 077; docker compose exec -T app cat /app/data/app_secret > "$SECRET")
+          ./scripts/backup.sh --secret-sichern "$SECRET"
+          test "$(stat -c %a "$SECRET")" = 600
+          test -s backups/.app_secret-merkmal
           SUMME=$(secret_summe)
           MIGRATIONEN=$(sql 'SELECT count(*) FROM "_prisma_migrations"')
           test -z "$(sql 'SELECT "restoreEpoch" FROM "InstanceState"')"
@@ -274,8 +430,15 @@ jobs:
           test "$(sql 'SELECT count(*) FROM "Session" WHERE "revokedAt" IS NULL')" -ge 1
           test "$(sql 'SELECT count(*) FROM "Notification" WHERE "emailedAt" IS NULL')" -ge 1
           im_app 'echo vorher > /app/uploads/ci-vorher.txt'
-          TS=$(./scripts/backup.sh | sed -n 's#.*backups/db-\(.*\)\.dump$#\1#p')
+          TS=$(./scripts/backup.sh 2>"$RUNNER_TEMP/backup.err" | sed -n 's#.*backups/db-\(.*\)\.dump$#\1#p')
           test -n "$TS"
+          # Secret getrennt gesichert und passend: ein erfolgreicher Lauf
+          # schreibt nichts auf stderr (cron)
+          test ! -s "$RUNNER_TEMP/backup.err" || { cat "$RUNNER_TEMP/backup.err" >&2; false; }
+          # Archiv direkt aus dem Volume (compose run ... tar czf -). Erst in
+          # eine Datei: grep -q in einer Pipe liesse tar an SIGPIPE sterben.
+          tar tzf "backups/uploads-$TS.tar.gz" >"$RUNNER_TEMP/liste"
+          grep -qx './ci-vorher.txt' "$RUNNER_TEMP/liste"
           # Noch offen, also auch in der Sicherung offen
           test "$(sql "SELECT \"emailedAt\" IS NULL FROM \"Notification\" WHERE id = 'ci-rundlauf'")" = t
 
@@ -312,16 +475,52 @@ jobs:
           docker compose up -d --wait --wait-timeout 600
           sperre_mails
           test "$(secret_summe)" != "$SUMME"
+          # Das neue Secret erkennt backup.sh am Merkmal (echter node-Aufruf im
+          # Image). Erst in eine Variable: grep -q in einer Pipe liesse backup.sh
+          # an SIGPIPE sterben.
+          WARNUNG=$(./scripts/backup.sh 2>&1 >/dev/null)
+          grep -q 'ein anderes als bei der letzten getrennten Sicherung' <<<"$WARNUNG"
           ./scripts/restore.sh --ja --ohne-vorsicherung --secret "$SECRET" "$TS"
           pruefe_stand
           test "$(sql 'SELECT "restoreEpoch" FROM "InstanceState"')" != "$EPOCHE1"
+
+          # Nach dem Zuruecklegen passt das Merkmal wieder, auch wenn die Datei
+          # im Volume ein Zeilenende traegt (Editor): die App liest den Wert
+          # ohne, das Merkmal auch.
+          WARNUNG=$(./scripts/backup.sh 2>&1 >/dev/null)
+          test -z "$WARNUNG" || { echo "$WARNUNG" >&2; false; }
+          docker compose exec -T app sh -c 'printf "\n" >> /app/data/app_secret'
+          WARNUNG=$(./scripts/backup.sh 2>&1 >/dev/null)
+          test -z "$WARNUNG" || { echo "$WARNUNG" >&2; false; }
+
+      # Nur das eigene Image: Postgres, Redis, Caddy und Gotenberg haben
+      # fast immer offene Meldungen, die erst ein neues Upstream-Image behebt
+      # (das holt der Update-Befehl). Laeuft auch, wenn der Rundlauf
+      # scheitert, solange der Stack gebaut wurde. Compose nennt das
+      # gebaute Image <Projektname>-app; es ueberlebt down -v im Rundlauf.
+      - name: Image der App ermitteln
+        id: bild
+        if: ${{ !cancelled() && steps.start.outcome == 'success' }}
+        run: echo "ref=$(docker compose config --format json | jq -r .name)-app" >> "$GITHUB_OUTPUT"
+
+      - name: Image der App auf Luecken pruefen (Trivy)
+        if: ${{ !cancelled() && steps.start.outcome == 'success' }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.bild.outputs.ref }}
+          version: v0.74.0
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          trivyignores: .trivyignore.yaml
 
       - name: Zustand und Logs bei Fehlschlag
         if: failure()
         run: |
           docker compose ps -a
           docker compose logs --no-color --tail 80 app
-          docker compose logs --no-color --tail 30 proxy db
+          docker compose logs --no-color --tail 30 proxy db gotenberg
 
       - name: Aufräumen
         if: always()

@@ -102,7 +102,8 @@ async function version(pageId: string, minutenVorher: number): Promise<string> {
 async function meldung(data: {
   userId?: string;
   pageId: string;
-  type?: "PAGE_UPDATED" | "MENTION";
+  type?: "PAGE_UPDATED" | "MENTION" | "COMMENT" | "COMMENT_REPLY";
+  commentId?: string | null;
   versionId?: string | null;
   minutenVorher?: number;
 }): Promise<string> {
@@ -113,8 +114,44 @@ async function meldung(data: {
         actorId: other,
         type: data.type ?? "PAGE_UPDATED",
         pageId: data.pageId,
+        commentId: data.commentId ?? null,
         versionId: data.versionId ?? null,
         createdAt: new Date(Date.now() - (data.minutenVorher ?? 0) * 60_000),
+      },
+      select: { id: true },
+    })
+  ).id;
+}
+
+/** Wurzelkommentar eines Threads (UUID wie createThreadAction). */
+async function thread(
+  pageId: string,
+  data: { resolved?: boolean } = {},
+): Promise<string> {
+  return (
+    await prisma.comment.create({
+      data: {
+        id: crypto.randomUUID(),
+        pageId,
+        authorId: other,
+        body: `${TAG}-thread`,
+        resolvedAt: data.resolved ? new Date() : null,
+      },
+      select: { id: true },
+    })
+  ).id;
+}
+
+/** Antwort in einem Thread. */
+async function antwort(pageId: string, threadId: string): Promise<string> {
+  return (
+    await prisma.comment.create({
+      data: {
+        id: crypto.randomUUID(),
+        pageId,
+        parentId: threadId,
+        authorId: other,
+        body: `${TAG}-antwort`,
       },
       select: { id: true },
     })
@@ -248,6 +285,29 @@ describe("/notifications/<id>", () => {
     );
     expect(await gelesen(id)).toBe(false);
   });
+
+  it("antwortet einem RSC-Abruf leer, ohne Umleitung und ohne zu lesen", async () => {
+    // So holt Next das Ziel einer Server Action ab (Anmeldung mit
+    // `next`). Folgte dieser Abruf der Umleitung, ginge der Anker
+    // verloren; der Client soll stattdessen hart navigieren.
+    const pageId = await neueSeite();
+    const id = await meldung({ pageId, type: "MENTION" });
+    for (const actor of [me, null]) {
+      mocks.actor = actor;
+      const res = await GET(
+        new Request(`http://localhost/notifications/${id}`, {
+          headers: { rsc: "1" },
+        }),
+        { params: Promise.resolve({ id }) },
+      );
+      expect(res.status).toBe(204);
+      expect(res.headers.get("content-type")).toBeNull();
+      expect(await gelesen(id)).toBe(false);
+    }
+    mocks.actor = me;
+    expect(await oeffne(id)).toBe(`/s/${slug}/p/${pageId}`);
+    expect(await gelesen(id)).toBe(true);
+  });
 });
 
 describe("markPageUpdatesRead", () => {
@@ -305,5 +365,125 @@ describe("Liste der Benachrichtigungen", () => {
     await markAllReadAction();
     expect(await gelesen(unsichtbar)).toBe(true);
     expect((await loadNotificationList(user.id)).unreadTotal).toBe(0);
+  });
+});
+
+describe("Kommentarmeldungen", () => {
+  it("fuehrt einen Kommentar auf seinen Thread und meldet es der Glocke", async () => {
+    mocks.actor = me;
+    vi.mocked(publishNotification).mockClear();
+    const pageId = await neueSeite();
+    const t = await thread(pageId);
+    const id = await meldung({ pageId, type: "COMMENT", commentId: t });
+    expect(await oeffne(id)).toBe(`/s/${slug}/p/${pageId}#comment-thread-${t}`);
+    expect(await gelesen(id)).toBe(true);
+    expect(publishNotification).toHaveBeenCalledTimes(1);
+    expect(publishNotification).toHaveBeenCalledWith([me.id]);
+  });
+
+  it("fuehrt eine Antwort ueber parentId auf den Thread, auch wenn er erledigt ist", async () => {
+    mocks.actor = me;
+    vi.mocked(publishNotification).mockClear();
+    const pageId = await neueSeite();
+    const t = await thread(pageId, { resolved: true });
+    const r = await antwort(pageId, t);
+    const id = await meldung({ pageId, type: "COMMENT_REPLY", commentId: r });
+    expect(await oeffne(id)).toBe(`/s/${slug}/p/${pageId}#comment-thread-${t}`);
+    expect(await gelesen(id)).toBe(true);
+  });
+
+  it("liest die uebrigen Kommentarmeldungen des Threads mit, sonst nichts", async () => {
+    mocks.actor = me;
+    vi.mocked(publishNotification).mockClear();
+    const pageId = await neueSeite();
+    const t = await thread(pageId);
+    const r1 = await antwort(pageId, t);
+    const r2 = await antwort(pageId, t);
+    const t2 = await thread(pageId);
+    const r3 = await antwort(pageId, t2);
+
+    const zuT = await meldung({ pageId, type: "COMMENT", commentId: t });
+    const zuR1 = await meldung({ pageId, type: "COMMENT_REPLY", commentId: r1 });
+    const zuR2 = await meldung({ pageId, type: "COMMENT_REPLY", commentId: r2 });
+    const andererThread = await meldung({
+      pageId,
+      type: "COMMENT_REPLY",
+      commentId: r3,
+    });
+    // Erwaehnung im Thread: bleibt, sie hat ihren eigenen Weg.
+    const erwaehnung = await meldung({ pageId, type: "MENTION", commentId: r1 });
+    const aenderung = await meldung({ pageId });
+    const fremde = await meldung({
+      pageId,
+      userId: other,
+      type: "COMMENT_REPLY",
+      commentId: r1,
+    });
+
+    expect(await oeffne(zuR1)).toBe(`/s/${slug}/p/${pageId}#comment-thread-${t}`);
+    expect(await gelesen(zuR1)).toBe(true);
+    expect(await gelesen(zuT)).toBe(true);
+    expect(await gelesen(zuR2)).toBe(true);
+    expect(await gelesen(andererThread)).toBe(false);
+    expect(await gelesen(erwaehnung)).toBe(false);
+    expect(await gelesen(aenderung)).toBe(false);
+    expect(await gelesen(fremde)).toBe(false);
+    expect(publishNotification).toHaveBeenCalledTimes(1);
+
+    // Noch einmal: dasselbe Ziel, nichts mehr zu lesen, keine Nachricht.
+    expect(await oeffne(zuR1)).toBe(`/s/${slug}/p/${pageId}#comment-thread-${t}`);
+    expect(publishNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it("zeigt einen geloeschten Kommentar mit eigenem Anker", async () => {
+    mocks.actor = me;
+    const pageId = await neueSeite();
+    const t = await thread(pageId);
+    const r = await antwort(pageId, t);
+    const zuR = await meldung({ pageId, type: "COMMENT_REPLY", commentId: r });
+    const zuT = await meldung({ pageId, type: "COMMENT", commentId: t });
+    await prisma.comment.delete({ where: { id: r } });
+    expect(await oeffne(zuR)).toBe(`/s/${slug}/p/${pageId}#comment-deleted`);
+    expect(await gelesen(zuR)).toBe(true);
+    // Der Thread ist unbekannt: seine Meldung bleibt offen.
+    expect(await gelesen(zuT)).toBe(false);
+
+    await prisma.comment.delete({ where: { id: t } });
+    expect(await oeffne(zuT)).toBe(`/s/${slug}/p/${pageId}#comment-deleted`);
+    expect(await gelesen(zuT)).toBe(true);
+  });
+
+  it("zeigt nie auf einen Thread einer anderen Seite", async () => {
+    mocks.actor = me;
+    const p1 = await neueSeite();
+    const p2 = await neueSeite();
+    const t = await thread(p1);
+    const zuT = await meldung({ pageId: p1, type: "COMMENT", commentId: t });
+    const quer = await meldung({ pageId: p2, type: "COMMENT", commentId: t });
+    expect(await oeffne(quer)).toBe(`/s/${slug}/p/${p2}#comment-deleted`);
+    expect(await gelesen(quer)).toBe(true);
+    expect(await gelesen(zuT)).toBe(false);
+  });
+
+  it("fuehrt eine Kommentarmeldung ohne commentId auf die Seite", async () => {
+    mocks.actor = me;
+    const pageId = await neueSeite();
+    const id = await meldung({ pageId, type: "COMMENT", commentId: null });
+    expect(await oeffne(id)).toBe(`/s/${slug}/p/${pageId}`);
+    expect(await gelesen(id)).toBe(true);
+  });
+
+  it("liest ohne Zugriff auf die Seite keine Geschwister mit", async () => {
+    mocks.actor = me;
+    vi.mocked(publishNotification).mockClear();
+    const pageId = await neueSeite({ isRestricted: true });
+    const t = await thread(pageId);
+    const r = await antwort(pageId, t);
+    const zuT = await meldung({ pageId, type: "COMMENT", commentId: t });
+    const zuR = await meldung({ pageId, type: "COMMENT_REPLY", commentId: r });
+    expect(await oeffne(zuR)).toBe("/notifications");
+    expect(await gelesen(zuR)).toBe(true);
+    expect(await gelesen(zuT)).toBe(false);
+    expect(publishNotification).toHaveBeenCalledTimes(1);
   });
 });

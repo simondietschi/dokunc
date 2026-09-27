@@ -1,0 +1,23 @@
+# Ausnahmen fuer die Trivy-Scans (Job audit: Lockfile, Job docker: Image der
+# App). Je Eintrag nur die betroffene Paketversion (purls): eine andere
+# Version desselben Pakets mit derselben Luecke meldet Trivy weiter. Nach
+# expired_at gilt die Ausnahme nicht mehr, die CI wird rot, und sie muss
+# neu begruendet oder entfernt werden. statement nennt die GHSA-Kennung aus
+# auditConfig.ignoreGhsas (pnpm-workspace.yaml); lieferkette.test.ts prueft das.
+vulnerabilities:
+  - id: CVE-2026-40345
+    purls: ["pkg:npm/deepmerge-ts@7.1.5"]
+    expired_at: 2027-03-31
+    statement: "GHSA-ggr8-5vv4-36mx: deepmerge-ts 7 aus @prisma/config (auch prisma 7.10.0), behoben erst in 8. Fuehrt nur Prismas eigene Konfiguration zusammen."
+  - id: CVE-2026-67214
+    purls: ["pkg:npm/nanoid@4.0.2"]
+    expired_at: 2027-03-31
+    statement: "GHSA-28wg-ghj8-5hjv (negative Laenge): nanoid 4 aus @excalidraw/mermaid-to-excalidraw, behoben erst in 5. Aufruf nur mit Vorgabelaenge."
+  - id: CVE-2026-67213
+    purls: ["pkg:npm/nanoid@4.0.2"]
+    expired_at: 2027-03-31
+    statement: "GHSA-2v37-7h3g-55p8 (Laenge 0): nanoid 4 aus @excalidraw/mermaid-to-excalidraw, behoben erst in 5. Aufruf nur mit Vorgabelaenge."
+  - id: CVE-2026-73086
+    purls: ["pkg:npm/nanoid@4.0.2"]
+    expired_at: 2027-03-31
+    statement: "GHSA-xwg4-73v4-xw9w (uebergrosse Laenge): nanoid 4 aus @excalidraw/mermaid-to-excalidraw, behoben erst in 5. Aufruf nur mit Vorgabelaenge."

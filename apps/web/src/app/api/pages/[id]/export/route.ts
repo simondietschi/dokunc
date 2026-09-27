@@ -84,7 +84,9 @@ export async function GET(
 
   // Bilder als data:-URI einbetten — der Export muss ohne laufende App
   // funktionieren (Gotenberg kennt keine Basis-URL, eine gespeicherte
-  // .html-Datei wird per file:// geöffnet).
+  // .html-Datei wird per file:// geöffnet). Die Datei bringt ihre eigene
+  // CSP mit (nur data:-Bilder und Inline-Stile): Gotenberg und ein
+  // geöffneter Download laden so keine Adresse aus dem Seiteninhalt.
   const html = pageToPrintHtml({
     title: page.title,
     spaceName: page.space.name,

@@ -22,6 +22,7 @@ import { Onboarding, WaitingForInvite } from "./Onboarding";
 import { PaletteButton } from "@/components/CommandPalette";
 import { NotificationStream } from "@/components/NotificationStream";
 import { RecentAndFavorites } from "@/components/RecentAndFavorites";
+import { bellLabel } from "@/lib/unread-label";
 
 export const metadata: Metadata = {
   title: "Spaces",
@@ -135,7 +136,7 @@ export default async function SpacesPage() {
             <Link
               href="/notifications"
               className="relative grid h-9 w-9 place-items-center rounded-lg text-muted transition-colors hover:bg-subtle hover:text-ink"
-              aria-label="Benachrichtigungen"
+              aria-label={bellLabel(unreadCount)}
             >
               <Bell className="h-[18px] w-[18px]" />
               {unreadCount > 0 && (

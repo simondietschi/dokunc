@@ -144,7 +144,8 @@ export function WaitingForInvite() {
         style={stagger(2)}
       >
         Du bist noch keinem Space zugeordnet. Bitte eine Admin-Person,
-        dich in einen Space einzuladen — die Einladung kommt per E-Mail.
+        dich in einen Space einzuladen. Die Einladung kommt per E-Mail oder
+        als Link von der einladenden Person.
       </p>
 
       <div

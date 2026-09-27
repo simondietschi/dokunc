@@ -1,6 +1,7 @@
 import "server-only";
 import { generateHTML } from "@tiptap/html";
 import { richExtensions } from "@dokunc/editor";
+import { exportContentSecurityPolicy } from "./csp";
 
 const extensions = richExtensions();
 
@@ -84,16 +85,34 @@ export function escapeHtml(s: string): string {
 /**
  * Vollständiges, druckfertiges HTML-Dokument für Export/PDF.
  * Bewusst self-contained (Inline-CSS, keine externen Ressourcen).
+ * Für den Export setzt die Datei ihre eigene CSP (siehe
+ * `exportContentSecurityPolicy`), damit das auch für Inhalte gilt, die
+ * fremde Adressen nennen.
  */
 export function pageToPrintHtml(opts: {
   title: string;
   contentHtml: string;
   spaceName?: string;
+  /**
+   * Wohin das HTML geht. "export" (Vorgabe): eigenstaendige Datei fuer
+   * den Download und fuer Gotenberg, mit eigener CSP im Kopf, die nur
+   * eingebettete Bilder und Inline-Stile zulaesst. "print": die
+   * Druckansicht, die die App selbst ausliefert; dort gilt die CSP der
+   * Antwort (middleware.ts), und Bilder kommen relativ aus /api/files,
+   * die eine Export-CSP sperren wuerde. Ohne Angabe die strenge Fassung.
+   */
+  target?: "export" | "print";
 }): string {
+  // Direkt nach charset: eine Meta-CSP gilt nur fuer das, was danach
+  // geparst wird.
+  const csp =
+    (opts.target ?? "export") === "export"
+      ? `\n<meta http-equiv="Content-Security-Policy" content="${exportContentSecurityPolicy()}">`
+      : "";
   return `<!DOCTYPE html>
 <html lang="de">
 <head>
-<meta charset="utf-8">
+<meta charset="utf-8">${csp}
 <title>${escapeHtml(opts.title)}</title>
 <style>
   @page { margin: 22mm 18mm; }

@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { Locator, Page } from "@playwright/test";
+import { expect, type Locator, type Page } from "@playwright/test";
 import { Redis } from "ioredis";
 import { config as loadEnv } from "dotenv";
 
@@ -78,4 +78,16 @@ export async function dragUntil(
   if (!(await done())) {
     throw new Error(`Ziehen hat nach ${attempts} Versuchen nicht gewirkt`);
   }
+}
+
+/**
+ * Warten, bis der Editor mit dem Collab-Server verbunden ist: "Live"
+ * erscheint erst nach erfolgreicher WebSocket-Authentifizierung. Die
+ * Kopien in editor.spec.ts und features.spec.ts bleiben, neue Dateien
+ * nehmen diese.
+ */
+export async function waitForLive(page: Page): Promise<void> {
+  await expect(page.getByText("Live", { exact: true })).toBeVisible({
+    timeout: 20_000,
+  });
 }

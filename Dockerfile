@@ -21,7 +21,7 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN apt-get update \
   && apt-get install -y --no-install-recommends openssl ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
-  && npm install -g pnpm@11.13.1 \
+  && npm install -g pnpm@11.27.1 \
   && npm cache clean --force
 WORKDIR /app
 

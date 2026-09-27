@@ -35,18 +35,26 @@ export default defineConfig({
       : {},
     trace: CI ? "retain-on-failure" : "off",
   },
+  // gracefulShutdown: Playwright beendet die Server sonst mit SIGKILL an
+  // die Prozessgruppe. pnpm 11.27.1 startet das Skript in einer eigenen
+  // Sitzung (11.13.1 tat das nicht) und reicht nur Signale weiter, die es
+  // selbst abfangen kann. SIGKILL traf deshalb nur pnpm; next start und
+  // der Collab-Server liefen weiter, hielten Ports und Ausgabe offen, und
+  // der Lauf endete nach dem letzten Test nie. SIGTERM reicht pnpm weiter.
   webServer: [
     {
       command: "pnpm --filter @dokunc/collab start",
       port: 3001,
       reuseExistingServer: !CI,
       timeout: 60_000,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 20_000 },
     },
     {
       command: "pnpm --filter @dokunc/web start",
       url: "http://localhost:3000/api/health",
       reuseExistingServer: !CI,
       timeout: 120_000,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 20_000 },
       // Der Upload-Aufraeumer soll waehrend der E2E-Laeufe nicht im
       // Upload-Verzeichnis der Entwicklungsumgebung raeumen: globalSetup
       // leert die Datenbank, danach saehe dort jede alte Datei verwaist

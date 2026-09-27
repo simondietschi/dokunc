@@ -43,11 +43,20 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   sich live aktualisiert. Optional **per Mail**, sofort gebündelt oder
   als tägliche Zusammenfassung, pro Person im Konto einstellbar. Wer einer
   Seite folgt (Glocke im Seitenkopf), erfährt von neuen Kommentaren und von
-  Änderungen am Inhalt. Eine Änderung meldet dokunc höchstens alle zwei
-  Minuten je Seite und nur einmal, bis die Meldung oder die Seite geöffnet
-  ist; die Meldung führt zum Vergleich mit dem Stand davor. Was nach dem
-  Lesen der Meldung im selben Zwei-Minuten-Fenster noch geschrieben wird,
-  meldet erst die nächste Bearbeitung der Seite
+  Änderungen am Inhalt. Ein Klick auf eine Benachrichtigung, in der App oder
+  in der Mail, markiert sie als gelesen und führt bei Kommentaren direkt zum
+  Thread, auch wenn er erledigt ist oder man sich zuerst anmelden muss. Die übrigen ungelesenen Meldungen zu
+  diesem Thread gelten damit ebenfalls als gelesen, und ihre noch
+  ausstehenden Mails entfallen. Ist der Kommentar inzwischen gelöscht, sagt
+  die Seite das. Mail-Links führen über die Benachrichtigung selbst: ist sie
+  nach der Aufbewahrungsfrist gelöscht (`NOTIFICATION_RETENTION_DAYS`,
+  Vorgabe 90 Tage nach dem Lesen) oder bist du mit einem anderen Konto
+  angemeldet, landest du in der Liste der Benachrichtigungen. Eine Änderung
+  meldet dokunc höchstens alle zwei Minuten je Seite und nur einmal, bis die
+  Meldung oder die Seite geöffnet ist; die Meldung führt zum Vergleich mit
+  dem Stand davor. Was nach dem Lesen der Meldung im selben
+  Zwei-Minuten-Fenster noch geschrieben wird, meldet erst die nächste
+  Bearbeitung der Seite
 - **KI**: „Frag dein Wiki" (RAG mit Quellen, Claude API) über den ganzen
   Bestand, auch gleich nach einem Import, + KI-Aktionen
   im Editor (Verbessern, Zusammenfassen, Übersetzen, Weiterschreiben) —
@@ -174,7 +183,8 @@ Hinweise:
   importieren.
 - **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1:7891` (kein LAN-Zugriff;
   Adresse und Port über `APP_BIND` und `APP_PORT` in `.env` änderbar, s. u.).
-  App/DB/Redis sind nur im internen Docker-Netz erreichbar.
+  App, Datenbank, Redis und Gotenberg haben keine Host-Ports. Gotenberg hängt
+  zudem nur mit der App in einem eigenen Netz ohne Ausgang (siehe „Sicherheit“).
 - Der App-Container läuft als **non-root**. Daten liegen in den Volumes
   `db_data`, `redis_data`, `uploads`, `app_data`.
 
@@ -190,9 +200,19 @@ CADDY_TLS=admin@example.com
 APP_BIND=0.0.0.0
 APP_PORT=443
 COMPOSE_FILE=docker-compose.yml:docker-compose.domain.yml
-APP_SECRET=<openssl rand -base64 48>
 POSTGRES_PASSWORD=<eigenes Passwort>
 ```
+
+`APP_SECRET` gehört nicht in diese Liste: das beim ersten Start erzeugte
+Secret im Volume `app_data` gilt für die Domain genauso. Ein eigenes
+braucht es nur, wenn mehrere Instanzen dasselbe Secret teilen sollen.
+Läuft die Instanz schon, dann den bestehenden Wert übernehmen, nie einen
+neuen erzeugen (er steht in
+`docker compose exec -T app cat /app/data/app_secret`): ein neuer Wert
+meldet alle ab und sperrt die Zwei-Faktor-Anmeldung (siehe „Secret
+wechseln“). Mit dem Secret in der `.env` diese nur für das eigene Konto
+lesbar machen (`chmod 600 .env`) und getrennt von den Sicherungen
+aufbewahren.
 
 `SITE_ADDRESS` und `APP_URL` müssen denselben Namen tragen: `APP_URL`
 entscheidet allein, welche Herkunft die Route-Handler (Upload, Import,
@@ -250,8 +270,9 @@ Proxy nicht. Welche Adressen der Proxy tatsächlich belegt, zeigt
 Dann `docker compose up -d`. Aktualisiert wird wie im Abschnitt „Update
 und Rückweg“ beschrieben; weil keine versionierte Datei geändert ist,
 läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
-`APP_SECRET` hat Vorrang vor dem automatisch erzeugten (Wechsel beendet
-alle bestehenden Sitzungen).
+`APP_SECRET` hat Vorrang vor dem automatisch erzeugten; ein anderer Wert
+als bisher meldet alle ab und sperrt die Zwei-Faktor-Anmeldung (siehe
+„Secret wechseln“).
 Weitere Optionen — SMTP für Einladungs- und
 Benachrichtigungs-Mails (`MAIL_DISPATCH_INTERVAL_S`, `DIGEST_HOUR_UTC`),
 `ANTHROPIC_API_KEY` für die KI-Funktionen, `VOYAGE_API_KEY` für die
@@ -262,7 +283,29 @@ Uploads, die Fristen der Aufbewahrung (`SESSION_RETENTION_DAYS` und
 weitere), `SESSION_IDLE_TIMEOUT` für die Abmeldung nach Untätigkeit
 (empfohlen für geteilte Geräte) — siehe `.env.example`.
 
-Ohne SMTP steht der Link aus Reset- und Einladungsmails nur ausserhalb
+Ohne SMTP zeigt die Mitgliederseite nach dem Einladen den Einladungslink
+an, einmalig und mit Knopf zum Kopieren. Er ist 7 Tage gültig und gehört
+nur an die eingeladene Person: wer ihn hat, kann mit der eingeladenen
+Adresse ein Konto anlegen. Ist er verloren, lädt man dieselbe Adresse
+erneut ein; der alte Link wird damit ungültig. Dasselbe gilt, wenn SMTP
+eingerichtet ist, der Versand aber scheitert und es für die Adresse keine
+gültige Einladung gab. Den Link sehen nach Vorgabe nur Admin-Personen der
+Instanz, in Spaces, die sie verwalten (`INVITE_LINK_WITHOUT_MAIL=admins`);
+andere Space-Verwaltende erfahren, dass die Einladung nicht zugestellt
+wurde. Gibt es für die Adresse schon eine gültige Einladung, lässt ihr
+erneutes Einladen diese unverändert, auch die Rolle: ein Link, den eine
+Admin-Person schon weitergegeben hat, bleibt so gültig. Mit `INVITE_LINK_WITHOUT_MAIL=managers` sehen ihn alle, die einen
+Space verwalten; jeder andere Wert gilt als `admins`, mit einer Warnung im
+Log. Weil jede angemeldete Person einen eigenen Space anlegen
+kann, kann dann jede Person Konten für beliebige Adressen anlegen; mit SSO
+in diesem Fall `OIDC_AUTO_LINK_BY_EMAIL=false` setzen, sonst landet die
+spätere SSO-Anmeldung der echten Person in diesem Konto. Der Link steht
+nie im Log der Produktion und nie im Audit-Log (dort steht
+`delivery: "mail"`, `"link"` oder `"none"`). Einladungen, die vor diesem
+Update ohne Mailserver ausgesprochen wurden, haben niemanden erreicht:
+erneut aussprechen, dann erscheint der Link.
+
+Der Link zum Zurücksetzen des Passworts steht ohne SMTP nur ausserhalb
 der Produktion im Log (`SMTP fehlt — … nur im Log`), in der Produktion
 nie; die Empfängeradresse steht in keinem Fall darin. Scheitert der
 Versand einer Mail zum Zurücksetzen des Passworts, oder fehlt in der
@@ -293,7 +336,9 @@ git pull
 ```
 
 Danach `APP_BIND`, `APP_PORT`, `COMPOSE_FILE` und `CADDY_TLS` wie oben in
-die `.env` setzen und `docker compose up -d --build`. Ohne `APP_BIND`
+die `.env` setzen und
+`docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d --wait`
+(wie in „Update und Rückweg“). Ohne `APP_BIND`
 fällt der Proxy auf `127.0.0.1` zurück: die Instanz ist von aussen still
 nicht mehr erreichbar, und die Zertifikatserneuerung scheitert. Ohne
 `COMPOSE_FILE` fehlt Port 80. Ohne `CADDY_TLS` stellt Caddy wieder ein
@@ -416,13 +461,107 @@ unschädlich ist). Jeder Lauf loggt seine Zahlen unter
 
 `./scripts/backup.sh` sichert Datenbank und Uploads nach `backups/`
 (`db-<Zeitstempel>.dump` und `uploads-<Zeitstempel>.tar.gz`, nur für das
-eigene Konto lesbar). Das `APP_SECRET` ist nicht dabei: mit ihm sind die
+eigene Konto lesbar). Der Dienst `db` muss laufen, die App darf
+angehalten sein. Die Uploads werden direkt aus dem Volume gepackt, ohne
+Zwischenkopie. Vor dem Ablegen prüft das Skript den Dump
+(Inhaltsverzeichnis mit `_prisma_migrations`, einmal vollständig
+gelesen) und das Archiv (`tar tzf`). Scheitert ein Schritt, endet es mit
+einer Meldung `✗ …` und einem Exit-Code ungleich 0, und in `backups/`
+entsteht nichts, auch keine halbe Datei. Fortschritt steht auf der
+Standardausgabe, Fehler und Warnungen auf der Fehlerausgabe.
+
+Nicht gesichert, und nicht nötig: `redis_data` (Bremsen und Sperren,
+flüchtig) und `caddy_data` (Zertifikate, stellt Caddy neu aus; bei sehr
+häufigen Neuinstallationen derselben Domain greift die Wochengrenze von
+Let's Encrypt für doppelte Zertifikate).
+
+Das `APP_SECRET` ist nicht dabei: mit ihm sind die
 Zwei-Faktor-Geheimnisse versiegelt, und eine Sicherung allein soll nicht
 genügen, um sie zu lesen. Wer kein eigenes `APP_SECRET` in der `.env`
 setzt, sichert das automatisch erzeugte einmal getrennt, ausserhalb des
 Repositorys und nicht bei den Sicherungen:
 
-    (umask 077; docker compose exec -T app cat /app/data/app_secret > ~/dokunc-app_secret)
+    ./scripts/backup.sh --secret-sichern ~/dokunc-app_secret
+
+Das Skript schreibt nur ausserhalb des Repositorys, überschreibt keine
+Datei mit einem anderen Secret und legt in `backups/.app_secret-merkmal`
+ein Prüfmerkmal ab (ein Hash mit eigenem Präfix, weder das Secret noch
+der Schlüssel daraus). Danach meldet jede Sicherung nur noch „getrennt
+gesichert“. Wer das Secret schon früher mit dem bisherigen Befehl nach
+`~/dokunc-app_secret` gesichert hat, ruft den Befehl oben einmal mit
+derselben Datei auf: sie bleibt, wie sie ist, und das Merkmal kommt
+dazu. Ändert sich das Secret im Volume später, etwa weil `app_data` neu
+angelegt wurde, warnt jede Sicherung, bis das neue getrennt gesichert
+ist. Steht `APP_SECRET` in der `.env`, gehört stattdessen die `.env`
+getrennt gesichert; sie enthält auch `POSTGRES_PASSWORD` und die übrigen
+Zugangsdaten.
+
+**Aufbewahrung:** Mit `BACKUP_KEEP_DAYS` (in der Umgebung des Aufrufs
+oder in der `.env`, die Umgebung hat Vorrang) löscht jede erfolgreiche
+Sicherung danach die Sätze in `backups/`, deren Zeitstempel älter als so
+viele Tage ist. Die drei jüngsten Sätze bleiben immer, auch nach einer
+langen Pause. Vorgabe `0`: nie löschen. Gelöscht wird nur, was dem
+Namensmuster entspricht; ein ungültiger Wert löscht nichts und erzeugt
+eine Warnung. `restore.sh` löscht bei seiner Vorsicherung nie.
+
+**Zeitplan:** mit cron (Konto, dem das Repository gehört und das Docker
+bedienen darf):
+
+    MAILTO=admin@example.com
+    17 3 * * * cd /srv/dokunc && BACKUP_KEEP_DAYS=14 ./scripts/backup.sh >/dev/null
+
+`>/dev/null` verwirft den Fortschritt; cron mailt dann nur Fehler und
+Warnungen (dafür muss auf dem Server ein Mailversand eingerichtet sein).
+Liegt `docker` nicht in `/usr/bin`, in der crontab `PATH` setzen. Oder
+mit einem systemd-Timer, dann stehen die Läufe im Journal:
+
+    # /etc/systemd/system/dokunc-backup.service
+    [Unit]
+    Description=dokunc Sicherung
+    Wants=docker.service
+    After=docker.service
+
+    [Service]
+    Type=oneshot
+    User=dokunc
+    WorkingDirectory=/srv/dokunc
+    Environment=BACKUP_KEEP_DAYS=14
+    ExecStart=/srv/dokunc/scripts/backup.sh
+
+    # /etc/systemd/system/dokunc-backup.timer
+    [Unit]
+    Description=dokunc Sicherung täglich
+
+    [Timer]
+    OnCalendar=*-*-* 03:17
+    RandomizedDelaySec=15min
+    Persistent=true
+
+    [Install]
+    WantedBy=timers.target
+
+Einschalten mit
+`sudo systemctl daemon-reload && sudo systemctl enable --now dokunc-backup.timer`.
+Nächster Lauf: `systemctl list-timers dokunc-backup.timer`; Ausgabe:
+`journalctl -u dokunc-backup.service`. Ein gescheiterter Lauf erscheint
+in `systemctl --failed`. `User=` braucht Zugriff auf Docker (Gruppe
+`docker`) und muss Besitzer des Repositorys sein.
+
+**Kopie ausser Haus:** `backups/` liegt auf demselben Server. Nach der
+Sicherung etwa `rsync -a backups/ sicherung@anderer-host:dokunc/` oder
+`rclone copy backups/ ziel:dokunc` anhängen (in der cron-Zeile mit `&&`,
+im Service als zweites `ExecStart=`). Beide kopieren nur dazu und
+löschen am Ziel nichts. Nicht `rclone sync` und nicht `rsync --delete`
+nehmen: sie übertragen jede lokale Löschung auf das Ziel, die der
+Aufbewahrung ebenso wie ein leeres `backups/` (etwa auf einem neuen
+Host, auf dem die crontab schon wieder läuft, bevor die Sicherungen
+zurückgeholt sind). Damit wäre die Kopie ausser Haus genau dann weg, wenn
+sie gebraucht wird. Das Ziel braucht deshalb eine eigene Aufbewahrung,
+sonst wächst es unbegrenzt, etwa `rclone delete --min-age 60d ziel:dokunc`
+oder auf dem anderen Host `find ~/dokunc -type f -mtime +60 -delete`.
+Die Frist dort länger wählen als `BACKUP_KEEP_DAYS`; anders als
+`backup.sh` behält sie keine Mindestzahl an Sätzen. Das Secret und die
+`.env` gehören nicht an dasselbe Ziel.
 
 Zurückgespielt wird mit `./scripts/restore.sh <Zeitstempel>`. Das Skript
 
@@ -468,6 +607,67 @@ Die Abschlussmeldung nennt die Datenbanken mit früheren Ständen samt
 Löschbefehl, etwa
 `docker compose exec db dropdb -U dokunc dokunc_vor_20260925_143512`.
 
+### Secret wechseln
+
+`APP_SECRET` signiert Sitzungen, Collab-Tickets, den Zwischenschritt der
+Zwei-Faktor-Anmeldung und den Ablauf der SSO-Anmeldung. Aus ihm entsteht
+auch der Schlüssel, mit dem die Zwei-Faktor-Geheimnisse in der Datenbank
+verschlüsselt sind. Einen Übergang, in dem altes und neues Secret
+gelten, gibt es nicht. Ein neuer Wert hat deshalb sofort diese Folgen:
+
+- Alle sind abgemeldet, begonnene Anmeldungen (auch über SSO) müssen neu
+  beginnen, offene Tabs verbinden den Editor erst nach der neuen
+  Anmeldung wieder.
+- Wer die Zwei-Faktor-Anmeldung eingeschaltet hat, kommt mit dem Code aus
+  der Authenticator-App nicht mehr hinein. Die Anmeldung meldet „Der
+  zweite Faktor lässt sich zurzeit nicht prüfen“, das Log
+  `totp secret unreadable`, das Audit-Log den Grund
+  `totp_secret_unreadable`. Zurück geht es mit einem
+  Wiederherstellungscode; danach im Konto die Zwei-Faktor-Anmeldung
+  abschalten und neu einrichten. Ohne Code setzt die Administration sie
+  in der Verwaltung zurück („Zwei-Faktor zurücksetzen“).
+- Sicherungen von vor dem Wechsel enthalten Zwei-Faktor-Geheimnisse, die
+  nur das alte Secret lesen kann. Das alte deshalb aufbewahren, solange
+  es solche Sicherungen gibt. Wer eine davon zurückspielt, setzt wieder
+  das alte Secret (in der `.env`, oder mit `restore.sh --secret <Datei>`,
+  wenn keines in der `.env` steht) und behält es; sonst müssen die
+  Betroffenen die Zwei-Faktor-Anmeldung neu einrichten.
+
+Wie viele Konten betroffen wären:
+
+    docker compose exec -T db psql -U dokunc -d dokunc -Atc 'SELECT count(*) FROM "User" WHERE "totpEnabledAt" IS NOT NULL'
+
+Gewechselt wird nur, wenn das Secret in fremde Hände geraten sein kann.
+Wer vom automatisch erzeugten Secret auf eines in der `.env` umsteigt,
+wechselt nicht, sondern übernimmt den bestehenden Wert (siehe „Eigene
+Domain“). Ablauf eines Wechsels:
+
+1. Sichern (`./scripts/backup.sh`) und das bisherige Secret aufbewahren
+   (`--secret-sichern` bzw. die bisherige `.env`).
+2. In der `.env` `APP_SECRET` auf einen neuen Wert setzen
+   (`openssl rand -base64 48`).
+3. `docker compose up -d`: die App startet mit dem neuen Secret neu.
+4. Alle mit Zwei-Faktor-Anmeldung informieren.
+5. Wer das automatisch erzeugte Secret nutzte: `./scripts/backup.sh`
+   meldet danach „APP_SECRET steht in der .env“; die `.env` getrennt
+   sichern.
+
+Hat die einzige Administration selbst keinen Wiederherstellungscode
+mehr, bleibt als letzter Ausweg die Datenbank (ohne Eintrag im
+Audit-Log). Die Adresse muss genau so geschrieben sein wie in der
+Verwaltung; gibt die Abfrage keine Zeile mit einer ID aus, war es die
+falsche Adresse, und es hat sich nichts geändert:
+
+    docker compose exec -T db psql -U dokunc -d dokunc -v ON_ERROR_STOP=1 -v email=admin@example.com <<'SQL'
+    BEGIN;
+    DELETE FROM "TotpRecoveryCode" WHERE "userId" = (SELECT id FROM "User" WHERE email = :'email');
+    UPDATE "User" SET "totpSecret" = NULL, "totpEnabledAt" = NULL, "totpLastStep" = NULL WHERE email = :'email' RETURNING id;
+    COMMIT;
+    SQL
+
+Das entspricht „Zwei-Faktor zurücksetzen“ in der Verwaltung
+(`resetUserTotpAction`).
+
 ### Update und Rückweg
 
 **Das Update auf die Version mit KI-Index, Aufbewahrung und
@@ -497,9 +697,55 @@ Update deshalb sichern und den bisherigen Stand notieren:
     git rev-parse --short HEAD          # bisherigen Stand notieren
     git fetch
     git diff --stat HEAD origin/main -- packages/db/prisma/migrations
-    git pull && docker compose up -d --build --wait
+    docker compose images               # IDs für den Rückweg notieren
+    git pull && docker compose pull --ignore-buildable \
+      && docker compose build --pull && docker compose up -d --wait
 
 Die vierte Zeile zeigt, welche Migrationen das Update mitbringt.
+Mit `BACKUP_KEEP_DAYS` löscht ein späterer Lauf auch diese Sicherung,
+sobald sie die Frist erreicht und nicht mehr zu den drei jüngsten
+gehört; wer sich den Rückweg länger offenhalten will, kopiert den Satz
+aus `backups/` an einen anderen Ort.
+
+`docker compose pull --ignore-buildable` holt neue Fassungen von Proxy,
+Datenbank, Redis und Gotenberg, jeweils innerhalb ihres Tags
+(`caddy:2`, `postgres:18-trixie`, `redis:8`, `gotenberg/gotenberg:8`).
+`docker compose build --pull` baut die App auf dem neusten
+Node-Basis-Image. Ohne diese zwei Befehle bleiben die
+Sicherheitskorrekturen aus: `--pull always` bei `up` holt zwar die
+Images der Dienste, das Node-Basis-Image der App aber nicht. Die Befehle
+lohnen sich auch ohne neuen Stand im Repository, etwa monatlich und mit
+Sicherung vorher:
+`docker compose pull --ignore-buildable && docker compose build --pull && docker compose up -d --wait`.
+Ohne Zugang zu Docker Hub scheitert die Kette, und nichts wird neu
+gestartet; den neuen Code allein bringt dann
+`git pull && docker compose up -d --build --wait`. Nach dem Update
+liegt die vorige Fassung jedes neu geholten Images nur noch als
+unbenanntes Image vor, und `docker image prune` entfernt genau diese.
+Deshalb erst aufräumen, wenn sich der neue Stand bewährt hat: bis dahin
+ist die vorige Fassung der Rückweg (siehe Ende dieses Abschnitts).
+
+Das Postgres-Image ist auf das Debian-Release festgelegt (`18-trixie`).
+Ein neues Release bringt eine neue C-Bibliothek, die Text anders
+sortieren kann; Indizes auf Text wären danach inkonsistent. Den Wechsel
+auf `18-<neues Release>` deshalb wie eine Hauptversion behandeln:
+sichern (`./scripts/backup.sh`), das Image in `docker-compose.yml`
+ändern und zuerst nur die Datenbank starten, damit die App nicht auf
+den alten Indizes schreibt:
+
+    docker compose up -d --wait db
+    docker compose exec db reindexdb -U dokunc dokunc
+    docker compose exec db psql -U dokunc -d dokunc \
+      -c 'ALTER DATABASE dokunc REFRESH COLLATION VERSION' \
+      -c 'ALTER DATABASE postgres REFRESH COLLATION VERSION' \
+      -c 'ALTER DATABASE template1 REFRESH COLLATION VERSION'
+    docker compose up -d --wait
+
+Postgres vermerkt die Version der Kollation je Datenbank und warnt bei
+jeder Verbindung, solange sie nicht zur neuen C-Bibliothek passt;
+`reindexdb` allein setzt sie nicht nach, erst die drei `ALTER DATABASE`.
+Daran erinnert kein Werkzeug: Dependabot schlägt nur Tags mit demselben
+Suffix vor, also nie den Wechsel von `-trixie` auf ein neues Release.
 
 Bei grossem Bestand (grob ab 100 000 Seiten) laufen die Migrationen
 länger als die gut drei Minuten, die der Healthcheck der App beim Start
@@ -528,7 +774,11 @@ aktualisieren mit `git checkout main` und den Schritten oben. Hat die
 zweite Zeile das Skript geholt (`git status` zeigt
 `?? scripts/restore.sh`), vorher `rm scripts/restore.sh`, sonst bricht
 `git checkout main` ab, weil es die unversionierte Datei überschreiben
-müsste.
+müsste. Macht ein neu geholtes Image eines Dienstes Probleme, lässt sich
+die vorige Fassung über die vor dem Update notierte ID (Zeile
+`docker compose images` im Block oben) wieder einsetzen, solange sie
+nicht mit `docker image prune` entfernt ist:
+`docker tag <ID> <Image:Tag>` und `docker compose up -d <Dienst>`.
 
 ## Lokale Entwicklung (ohne Docker)
 
@@ -542,6 +792,15 @@ cp .env.example .env     # Werte anpassen
 pnpm db:migrate          # Schema + Migrationen
 pnpm dev                 # web :3000 + collab :3001
 ```
+
+`pnpm dev` mit Ctrl+C beenden. Die pnpm-Version des Projekts
+(11.27.1) startet ihre Skripte in einer eigenen Sitzung: Wird
+stattdessen das Terminal oder die SSH-Sitzung geschlossen, laufen
+`next dev` und der Collab-Server weiter und belegen die Ports 3000 und
+3001. Das nächste `pnpm dev`
+scheitert dann mit „EADDRINUSE“, und `pnpm test:e2e` nutzt still die
+verwaisten Server. Finden lassen sie sich mit
+`lsof -i :3000 -i :3001`, beenden mit `kill <PID>`.
 
 ## Collab-Server
 
@@ -706,7 +965,11 @@ Versuchen), dass neue Wiederherstellungscodes erst nach ihrer
 Bestätigung gelten und den alten Satz in einem Schritt ablösen (auch
 wenn zwei Fenster gleichzeitig daran arbeiten), und dass eine geschützte
 Seite genau denen sichtbar ist, die sie sehen dürfen — direkt, über eine
-Gruppe oder als Space-Verwaltung. Sie brauchen eine erreichbare
+Gruppe oder als Space-Verwaltung. Für Freigabelinks prüfen sie jede
+Absage einzeln an Seite und Datei-Route (zurückgezogen, abgelaufen, Seite
+gelöscht oder geschützt, Seite ausserhalb des freigegebenen Unterbaums,
+fremder oder seitenloser Anhang), dass alle dieselbe Antwort geben, und
+was die Unterseitenliste auslässt. Sie brauchen eine erreichbare
 Datenbank und ein erreichbares Redis aus `.env` und legen ihre eigenen
 Datensätze an (und wieder ab); sie leeren nichts. Einige starten dafür einen eigenen
 Collab-Server (Port 3150 bis 3199, eigene Redis-Datenbank). Solange sie
@@ -727,7 +990,41 @@ vorinstalliertem Chromium: `PW_EXECUTABLE_PATH=/pfad/zu/chromium` setzen.
 CI führt alle diese Suiten automatisch aus (`.github/workflows/ci.yml`).
 Der Docker-Job spielt dabei eine Sicherung zurück, einmal auf demselben
 und einmal auf einem frisch angelegten Stack, und prüft Datenbank,
-Uploads, Secret, Sitzungen und Restore-Epoche.
+Uploads, Secret, Sitzungen und Restore-Epoche, dazu, dass `backup.sh`
+ein geändertes Secret bemerkt und bei passendem Secret nichts auf die
+Fehlerausgabe schreibt. Er prüft ausserdem, dass Gotenberg weder
+Datenbank noch Redis noch das Internet erreicht und beim Umwandeln keine
+fremden Adressen lädt.
+
+Ein eigener Job prüft die Laufzeitabhängigkeiten mit
+`pnpm audit --prod --audit-level high` und das Lockfile mit Trivy. Der
+Docker-Job führt die Update-Befehle aus „Update und Rückweg“ aus und
+prüft das gebaute Image der App mit Trivy (hoch und kritisch, nur Lücken
+mit verfügbarer Korrektur). Die CI läuft zusätzlich jeden Montag, damit
+neue Meldungen auch ohne Push auffallen, und Dependabot schlägt
+wöchentlich Updates vor (`.github/dependabot.yml`).
+
+**Meldet `pnpm audit` oder Trivy eine Lücke**, der Reihe nach: das
+Elternpaket aktualisieren; sonst in `pnpm-workspace.yaml` ein Override
+innerhalb der Hauptversion; nur wenn es keinen Weg innerhalb der
+Hauptversion gibt, die Lücke ausnehmen, mit Begründung, in
+`pnpm-workspace.yaml` (`auditConfig.ignoreGhsas`, GHSA-Kennung) und in
+`.trivyignore.yaml` (Kennung aus der Trivy-Ausgabe, `purls` mit genau
+der betroffenen Paketversion, `expired_at`, `statement` mit der
+GHSA-Kennung). Eine Ausnahme in `ignoreGhsas` gilt für alle Versionen
+eines Pakets; ob ein Override noch nötig ist, zeigt deshalb Trivy, nicht
+`pnpm audit`. Nach `expired_at` meldet Trivy die Lücke wieder. Die
+Schwelle wird nie gesenkt. Treffer in Postgres, Redis, Caddy oder
+Gotenberg prüft die CI nicht: sie kommen mit dem nächsten
+Upstream-Image und dem Update-Befehl. Meldet Trivy im Image der App eine
+Lücke in einem Debian-Paket, deren Korrektur das offizielle Node-Image
+noch nicht enthält, zuerst einige Tage abwarten und die CI erneut
+starten; erst danach befristet ausnehmen, mit `purls` auf genau diese
+Paketversion (Feld `PkgIdentifier.PURL` aus `trivy image --format json`).
+Kein `apt-get upgrade` im Dockerfile. Tiptap hebt Dependabot nicht an,
+auch nicht bei Sicherheitsmeldungen (Override auf genau eine Version);
+es wird von Hand zusammen mit dem Override aktualisiert, Lücken darin
+melden `pnpm audit` und Trivy.
 
 ## Sicherheit
 
@@ -741,6 +1038,36 @@ Kurz, was die App bewusst tut:
   Nur unter `pnpm dev` (`next dev`) ist die CSP der Seiten gelockert, und
   zwar nur um das, was Fast Refresh braucht: `'unsafe-eval'` und den
   HMR-WebSocket. `/api` bleibt auch dort bei der strengen Fassung.
+- **Export ohne Nachladen**: Exportiertes HTML und PDF bringen ihre eigene
+  Content-Security-Policy mit. Sie laden nur eingebettete Bilder (`data:`)
+  und Videos von YouTube wie in der App, sonst keine Adresse aus dem
+  Seiteninhalt. Bilder von fremden Adressen fehlen deshalb im Export, wie
+  sie schon im Editor fehlen. Der PDF-Dienst Gotenberg lädt zusätzlich nur
+  seine eigene Arbeitsdatei (`--chromium-allow-list`); Warnungen „blocked
+  for …“ oder „does not match any expression from the allowed list“ in
+  `docker compose logs gotenberg` sind erwartet (letztere etwa für
+  eingebettete Videos).
+- **PDF-Dienst abgeschottet**: Gotenberg hängt nur mit der App in einem
+  eigenen Netz ohne Ausgang (`render`). Sein Chromium erreicht damit weder
+  Datenbank noch Redis, das LAN oder das Internet, nur die App und den
+  Docker-Host selbst über die Gateway-Adresse von `render` (Dienste des
+  Servers, die auf allen Adressen lauschen). Ab Docker Engine 28.0 schliesst
+  auch diesen Weg eine `docker-compose.override.yml` mit
+
+  ```yaml
+  networks:
+    render:
+      driver_opts:
+        com.docker.network.bridge.gateway_mode_ipv4: isolated
+  ```
+
+  (`docker compose up -d` legt das Netz dann neu an und startet App und
+  Gotenberg neu). Ältere Engines kennen den Wert nicht (27.x bricht mit
+  „unknown gateway mode isolated“ ab), darum steht er nicht in
+  `docker-compose.yml`. Eigene Dienste in einer
+  `docker-compose.override.yml` bleiben ohne Angabe im Standardnetz wie
+  bisher; wer einen davon Gotenberg nutzen lässt, gibt ihm
+  `networks: [default, render]`.
 - **Space-Bindung** aller Schreibzugriffe: IDs aus Formularen werden gegen
   den Space geprüft, in dem die Person tatsächlich Rechte hat — und gegen
   das, was sie dort sehen darf.
@@ -750,13 +1077,24 @@ Kurz, was die App bewusst tut:
   geschützte Seite entsteht gar nicht erst und ein bestehender endet,
   sobald der Schutz gesetzt wird. Die Pfadzeile eines Suchtreffers endet
   an der ersten nicht sichtbaren Elternseite.
+- **Freigabelinks** öffnen genau die freigegebene Seite und, wenn beim
+  Teilen gewählt, ihre Unterseiten. Ein Link endet, sobald er
+  zurückgezogen wird, abläuft oder seine Seite im Papierkorb liegt.
+  Unterseiten zählen nur, solange der Weg zur freigegebenen Seite nicht
+  durch den Papierkorb oder einen anderen Space führt. Jede Absage ist
+  dieselbe Antwort „nicht gefunden“, auch bei doppelt angegebenen
+  Parametern: an der Antwort lässt sich nicht erkennen, warum ein Link
+  nicht öffnet.
 - **Gruppen** geben Rollen, nehmen aber keine: die wirksame Rolle ist
   die stärkste aus eigener Mitgliedschaft und allen Gruppen. OWNER
   vergibt keine Gruppe — Eigentümerschaft bleibt persönlich.
 - **Rollen**: die eigene Rolle lässt sich nicht ändern, OWNER vergibt nur
   ein OWNER, der letzte OWNER bleibt bestehen.
 - **Registrierung** ausschliesslich mit gültigem Einladungstoken; die
-  blosse Kenntnis einer eingeladenen Adresse genügt nicht.
+  blosse Kenntnis einer eingeladenen Adresse genügt nicht. Ohne
+  Mailserver erscheint der Einladungslink einmalig bei der einladenden
+  Person, nach Vorgabe nur bei Admin-Personen der Instanz
+  (`INVITE_LINK_WITHOUT_MAIL`), nie im Log.
 - **Uploads** gehören einem Space und werden nur an dessen Mitglieder
   ausgeliefert.
 - **Sitzungen** sind einzeln widerrufbar; der Entzug wirkt auch auf
@@ -782,7 +1120,8 @@ Kurz, was die App bewusst tut:
   damit keine Sitzung.
 - **Zwei-Faktor-Anmeldung** nach RFC 6238, pro Konto zuschaltbar. Das
   Geheimnis liegt mit AES-256-GCM verschlüsselt in der Datenbank (Schlüssel
-  aus `APP_SECRET`), Wiederherstellungscodes nur als SHA-256-Hash und jeder
+  aus `APP_SECRET`; ein Wechsel macht es unlesbar, siehe „Secret
+  wechseln“), Wiederherstellungscodes nur als SHA-256-Hash und jeder
   genau einmal gültig. Zwischen Passwort und Code steht ein eigenes,
   fünf Minuten gültiges Cookie — kein Sitzungscookie. Neue
   Wiederherstellungscodes gelten erst, wenn man einen davon zurück
@@ -800,6 +1139,10 @@ Kurz, was die App bewusst tut:
   eine Seite des Space sie verwendet (Inhalt, Titelbild oder eine
   erhaltene Version) und die Person jede dieser Seiten
   sehen darf; Freigabelinks liefern sie gar nicht aus.
+- **Lieferkette**: `pnpm audit` und Trivy (Lockfile und Image der App) in
+  jeder CI und jeden Montag, Dependabot für npm, Docker, Compose und
+  Actions, der Workflow nur mit Leserechten. Der Update-Befehl holt auch
+  neue Images der mitlaufenden Dienste.
 
 ## Projektstruktur
 

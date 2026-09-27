@@ -1,0 +1,99 @@
+# Dependabot: woechentliche Update-PRs fuer npm (pnpm-Workspace), Docker,
+# Docker Compose und GitHub Actions. Sicherheitsupdates und -meldungen
+# schaltet die Repository-Einstellung ein (Settings > Code security),
+# nicht diese Datei. Pruefung der Datei: apps/web/src/lieferkette.test.ts
+#
+# Bei gleitenden Tags (caddy:2, node:26-trixie-slim, postgres:18-trixie,
+# redis:8, gotenberg/gotenberg:8) schlaegt Dependabot nur neue
+# Hauptversionen mit demselben Suffix vor. Fuer node, postgres und redis
+# sind die Hauptversionen unten ausgenommen; Vorschlaege kommen also nur
+# fuer caddy und gotenberg. Ein neues Debian-Release (trixie auf das
+# naechste) schlaegt Dependabot nie vor, der Wechsel ist Handarbeit
+# (README "Update und Rueckweg"). Patches innerhalb des Tags kommen ueber
+# den Update-Befehl im README, das Image der App prueft Trivy im CI-Job
+# docker.
+#
+# Die Service-Images des CI-Jobs e2e pflegt kein Oekosystem;
+# apps/web/src/lieferkette.test.ts haelt sie gleich mit docker-compose.yml.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Zurich
+    # pnpm-workspace.yaml setzt minimumReleaseAge: 1440 (Minuten). Ein
+    # Vorschlag knapp unter 24 h scheiterte an pnpm install; Dependabot
+    # rechnet in Tagen, deshalb einer mehr.
+    cooldown:
+      default-days: 2
+    open-pull-requests-limit: 10
+    groups:
+      prisma:
+        patterns: ["prisma", "@prisma/*"]
+      next:
+        patterns: ["next", "@next/*"]
+      react:
+        patterns: ["react", "react-dom", "@types/react", "@types/react-dom"]
+      yjs:
+        patterns: ["@hocuspocus/*", "yjs", "y-*"]
+      eslint:
+        patterns: ["eslint", "@eslint/*", "typescript-eslint", "eslint-plugin-*", "globals"]
+      tailwind:
+        patterns: ["tailwindcss", "@tailwindcss/*"]
+      # Alles uebrige in einem PR, Hauptversionen einzeln
+      uebrige:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+    ignore:
+      # Per Override auf genau eine Version gesetzt (eine ProseMirror-Instanz,
+      # pnpm-workspace.yaml). Von Hand zusammen mit dem Override heben. Gilt
+      # auch fuer Sicherheitsupdates; Luecken melden pnpm audit und Trivy.
+      - dependency-name: "@tiptap/*"
+      # Laufzeit ist Node 26 (engines, .nvmrc, Dockerfile, CI)
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Zurich
+    ignore:
+      # Node-Hauptversion nur zusammen mit engines, .nvmrc und CI
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: docker-compose
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Zurich
+    # Gotenberg-Hauptversionen prueft der CI-Schritt "PDF-Dienst laedt keine
+    # fremden Adressen" (Allow-List und eingebettete Bilder).
+    ignore:
+      # Eine neue Postgres-Hauptversion liest das bestehende Datenverzeichnis
+      # nicht; der Wechsel braucht Dump und Restore (README).
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      # Redis schreibt mit appendonly in einem Format, das die Vorversion
+      # nicht liest: Hauptversion nur von Hand, mit Sicherung vorher.
+      - dependency-name: redis
+        update-types: ["version-update:semver-major"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "05:00"
+      timezone: Europe/Zurich
+    groups:
+      actions:
+        patterns: ["*"]

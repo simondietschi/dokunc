@@ -26,18 +26,21 @@ export default async function SharedPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ token?: string; page?: string }>;
+  searchParams: Promise<{ token?: string | string[]; page?: string | string[] }>;
 }) {
   const { id } = await params;
-  const { token = "", page: wantedPageId } = await searchParams;
+  const { token, page: wantedPageId } = await searchParams;
 
+  // Doppelte Parameter kommen als Liste an; resolveShare lehnt sie ab.
+  // Die zweite Bedingung sagt das TypeScript für den Rest der Seite.
   const share = await resolveShare(id, token, wantedPageId);
-  if (!share) notFound();
+  if (!share || typeof token !== "string") notFound();
 
   const children = share.includeChildren
     ? await prisma.page.findMany({
         where: {
           parentId: share.page.id,
+          spaceId: share.spaceId,
           deletedAt: null,
           // Dieselbe Bedingung, die resolveShare beim Öffnen erzwingt:
           // ohne sie stünden Titel und Icon einer nachträglich

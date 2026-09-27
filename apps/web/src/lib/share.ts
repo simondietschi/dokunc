@@ -17,20 +17,36 @@ export type ShareTarget = {
   includeChildren: boolean;
 };
 
+/** Wert eines Suchparameters, wie Next ihn liefert: mehrfach als Liste. */
+export type SearchValue = string | string[] | undefined;
+
 /**
  * Löst einen Freigabelink auf.
  *
  * Gültig ist er nur, wenn er nicht zurückgezogen und nicht abgelaufen
- * ist, die Seite noch existiert und nicht geschützt ist, und das Token
- * zum gespeicherten Hash passt. Ohne diese Auflösung gäbe es keinen Lesezugriff ohne Konto —
+ * ist, die Seite noch existiert und nicht geschützt ist und, bei
+ * Unterseiten, ohne Umweg über den Papierkorb oder einen anderen Space
+ * unter der freigegebenen hängt, und das Token zum gespeicherten Hash
+ * passt. Ohne diese Auflösung gäbe es keinen Lesezugriff ohne Konto —
  * mit ihr genau einen, und nur auf die freigegebene Seite.
  */
 export async function resolveShare(
   shareId: string,
-  token: string,
-  pageId?: string,
+  token: SearchValue,
+  pageId?: SearchValue,
 ): Promise<ShareTarget | null> {
-  if (!shareId || !token) return null;
+  // Nur einzelne Werte. Ein doppelter Suchparameter (?token=a&token=b)
+  // kommt aus der Seite als Liste an; bis hierher durchgereicht, warf
+  // hashToken erst nach den Pruefungen auf Rueckzug, Ablauf und Papierkorb
+  // (500 bei einer lebenden Freigabe, 404 bei jeder anderen). Die Pruefung
+  // auf string lehnt auch null ab: ein Anhang ohne Seite ist nie von einer
+  // Freigabe gedeckt, auch wenn die Datei-Route das selbst schon prueft.
+  if (!shareId || typeof token !== "string" || !token) return null;
+  if (pageId !== undefined && typeof pageId !== "string") return null;
+  // Ein NUL-Byte (%00 im Pfad oder in ?page=) lehnt Postgres in jedem
+  // Textparameter ab; die Abfrage warf, statt nichts zu finden (500 und
+  // ein Fehlerlog je Aufruf, auch ohne Token). Keine ID enthaelt eines.
+  if (shareId.includes("\0") || pageId?.includes("\0")) return null;
 
   const share = await prisma.pageShare.findUnique({
     where: { id: shareId },
@@ -87,13 +103,18 @@ export async function resolveShare(
   });
   if (!page) return null;
 
-  // Unterseiten nur, wenn sie wirklich unterhalb der Freigabe hängen.
+  // Unterseiten nur, wenn sie wirklich unterhalb der Freigabe haengen:
+  // nicht durch den Papierkorb hindurch (eine lebende Seite unter einer
+  // geloeschten zeigt der Seitenbaum als eigene Wurzel, buildTree) und
+  // nicht ueber die Grenze des Space (wie trashPageTree). Die freigegebene
+  // Seite selbst ist oben schon geprueft.
   if (wanted !== share.pageId) {
     const inSubtree = await prisma.$queryRaw<{ id: string }[]>`
       WITH RECURSIVE sub AS (
         SELECT id FROM "Page" WHERE id = ${share.pageId}
         UNION ALL
         SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
+        WHERE p."deletedAt" IS NULL AND p."spaceId" = ${share.page.spaceId}
       )
       SELECT id FROM sub WHERE id = ${wanted}
     `;
