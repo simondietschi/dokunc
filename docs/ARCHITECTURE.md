@@ -644,7 +644,7 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       NUL-Zeichen und unbrauchbare Seitenzahlen abgefangen
 - [x] Druckansicht druckt wieder von selbst: das Druckskript trägt die
       Nonce der Anfrage und steht fest hinter dem Inhalt statt per
-      Textersatz hinter dem ersten `</body>`, das auch in einer
+      Textersatz vor dem ersten `</body>`, das auch in einer
       Linkadresse der Seite stehen konnte
 - [x] Container gehärtet: Proxy nur mit der App im Netz `edge`, Datenbank
       und Redis ohne Proxy, Redis mit Passwort aus dem Volume `redis_auth`
