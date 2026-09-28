@@ -17,7 +17,9 @@ export const MAX_QUERY_LENGTH = 100;
 
 /** Eingabe auf die Form bringen, in der die Routen sie auswerten. */
 export function normalizeQuery(raw: string | null | undefined): string {
-  return (raw ?? "").trim().slice(0, MAX_QUERY_LENGTH);
+  // NUL-Zeichen lehnt Postgres in jedem Textparameter ab (22021): ?q=%00
+  // warf in der Suche, statt nichts zu finden. Keine Eingabe braucht eines.
+  return (raw ?? "").replaceAll("\0", "").trim().slice(0, MAX_QUERY_LENGTH);
 }
 
 /**

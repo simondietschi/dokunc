@@ -17,6 +17,7 @@ import {
   removeGroupMemberAction,
   renameGroupAction,
 } from "./actions";
+import type { SearchParams } from "@/lib/search-params";
 
 export const metadata: Metadata = {
   title: "Gruppen",
@@ -26,7 +27,7 @@ export const metadata: Metadata = {
 export default async function GroupsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+  searchParams: SearchParams;
 }) {
   await requireAdmin();
   // Eine abgelehnte Umbenennung kommt als Kennung zurueck (siehe

@@ -37,6 +37,7 @@ import {
   deleteUserAction,
   deleteSpaceAction,
 } from "./actions";
+import type { SearchParams } from "@/lib/search-params";
 
 export const metadata: Metadata = {
   title: "Administration",
@@ -46,7 +47,7 @@ export const metadata: Metadata = {
 export default async function AdminPage({
   searchParams,
 }: {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+  searchParams: SearchParams;
 }) {
   const me = await requireAdmin();
   // Eine abgelehnte Loeschung, Sperre, Freischaltung oder Aenderung der

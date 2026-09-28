@@ -75,7 +75,11 @@ export function parseInviteFromNext(
     return null;
   }
   const match = url.pathname.match(/^\/invite\/([A-Za-z0-9_-]+)$/);
-  const token = url.searchParams.get("token");
+  // Genau ein Token, wie auf der Einladungsseite (lib/search-params.ts):
+  // mit ?token=<richtig>&token=x sagte die Seite "ungültig", die
+  // Registrierung aber galt als eingeladen.
+  const tokens = url.searchParams.getAll("token");
+  const token = tokens.length === 1 ? tokens[0] : "";
   if (!match || !token) return null;
   return { invitationId: match[1], token };
 }

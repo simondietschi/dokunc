@@ -86,6 +86,12 @@ export function AuthForm({
     undefined,
   );
   const isLogin = mode === "login";
+  // Nur eigene Schlüssel: ?sso=__proto__ fand sonst Object.prototype
+  // und React warf beim Rendern (500 auf der Anmeldeseite).
+  const ssoMessage =
+    ssoError && Object.hasOwn(SSO_ERRORS, ssoError)
+      ? SSO_ERRORS[ssoError]
+      : undefined;
   const switchHref = `${isLogin ? "/register" : "/login"}${
     next ? `?next=${encodeURIComponent(next)}` : ""
   }`;
@@ -110,12 +116,12 @@ export function AuthForm({
       {/* Die Meldung steht ausserhalb der Schaltfläche: schlägt die
           Anmeldung fehl, weil gar kein Anbieter eingerichtet ist, gibt
           es keine Schaltfläche — die Erklärung braucht es trotzdem. */}
-      {isLogin && ssoError && SSO_ERRORS[ssoError] && (
+      {isLogin && ssoMessage && (
         <p
           style={stagger(1)}
           className="dk-shake mt-6 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger"
         >
-          {SSO_ERRORS[ssoError]}
+          {ssoMessage}
         </p>
       )}
 

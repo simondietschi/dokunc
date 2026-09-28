@@ -243,5 +243,7 @@ describe("versionsToDelete, Eigenschaften", () => {
         expect(doomed.has(newestOf(inFach).id), `Fall ${fall} ${k}`).toBe(false);
       }
     }
-  });
+    // 200 Faelle mit bis zu 400 Versionen: auf einem langsamen Rechner
+    // ueber der Vorgabe von 5 s (gemessen 5.4 s), ohne dass etwas haengt.
+  }, 30_000);
 });

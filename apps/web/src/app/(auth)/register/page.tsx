@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { singleParam, type SearchParams } from "@/lib/search-params";
 import { AuthForm } from "../AuthForm";
 
 export const metadata: Metadata = {
@@ -8,8 +9,8 @@ export const metadata: Metadata = {
 export default async function RegisterPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: SearchParams;
 }) {
-  const { next } = await searchParams;
+  const next = singleParam((await searchParams).next);
   return <AuthForm mode="register" next={next} />;
 }

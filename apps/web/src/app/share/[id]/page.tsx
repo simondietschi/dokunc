@@ -7,6 +7,7 @@ import { contentToHtml } from "@/lib/page-html";
 import { resolveShare, rewriteFileUrls } from "@/lib/share";
 import { Logo } from "@/components/ui/Logo";
 import { pageTitle } from "@/lib/page-title";
+import type { SearchParams } from "@/lib/search-params";
 
 /**
  * Geteilte Seite: Lesen ohne Konto.
@@ -26,7 +27,7 @@ export default async function SharedPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ token?: string | string[]; page?: string | string[] }>;
+  searchParams: SearchParams;
 }) {
   const { id } = await params;
   const { token, page: wantedPageId } = await searchParams;

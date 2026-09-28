@@ -969,8 +969,15 @@ Gruppe oder als Space-Verwaltung. Für Freigabelinks prüfen sie jede
 Absage einzeln an Seite und Datei-Route (zurückgezogen, abgelaufen, Seite
 gelöscht oder geschützt, Seite ausserhalb des freigegebenen Unterbaums,
 fremder oder seitenloser Anhang), dass alle dieselbe Antwort geben, und
-was die Unterseitenliste auslässt. Sie brauchen eine erreichbare
-Datenbank und ein erreichbares Redis aus `.env` und legen ihre eigenen
+was die Unterseitenliste auslässt. Für Parameter in der Adresse prüfen
+sie, dass doppelt angegebene Werte und unbrauchbare Seitenzahlen auf
+Einladung, Zurücksetzen, Anmeldung und Suche dieselbe Antwort geben wie
+ohne den Parameter, dass Kennungen, die jedes Objekt erbt
+(`?sso=__proto__` an der Anmeldung, `?action=toString` im Audit-Log),
+wie unbekannte gelten, dass die Suche NUL-Zeichen im Suchbegriff
+weglässt und dass keine dieser Adressen einen Serverfehler auslöst.
+Sie brauchen eine erreichbare Datenbank und ein erreichbares Redis aus
+`.env` und legen ihre eigenen
 Datensätze an (und wieder ab); sie leeren nichts. Einige starten dafür einen eigenen
 Collab-Server (Port 3150 bis 3199, eigene Redis-Datenbank). Solange sie
 laufen, darf kein anderer Collab-Server an demselben Redis hängen, etwa
@@ -1085,6 +1092,12 @@ Kurz, was die App bewusst tut:
   dieselbe Antwort „nicht gefunden“, auch bei doppelt angegebenen
   Parametern: an der Antwort lässt sich nicht erkennen, warum ein Link
   nicht öffnet.
+- **Parameter in der Adresse**: auf den Seiten der App gilt ein mehrfach
+  angegebener Parameter (`?token=a&token=b`) als nicht angegeben. Ein
+  Einladungslink antwortet darauf mit derselben Absage wie auf ein
+  falsches Token, ob die Einladung offen ist oder nicht; auch die
+  Registrierung über diesen Link gilt dann nicht als eingeladen.
+  Schnittstellen unter `/api` lesen wie bisher den ersten Wert.
 - **Gruppen** geben Rollen, nehmen aber keine: die wirksame Rolle ist
   die stärkste aus eigener Mitgliedschaft und allen Gruppen. OWNER
   vergibt keine Gruppe — Eigentümerschaft bleibt persönlich.

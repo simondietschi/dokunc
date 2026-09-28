@@ -638,6 +638,10 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       verkettet), Dependabot, `pnpm audit` und Trivy (Lockfile, App-Image)
       in der CI, wöchentlicher Lauf, Postgres auf das Debian-Release
       festgelegt
+- [x] Parameter in der Adresse: auf Seiten gilt mehrfach angegeben als
+      nicht angegeben (`lib/search-params.ts`, Werte als `unknown`
+      typisiert), Einladung, Anmeldung und Suche ohne Serverfehler,
+      NUL-Zeichen und unbrauchbare Seitenzahlen abgefangen
 
 ## 7. Setup
 

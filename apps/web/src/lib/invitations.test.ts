@@ -75,6 +75,14 @@ describe("parseInviteFromNext", () => {
     expect(parseInviteFromNext("/invite/abc123")).toBeNull();
   });
 
+  it("gibt null zurück, wenn das Token mehrfach angegeben ist", () => {
+    // Wie die Einladungsseite: mehrfach gilt als nicht angegeben, weder
+    // der erste noch der letzte Wert zählt.
+    expect(parseInviteFromNext("/invite/abc123?token=xyz&token=x")).toBeNull();
+    expect(parseInviteFromNext("/invite/abc123?token=xyz&token=xyz")).toBeNull();
+    expect(parseInviteFromNext("/invite/abc123?token=&token=xyz")).toBeNull();
+  });
+
   it("greift nur bei Einladungszielen", () => {
     expect(parseInviteFromNext("/spaces?token=xyz")).toBeNull();
     expect(parseInviteFromNext("/s/team/p/1")).toBeNull();

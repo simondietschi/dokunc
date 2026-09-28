@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { singleParam, type SearchParams } from "@/lib/search-params";
 import { ResetForm } from "./ResetForm";
 
 export const metadata: Metadata = {
@@ -10,9 +11,11 @@ export default async function ResetPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ token?: string }>;
+  searchParams: SearchParams;
 }) {
   const { id } = await params;
-  const { token = "" } = await searchParams;
+  // Mehrfach angegeben zaehlt als fehlend; das Formular meldet beim
+  // Absenden "Link ungueltig" wie bei jedem anderen falschen Token.
+  const token = singleParam((await searchParams).token) ?? "";
   return <ResetForm id={id} token={token} />;
 }
