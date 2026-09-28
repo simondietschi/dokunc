@@ -425,8 +425,9 @@ jobs:
             wirksam=$(awk '/^CapEff/ {print $2}' <<<"$haupt")
             test $(( 0x$wirksam )) -eq "$eff" || { echo "$s: Hauptprozess mit Faehigkeiten $wirksam"; exit 1; }
             # Eine Stelle, die ohne read_only beschreibbar waere (root
-            # besitzt /, node besitzt .next, gotenberg sein Home)
-            wo=/; case "$s" in app) wo=/app/apps/web/.next ;; gotenberg) wo=/home/gotenberg ;; esac
+            # besitzt /, node besitzt .next, gotenberg /opt/gotenberg; sein
+            # Home ist ein tmpfs, siehe docker-compose.yml)
+            wo=/; case "$s" in app) wo=/app/apps/web/.next ;; gotenberg) wo=/opt/gotenberg ;; esac
             if docker exec "$c" sh -c ": > $wo/.haertung-probe" 2>/dev/null; then
               echo "$s: $wo beschreibbar"; exit 1
             fi
@@ -445,7 +446,8 @@ jobs:
             docker compose exec -T $u "$1" sh -c ": > '$2/.haertung-probe' && rm '$2/.haertung-probe'"
           }
           for ort in app:/tmp app:/app/apps/web/.next/cache app:/app/uploads app:/app/data \
-                     db:/var/run/postgresql gotenberg:/tmp proxy:/data proxy:/config redis:/data; do
+                     db:/var/run/postgresql gotenberg:/tmp gotenberg:/home/gotenberg \
+                     proxy:/data proxy:/config redis:/data; do
             schreibt "${ort%%:*}" "${ort#*:}"
           done
           # Der Cache von Next.js: /_next/image legt dort als node an, auch

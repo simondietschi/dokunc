@@ -306,7 +306,11 @@ services:
       - render
     # Läuft als Nutzer gotenberg, Chromium ohne eigene Sandbox: keine
     # Fähigkeit nötig. Arbeitsdateien und Profil liegen in /tmp (tmpfs,
-    # zählt zum Speicher). Bedarf: zwei Umwandlungen mal gut 430 MB für die
+    # zählt zum Speicher). Das Home braucht ebenfalls einen tmpfs: Chromium
+    # legt dort den Ordner für Absturzberichte an und startet seinen
+    # Crash-Handler damit. Ist es schreibgeschützt, startet Chromium je nach
+    # Umgebung gar nicht ("chrome_crashpad_handler: --database is required",
+    # so in der CI auf ubuntu-latest). Bedarf: zwei Umwandlungen mal gut 430 MB für die
     # grösste Seite, die der Export erlaubt (16 MB eingebettete Bilder),
     # dazu jede wartende Anfrage mit ihrer Datei. Gemessen mit 1 GB und
     # Seiten mit gut 13 MB eingebetteten Bildern: 12 gleichzeitige Exporte
@@ -318,6 +322,7 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+      - /home/gotenberg:mode=1777
     mem_limit: 1g
     pids_limit: 512
 

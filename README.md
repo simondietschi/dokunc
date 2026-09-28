@@ -1176,8 +1176,9 @@ Kurz, was die App bewusst tut:
   einrichtet und zum eigenen Nutzer wechselt (die Server selbst laufen
   ohne); App und Gotenberg keine. Dazu `no-new-privileges` und ein
   schreibgeschütztes Dateisystem: geschrieben wird nur in die Volumes und
-  in `tmpfs` für `/tmp`, den Cache von Next.js und den Socket der
-  Datenbank. Grenzen je Dienst:
+  in `tmpfs` für `/tmp`, den Cache von Next.js, den Socket der
+  Datenbank und das Home von Gotenberg (dort legt Chromium beim Start den
+  Ordner für Absturzberichte an). Grenzen je Dienst:
 
   | Dienst | Speicher | Prozesse |
   |---|---|---|
