@@ -9,7 +9,8 @@
  * muss und deshalb inline bleibt.
  *
  * Jetzt bekommt jede Antwort eine frische Nonce (siehe middleware.ts),
- * das Theme-Skript traegt sie, und Next reicht sie an seine eigenen
+ * das Theme-Skript traegt sie, ebenso das Druckskript der Druckansicht
+ * (lib/page-html.ts), und Next reicht sie an seine eigenen
  * Bootstrap-Skripte weiter. `strict-dynamic` laesst zu, was ein so
  * freigegebenes Skript selbst nachlaedt — die Chunk-Dateien.
  *
@@ -198,8 +199,37 @@ export function exportContentSecurityPolicy(): string {
   ].join("; ");
 }
 
-/** Header-Name, ueber den die Middleware die Nonce ans Layout reicht. */
+/**
+ * Header-Name, ueber den die Middleware die Nonce ans Layout und an die
+ * Druckansicht reicht.
+ */
 export const NONCE_HEADER = "x-nonce";
+
+/**
+ * Ob ein Wert als Nonce taugt, in `'nonce-...'` der Richtlinie und roh
+ * im Attribut `nonce="..."`.
+ *
+ * Grammatik aus CSP Level 3 (base64-value): Buchstaben, Ziffern,
+ * + / - _ und hoechstens zwei = am Ende. Ein solcher Wert enthaelt weder
+ * Anfuehrungszeichen noch spitze Klammern und kann das Attribut nicht
+ * verlassen.
+ */
+export function isCspNonce(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9+/_-]+={0,2}$/.test(value);
+}
+
+/**
+ * Die Nonce, die die Middleware dieser Anfrage mitgegeben hat.
+ *
+ * Fuer Antworten, die ihr HTML selbst schreiben statt ueber React, heute
+ * die Druckansicht. Die Middleware setzt den Header auf jeder Anfrage
+ * neu; ein vom Browser mitgeschickter Wert kommt nicht durch. Fehlt er
+ * oder sieht er nicht wie eine Nonce aus: undefined.
+ */
+export function nonceFromHeaders(headers: Headers): string | undefined {
+  const wert = headers.get(NONCE_HEADER);
+  return isCspNonce(wert) ? wert : undefined;
+}
 
 /** Frische Nonce je Antwort. Hex ist im Base64-Zeichenvorrat der CSP. */
 export function createNonce(): string {

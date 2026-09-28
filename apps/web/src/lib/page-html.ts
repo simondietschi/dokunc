@@ -1,7 +1,7 @@
 import "server-only";
 import { generateHTML } from "@tiptap/html";
 import { richExtensions } from "@dokunc/editor";
-import { exportContentSecurityPolicy } from "./csp";
+import { exportContentSecurityPolicy, isCspNonce } from "./csp";
 
 const extensions = richExtensions();
 
@@ -82,12 +82,17 @@ export function escapeHtml(s: string): string {
   );
 }
 
+/** Oeffnet den Druckdialog, sobald die Seite samt Bildern geladen ist. */
+const AUTO_PRINT_SCRIPT =
+  'window.addEventListener("load",()=>setTimeout(()=>window.print(),300));';
+
 /**
  * Vollständiges, druckfertiges HTML-Dokument für Export/PDF.
  * Bewusst self-contained (Inline-CSS, keine externen Ressourcen).
  * Für den Export setzt die Datei ihre eigene CSP (siehe
  * `exportContentSecurityPolicy`), damit das auch für Inhalte gilt, die
- * fremde Adressen nennen.
+ * fremde Adressen nennen. Die Druckansicht endet mit dem Druckskript,
+ * sofern eine Nonce übergeben wird (siehe `printNonce`).
  */
 export function pageToPrintHtml(opts: {
   title: string;
@@ -102,12 +107,28 @@ export function pageToPrintHtml(opts: {
    * die eine Export-CSP sperren wuerde. Ohne Angabe die strenge Fassung.
    */
   target?: "export" | "print";
+  /**
+   * Nur fuer target "print": die Nonce der Antwort (x-nonce der
+   * Middleware). Mit ihr endet das Dokument mit einem Skript, das den
+   * Druckdialog oeffnet. Ohne gueltige Nonce kein Skript: die CSP der
+   * Antwort blockierte es ohnehin, und die Seite laesst sich weiter von
+   * Hand drucken. Der Export bekommt nie eines.
+   */
+  printNonce?: string;
 }): string {
+  const target = opts.target ?? "export";
   // Direkt nach charset: eine Meta-CSP gilt nur fuer das, was danach
   // geparst wird.
   const csp =
-    (opts.target ?? "export") === "export"
+    target === "export"
       ? `\n<meta http-equiv="Content-Security-Policy" content="${exportContentSecurityPolicy()}">`
+      : "";
+  // Fest hinter </main> und nicht per Textersatz im fertigen HTML: ein
+  // "</body>" kann roh in einem Attributwert des Inhalts stehen (siehe
+  // decodeHtmlAttr), und ein dort eingesetztes Skript brach den Wert auf.
+  const autoPrint =
+    target === "print" && isCspNonce(opts.printNonce)
+      ? `\n<script nonce="${opts.printNonce}">${AUTO_PRINT_SCRIPT}</script>`
       : "";
   return `<!DOCTYPE html>
 <html lang="de">
@@ -176,7 +197,7 @@ export function pageToPrintHtml(opts: {
   <h1>${escapeHtml(opts.title)}</h1>
   ${opts.spaceName ? `<p>${escapeHtml(opts.spaceName)} · dokunc</p>` : ""}
 </header>
-<main>${opts.contentHtml}</main>
+<main>${opts.contentHtml}</main>${autoPrint}
 </body>
 </html>`;
 }

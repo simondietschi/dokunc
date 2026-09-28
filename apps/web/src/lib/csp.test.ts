@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EMBED_FRAME_SOURCES,
+  NONCE_HEADER,
   collabOrigin,
   contentSecurityPolicy,
   createNonce,
   cspMode,
   devServerSocket,
   exportContentSecurityPolicy,
+  nonceFromHeaders,
 } from "./csp";
 
 // collabOrigin() und damit connect-src lesen NEXT_PUBLIC_COLLAB_URL aus
@@ -192,6 +194,30 @@ describe("createNonce()", () => {
 
   it("liefert nur Zeichen, die im Header zulaessig sind", () => {
     expect(createNonce()).toMatch(/^[0-9a-f]{32}$/);
+  });
+});
+
+describe("nonceFromHeaders()", () => {
+  const mit = (wert: string) => new Headers({ [NONCE_HEADER]: wert });
+
+  it("liest die Nonce, die die Middleware setzt", () => {
+    const nonce = createNonce();
+    expect(nonceFromHeaders(mit(nonce))).toBe(nonce);
+    // Die ganze Base64-Grammatik der CSP, samt Auffuellung am Ende.
+    expect(nonceFromHeaders(mit("QUJD+/_-=="))).toBe("QUJD+/_-==");
+  });
+
+  it("verwirft fehlende und fremde Werte", () => {
+    // Positivkontrolle: derselbe Weg nimmt eine echte Nonce an.
+    const nonce = createNonce();
+    expect(nonceFromHeaders(mit(nonce))).toBe(nonce);
+
+    expect(nonceFromHeaders(new Headers())).toBeUndefined();
+    // Der Wert steht roh in nonce="...": nichts, was das Attribut
+    // verlassen koennte.
+    for (const fremd of ["", 'abc"><script>', "a b", "abc===", "=abc"]) {
+      expect(nonceFromHeaders(mit(fremd)), fremd).toBeUndefined();
+    }
   });
 });
 

@@ -2,16 +2,18 @@ import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { readablePageRole } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
+import { nonceFromHeaders } from "@/lib/csp";
 import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
 
 export const runtime = "nodejs";
 
 /**
- * Druckansicht: druckfertiges HTML mit automatischem window.print().
+ * Druckansicht: druckfertiges HTML, das den Druckdialog von selbst
+ * oeffnet (Skript mit der Nonce der Anfrage, siehe pageToPrintHtml).
  * Universeller PDF-Weg ohne Zusatzdienst (Browser: "Als PDF speichern").
  */
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ pageId: string }> },
 ) {
   const user = await getCurrentUser();
@@ -43,10 +45,9 @@ export async function GET(
     contentHtml: contentToHtml(page.content),
     // Die Antwort traegt die CSP der Middleware; eine Export-CSP sperrte die Bilder aus /api/files.
     target: "print",
-  }).replace(
-    "</body>",
-    `<script>window.addEventListener("load",()=>setTimeout(()=>window.print(),300));</script></body>`,
-  );
+    // Ohne die Nonce dieser Anfrage blockiert dieselbe CSP das Druckskript.
+    printNonce: nonceFromHeaders(req.headers),
+  });
 
   return new NextResponse(html, {
     headers: { "Content-Type": "text/html; charset=utf-8" },

@@ -229,15 +229,15 @@ describe("escapeHtml()", () => {
   });
 });
 
-describe("Export-CSP", () => {
-  /** Inhalte aller CSP-Meta-Tags im Dokument. */
-  const cspMeta = (html: string) =>
-    [
-      ...html.matchAll(
-        /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/g,
-      ),
-    ].map((m) => m[1]);
+/** Inhalte aller CSP-Meta-Tags im Dokument. */
+const cspMeta = (html: string) =>
+  [
+    ...html.matchAll(
+      /<meta http-equiv="Content-Security-Policy" content="([^"]*)">/g,
+    ),
+  ].map((m) => m[1]);
 
+describe("Export-CSP", () => {
   it("Export-HTML bringt seine CSP mit: nur data:-Bilder und Inline-Stile", () => {
     // Ohne sie lud Gotenbergs Chromium jede Bildadresse aus dem Inhalt,
     // hier etwa die Datenbank im Docker-Netz.
@@ -281,5 +281,118 @@ describe("Export-CSP", () => {
       target: "export",
     });
     expect(cspMeta(exportHtml)).toHaveLength(1);
+  });
+});
+
+describe("Druckansicht druckt von selbst", () => {
+  /** Alle Skript-Tags im Dokument, samt Inhalt. */
+  const skripte = (html: string) =>
+    [...html.matchAll(/<script\b[^>]*>[\s\S]*?<\/script>/g)].map((m) => m[0]);
+
+  it("haengt das Druckskript mit Nonce an, nur in der Druckansicht", () => {
+    const druck = pageToPrintHtml({
+      title: "T",
+      contentHtml: "<p>x</p>",
+      target: "print",
+      printNonce: "abc123",
+    });
+    const tags = skripte(druck);
+    expect(tags).toHaveLength(1);
+    expect(tags[0]).toMatch(/^<script nonce="abc123">/);
+    expect(tags[0]).toContain("window.print()");
+
+    // Ohne Nonce kein Skript: die CSP der Antwort blockierte es ohnehin.
+    const ohneNonce = pageToPrintHtml({
+      title: "T",
+      contentHtml: "<p>x</p>",
+      target: "print",
+    });
+    expect(ohneNonce).not.toContain("<script");
+
+    // Der Export (Download, Gotenberg) bekommt nie eines, auch mit Nonce.
+    const exportHtml = pageToPrintHtml({
+      title: "T",
+      contentHtml: "<p>x</p>",
+      target: "export",
+      printNonce: "abc123",
+    });
+    expect(exportHtml).not.toContain("<script");
+    expect(cspMeta(exportHtml)).toHaveLength(1);
+  });
+
+  it("setzt keine Nonce ein, die das Attribut verlassen koennte", () => {
+    // Positivkontrolle: mit einer gueltigen Nonce entsteht das Skript.
+    const gut = pageToPrintHtml({
+      title: "T",
+      contentHtml: "<p>x</p>",
+      target: "print",
+      printNonce: "abc123",
+    });
+    expect(skripte(gut)).toHaveLength(1);
+
+    const boese = pageToPrintHtml({
+      title: "T",
+      contentHtml: "<p>x</p>",
+      target: "print",
+      printNonce: 'x" onload="alert(1)',
+    });
+    expect(boese).not.toContain("<script");
+    expect(boese).not.toContain("onload");
+  });
+
+  it("setzt das Druckskript hinter den Inhalt, auch wenn dort </body> steht", () => {
+    // Das darf der Serializer: in einem Attributwert steht < roh (siehe
+    // decodeHtmlAttr). Der fruehere Textersatz der Route traf das erste
+    // </body>, also das im href, und brach den Wert auf.
+    const contentHtml =
+      '<p><a href="https://x.test/?q=</body></main><b id=boese>x</b>">L</a></p>';
+    const out = pageToPrintHtml({
+      title: "T",
+      contentHtml,
+      target: "print",
+      printNonce: "abc123",
+    });
+    expect(skripte(out)).toHaveLength(1);
+    expect(out).toContain(
+      `<main>${contentHtml}</main>\n<script nonce="abc123">`,
+    );
+    expect(out.endsWith("</script>\n</body>\n</html>")).toBe(true);
+  });
+
+  it("Serializer laesst < im Attribut roh, das Skript bleibt trotzdem hinten", () => {
+    // Dokumentiert, warum der Test oben einen festen Inhalt nimmt: so
+    // sieht die Ausgabe von contentToHtml heute aus.
+    const contentHtml = contentToHtml(
+      doc([
+        {
+          type: "paragraph",
+          content: [
+            {
+              type: "text",
+              text: "Link",
+              marks: [
+                {
+                  type: "link",
+                  attrs: { href: "https://x.test/?q=</body><b id=boese>x</b>" },
+                },
+              ],
+            },
+          ],
+        },
+      ]),
+    );
+    // Wird das rot, kodiert der Serializer < jetzt: diesen Test und den
+    // Kommentar an decodeHtmlAttr (page-html.ts) anpassen.
+    expect(contentHtml).toContain("</body><b id=boese>");
+    const out = pageToPrintHtml({
+      title: "T",
+      contentHtml,
+      target: "print",
+      printNonce: "abc123",
+    });
+    expect(out).toContain(
+      `<main>${contentHtml}</main>\n<script nonce="abc123">`,
+    );
+    expect(skripte(out)).toHaveLength(1);
   });
 });

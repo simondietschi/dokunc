@@ -1045,6 +1045,8 @@ Kurz, was die App bewusst tut:
   Nur unter `pnpm dev` (`next dev`) ist die CSP der Seiten gelockert, und
   zwar nur um das, was Fast Refresh braucht: `'unsafe-eval'` und den
   HMR-WebSocket. `/api` bleibt auch dort bei der strengen Fassung.
+  Auch das Skript der Druckansicht, das den Druckdialog öffnet, trägt
+  diese Nonce.
 - **Export ohne Nachladen**: Exportiertes HTML und PDF bringen ihre eigene
   Content-Security-Policy mit. Sie laden nur eingebettete Bilder (`data:`)
   und Videos von YouTube wie in der App, sonst keine Adresse aus dem

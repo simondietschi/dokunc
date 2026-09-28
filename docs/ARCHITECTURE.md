@@ -642,6 +642,10 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       nicht angegeben (`lib/search-params.ts`, Werte als `unknown`
       typisiert), Einladung, Anmeldung und Suche ohne Serverfehler,
       NUL-Zeichen und unbrauchbare Seitenzahlen abgefangen
+- [x] Druckansicht druckt wieder von selbst: das Druckskript trägt die
+      Nonce der Anfrage und steht fest hinter dem Inhalt statt per
+      Textersatz hinter dem ersten `</body>`, das auch in einer
+      Linkadresse der Seite stehen konnte
 
 ## 7. Setup
 
