@@ -309,9 +309,10 @@ jobs:
           test "$(CADDY_TLS= tls)" = internal
           test "$(CADDY_TLS=admin@example.com tls)" = admin@example.com
 
-      # Gotenberg nur im internen Netz render mit der App (docker-compose.yml,
-      # networks). Fuer docker-compose.yml allein und mit beiden Zusaetzen,
-      # weil jede Datei die Dienste erweitern kann.
+      # Proxy nur mit der App im Netz edge, Gotenberg nur mit der App im
+      # internen Netz render, Datenbank und Redis im Standardnetz ohne den
+      # Proxy (docker-compose.yml, networks). Fuer docker-compose.yml allein
+      # und mit beiden Zusaetzen, weil jede Datei die Dienste erweitern kann.
       - name: Netze getrennt (Konfiguration)
         run: |
           set -euo pipefail
@@ -319,14 +320,35 @@ jobs:
           for dateien in docker-compose.yml "$ALLE"; do
             cfg=$(COMPOSE_FILE=$dateien docker compose config --format json)
             test "$(jq -cS '.services | map_values(.networks | keys)' <<<"$cfg")" \
-              = '{"app":["default","render"],"db":["default"],"gotenberg":["render"],"proxy":["default"],"redis":["default"]}'
+              = '{"app":["default","edge","render"],"db":["default"],"gotenberg":["render"],"proxy":["edge"],"redis":["default"]}'
             test "$(jq -cS '.networks | map_values(.internal // false)' <<<"$cfg")" \
-              = '{"default":false,"render":true}'
+              = '{"default":false,"edge":false,"render":true}'
+          done
+
+      # Jeder Dienst, auch ein kuenftiger, in jeder Dateikombination: alle
+      # Faehigkeiten abgegeben, keine neuen Rechte, Dateisystem
+      # schreibgeschuetzt, Grenzen fuer Speicher und Prozesse. Welche
+      # Faehigkeiten zurueckkommen und ob alles wirkt, prueft der Schritt
+      # "Container gehaertet (am Stack)".
+      - name: Container gehaertet (Konfiguration)
+        run: |
+          set -euo pipefail
+          ALLE=docker-compose.yml:docker-compose.domain.yml:docker-compose.ipv6.yml
+          for dateien in docker-compose.yml "$ALLE"; do
+            fehlt=$(COMPOSE_FILE=$dateien docker compose config --format json | jq -c '.services
+              | map_values(select((.cap_drop == ["ALL"]
+                  and ((.security_opt // []) | index("no-new-privileges:true") != null)
+                  and .read_only == true and .mem_limit != null and .pids_limit != null) | not))
+              | keys')
+            test "$fehlt" = '[]' || { echo "Ohne Haertung ($dateien): $fehlt"; exit 1; }
           done
 
       # Am laufenden Stack: Gotenberg kennt Datenbank und Redis nicht und
-      # kommt nicht ins Internet; die App erreicht Gotenberg und hat Ausgang.
-      # Die ersten zwei Zeilen zeigen, dass getent und curl im Image laufen.
+      # kommt nicht ins Internet; der Proxy erreicht die App, aber weder
+      # Datenbank noch Redis, auch nicht ueber deren Adresse; die App
+      # erreicht Gotenberg, Datenbank und Redis und hat Ausgang. Die
+      # Zeilen vor jeder Negativprobe zeigen, dass getent, curl, wget und
+      # nc im jeweiligen Image laufen.
       # curl -k: es geht um die Verbindung, nicht um das Zertifikat.
       - name: Netze getrennt (am Stack)
         run: |
@@ -341,8 +363,155 @@ jobs:
           if docker compose exec -T gotenberg curl -ksS -o /dev/null --max-time 10 https://registry.npmjs.org/; then
             echo "Gotenberg erreicht das Internet"; exit 1
           fi
+          docker compose exec -T proxy getent hosts app >/dev/null
+          docker compose exec -T proxy wget -q -O /dev/null -T 10 http://app:3000/api/health
+          docker compose exec -T proxy nc -z -w 5 app 3001
+          for dienst in db redis; do
+            if docker compose exec -T proxy getent hosts "$dienst"; then
+              echo "Proxy sieht $dienst"; exit 1
+            fi
+          done
+          # Per Adresse, wie ein Angreifer sie nutzte; dieselbe Verbindung
+          # von der App aus ist die Gegenkontrolle
+          verbindet() { docker compose exec -T app node -e "const s=require('node:net').connect($2,'$1');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1));setTimeout(()=>process.exit(1),5000)"; }
+          for ziel in db:5432 redis:6379; do
+            ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(docker compose ps -q "${ziel%%:*}")")
+            test -n "$ip"
+            verbindet "$ip" "${ziel#*:}"
+            if docker compose exec -T proxy nc -z -w 5 "$ip" "${ziel#*:}"; then
+              echo "Proxy erreicht $ziel ueber $ip"; exit 1
+            fi
+          done
           docker compose exec -T app node -e 'fetch("http://gotenberg:3000/health").then(r=>process.exit(r.ok?0:1),()=>process.exit(1))'
           docker compose exec -T app node -e 'fetch("https://registry.npmjs.org/",{method:"HEAD"}).then(()=>process.exit(0),()=>process.exit(1))'
+
+      # Wirkung der Haertung in jedem laufenden Container (die
+      # Konfiguration prueft der Schritt oben): no-new-privileges, genau die
+      # erlaubten Faehigkeiten (aus einem Prozess von docker exec gelesen,
+      # dort steht die Vorgabe des Containers; PID 1 von Redis hat sie
+      # schon selbst abgegeben), der Hauptprozess ohne wirksame Faehigkeit
+      # (Proxy: nur NET_BIND_SERVICE), Dateisystem schreibgeschuetzt,
+      # Grenzen im cgroup (v2, sonst v1). Gegenkontrolle: wo ein Dienst
+      # schreiben muss, geht es.
+      - name: Container gehaertet (am Stack)
+        run: |
+          set -euo pipefail
+          grenze() {
+            local w
+            w=$(docker exec "$1" sh -c "cat /sys/fs/cgroup/$2 2>/dev/null || cat /sys/fs/cgroup/$3")
+            [[ "$w" =~ ^[0-9]{1,15}$ ]] || { echo "$4: $2 unbegrenzt ($w)" >&2; exit 1; }
+            echo "$w"
+          }
+          for s in $(docker compose config --services); do
+            c=$(docker compose ps -q "$s")
+            test -n "$c" || { echo "$s laeuft nicht"; exit 1; }
+            eigen=$(docker exec "$c" cat /proc/self/status)
+            haupt=$(docker exec "$c" cat /proc/1/status)
+            grep -qx $'NoNewPrivs:\t1' <<<"$eigen" || { echo "$s: ohne no-new-privileges"; exit 1; }
+            grep -qx $'NoNewPrivs:\t1' <<<"$haupt" || { echo "$s: Hauptprozess ohne no-new-privileges"; exit 1; }
+            # Bits: CHOWN 0, DAC_READ_SEARCH 2, FOWNER 3, SETGID 6,
+            # SETUID 7, SETPCAP 8, NET_BIND_SERVICE 10
+            case "$s" in
+              proxy) erlaubt=$(( 1<<10 )); eff=$(( 1<<10 )) ;;
+              db) erlaubt=$(( 1<<0 | 1<<2 | 1<<3 | 1<<6 | 1<<7 )); eff=0 ;;
+              redis) erlaubt=$(( 1<<0 | 1<<2 | 1<<3 | 1<<6 | 1<<7 | 1<<8 )); eff=0 ;;
+              *) erlaubt=0; eff=0 ;;
+            esac
+            bnd=$(awk '/^CapBnd/ {print $2}' <<<"$eigen")
+            test $(( 0x$bnd )) -eq "$erlaubt" || { echo "$s: Faehigkeiten $bnd"; exit 1; }
+            wirksam=$(awk '/^CapEff/ {print $2}' <<<"$haupt")
+            test $(( 0x$wirksam )) -eq "$eff" || { echo "$s: Hauptprozess mit Faehigkeiten $wirksam"; exit 1; }
+            # Eine Stelle, die ohne read_only beschreibbar waere (root
+            # besitzt /, node besitzt .next, gotenberg sein Home)
+            wo=/; case "$s" in app) wo=/app/apps/web/.next ;; gotenberg) wo=/home/gotenberg ;; esac
+            if docker exec "$c" sh -c ": > $wo/.haertung-probe" 2>/dev/null; then
+              echo "$s: $wo beschreibbar"; exit 1
+            fi
+            grenze "$c" pids.max pids/pids.max "$s" >/dev/null
+            speicher=$(grenze "$c" memory.max memory/memory.limit_in_bytes "$s")
+            if [ "$s" = redis ]; then
+              # maxmemory unter der Grenze: volles Redis lehnt Schreiben ab,
+              # statt vom Kernel beendet zu werden
+              mm=$(docker compose exec -T redis sh -c 'REDISCLI_AUTH="$(cat /run/redis-auth/password)" redis-cli CONFIG GET maxmemory' | sed -n 2p)
+              test "$mm" -gt 0 && test "$mm" -lt "$speicher" || { echo "redis: maxmemory $mm, Grenze $speicher"; exit 1; }
+            fi
+          done
+          schreibt() {
+            local u=; case "$1" in db) u="-u postgres" ;; redis) u="-u redis" ;; esac
+            # shellcheck disable=SC2086
+            docker compose exec -T $u "$1" sh -c ": > '$2/.haertung-probe' && rm '$2/.haertung-probe'"
+          }
+          for ort in app:/tmp app:/app/apps/web/.next/cache app:/app/uploads app:/app/data \
+                     db:/var/run/postgresql gotenberg:/tmp proxy:/data proxy:/config redis:/data; do
+            schreibt "${ort%%:*}" "${ort#*:}"
+          done
+          # Der Cache von Next.js: /_next/image legt dort als node an, auch
+          # wenn es das SVG danach mit 400 ablehnt (gehoerte der tmpfs root,
+          # stuende EACCES im Log der App)
+          curl -sSk -o /dev/null "https://localhost:${APP_PORT:-7891}/_next/image?url=%2Ficon.svg&w=64&q=75"
+          docker compose exec -T app test -d /app/apps/web/.next/cache/images
+          if docker compose logs app | grep -E 'EACCES|EROFS'; then exit 1; fi
+
+      # Redis weist ohne Passwort ab (redis-cli endet dabei mit 0, deshalb
+      # die Antwort), die Prozesse der App haben es in REDIS_URL, und der
+      # Collab-Server hat sich damit angemeldet (SUBSCRIBE geht erst nach
+      # der Anmeldung). Das Passwort steht weder in der Konfiguration noch
+      # in einer Befehlszeile, die docker inspect zeigt. Ein App-Image von
+      # vor dem Passwort (Einstieg von 84a44cc) bleibt nicht still gesund:
+      # der Healthcheck meldet es.
+      - name: Redis nur mit Passwort
+        run: |
+          set -euo pipefail
+          rcli() { docker compose exec -T redis sh -c 'REDISCLI_AUTH="$(cat /run/redis-auth/password)" redis-cli "$@"' rcli "$@"; }
+          docker compose exec -T redis redis-cli PING | grep -q '^NOAUTH'
+          test "$(rcli PING)" = PONG
+          # Nur Prozesse des Stacks: Prozesse aus docker exec (dieses sh,
+          # der Healthcheck) haben PPid 0 und die Umgebung des Containers
+          docker compose exec -T app sh -s <<'SH'
+          set -eu
+          pw=$(cat /run/redis-auth/password)
+          test -n "$pw"
+          n=0
+          for p in /proc/[0-9]*; do
+            st=$(cat "$p/status" 2>/dev/null) || continue
+            ppid=$(printf '%s\n' "$st" | sed -n 's/^PPid:[[:space:]]*//p')
+            [ "${p#/proc/}" = 1 ] || [ "$ppid" != 0 ] || continue
+            e=$(tr '\0' '\n' < "$p/environ" 2>/dev/null) || continue
+            [ -n "$e" ] || continue
+            printf '%s\n' "$e" | grep -qx "REDIS_URL=redis://:$pw@redis:6379" \
+              || { echo "ohne Passwort: $p $(cat "$p/comm" 2>/dev/null)"; exit 1; }
+            n=$((n + 1))
+          done
+          test "$n" -ge 3
+          SH
+          angemeldet=
+          for i in $(seq 1 15); do
+            if rcli CLIENT LIST | grep -q 'cmd=subscribe'; then angemeldet=1; break; fi
+            sleep 2
+          done
+          test -n "$angemeldet"
+          if docker compose logs app | grep -E 'NOAUTH|WRONGPASS|Redis-Passwort'; then exit 1; fi
+          PW=$(docker compose exec -T redis cat /run/redis-auth/password)
+          if docker inspect $(docker compose ps -q) | grep -qF "$PW"; then echo "Passwort in docker inspect"; exit 1; fi
+
+          # Healthcheck der App, wie Docker ihn ausfuehrt, in einem
+          # Container mit altem Einstieg (Image ohne Passwortblock) und zur
+          # Kontrolle mit dem Einstieg des Images; beide ohne Server
+          # (sleep), die Meldung kommt vor der Abfrage.
+          VOR=84a44cc68366e5219c700017be6cc5b6d9ff2258
+          git fetch --no-tags --depth=1 origin "$VOR"
+          git show "$VOR:scripts/docker-entrypoint.sh" > "$RUNNER_TEMP/alt-einstieg.sh"
+          docker compose run -d --no-deps --name ci-alt-einstieg \
+            -v "$RUNNER_TEMP/alt-einstieg.sh:/alt-einstieg.sh:ro" --entrypoint sh app /alt-einstieg.sh sleep 300 >/dev/null
+          docker compose run -d --no-deps --name ci-neu-einstieg app sleep 300 >/dev/null
+          HC=$(docker inspect -f '{{index .Config.Healthcheck.Test 3}}' ci-alt-einstieg)
+          sleep 2
+          if docker exec ci-alt-einstieg node -e "$HC" >"$RUNNER_TEMP/hc-alt"; then exit 1; fi
+          grep -q 'ohne Redis-Passwort' "$RUNNER_TEMP/hc-alt"
+          docker exec ci-neu-einstieg node -e "$HC" >"$RUNNER_TEMP/hc-neu" || true
+          if grep 'ohne Redis-Passwort' "$RUNNER_TEMP/hc-neu"; then exit 1; fi
+          docker rm -f ci-alt-einstieg ci-neu-einstieg >/dev/null
+          test "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q app)")" = healthy
 
       # Gotenbergs Allow-List: ein Horchposten in der App (im selben Netz
       # wie Gotenberg, also erreichbar), dann ein PDF aus HTML, das ihn per
@@ -403,7 +572,7 @@ jobs:
           # seine Sperre belegt ist, laeuft er nicht; sonst waere die
           # Pruefung von Schritt 12 unten auch ohne Schritt 12 gruen.
           sperre_mails() {
-            test "$(docker compose exec -T redis redis-cli SET dokunc:mail-dispatch:lock ci-rundlauf PX 3600000)" = OK
+            test "$(docker compose exec -T redis sh -c 'REDISCLI_AUTH="$(cat /run/redis-auth/password)" redis-cli SET dokunc:mail-dispatch:lock ci-rundlauf PX 3600000')" = OK
           }
           warte_auf_health() {
             for i in $(seq 1 30); do
@@ -493,6 +662,44 @@ jobs:
           WARNUNG=$(./scripts/backup.sh 2>&1 >/dev/null)
           test -z "$WARNUNG" || { echo "$WARNUNG" >&2; false; }
 
+      # Eine Installation vom Stand vor der Haertung (Commit 84a44cc, Punkte
+      # 1 bis 6) mit Bestand in Datenbank, Uploads, Secret und Redis, dann
+      # die letzte Zeile des Update-Befehls aus dem README. Der Bestand muss
+      # bleiben, die Sitzungen gelten weiter (gleiches Secret), Redis
+      # verlangt danach ein Passwort, und der Proxy sieht die Datenbank
+      # nicht mehr. pull und build --pull prueft "Update-Weg aus dem
+      # README"; hier liegen die Images schon vor. Der alte Stand nutzt das
+      # App-Image aus dem aktuellen Checkout; dessen Einstieg tut ohne
+      # REDIS_PASSWORD_FILE nichts Neues. Ein altes App-Image mit der neuen
+      # Datei prueft "Redis nur mit Passwort" (Healthcheck).
+      - name: Update von einer Installation vor der Haertung
+        run: |
+          set -euo pipefail
+          VOR=84a44cc68366e5219c700017be6cc5b6d9ff2258
+          git fetch --no-tags --depth=1 origin "$VOR"
+          git show "$VOR:docker-compose.yml" > "$RUNNER_TEMP/vor-haertung.yml"
+          alt() { docker compose --project-directory . -f "$RUNNER_TEMP/vor-haertung.yml" "$@"; }
+          sql() { docker compose exec -T db psql -X -U dokunc -d dokunc -v ON_ERROR_STOP=1 -At -c "$1"; }
+          docker compose down -v
+          alt up -d --wait --wait-timeout 600
+          alt exec -T db psql -X -U dokunc -d dokunc -v ON_ERROR_STOP=1 -c "CREATE TABLE ci_update (wert text); INSERT INTO ci_update VALUES ('vorher')"
+          alt exec -T app sh -c 'echo vorher > /app/uploads/ci-update.txt'
+          SUMME=$(alt exec -T app cat /app/data/app_secret | sha256sum)
+          test "$(alt exec -T redis redis-cli SET ci:update vorher)" = OK
+          docker compose up -d --wait --wait-timeout 600
+          test "$(sql 'SELECT wert FROM ci_update')" = vorher
+          docker compose exec -T app sh -c 'test "$(cat /app/uploads/ci-update.txt)" = vorher'
+          test "$(docker compose exec -T app cat /app/data/app_secret | sha256sum)" = "$SUMME"
+          test "$(docker compose exec -T redis sh -c 'REDISCLI_AUTH="$(cat /run/redis-auth/password)" redis-cli GET ci:update')" = vorher
+          docker compose exec -T redis redis-cli PING | grep -q '^NOAUTH'
+          if docker compose exec -T proxy getent hosts db; then echo "Proxy sieht nach dem Update die Datenbank"; exit 1; fi
+          for i in $(seq 1 30); do
+            curl -fsSk "https://localhost:${APP_PORT:-7891}/api/health" | grep -q '"status":"ok"' && exit 0
+            sleep 2
+          done
+          echo "Nach dem Update von vor der Haertung antwortet der Proxy nicht"
+          exit 1
+
       # Nur das eigene Image: Postgres, Redis, Caddy und Gotenberg haben
       # fast immer offene Meldungen, die erst ein neues Upstream-Image behebt
       # (das holt der Update-Befehl). Laeuft auch, wenn der Rundlauf
@@ -520,7 +727,7 @@ jobs:
         run: |
           docker compose ps -a
           docker compose logs --no-color --tail 80 app
-          docker compose logs --no-color --tail 30 proxy db gotenberg
+          docker compose logs --no-color --tail 30 proxy db redis gotenberg
 
       - name: Aufräumen
         if: always()

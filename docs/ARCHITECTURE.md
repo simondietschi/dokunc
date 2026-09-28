@@ -49,7 +49,7 @@ Node-Prozess (`apps/collab`) und teilt das Prisma-Schema über `packages/db`.
 │  ├─ editor/   TipTap-Schema und Collab-Protokoll (Web + Collab)
 │  └─ mail/     E-Mail-Versand und Benachrichtigungsplanung (Web + Collab)
 ├─ e2e/         Playwright-E2E-Tests
-├─ scripts/     backup.sh, restore.sh, docker-entrypoint.sh
+├─ scripts/     backup.sh, restore.sh, docker-entrypoint.sh, redis-start.sh
 ├─ docs/ARCHITECTURE.md
 ├─ Caddyfile            Proxy: TLS (CADDY_TLS), /collab an Hocuspocus
 ├─ Dockerfile           Image der App (Web + Collab, Debian trixie)
@@ -646,6 +646,13 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       Nonce der Anfrage und steht fest hinter dem Inhalt statt per
       Textersatz hinter dem ersten `</body>`, das auch in einer
       Linkadresse der Seite stehen konnte
+- [x] Container gehärtet: Proxy nur mit der App im Netz `edge`, Datenbank
+      und Redis ohne Proxy, Redis mit Passwort aus dem Volume `redis_auth`
+      (`scripts/redis-start.sh`, der Healthcheck der App prüft, dass sie
+      es hat), `cap_drop: [ALL]` mit den nötigen Fähigkeiten je Dienst,
+      `no-new-privileges`, `read_only` mit `tmpfs`, Speicher- und
+      Prozessgrenzen; im Docker-Job geprüft, auch das Update von einem
+      Stand davor
 
 ## 7. Setup
 
