@@ -461,7 +461,7 @@ jobs:
       # der Anmeldung). Das Passwort steht weder in der Konfiguration noch
       # in einer Befehlszeile, die docker inspect zeigt. Ein App-Image von
       # vor dem Passwort (Einstieg von 84a44cc) bleibt nicht still gesund:
-      # der Healthcheck meldet es.
+      # der Healthcheck meldet es, auch mit init: true, und nur dann.
       - name: Redis nur mit Passwort
         run: |
           set -euo pipefail
@@ -513,7 +513,21 @@ jobs:
           grep -q 'ohne Redis-Passwort' "$RUNNER_TEMP/hc-alt"
           docker exec ci-neu-einstieg node -e "$HC" >"$RUNNER_TEMP/hc-neu" || true
           if grep 'ohne Redis-Passwort' "$RUNNER_TEMP/hc-neu"; then exit 1; fi
-          docker rm -f ci-alt-einstieg ci-neu-einstieg >/dev/null
+          # Dasselbe mit init: true aus einer override-Datei: PID 1 ist dann
+          # docker-init mit der Umgebung des Containers, der Server erst
+          # dessen Kind. Neuer Einstieg ohne Meldung, alter weiter gemeldet.
+          printf 'services:\n  app:\n    init: true\n' > "$RUNNER_TEMP/init.yml"
+          mit_init() { docker compose -f docker-compose.yml -f "$RUNNER_TEMP/init.yml" "$@"; }
+          mit_init run -d --no-deps --name ci-alt-init \
+            -v "$RUNNER_TEMP/alt-einstieg.sh:/alt-einstieg.sh:ro" --entrypoint sh app /alt-einstieg.sh sleep 300 >/dev/null
+          mit_init run -d --no-deps --name ci-neu-init app sleep 300 >/dev/null
+          sleep 2
+          for c in ci-alt-init ci-neu-init; do test "$(docker exec "$c" cat /proc/1/comm)" = docker-init; done
+          if docker exec ci-alt-init node -e "$HC" >"$RUNNER_TEMP/hc-alt-init"; then exit 1; fi
+          grep -q 'ohne Redis-Passwort' "$RUNNER_TEMP/hc-alt-init"
+          docker exec ci-neu-init node -e "$HC" >"$RUNNER_TEMP/hc-neu-init" || true
+          if grep 'ohne Redis-Passwort' "$RUNNER_TEMP/hc-neu-init"; then exit 1; fi
+          docker rm -f ci-alt-einstieg ci-neu-einstieg ci-alt-init ci-neu-init >/dev/null
           test "$(docker inspect -f '{{.State.Health.Status}}' "$(docker compose ps -q app)")" = healthy
 
       # Gotenbergs Allow-List: ein Horchposten in der App (im selben Netz
@@ -559,6 +573,49 @@ jobs:
           test "$(grep -ac '/Subtype /Image' "$RUNNER_TEMP/probe.pdf")" -ge 1
           sleep 1
           test "$(docker compose exec -T app cat /tmp/falle.log)" = "/kontrolle"
+
+      # Ein Stoss grosser Exporte bleibt unter der Speichergrenze von
+      # Gotenberg: acht gleichzeitige Umwandlungen einer Seite mit gut 13 MB
+      # eingebetteten Bildern (die Grenze des Exports liegt bei 16 MB). Mit
+      # der Vorgabe von 6 gleichzeitigen Umwandlungen beendete der Kernel
+      # Chromium, und alle laufenden Exporte scheiterten.
+      - name: PDF-Dienst haelt einen Stoss grosser Exporte aus
+        run: |
+          set -euo pipefail
+          docker compose exec -T app node - <<'JS'
+          const zlib = require("node:zlib");
+          const crypto = require("node:crypto");
+          // Rauschen als unkomprimiertes PNG: Chromium muss es ganz dekodieren
+          function png(w, h) {
+            const roh = Buffer.alloc((w * 3 + 1) * h);
+            crypto.randomFillSync(roh);
+            for (let y = 0; y < h; y++) roh[y * (w * 3 + 1)] = 0;
+            const teil = (typ, daten) => {
+              const l = Buffer.alloc(4); l.writeUInt32BE(daten.length);
+              const t = Buffer.from(typ);
+              const c = Buffer.alloc(4); c.writeUInt32BE(zlib.crc32(Buffer.concat([t, daten])));
+              return Buffer.concat([l, t, daten, c]);
+            };
+            const kopf = Buffer.alloc(13);
+            kopf.writeUInt32BE(w, 0); kopf.writeUInt32BE(h, 4); kopf[8] = 8; kopf[9] = 2;
+            return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), teil("IHDR", kopf),
+              teil("IDAT", zlib.deflateSync(roh, { level: 0 })), teil("IEND", Buffer.alloc(0))]);
+          }
+          const html = "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>" +
+            Array.from({ length: 5 }, () => `<img src="data:image/png;base64,${png(1000, 700).toString("base64")}">`).join("") +
+            "</body></html>";
+          console.log(`Seite: ${(html.length / 1048576).toFixed(1)} MB`);
+          Promise.all(Array.from({ length: 8 }, () => {
+            const form = new FormData();
+            form.set("files", new File([html], "index.html", { type: "text/html" }));
+            return fetch("http://gotenberg:3000/forms/chromium/convert/html", { method: "POST", body: form })
+              .then(async (r) => { await r.arrayBuffer(); return r.status; }, (e) => String(e));
+          })).then((antworten) => {
+            console.log(antworten.join(" "));
+            process.exit(antworten.every((a) => a === 200) ? 0 : 1);
+          });
+          JS
+          test "$(docker inspect -f '{{.State.OOMKilled}}' "$(docker compose ps -q gotenberg)")" = false
 
       # Sicherung und Rueckweg mit genau den Befehlen aus dem README. Einmal
       # auf demselben Stack, einmal auf einem frisch angelegten (wie nach

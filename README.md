@@ -770,7 +770,9 @@ dabei kurz mit 502. Die App muss dafür neu gebaut sein, denn erst ihr
 neuer Einstieg setzt das Passwort: ein `docker compose up -d` ohne Build
 startet die bisherige App ohne Passwort, sie bleibt dann `unhealthy`
 („REDIS_URL der App ohne Redis-Passwort“ im Healthcheck), und der Proxy
-startet nicht. Anpassen muss nur, wer eines der folgenden nutzt:
+startet nicht. `init: true` oder tini vor dem Einstieg der App in einer
+override-Datei stören dabei nicht. Anpassen muss nur, wer eines der
+folgenden nutzt:
 
 - einen eigenen Dienst in der `docker-compose.override.yml`, den der
   Proxy erreichen soll: er bekommt `networks: [default, edge]`;
@@ -781,14 +783,34 @@ startet nicht. Anpassen muss nur, wer eines der folgenden nutzt:
   dem Host `docker compose exec -T redis cat /run/redis-auth/password`;
 - ein Redis mit eigenem Passwort: steht es als `--requirepass` im
   `command`, gilt es weiter und landet selbst in der Passwortdatei (die
-  eigene `REDIS_URL` der App bleibt). Steht es als `requirepass` in einer
-  eigenen Konfigurationsdatei, gilt danach das erzeugte Passwort: die App
-  meldet `WRONGPASS`, oder Redis bleibt `unhealthy`, wenn ein eigener
-  Healthcheck das eigene Passwort nutzt. Dann vor dem Update entweder `requirepass` und
-  die eigene `REDIS_URL` aus der override-Datei entfernen oder das eigene
-  Passwort als Passwortdatei hinterlegen (nur Buchstaben, Ziffern und
-  `. _ ~ -`):
-  `docker compose run --rm --no-deps --entrypoint sh redis -c 'printf %s "<Passwort>" > /run/redis-auth/password'`;
+  eigene `REDIS_URL` der App bleibt). Fällt `--requirepass` später weg,
+  gilt das Passwort aus der Datei weiter; hat es andere Zeichen als
+  Buchstaben, Ziffern und `. _ ~ -`, erzeugt Redis beim Start ein neues,
+  und die eigene `REDIS_URL` muss dann ebenfalls weg. Steht es als
+  `requirepass` in einer eigenen Konfigurationsdatei, gilt nach dem
+  Update das erzeugte Passwort: die App meldet `WRONGPASS`, oder Redis
+  bleibt `unhealthy`, wenn ein eigener Healthcheck das eigene Passwort
+  nutzt. Dann entweder vor dem Update `requirepass` und die eigene
+  `REDIS_URL` aus der override-Datei entfernen oder das eigene Passwort
+  als Passwortdatei hinterlegen (nur Buchstaben, Ziffern und `. _ ~ -`).
+  Das Volume dafür bringt erst die neue `docker-compose.yml` mit, also
+  die Befehlskette oben aufteilen: zuerst `git pull`, dann
+  `docker compose run --rm --no-deps --entrypoint sh redis -c 'printf %s "<Passwort>" > /run/redis-auth/password'`,
+  dann den Rest ab `docker compose pull --ignore-buildable`. Wer die
+  Datei erst nach dem Update hinterlegt, startet Redis danach neu:
+  `docker compose up -d --force-recreate redis`;
+- `user:` für `redis` in der override-Datei: vor dem Update entfernen.
+  Der Start mit Passwort legt die Passwortdatei als root an, der
+  Einstieg des Images wechselt danach selbst zum Nutzer `redis`. Mit
+  `user:` bricht Redis ab („… ist nicht beschreibbar“ im Log), und die
+  App startet nicht;
+- Grenzen in der override-Datei über `deploy.resources.limits` für
+  `proxy`, `db`, `redis` oder `gotenberg`: vor dem Update auf `mem_limit`,
+  `pids_limit` und `cpus` umstellen. `docker-compose.yml` setzt dort nun
+  `mem_limit` und `pids_limit`, und Compose lehnt beide Schreibweisen
+  nebeneinander ab („can't set distinct values on 'mem_limit' and
+  'deploy.resources.limits.memory'“): danach scheitert jeder Befehl mit
+  `docker compose`, auch `scripts/backup.sh`;
 - einen eigenen `entrypoint` für `redis`: er ersetzt den Start mit
   Passwort, Redis läuft dann ohne (die App schickt ihr Passwort trotzdem,
   ioredis warnt nur).
@@ -1045,12 +1067,14 @@ und einmal auf einem frisch angelegten Stack, und prüft Datenbank,
 Uploads, Secret, Sitzungen und Restore-Epoche, dazu, dass `backup.sh`
 ein geändertes Secret bemerkt und bei passendem Secret nichts auf die
 Fehlerausgabe schreibt. Er prüft ausserdem, dass Gotenberg weder
-Datenbank noch Redis noch das Internet erreicht und beim Umwandeln keine
-fremden Adressen lädt. Dazu, dass der Proxy weder Datenbank noch Redis
+Datenbank noch Redis noch das Internet erreicht, beim Umwandeln keine
+fremden Adressen lädt und einen Stoss grosser Exporte unter seiner
+Speichergrenze umwandelt. Dazu, dass der Proxy weder Datenbank noch Redis
 erreicht, dass Redis ein Passwort verlangt und die App es nutzt (ein
-App-Image ohne Passwort meldet der Healthcheck), die Härtung jedes
-Containers in der Konfiguration und am laufenden Stack, und das Update
-von einer Installation vor der Härtung ohne Handarbeit.
+App-Image ohne Passwort meldet der Healthcheck, auch mit `init: true`),
+die Härtung jedes Containers in der Konfiguration und am laufenden
+Stack, und das Update von einer Installation vor der Härtung ohne
+Handarbeit.
 
 Ein eigener Job prüft die Laufzeitabhängigkeiten mit
 `pnpm audit --prod --audit-level high` und das Lockfile mit Trivy. Der
@@ -1161,12 +1185,22 @@ Kurz, was die App bewusst tut:
   | app | 2 GB (dazu 1.5 CPU) | 512 |
   | db | 2 GB | 256 |
   | redis | 512 MB, davon höchstens 384 MB Daten (`--maxmemory`) | 128 |
-  | gotenberg | 1 GB | 512 |
+  | gotenberg | 1 GB, zwei Umwandlungen zugleich | 512 |
+
+  Gotenberg wandelt höchstens zwei Seiten zugleich um, weitere Exporte
+  warten (höchstens 30 Sekunden). Gemessen mit 1 GB und Seiten mit gut
+  13 MB eingebetteten Bildern (der Export erlaubt 16 MB): 12 gleichzeitige
+  Exporte laufen durch, mehr als die Bremse einem Konto in zehn Minuten
+  erlaubt; ab 15 beendet der Kernel Gotenberg, und alle laufenden Exporte
+  scheitern. Wer mehr
+  gleichzeitige Exporte grosser Seiten erwartet, setzt die Grenze höher
+  (2 GB: 20 gemessen).
 
   Anpassen in der `docker-compose.override.yml` mit `mem_limit` und
-  `pids_limit` je Dienst. Stösst ein Dienst an die Speichergrenze, beendet
-  ihn der Kernel und Docker startet ihn neu; ein volles Redis lehnt
-  dagegen nur weitere Schreibvorgänge ab. Braucht ein Dienst doch ein
+  `pids_limit` je Dienst, nicht mit `deploy.resources.limits`: Compose
+  lehnt beide Schreibweisen nebeneinander ab. Stösst ein Dienst an die
+  Speichergrenze, beendet ihn der Kernel und Docker startet ihn neu; ein
+  volles Redis lehnt dagegen nur weitere Schreibvorgänge ab. Braucht ein Dienst doch ein
   beschreibbares Dateisystem, setzt die override-Datei `read_only: false`
   für ihn. Mit `docker compose exec` als root in `db` oder `redis` lässt
   sich lesen, aber nicht direkt schreiben; für Schreibendes `-u postgres`

@@ -186,12 +186,14 @@ services:
     expose:
       - "3000"
       - "3001"
-    # Zuerst: hat der Hauptprozess das Redis-Passwort, wenn es eines gibt?
-    # Das setzt der Einstieg des Images (scripts/docker-entrypoint.sh). Ein
+    # Zuerst: hat der Server das Redis-Passwort, wenn es eines gibt? Das
+    # setzt der Einstieg des Images (scripts/docker-entrypoint.sh). Ein
     # App-Image von vor dem Passwort (up -d ohne neuen Build, altes Image
-    # per docker tag) liefe sonst gesund, aber ohne Redis (NOAUTH). PID 1
-    # ist der Server selbst (exec im Einstieg und im CMD); mit init: true
-    # müsste die Prüfung auf dessen Kindprozess gehen.
+    # per docker tag) liefe sonst gesund, aber ohne Redis (NOAUTH).
+    # Geprüft werden alle Prozesse des Containers ausser denen aus docker
+    # exec (PPid 0, auch dieser Healthcheck), und einer mit Passwort
+    # genügt: mit init: true oder tini ist PID 1 der Init-Prozess mit der
+    # Umgebung des Containers, der Server erst dessen Kind.
     healthcheck:
       test:
         - CMD
@@ -201,12 +203,20 @@ services:
           const fs = require("node:fs");
           const datei = process.env.REDIS_PASSWORD_FILE;
           let pw = "";
-          let env = "";
           try { pw = datei ? fs.readFileSync(datei, "utf8").trim() : ""; } catch {}
-          try { env = fs.readFileSync("/proc/1/environ", "utf8"); } catch {}
-          const url = (env.split(String.fromCharCode(0))
-            .find((z) => z.startsWith("REDIS_URL=")) ?? "").slice(10);
-          if (pw && (url === "redis://redis:6379" || url.startsWith("redis://redis:6379/"))) {
+          const urls = [];
+          for (const p of fs.readdirSync("/proc")) {
+            if (/\D/.test(p)) continue;
+            try {
+              const ppid = /^PPid:\s*(\d+)/m.exec(fs.readFileSync("/proc/" + p + "/status", "utf8"))?.[1];
+              if (p !== "1" && ppid === "0") continue;
+              const z = fs.readFileSync("/proc/" + p + "/environ", "utf8")
+                .split(String.fromCharCode(0)).find((z) => z.startsWith("REDIS_URL="));
+              if (z) urls.push(z.slice(10));
+            } catch {}
+          }
+          const ohne = (u) => u === "redis://redis:6379" || u.startsWith("redis://redis:6379/");
+          if (pw && urls.length > 0 && urls.every(ohne)) {
             console.log("dokunc: REDIS_URL der App ohne Redis-Passwort, App-Image neu bauen");
             process.exit(1);
           }
@@ -287,12 +297,22 @@ services:
       - --chromium-disable-javascript=true
       - "--chromium-allow-list=^(file:///tmp/|data:)"
       - --api-timeout=30s
+      # Zwei Umwandlungen zugleich (Vorgabe von Gotenberg: 6), weitere
+      # warten, höchstens bis --api-timeout. Mit 6 zugleich sprengen schon
+      # vier bis sechs grosse Seiten die Speichergrenze unten, und der Kernel
+      # beendet Chromium samt allen laufenden Exporten.
+      - --chromium-max-concurrency=2
     networks:
       - render
     # Läuft als Nutzer gotenberg, Chromium ohne eigene Sandbox: keine
     # Fähigkeit nötig. Arbeitsdateien und Profil liegen in /tmp (tmpfs,
-    # zählt zum Speicher). 1 GB reicht für die grösste Seite, die der
-    # Export erlaubt (16 MB eingebettete Bilder: gut 430 MB gemessen).
+    # zählt zum Speicher). Bedarf: zwei Umwandlungen mal gut 430 MB für die
+    # grösste Seite, die der Export erlaubt (16 MB eingebettete Bilder),
+    # dazu jede wartende Anfrage mit ihrer Datei. Gemessen mit 1 GB und
+    # Seiten mit gut 13 MB eingebetteten Bildern: 12 gleichzeitige Exporte
+    # laufen durch, mehr als die Bremse einem Konto erlaubt (10 in 10
+    # Minuten); ab 15 beendet der Kernel Gotenberg. Wer mehr erwartet,
+    # setzt mem_limit höher (2 GB: 20).
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     read_only: true

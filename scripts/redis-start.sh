@@ -13,7 +13,10 @@
 # Ausnahme: steht --requirepass schon im command (eine Installation, die
 # Redis vor diesem Skript selbst geschuetzt hat, mit eigener REDIS_URL fuer
 # die App), gilt dieses Passwort weiter. Es kommt nur in die Passwortdatei,
-# damit Healthcheck und redis-cli-Anleitung stimmen.
+# damit Healthcheck und redis-cli-Anleitung stimmen. Faellt --requirepass
+# spaeter weg und hat das Passwort Zeichen, die REDIS_URL nicht ohne
+# Kodierung traegt, entsteht ein neues (Merker aus-requirepass): sonst
+# startete Redis nicht mehr, bis jemand die Datei von Hand loescht.
 #
 # Neues Passwort: docker compose exec redis rm /run/redis-auth/password,
 # dann docker compose up -d --force-recreate redis app.
@@ -22,6 +25,7 @@ set -eu
 
 DIR="${REDIS_AUTH_DIR:-/run/redis-auth}"
 PASSWORT="$DIR/password"
+MERKER="$DIR/aus-requirepass"
 
 # Wie der Einstieg des Images: beginnt der Befehl mit einer Option oder
 # einer Konfigurationsdatei, ist redis-server gemeint.
@@ -45,14 +49,31 @@ for a in "$@"; do
   fi
 done
 
+# Das Volume gehoert root: mit user: aus einer override-Datei scheiterte
+# sonst der erste Schreibversuch mit einer blossen Shell-Meldung.
+if ! (: > "$DIR/.schreibprobe") 2>/dev/null; then
+  echo "dokunc: $DIR ist nicht beschreibbar (Redis startet als Nutzer $(id -u)). user: fuer redis aus der docker-compose.override.yml entfernen: der Start legt das Passwort als root an, der Einstieg des Images wechselt danach selbst zum Nutzer redis." >&2
+  exit 1
+fi
+rm -f "$DIR/.schreibprobe"
+
 umask 022
 if [ -n "$EIGENES" ]; then
   printf '%s' "$EIGENES" > "$PASSWORT.neu"
   mv "$PASSWORT.neu" "$PASSWORT"
+  : > "$MERKER"
   echo "dokunc: Redis-Passwort aus --requirepass uebernommen ($PASSWORT)."
   exec docker-entrypoint.sh "$@"
 fi
 
+if [ -e "$MERKER" ]; then
+  case "$(cat "$PASSWORT" 2>/dev/null || true)" in
+    ''|*[!0-9A-Za-z._~-]*)
+      echo "dokunc: Passwort aus dem frueheren --requirepass passt nicht in REDIS_URL, ein neues wird erzeugt."
+      rm -f "$PASSWORT" ;;
+  esac
+  rm -f "$MERKER"
+fi
 if [ ! -s "$PASSWORT" ]; then
   # 32 Zufallsbytes als Hex: nur Zeichen, die in REDIS_URL ohne Kodierung
   # stehen duerfen.

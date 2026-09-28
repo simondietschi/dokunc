@@ -46,12 +46,16 @@ afterEach(() => {
   for (const d of ordner.splice(0)) rmSync(d, { recursive: true, force: true });
 });
 
-/** redis-start.sh mit Attrappe; liefert Exit, Ausgaben und die Argumente an das Image. */
-function redisStart(dir: string, args: string[]) {
+/**
+ * redis-start.sh mit Attrappe; liefert Exit, Ausgaben und die Argumente an
+ * das Image. authDir: ein Passwortordner, den der Test selbst vorbereitet
+ * (sonst dir/auth, frisch angelegt).
+ */
+function redisStart(dir: string, args: string[], authDir?: string) {
   const bin = join(dir, "bin");
-  const auth = join(dir, "auth");
+  const auth = authDir ?? join(dir, "auth");
   mkdirSync(bin, { recursive: true });
-  mkdirSync(auth, { recursive: true });
+  if (!authDir) mkdirSync(auth, { recursive: true });
   const argsDatei = join(dir, "args");
   writeFileSync(
     join(bin, "docker-entrypoint.sh"),
@@ -189,6 +193,66 @@ describe("scripts/redis-start.sh", () => {
     expect(readFileSync(join(r.auth, "password"), "utf8")).toBe("Mein+Pw/1");
     expect(statSync(join(r.auth, "password")).mode & 0o777).toBe(0o644);
     expect(r.stdout).toContain("aus --requirepass uebernommen");
+  });
+
+  it("ersetzt ein frueheres --requirepass, das REDIS_URL nicht traegt, sobald es wegfaellt", () => {
+    // Erst mit eigenem --requirepass (Zeichen wie aus openssl rand -base64),
+    // dann ohne (override-Datei entfernt): Redis startet mit neuem Passwort,
+    // statt an der eigenen Datei zu scheitern.
+    const d = neuerOrdner();
+    const mit = redisStart(d, ["redis-server", "--requirepass", "q8Zk+3/AbC=="]);
+    expect(mit.status, mit.stderr).toBe(0);
+    expect(readFileSync(join(d, "auth", "password"), "utf8")).toBe("q8Zk+3/AbC==");
+    const ohne = redisStart(d, ["redis-server", "--appendonly", "yes"]);
+    expect(ohne.status, ohne.stderr).toBe(0);
+    expect(ohne.stdout).toContain("passt nicht in REDIS_URL, ein neues wird erzeugt");
+    const pw = readFileSync(join(d, "auth", "password"), "utf8");
+    expect(pw).toMatch(/^[0-9a-f]{64}$/);
+    expect(readFileSync(join(d, "auth", "redis.conf"), "utf8")).toBe(
+      `requirepass ${pw}\n`,
+    );
+    expect(ohne.weiter).toEqual([
+      "redis-server",
+      "--appendonly",
+      "yes",
+      "--include",
+      join(d, "auth", "redis.conf"),
+    ]);
+    // Einmal ersetzt, gilt das neue auch beim naechsten Start
+    const danach = redisStart(d, ["redis-server"]);
+    expect(danach.status, danach.stderr).toBe(0);
+    expect(readFileSync(join(d, "auth", "password"), "utf8")).toBe(pw);
+  });
+
+  it("behaelt ein frueheres --requirepass, das REDIS_URL traegt, auch ohne", () => {
+    // Gegenstueck: gueltige Zeichen bleiben (eine eigene REDIS_URL damit
+    // gilt weiter). Ein von Hand hinterlegtes ungueltiges Passwort ohne
+    // --requirepass davor weist der Start weiter ab (Test oben).
+    const d = neuerOrdner();
+    redisStart(d, ["redis-server", "--requirepass", "Eigenes.Pw-1"]);
+    const ohne = redisStart(d, ["redis-server"]);
+    expect(ohne.status, ohne.stderr).toBe(0);
+    expect(ohne.stdout).not.toContain("ein neues wird erzeugt");
+    expect(readFileSync(join(d, "auth", "password"), "utf8")).toBe("Eigenes.Pw-1");
+    expect(readFileSync(join(d, "auth", "redis.conf"), "utf8")).toBe(
+      "requirepass Eigenes.Pw-1\n",
+    );
+  });
+
+  it("sagt klar, was zu tun ist, wenn der Passwortordner nicht beschreibbar ist", () => {
+    // Redis mit user: aus einer override-Datei kann das Volume von root nicht
+    // beschreiben. Hier ein Ordner, den es nicht gibt (die Tests laufen
+    // lokal als root, der ignoriert fehlende Schreibrechte).
+    const d = neuerOrdner();
+    const r = redisStart(d, ["redis-server"], join(d, "fehlt"));
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("ist nicht beschreibbar");
+    expect(r.stderr).toContain("user: fuer redis aus der docker-compose.override.yml entfernen");
+    expect(r.weiter).toBeNull();
+    // Andere Befehle brauchen den Ordner nicht
+    const cli = redisStart(d, ["redis-cli", "ping"], join(d, "fehlt"));
+    expect(cli.status, cli.stderr).toBe(0);
+    expect(cli.weiter).toEqual(["redis-cli", "ping"]);
   });
 
   it("reicht andere Befehle unveraendert durch", () => {
