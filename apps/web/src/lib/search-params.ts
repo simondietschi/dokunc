@@ -10,10 +10,13 @@
  * Regel fuer alle Seiten (searchParams): ein mehrfach angegebener
  * Parameter gilt als nicht angegeben. Jede Seite faellt damit auf ihren
  * Fall ohne diesen Parameter zurueck, ein Link mit Token auf seine
- * Absage. Route-Handler unter /api lesen ueber URLSearchParams.get()
- * weiter den ersten Wert und bekommen nie eine Liste; ausgenommen ist
- * parseInviteFromNext (lib/invitations.ts), das dieselbe Einladungsadresse
- * liest wie die Einladungsseite und deshalb genau ein Token verlangt.
+ * Absage. Ausnahme: die Freigabeseite (/share) lehnt einen doppelten
+ * Parameter ab, auch ?page, statt auf die freigegebene Seite
+ * zurueckzufallen (siehe resolveShare in lib/share.ts). Route-Handler
+ * unter /api lesen ueber URLSearchParams.get() weiter den ersten Wert
+ * und bekommen nie eine Liste; ausgenommen ist parseInviteFromNext
+ * (lib/invitations.ts), das dieselbe Einladungsadresse liest wie die
+ * Einladungsseite und deshalb genau ein Token verlangt.
  *
  * Bewusst ohne "server-only": rein und in Unit-Tests pruefbar.
  */

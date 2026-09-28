@@ -995,6 +995,7 @@ erscheint der Hinweis bei jeder Wiederherstellung.
 
 ```bash
 pnpm lint             # ESLint über das ganze Monorepo
+pnpm typecheck        # TypeScript für Pakete und Web-App, auch Testdateien
 pnpm test             # Unit-Tests von Web-App und Collab-Server (Vitest)
 pnpm test:integration # Integrationstests gegen echte Datenbank und Redis
 pnpm test:e2e         # Playwright-E2E: kompletter Editor-Pfad inkl.
@@ -1190,10 +1191,11 @@ Kurz, was die App bewusst tut:
   Parametern: an der Antwort lässt sich nicht erkennen, warum ein Link
   nicht öffnet.
 - **Parameter in der Adresse**: auf den Seiten der App gilt ein mehrfach
-  angegebener Parameter (`?token=a&token=b`) als nicht angegeben. Ein
-  Einladungslink antwortet darauf mit derselben Absage wie auf ein
-  falsches Token, ob die Einladung offen ist oder nicht; auch die
-  Registrierung über diesen Link gilt dann nicht als eingeladen.
+  angegebener Parameter (`?token=a&token=b`) als nicht angegeben
+  (Ausnahme Freigabelinks, siehe oben). Ein Einladungslink antwortet
+  darauf mit derselben Absage wie auf ein falsches Token, ob die
+  Einladung offen ist oder nicht; auch die Registrierung über diesen
+  Link gilt dann nicht als eingeladen.
   Schnittstellen unter `/api` lesen wie bisher den ersten Wert.
 - **Gruppen** geben Rollen, nehmen aber keine: die wirksame Rolle ist
   die stärkste aus eigener Mitgliedschaft und allen Gruppen. OWNER

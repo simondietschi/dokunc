@@ -2,6 +2,7 @@ import type { InputHTMLAttributes } from "react";
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { parse } from "yaml";
 import {
   pageNumberParam,
   singleParam,
@@ -56,11 +57,12 @@ describe("pageNumberParam", () => {
 
 describe("SearchParams als Typ", () => {
   it("laesst keinen Wert ungeprueft als Text durch", () => {
-    // Wird nur von tsc geprueft (die Testdateien liegen im tsconfig,
-    // next build prueft sie): jede Zeile mit @ts-expect-error MUSS ein
-    // Typfehler sein. Mit string | string[] als Werttyp gingen die
-    // beiden Zuweisungen durch, und React verbaende die Liste still zu
-    // "a,b" (so auf der Reset- und der Anmeldeseite).
+    // Wird nur von tsc geprueft (pnpm typecheck, auch in der CI; next
+    // build verwirft Meldungen aus Testdateien): jede Zeile mit dem
+    // Vermerk @ts-expect-error MUSS ein Typfehler sein. Mit
+    // string | string[] als Werttyp gingen die beiden Zuweisungen durch,
+    // und React verbaende die Liste still zu "a,b" (so auf der Reset-
+    // und der Anmeldeseite).
     const nurFuerTsc = async (searchParams: SearchParams) => {
       const { token } = await searchParams;
       // @ts-expect-error ein Wert aus der Adresse ist kein Text
@@ -71,6 +73,25 @@ describe("SearchParams als Typ", () => {
       return [alsText, alsFeld, geprueft];
     };
     expect(nurFuerTsc).toBeTypeOf("function");
+  });
+
+  it("wird in der CI von tsc geprueft, nicht nur von next build", () => {
+    // next build verwirft Typfehler aus *.test.ts; ohne eigenen
+    // tsc-Lauf ueber die Web-App faellt der Test oben in der CI nie rot.
+    const ROOT = join(__dirname, "../../../..");
+    const skripte = (datei: string): Record<string, string> =>
+      JSON.parse(readFileSync(join(ROOT, datei), "utf8")).scripts;
+    expect(skripte("apps/web/package.json").typecheck).toBe("tsc --noEmit");
+    expect(skripte("package.json").typecheck).toMatch(
+      /--filter @dokunc\/web typecheck$/,
+    );
+    const ci = parse(
+      readFileSync(join(ROOT, ".github/workflows/ci.yml"), "utf8"),
+    ) as { jobs: Record<string, { steps: { run?: string }[] }> };
+    const befehle = Object.values(ci.jobs).flatMap((job) =>
+      job.steps.map((s) => s.run?.trim()),
+    );
+    expect(befehle).toContain("pnpm typecheck");
   });
 });
 

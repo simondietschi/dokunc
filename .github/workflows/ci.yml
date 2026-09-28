@@ -109,8 +109,11 @@ jobs:
 
       # Die Pakete sah bisher nur tsc der Apps, und nur soweit diese sie
       # importieren. Ein Fehler in einer Datei, die keine App einbindet
-      # (etwa prisma.config.ts), fiel so nirgends auf.
-      - name: Typecheck Pakete
+      # (etwa prisma.config.ts), fiel so nirgends auf. Die Web-App laeuft
+      # hier mit tsc: next build verwirft Meldungen aus *.test.ts und
+      # *.spec.ts, und dort stehen Typzusicherungen (@ts-expect-error in
+      # search-params.test.ts und browser-events.test.ts).
+      - name: Typecheck Pakete und Web-App
         run: pnpm typecheck
 
       - name: Build web
