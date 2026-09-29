@@ -88,10 +88,11 @@ test("unter der Nonce-Richtlinie blockiert der Browser nichts", async ({
 });
 
 test("das Theme-Skript laeuft vor dem ersten Paint", async ({ page }) => {
-  // Es ist das einzige Inline-Skript der Anwendung und der Grund, warum
-  // 'unsafe-inline' ueberhaupt dastand. Blockiert die CSP es, bleibt die
-  // Klasse am <html> ungesetzt und die Seite flackert beim Laden hell
-  // auf, bevor React uebernimmt.
+  // Es ist das einzige Inline-Skript der React-Seiten (die Druckansicht
+  // schreibt ihr HTML selbst und hat ein eigenes, siehe
+  // print-view.spec.ts) und der Grund, warum 'unsafe-inline' ueberhaupt
+  // dastand. Blockiert die CSP es, bleibt die Klasse am <html> ungesetzt
+  // und die Seite flackert beim Laden hell auf, bevor React uebernimmt.
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto("/login");
   await expect(page.locator("html")).toHaveClass(/dark/);

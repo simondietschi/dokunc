@@ -8,6 +8,7 @@ import {
   currentRetentionConfig,
   retentionNotes,
 } from "@/lib/retention-config";
+import { singleParam, type SearchParams } from "@/lib/search-params";
 
 export const metadata: Metadata = {
   title: "Audit-Log",
@@ -30,11 +31,14 @@ function isAutomatic(metadata: unknown): boolean {
 export default async function AuditPage({
   searchParams,
 }: {
-  searchParams: Promise<{ action?: string }>;
+  searchParams: SearchParams;
 }) {
   await requireAdmin();
-  const { action } = await searchParams;
-  const filter = action && action in AUDIT_LABELS ? action : undefined;
+  const action = singleParam((await searchParams).action);
+  // Nur eigene Schluessel: `in` saehe auch "__proto__" oder "toString"
+  // und filterte dann auf ein Ereignis, das es nie gibt (leere Liste).
+  const filter =
+    action && Object.hasOwn(AUDIT_LABELS, action) ? action : undefined;
 
   const entries = await prisma.auditLog.findMany({
     where: filter ? { action: filter } : undefined,

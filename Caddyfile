@@ -5,6 +5,17 @@
 # (Caddy holt dann Let's-Encrypt-Zertifikate), dazu APP_BIND, APP_PORT=443
 # und COMPOSE_FILE (s. README), sonst bleibt die Instanz von aussen
 # unerreichbar.
+#
+# Globale Optionen: die eigene CA nicht in den Zertifikatsspeicher des
+# Containers eintragen. Dort nuetzt sie niemandem, und das Dateisystem des
+# Proxys ist schreibgeschuetzt (read_only in docker-compose.yml). Ohne
+# diese Zeile meldet Caddy bei jedem Start "failed to install root
+# certificate". Browser vertrauen der CA so wenig wie vorher. (Keine
+# Leerzeile vor dem Block: caddy fmt verlangt es so und warnt sonst bei
+# jedem Start.)
+{
+	skip_install_trust
+}
 
 {$SITE_ADDRESS:localhost} {
 	encode zstd gzip

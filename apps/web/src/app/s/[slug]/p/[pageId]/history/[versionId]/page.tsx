@@ -13,6 +13,7 @@ import { Avatar } from "@/components/ui/Avatar";
 import { DiffView, DiffSummary } from "@/components/history/DiffView";
 import { restoreVersionAction } from "../../../../actions";
 import { RestoreButton } from "../RestoreButton";
+import type { SearchParams } from "@/lib/search-params";
 
 /**
  * Versionsvergleich: eine gespeicherte Version gegen den aktuellen Stand
@@ -36,7 +37,7 @@ export default async function VersionComparePage({
   searchParams,
 }: {
   params: Promise<{ slug: string; pageId: string; versionId: string }>;
-  searchParams: Promise<{ against?: string; view?: string }>;
+  searchParams: SearchParams;
 }) {
   const { slug, pageId, versionId } = await params;
   const query = await searchParams;

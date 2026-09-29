@@ -17,9 +17,6 @@ export type ShareTarget = {
   includeChildren: boolean;
 };
 
-/** Wert eines Suchparameters, wie Next ihn liefert: mehrfach als Liste. */
-export type SearchValue = string | string[] | undefined;
-
 /**
  * Löst einen Freigabelink auf.
  *
@@ -32,8 +29,8 @@ export type SearchValue = string | string[] | undefined;
  */
 export async function resolveShare(
   shareId: string,
-  token: SearchValue,
-  pageId?: SearchValue,
+  token: unknown,
+  pageId?: unknown,
 ): Promise<ShareTarget | null> {
   // Nur einzelne Werte. Ein doppelter Suchparameter (?token=a&token=b)
   // kommt aus der Seite als Liste an; bis hierher durchgereicht, warf

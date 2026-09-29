@@ -4,6 +4,7 @@ import { CheckCircle2, ShieldAlert, MailWarning, Users } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
 import { verifyToken, normalizeEmail } from "@/lib/invitations";
+import { singleParam, type SearchParams } from "@/lib/search-params";
 import { Button } from "@/components/ui/Button";
 import { acceptInvitationAction } from "@/app/s/[slug]/members/actions";
 import { stagger } from "../../stagger";
@@ -52,10 +53,12 @@ export default async function InvitePage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ token?: string }>;
+  searchParams: SearchParams;
 }) {
   const { id } = await params;
-  const { token = "" } = await searchParams;
+  // Mehrfach angegeben (?token=a&token=b) zaehlt als fehlend: dieselbe
+  // Absage wie ein falsches Token, auch bei einer offenen Einladung.
+  const token = singleParam((await searchParams).token) ?? "";
 
   const invitation = await prisma.spaceInvitation.findUnique({
     where: { id },

@@ -183,9 +183,13 @@ Hinweise:
   importieren.
 - **Nur der Proxy ist exponiert**, gebunden an `127.0.0.1:7891` (kein LAN-Zugriff;
   Adresse und Port über `APP_BIND` und `APP_PORT` in `.env` änderbar, s. u.).
-  App, Datenbank, Redis und Gotenberg haben keine Host-Ports. Gotenberg hängt
-  zudem nur mit der App in einem eigenen Netz ohne Ausgang (siehe „Sicherheit“).
-- Der App-Container läuft als **non-root**. Daten liegen in den Volumes
+  App, Datenbank, Redis und Gotenberg haben keine Host-Ports. Der Proxy
+  erreicht nur die App, nicht Datenbank und Redis; Gotenberg hängt nur mit
+  der App in einem eigenen Netz ohne Ausgang (siehe „Sicherheit“).
+- Der App-Container läuft als **non-root**. Alle Container laufen ohne
+  zusätzliche Rechte, mit schreibgeschütztem Dateisystem und mit Grenzen
+  für Speicher und Prozesse; Redis verlangt ein Passwort, das beim ersten
+  Start entsteht (siehe „Sicherheit“). Daten liegen in den Volumes
   `db_data`, `redis_data`, `uploads`, `app_data`.
 
 ### Eigene Domain / Produktionsbetrieb
@@ -471,7 +475,8 @@ entsteht nichts, auch keine halbe Datei. Fortschritt steht auf der
 Standardausgabe, Fehler und Warnungen auf der Fehlerausgabe.
 
 Nicht gesichert, und nicht nötig: `redis_data` (Bremsen und Sperren,
-flüchtig) und `caddy_data` (Zertifikate, stellt Caddy neu aus; bei sehr
+flüchtig), `redis_auth` (das Passwort von Redis, entsteht bei Bedarf neu)
+und `caddy_data` (Zertifikate, stellt Caddy neu aus; bei sehr
 häufigen Neuinstallationen derselben Domain greift die Wochengrenze von
 Let's Encrypt für doppelte Zertifikate).
 
@@ -757,6 +762,65 @@ die Migrationen durch sind und die App startet, dann
 `--wait-timeout` hilft hier nicht, der Abbruch kommt beim ersten
 „unhealthy“.
 
+**Update auf die gehärteten Container** (Netz `edge`, Redis mit
+Passwort, Rechte und Grenzen je Dienst): läuft mit dem Befehl oben ohne
+Zutun. Beim ersten Start erzeugt Redis sein Passwort, `docker compose up`
+legt das Netz `edge` an und startet alle Dienste neu; der Proxy antwortet
+dabei kurz mit 502. Die App muss dafür neu gebaut sein, denn erst ihr
+neuer Einstieg setzt das Passwort: ein `docker compose up -d` ohne Build
+startet die bisherige App ohne Passwort, sie bleibt dann `unhealthy`
+(„REDIS_URL der App ohne Redis-Passwort“ im Healthcheck), und der Proxy
+startet nicht. `init: true` oder tini vor dem Einstieg der App in einer
+override-Datei stören dabei nicht. Anpassen muss nur, wer eines der
+folgenden nutzt:
+
+- einen eigenen Dienst in der `docker-compose.override.yml`, den der
+  Proxy erreichen soll: er bekommt `networks: [default, edge]`;
+- einen eigenen Dienst, ein Skript auf dem Host oder ein Werkzeug über
+  einen eigenen Port an `redis`, das Redis direkt anspricht: es braucht
+  das Passwort. Im Container `REDISCLI_AUTH="$(cat /run/redis-auth/password)"`
+  (eigene Dienste binden dazu `redis_auth:/run/redis-auth:ro` ein), auf
+  dem Host `docker compose exec -T redis cat /run/redis-auth/password`;
+- ein Redis mit eigenem Passwort: steht es als `--requirepass` im
+  `command`, gilt es weiter und landet selbst in der Passwortdatei (die
+  eigene `REDIS_URL` der App bleibt). Fällt `--requirepass` später weg,
+  gilt das Passwort aus der Datei weiter; hat es andere Zeichen als
+  Buchstaben, Ziffern und `. _ ~ -`, erzeugt Redis beim Start ein neues,
+  und die eigene `REDIS_URL` muss dann ebenfalls weg. Steht es als
+  `requirepass` in einer eigenen Konfigurationsdatei, gilt nach dem
+  Update das erzeugte Passwort: die App meldet `WRONGPASS`, oder Redis
+  bleibt `unhealthy`, wenn ein eigener Healthcheck das eigene Passwort
+  nutzt. Dann entweder vor dem Update `requirepass` und die eigene
+  `REDIS_URL` aus der override-Datei entfernen oder das eigene Passwort
+  als Passwortdatei hinterlegen (nur Buchstaben, Ziffern und `. _ ~ -`).
+  Das Volume dafür bringt erst die neue `docker-compose.yml` mit, also
+  die Befehlskette oben aufteilen: zuerst `git pull`, dann
+  `docker compose run --rm --no-deps --entrypoint sh redis -c 'printf %s "<Passwort>" > /run/redis-auth/password'`,
+  dann den Rest ab `docker compose pull --ignore-buildable`. Wer die
+  Datei erst nach dem Update hinterlegt, startet Redis danach neu:
+  `docker compose up -d --force-recreate redis`;
+- `user:` für `redis` in der override-Datei: vor dem Update entfernen.
+  Der Start mit Passwort legt die Passwortdatei als root an, der
+  Einstieg des Images wechselt danach selbst zum Nutzer `redis`. Mit
+  `user:` bricht Redis ab („… ist nicht beschreibbar“ im Log), und die
+  App startet nicht;
+- Grenzen in der override-Datei über `deploy.resources.limits` für
+  `proxy`, `db`, `redis` oder `gotenberg`: vor dem Update auf `mem_limit`,
+  `pids_limit` und `cpus` umstellen. `docker-compose.yml` setzt dort nun
+  `mem_limit` und `pids_limit`, und Compose lehnt beide Schreibweisen
+  nebeneinander ab („can't set distinct values on 'mem_limit' and
+  'deploy.resources.limits.memory'“): danach scheitert jeder Befehl mit
+  `docker compose`, auch `scripts/backup.sh`;
+- einen eigenen `entrypoint` für `redis`: er ersetzt den Start mit
+  Passwort, Redis läuft dann ohne (die App schickt ihr Passwort trotzdem,
+  ioredis warnt nur).
+
+Ein eigenes `command` für `redis` bleibt wirksam, das Passwort gilt
+trotzdem; es ersetzt aber `--maxmemory 384mb` aus `docker-compose.yml`,
+den Wert deshalb übernehmen. Zurück auf einen Stand vor der Härtung geht
+es ohne Zutun (Rückweg unten): Redis läuft dort wieder ohne Passwort, das
+Volume `redis_auth` bleibt ungenutzt liegen.
+
 Startet die neue Version nicht (der Container startet immer wieder neu,
 `docker compose logs app` nennt die gescheiterte Migration) oder zeigt sie
 einen Fehler, geht es zurück auf den notierten Stand:
@@ -778,7 +842,9 @@ müsste. Macht ein neu geholtes Image eines Dienstes Probleme, lässt sich
 die vorige Fassung über die vor dem Update notierte ID (Zeile
 `docker compose images` im Block oben) wieder einsetzen, solange sie
 nicht mit `docker image prune` entfernt ist:
-`docker tag <ID> <Image:Tag>` und `docker compose up -d <Dienst>`.
+`docker tag <ID> <Image:Tag>` und `docker compose up -d <Dienst>`. Das
+gilt für Proxy, Datenbank, Redis und Gotenberg; die App gehört zu ihrem
+Stand im Repository und kommt mit den Schritten oben zurück.
 
 ## Lokale Entwicklung (ohne Docker)
 
@@ -951,6 +1017,7 @@ erscheint der Hinweis bei jeder Wiederherstellung.
 
 ```bash
 pnpm lint             # ESLint über das ganze Monorepo
+pnpm typecheck        # TypeScript für Pakete und Web-App, auch Testdateien
 pnpm test             # Unit-Tests von Web-App und Collab-Server (Vitest)
 pnpm test:integration # Integrationstests gegen echte Datenbank und Redis
 pnpm test:e2e         # Playwright-E2E: kompletter Editor-Pfad inkl.
@@ -969,8 +1036,15 @@ Gruppe oder als Space-Verwaltung. Für Freigabelinks prüfen sie jede
 Absage einzeln an Seite und Datei-Route (zurückgezogen, abgelaufen, Seite
 gelöscht oder geschützt, Seite ausserhalb des freigegebenen Unterbaums,
 fremder oder seitenloser Anhang), dass alle dieselbe Antwort geben, und
-was die Unterseitenliste auslässt. Sie brauchen eine erreichbare
-Datenbank und ein erreichbares Redis aus `.env` und legen ihre eigenen
+was die Unterseitenliste auslässt. Für Parameter in der Adresse prüfen
+sie, dass doppelt angegebene Werte und unbrauchbare Seitenzahlen auf
+Einladung, Zurücksetzen, Anmeldung und Suche dieselbe Antwort geben wie
+ohne den Parameter, dass Kennungen, die jedes Objekt erbt
+(`?sso=__proto__` an der Anmeldung, `?action=toString` im Audit-Log),
+wie unbekannte gelten, dass die Suche NUL-Zeichen im Suchbegriff
+weglässt und dass keine dieser Adressen einen Serverfehler auslöst.
+Sie brauchen eine erreichbare Datenbank und ein erreichbares Redis aus
+`.env` und legen ihre eigenen
 Datensätze an (und wieder ab); sie leeren nichts. Einige starten dafür einen eigenen
 Collab-Server (Port 3150 bis 3199, eigene Redis-Datenbank). Solange sie
 laufen, darf kein anderer Collab-Server an demselben Redis hängen, etwa
@@ -993,8 +1067,14 @@ und einmal auf einem frisch angelegten Stack, und prüft Datenbank,
 Uploads, Secret, Sitzungen und Restore-Epoche, dazu, dass `backup.sh`
 ein geändertes Secret bemerkt und bei passendem Secret nichts auf die
 Fehlerausgabe schreibt. Er prüft ausserdem, dass Gotenberg weder
-Datenbank noch Redis noch das Internet erreicht und beim Umwandeln keine
-fremden Adressen lädt.
+Datenbank noch Redis noch das Internet erreicht, beim Umwandeln keine
+fremden Adressen lädt und einen Stoss grosser Exporte unter seiner
+Speichergrenze umwandelt. Dazu, dass der Proxy weder Datenbank noch Redis
+erreicht, dass Redis ein Passwort verlangt und die App es nutzt (ein
+App-Image ohne Passwort meldet der Healthcheck, auch mit `init: true`),
+die Härtung jedes Containers in der Konfiguration und am laufenden
+Stack, und das Update von einer Installation vor der Härtung ohne
+Handarbeit.
 
 Ein eigener Job prüft die Laufzeitabhängigkeiten mit
 `pnpm audit --prod --audit-level high` und das Lockfile mit Trivy. Der
@@ -1038,6 +1118,8 @@ Kurz, was die App bewusst tut:
   Nur unter `pnpm dev` (`next dev`) ist die CSP der Seiten gelockert, und
   zwar nur um das, was Fast Refresh braucht: `'unsafe-eval'` und den
   HMR-WebSocket. `/api` bleibt auch dort bei der strengen Fassung.
+  Auch das Skript der Druckansicht, das den Druckdialog öffnet, trägt
+  diese Nonce.
 - **Export ohne Nachladen**: Exportiertes HTML und PDF bringen ihre eigene
   Content-Security-Policy mit. Sie laden nur eingebettete Bilder (`data:`)
   und Videos von YouTube wie in der App, sonst keine Adresse aus dem
@@ -1068,6 +1150,64 @@ Kurz, was die App bewusst tut:
   `docker-compose.override.yml` bleiben ohne Angabe im Standardnetz wie
   bisher; wer einen davon Gotenberg nutzen lässt, gibt ihm
   `networks: [default, render]`.
+- **Netze**: Der Proxy hängt nur mit der App im Netz `edge` und erreicht
+  weder Datenbank noch Redis. Datenbank und Redis teilen das Standardnetz
+  mit der App und mit eigenen Diensten aus einer
+  `docker-compose.override.yml` ohne `networks:` (ein pgAdmin erreicht die
+  Datenbank also weiter). Das Standardnetz ist nicht intern: sonst
+  verlören Ports an `db`, `redis` oder eigenen Diensten still ihre
+  Wirkung, und eigene Dienste kämen nicht mehr ins Internet. Ein eigener
+  Dienst, den der Proxy erreichen soll, bekommt `networks: [default, edge]`.
+- **Redis mit Passwort**: Beim ersten Start erzeugt der Dienst `redis` ein
+  zufälliges Passwort im Volume `redis_auth`, das nur `redis` und `app`
+  einbinden; die App setzt es beim Start in ihre `REDIS_URL`, und ihr
+  Healthcheck schlägt fehl, wenn das nicht geschehen ist. Einzutragen ist
+  nichts, auch nicht beim Update. Das Passwort steht in keiner
+  Befehlszeile und nicht in `docker inspect` (Redis liest es mit
+  `--include` aus einer Datei). Von Hand:
+  `docker compose exec redis sh -c 'REDISCLI_AUTH="$(cat /run/redis-auth/password)" redis-cli'`.
+  Ein eigener Dienst, der Redis nutzt, bindet `redis_auth` nur lesend ein
+  und liest `/run/redis-auth/password`. Neues Passwort:
+  `docker compose exec redis rm /run/redis-auth/password`, dann
+  `docker compose up -d --force-recreate redis app`.
+- **Container gehärtet**: Jeder Dienst gibt alle Linux-Fähigkeiten ab und
+  bekommt nur die nötigen zurück: der Proxy `NET_BIND_SERVICE`; Datenbank
+  und Redis die, mit denen ihr Einstieg als root Besitz und Rechte
+  einrichtet und zum eigenen Nutzer wechselt (die Server selbst laufen
+  ohne); App und Gotenberg keine. Dazu `no-new-privileges` und ein
+  schreibgeschütztes Dateisystem: geschrieben wird nur in die Volumes und
+  in `tmpfs` für `/tmp`, den Cache von Next.js, den Socket der
+  Datenbank und das Home von Gotenberg (dort legt Chromium beim Start den
+  Ordner für Absturzberichte an). Grenzen je Dienst:
+
+  | Dienst | Speicher | Prozesse |
+  |---|---|---|
+  | proxy | 256 MB | 256 |
+  | app | 2 GB (dazu 1.5 CPU) | 512 |
+  | db | 2 GB | 256 |
+  | redis | 512 MB, davon höchstens 384 MB Daten (`--maxmemory`) | 128 |
+  | gotenberg | 1 GB, zwei Umwandlungen zugleich | 512 |
+
+  Gotenberg wandelt höchstens zwei Seiten zugleich um, weitere Exporte
+  warten (höchstens 30 Sekunden). Gemessen mit 1 GB und Seiten mit gut
+  13 MB eingebetteten Bildern (der Export erlaubt 16 MB): 12 gleichzeitige
+  Exporte laufen durch, mehr als die Bremse einem Konto in zehn Minuten
+  erlaubt; ab 15 beendet der Kernel Gotenberg, und alle laufenden Exporte
+  scheitern. Wer mehr
+  gleichzeitige Exporte grosser Seiten erwartet, setzt die Grenze höher
+  (2 GB: 20 gemessen).
+
+  Anpassen in der `docker-compose.override.yml` mit `mem_limit` und
+  `pids_limit` je Dienst, nicht mit `deploy.resources.limits`: Compose
+  lehnt beide Schreibweisen nebeneinander ab. Stösst ein Dienst an die
+  Speichergrenze, beendet ihn der Kernel und Docker startet ihn neu; ein
+  volles Redis lehnt dagegen nur weitere Schreibvorgänge ab. Braucht ein Dienst doch ein
+  beschreibbares Dateisystem, setzt die override-Datei `read_only: false`
+  für ihn. Mit `docker compose exec` als root in `db` oder `redis` lässt
+  sich lesen, aber nicht direkt schreiben; für Schreibendes `-u postgres`
+  bzw. `-u redis` nutzen. Interaktives `psql` in `docker compose exec db`
+  meldet beim Beenden, dass es den Verlauf nicht speichern kann; das ist
+  erwartet.
 - **Space-Bindung** aller Schreibzugriffe: IDs aus Formularen werden gegen
   den Space geprüft, in dem die Person tatsächlich Rechte hat — und gegen
   das, was sie dort sehen darf.
@@ -1085,6 +1225,13 @@ Kurz, was die App bewusst tut:
   dieselbe Antwort „nicht gefunden“, auch bei doppelt angegebenen
   Parametern: an der Antwort lässt sich nicht erkennen, warum ein Link
   nicht öffnet.
+- **Parameter in der Adresse**: auf den Seiten der App gilt ein mehrfach
+  angegebener Parameter (`?token=a&token=b`) als nicht angegeben
+  (Ausnahme Freigabelinks, siehe oben). Ein Einladungslink antwortet
+  darauf mit derselben Absage wie auf ein falsches Token, ob die
+  Einladung offen ist oder nicht; auch die Registrierung über diesen
+  Link gilt dann nicht als eingeladen.
+  Schnittstellen unter `/api` lesen wie bisher den ersten Wert.
 - **Gruppen** geben Rollen, nehmen aber keine: die wirksame Rolle ist
   die stärkste aus eigener Mitgliedschaft und allen Gruppen. OWNER
   vergibt keine Gruppe — Eigentümerschaft bleibt persönlich.

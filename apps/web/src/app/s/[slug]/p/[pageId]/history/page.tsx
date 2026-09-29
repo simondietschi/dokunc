@@ -18,6 +18,7 @@ import {
 import { Avatar } from "@/components/ui/Avatar";
 import { restoreVersionAction } from "../../../actions";
 import { RestoreButton } from "./RestoreButton";
+import type { SearchParams } from "@/lib/search-params";
 
 export const metadata: Metadata = {
   title: "Versionsverlauf",
@@ -29,7 +30,7 @@ export default async function HistoryPage({
   searchParams,
 }: {
   params: Promise<{ slug: string; pageId: string }>;
-  searchParams: Promise<{ vor?: string | string[] }>;
+  searchParams: SearchParams;
 }) {
   const { slug, pageId } = await params;
   // Ein unlesbarer Cursor (auch ein alter Link mit ?limit=) zeigt die

@@ -21,6 +21,7 @@ import { CommentsPanel } from "./comments/CommentsPanel";
 import { PageAttachments } from "@/components/space/PageAttachments";
 import { pageTitle } from "@/lib/page-title";
 import { RESTORE_STALE_PARAM, readStaleRestore } from "@/lib/collab-sync";
+import type { SearchParams } from "@/lib/search-params";
 
 /**
  * Ab wann ein Kommentar als nachträglich geändert gilt.
@@ -77,7 +78,7 @@ export default async function PageView({
   searchParams,
 }: {
   params: Promise<{ slug: string; pageId: string }>;
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+  searchParams: SearchParams;
 }) {
   const { slug, pageId } = await params;
   // Gesetzt, wenn der Collab-Server die Wiederherstellung nicht

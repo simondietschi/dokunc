@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { AuthForm } from "../AuthForm";
 import { oidcConfig } from "@/lib/oidc";
+import { singleParam, type SearchParams } from "@/lib/search-params";
 
 export const metadata: Metadata = {
   title: "Anmelden",
@@ -9,9 +10,11 @@ export const metadata: Metadata = {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string; sso?: string }>;
+  searchParams: SearchParams;
 }) {
-  const { next, sso } = await searchParams;
+  const query = await searchParams;
+  const next = singleParam(query.next);
+  const sso = singleParam(query.sso);
   return (
     <AuthForm
       mode="login"

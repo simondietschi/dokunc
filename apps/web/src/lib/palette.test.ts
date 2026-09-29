@@ -117,6 +117,15 @@ describe("normalizeQuery()", () => {
     expect(normalizeQuery(null)).toBe("");
     expect(normalizeQuery(undefined)).toBe("");
   });
+
+  it("entfernt NUL-Zeichen, die Postgres in keinem Text annimmt", () => {
+    expect(normalizeQuery("ab\0c")).toBe("abc");
+    expect(normalizeQuery(" \0 ")).toBe("");
+    // Kappen nach dem Entfernen: die Grenze gilt fuer das, was ankommt.
+    expect(normalizeQuery("\0".repeat(5) + "x".repeat(150))).toHaveLength(
+      MAX_QUERY_LENGTH,
+    );
+  });
 });
 
 describe("pageHint", () => {

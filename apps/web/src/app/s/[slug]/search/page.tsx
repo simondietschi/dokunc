@@ -8,6 +8,11 @@ import { normalizeQuery, splitHighlights } from "@/lib/palette";
 import { pageTitle } from "@/lib/page-title";
 import { relativeTime } from "@/lib/relative-time";
 import { collapseCrumbs } from "@/lib/breadcrumbs";
+import {
+  pageNumberParam,
+  singleParam,
+  type SearchParams,
+} from "@/lib/search-params";
 
 export const metadata: Metadata = {
   title: "Suche",
@@ -19,15 +24,15 @@ export default async function SearchPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ q?: string; p?: string }>;
+  searchParams: SearchParams;
 }) {
   const { slug } = await params;
   const { q, p } = await searchParams;
   const { space, role, user } = await loadSpace(slug);
   // Dieselbe Obergrenze wie die Palette (100 Zeichen).
-  const query = normalizeQuery(q);
+  const query = normalizeQuery(singleParam(q));
   const pageSize = 20;
-  const pageNum = Math.max(1, Number(p ?? "1") || 1);
+  const pageNum = pageNumberParam(p);
   const offset = (pageNum - 1) * pageSize;
 
   // Dieselbe Abfrage wie die ⌘K-Palette (lib/page-search.ts), nur auf

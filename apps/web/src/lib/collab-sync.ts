@@ -48,7 +48,7 @@ export const RESTORE_STALE_PARAM = "neu-laden";
  * Versionsseite, auf die der Link fuehrt. Ein anderer Wert (etwa "1" aus
  * einem aelteren Link) zeigt den Hinweis mit einem Link zum Verlauf.
  */
-export function readStaleRestore(value: string | string[] | undefined): {
+export function readStaleRestore(value: unknown): {
   offen: boolean;
   versionId: string | null;
 } {

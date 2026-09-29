@@ -64,8 +64,9 @@ describe("sendBrowserEvent / onBrowserEvent", () => {
   });
 
   it("Sender und Empfaenger sind an denselben Typ gebunden", () => {
-    // Wird nur von tsc geprueft (die Testdateien liegen im tsconfig):
-    // jede Zeile mit @ts-expect-error MUSS ein Typfehler sein.
+    // Wird nur von tsc geprueft (pnpm typecheck, auch in der CI; next
+    // build verwirft Meldungen aus Testdateien): jede Zeile mit dem
+    // Vermerk @ts-expect-error MUSS ein Typfehler sein.
     const nurFuerTsc = () => {
       // @ts-expect-error Feld heisst `id`, nicht `commentId`
       sendBrowserEvent(EVENT_REMOVE_COMMENT_MARK, { commentId: "t1" });
