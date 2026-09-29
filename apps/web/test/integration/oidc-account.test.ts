@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@dokunc/db";
 import { resolveOidcUser, type OidcOptions } from "@/lib/oidc-account";
+import { USER_NAME_MAX, userNameSchema } from "@/lib/user-name";
 
 /**
  * Wer darf sich über SSO als wer anmelden?
@@ -168,6 +169,37 @@ describe("Kontoanlage", () => {
       isAdmin: false,
       oidcIssuer: ISSUER,
       name: "SSO Person",
+    });
+  });
+
+  describe("Name des Anbieters nach der Regel von Registrierung und Profil", () => {
+    // Der Claim kommt ohne Grenze und wanderte bisher unverändert ins
+    // Konto. Mit 81 Zeichen oder mit einem einzigen liess sich das Profil
+    // danach nicht speichern, ohne den Namen zu ändern (lib/user-name).
+    const R = "\u{1F680}";
+    const signup = { ...base, allowSignup: true };
+    const nameOf = async () =>
+      (
+        await prisma.user.findUniqueOrThrow({
+          where: { email: `${TAG}@example.test` },
+          select: { name: true },
+        })
+      ).name;
+
+    it("kappt einen zu langen Namen in Codepoints", async () => {
+      // Die Rakete an Stelle 80 bleibt ganz, in der Datenbank steht kein
+      // Ersatzzeichen.
+      const x = "x".repeat(USER_NAME_MAX - 1);
+      const out = await resolveOidcUser(claims({ name: `${x}${R}${R}` }), signup);
+      expect("user" in out).toBe(true);
+      expect(await nameOf()).toBe(`${x}${R}`);
+      expect(userNameSchema.safeParse(await nameOf()).success).toBe(true);
+    });
+
+    it("nimmt für einen zu kurzen Namen den Lokalteil der Adresse", async () => {
+      const out = await resolveOidcUser(claims({ name: R }), signup);
+      expect("user" in out).toBe(true);
+      expect(await nameOf()).toBe(TAG);
     });
   });
 

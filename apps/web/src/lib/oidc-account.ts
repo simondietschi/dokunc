@@ -5,6 +5,7 @@ import { prisma } from "@dokunc/db";
 import { audit } from "./audit";
 import { decideRegistration } from "./registration";
 import { BCRYPT_COST } from "./password-policy";
+import { ssoUserName } from "./user-name";
 import type { OidcClaims } from "./oidc";
 
 /**
@@ -115,7 +116,10 @@ export async function resolveOidcUser(
   const created = await prisma.user.create({
     data: {
       email: claims.email,
-      name: claims.name || claims.email.split("@")[0],
+      // Dieselbe Namensregel wie Registrierung und Profil (lib/user-name):
+      // der Claim kommt ohne Grenze, und ein Name ausserhalb der Regel
+      // sperrte spaeter das Profilformular.
+      name: ssoUserName(claims.name, claims.email),
       // Kein nutzbares Passwort: die Anmeldung läuft über den Anbieter.
       // Wer eines will, setzt es über „Passwort vergessen".
       // Kostenfaktor trotzdem aus lib/password-policy und nicht nackt:
