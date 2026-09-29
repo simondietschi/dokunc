@@ -6,7 +6,6 @@ import type { Duplex } from "node:stream";
 import { Server, type Connection, type Document } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
 import { jwtVerify, type JWTPayload } from "jose";
-import { Redis } from "ioredis";
 import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
 import pino from "pino";
 import * as Y from "yjs";
@@ -72,6 +71,7 @@ import {
   trustedProxyHops,
 } from "./limits";
 import { createAttemptLimiter, createTicketLedger } from "./redis-guards";
+import { createRedisClient } from "./redis-client";
 
 const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
@@ -106,10 +106,11 @@ const extensions = richExtensions();
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
 const VERSION_INTERVAL_MS = 2 * 60 * 1000;
 
-const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
-  maxRetriesPerRequest: 2,
-  lazyConnect: true,
-});
+// Zwei Versuche je Befehl, Abstaende beim Wiederverbinden wie in
+// ioredis 5 (Begruendung in ./redis-client).
+const redis = createRedisClient(
+  process.env.REDIS_URL ?? "redis://localhost:6379",
+);
 redis.on("error", (e: Error) => log.warn({ err: e }, "redis"));
 
 /*

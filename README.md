@@ -849,7 +849,8 @@ Stand im Repository und kommt mit den Schritten oben zurück.
 ## Lokale Entwicklung (ohne Docker)
 
 Voraussetzungen: Node 26 (`.nvmrc`), pnpm, lokal laufendes PostgreSQL 16
-mit pg_trgm (bei manchen Distributionen im Paket postgresql-contrib) + Redis.
+mit pg_trgm (bei manchen Distributionen im Paket postgresql-contrib) +
+Redis 7 oder neuer.
 
 ```bash
 nvm use                 # Node 26
