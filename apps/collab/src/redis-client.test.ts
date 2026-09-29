@@ -1,8 +1,13 @@
-import { describe, expect, it } from "vitest";
-import { createRedisClient, reconnectDelay } from "./redis-client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createHaRedis,
+  createRedisClient,
+  reconnectDelay,
+} from "./redis-client";
 
-// Ein Port, auf dem nichts lauscht: der Client ist lazy und verbindet
-// hier nie, der Test braucht kein Redis.
+// Ein Port, auf dem nichts lauscht. Die Clients sind lazy; nur der
+// Abonnent der HA-Extension versucht zu verbinden (sie abonniert im
+// Konstruktor) und wird abgewiesen. Kein Redis noetig.
 const URL_OHNE_REDIS = "redis://127.0.0.1:1/0";
 
 describe("reconnectDelay", () => {
@@ -31,5 +36,74 @@ describe("createRedisClient", () => {
       kopie.disconnect();
       client.disconnect();
     }
+  });
+});
+
+describe("createHaRedis", () => {
+  // Waechter fuer die Reihenfolge, in der @hocuspocus/extension-redis
+  // createClient ruft (erst pub, dann sub). Aendert ein Update sie,
+  // scheitert createHaRedis und damit dieser Test, statt dass der
+  // Abonnent still wieder mit zwei Versuchen dasteht.
+  it("gibt nur dem Abonnenten der Extension unbegrenzte Versuche", async () => {
+    const redis = createRedisClient(URL_OHNE_REDIS);
+    const fehler: string[] = [];
+    const { extension, pub, sub } = createHaRedis(redis, (_e, rolle) =>
+      fehler.push(rolle),
+    );
+    try {
+      expect(extension.pub as unknown).toBe(pub);
+      expect(extension.sub as unknown).toBe(sub);
+      expect(sub.options.maxRetriesPerRequest).toBeNull();
+      expect(pub.options.maxRetriesPerRequest).toBe(2);
+      // Alles andere bleibt wie beim Original, auch die Abstaende.
+      for (const client of [pub, sub]) {
+        expect(client.options.retryStrategy).toBe(reconnectDelay);
+        expect(client.options.lazyConnect).toBe(true);
+        expect(client.options.port).toBe(1);
+      }
+      expect(redis.options.maxRetriesPerRequest).toBe(2);
+      // Der Konstruktor abonniert sofort; der abgewiesene Verbindungsversuch
+      // landet beim Fehler-Handler statt als "Unhandled error event" auf
+      // stderr.
+      const ende = Date.now() + 2_000;
+      while (!fehler.includes("sub") && Date.now() < ende) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(fehler).toContain("sub");
+    } finally {
+      pub.disconnect();
+      sub.disconnect();
+      redis.disconnect();
+    }
+  });
+
+  describe("mit einer Extension, die erst den Abonnenten baut", () => {
+    afterEach(() => {
+      vi.doUnmock("@hocuspocus/extension-redis");
+      vi.resetModules();
+    });
+
+    it("bricht ab, statt den Abonnenten mit Grenze zu lassen", async () => {
+      vi.resetModules();
+      vi.doMock("@hocuspocus/extension-redis", () => ({
+        Redis: class {
+          sub: unknown;
+          pub: unknown;
+          constructor(c: { createClient: () => unknown }) {
+            this.sub = c.createClient();
+            this.pub = c.createClient();
+          }
+        },
+      }));
+      const modul = await import("./redis-client");
+      const redis = modul.createRedisClient(URL_OHNE_REDIS);
+      try {
+        expect(() => modul.createHaRedis(redis, () => undefined)).toThrow(
+          /nicht mehr als pub, dann sub/,
+        );
+      } finally {
+        redis.disconnect();
+      }
+    });
   });
 });
