@@ -23,10 +23,22 @@ import type { MermaidConfig } from "mermaid";
  * - `layout: "dagre"` statt ELK, und zwar je Diagrammtyp, nicht global:
  *   ein global gesetztes `layout` nimmt mermaid bei Mindmaps als
  *   ausdruecklichen Wunsch und setzte sie dann mit dagre statt wie bisher
- *   mit cose-bilkent. Use-Case und Agentflow sind in 12 neu, dort gibt es
- *   kein altes Bild zu halten; sie behalten die Vorgabe von mermaid.
- *   Nebenbei laedt so kein Diagramm ohne eigene Angabe den ELK-Teil von
- *   mermaid, einen eigenen, grossen Chunk.
+ *   mit cose-bilkent. Die Liste enthaelt jeden Typ, dessen Renderer in
+ *   mermaid 12.0.0 ohne eigene Angabe auf die globale Vorgabe `elk`
+ *   faellt. Mindmap (cose-bilkent) und Swimlane (eigenes Layout) bringen
+ *   ihre eigene mit, alle anderen (Sequenz, Gantt, C4, Block u. a.)
+ *   waehlen gar kein Layout. Use-Case und Agentflow sind in 12 neu und
+ *   haetten kein altes Bild zu halten, sie stehen trotzdem hier: ohne
+ *   eigene Angabe luden sie den ELK-Chunk (1,4 MB roh). Ihre Renderer
+ *   fallen ohne ELK selbst auf dagre zurueck (so auch im Tiny-Build von
+ *   mermaid), brauchen es also nicht. Damit bleibt ELK Opt-in: geladen
+ *   wird es nur, wenn ein Diagramm `layout: elk` im Front Matter oder
+ *   einer Direktive verlangt. Das Schluesselwort `flowchart-elk` setzt
+ *   sich gegen die Angabe hier nicht durch und bleibt bei dagre, wie
+ *   schon unter mermaid 11, das ELK nicht mitbrachte. Unter dagre legt
+ *   Agentflow, wie Flussdiagramm-Subgraphen, einen Container ohne Kanten
+ *   nach aussen quer zur Diagrammrichtung; `direction TB` im Container
+ *   oder `layout: elk` gibt das Bild aus der mermaid-Doku.
  * - `wrappingWidth: 200` und `minNodeWidth: 0`: mermaid 12 bricht
  *   Beschriftungen bei 120 px um und macht jeden Knoten mindestens 120 px
  *   breit; bis 11 waren es 200 px und keine Mindestbreite.
@@ -42,5 +54,7 @@ export function mermaidConfig(dark: boolean): MermaidConfig {
     class: { layout: "dagre" },
     er: { layout: "dagre" },
     requirement: { layout: "dagre" },
+    usecase: { layout: "dagre" },
+    agentflow: { layout: "dagre" },
   };
 }
