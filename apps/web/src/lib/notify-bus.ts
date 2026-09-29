@@ -52,7 +52,8 @@ export function subscribeNotifications(
   onEvent: () => void,
 ): { close: () => void } | null {
   // lazy: false — ein Abonnent sendet nie einen gewoehnlichen Befehl,
-  // die Verbindung kaeme sonst nie zustande.
+  // die Verbindung kaeme sonst nie zustande. Davon haengt auch das
+  // Abonnieren unten ab: "ready" kommt nur, wenn verbunden wird.
   const sub = createRedis({
     retries: 2,
     lazy: false,
@@ -60,15 +61,27 @@ export function subscribeNotifications(
   });
   if (!sub) return null;
   sub.on("message", () => onEvent());
-  // Scheitert das Abonnement, bleibt der SSE-Strom trotzdem offen und
-  // sendet weiter seinen Ping: der Browser hält die Leitung für gesund,
-  // während nie eine Benachrichtigung ankommt. Zumindest im Log muss das
-  // stehen, sonst ist der Zustand von aussen nicht zu erkennen.
-  void sub
-    .subscribe(`${NOTIFY_CHANNEL_PREFIX}${userId}`)
-    .catch((e) =>
-      log.warn({ err: e, userId }, "Benachrichtigungskanal nicht abonniert"),
-    );
+  // Abonniert wird nach JEDEM Verbindungsaufbau, nicht einmal beim
+  // Anlegen. ioredis abonniert nach einem Wiederaufbau zwar selbst neu,
+  // aber nur Kanaele, deren SUBSCRIBE Redis schon bestaetigt hatte. War
+  // Redis beim Oeffnen des Stroms nicht erreichbar, lehnte ioredis das
+  // eine SUBSCRIBE nach drei gescheiterten Versuchen ab (nach gut 150 ms),
+  // und der Strom blieb danach stumm, bis der Browser ihn neu aufbaute.
+  // Ein zweites SUBSCRIBE auf denselben Kanal ist folgenlos. Dasselbe
+  // Muster hat der Collab-Server (startDocResetListener).
+  //
+  // Scheitert ein Abonnement trotzdem (Verbindung reisst zwischen Aufbau
+  // und Antwort), holt es das naechste "ready" nach. Bis dahin bleibt der
+  // SSE-Strom offen und sendet weiter seinen Ping, waehrend keine
+  // Benachrichtigung ankommt; zumindest im Log muss das stehen.
+  const kanal = `${NOTIFY_CHANNEL_PREFIX}${userId}`;
+  sub.on("ready", () => {
+    sub
+      .subscribe(kanal)
+      .catch((e: unknown) =>
+        log.warn({ err: e, userId }, "Benachrichtigungskanal nicht abonniert"),
+      );
+  });
   return {
     close: () => {
       sub.disconnect();

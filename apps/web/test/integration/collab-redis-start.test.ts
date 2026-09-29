@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { HocuspocusProvider } from "@hocuspocus/provider";
-import { createServer, connect, type Socket } from "node:net";
 import { prisma } from "@dokunc/db";
 import {
   redisUrlMitDb,
@@ -8,6 +7,7 @@ import {
   type Pruefserver,
 } from "./collab-pruefserver";
 import { verbinde } from "./collab-hilfen";
+import { starteWeiche, type Weiche } from "./redis-weiche";
 
 /**
  * Redis fehlt, waehrend der Collab-Server startet.
@@ -21,11 +21,10 @@ import { verbinde } from "./collab-hilfen";
  * Versuche.
  *
  * Der Collab-Server (eigener Prozess, siehe ./collab-pruefserver,
- * Redis-Datenbank 15) spricht Redis hier ueber eine Weiche an: einen
- * TCP-Durchgang, der jede Verbindung sofort zuruecksetzt, bis er 1,5 s
- * nach dem ersten Versuch aufmacht und zum echten Redis durchreicht. So
- * geht es auch in der CI, wo Redis ein Dienst-Container ist und kein
- * eigenes redis-server gestartet werden kann.
+ * Redis-Datenbank 15) spricht Redis hier ueber eine Weiche an
+ * (./redis-weiche): einen TCP-Durchgang, der jede Verbindung sofort
+ * zuruecksetzt, bis er 1,5 s nach dem ersten Versuch aufmacht und zum
+ * echten Redis durchreicht.
  */
 
 const REDIS_DB = 15;
@@ -35,71 +34,6 @@ const { getAppSecret } = await import("@/lib/secret");
 const { issueCollabTicket } = await import("@/lib/collab-ticket");
 
 const TAG = `crst-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-type Weiche = {
-  /** REDIS_URL fuer den Collab-Server: Weiche statt Redis. */
-  url: string;
-  /** Zurueckgesetzte Verbindungsversuche, solange die Weiche zu war. */
-  abgewiesen(): number;
-  schliessen(): Promise<void>;
-};
-
-/**
- * TCP-Weiche vor dem echten Redis. Zu Beginn setzt sie jede Verbindung
- * sofort zurueck (fuer ioredis wie ein nicht erreichbares Redis), ab
- * `offenNachMs` nach dem ersten Versuch reicht sie durch.
- */
-async function starteWeiche(
-  redisUrl: string,
-  offenNachMs: number,
-): Promise<Weiche> {
-  const ziel = new URL(redisUrl);
-  let offen = false;
-  let abgewiesen = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const sockets = new Set<Socket>();
-  const merke = (s: Socket) => {
-    sockets.add(s);
-    s.on("close", () => sockets.delete(s));
-  };
-  const server = createServer((client) => {
-    merke(client);
-    client.on("error", () => undefined);
-    timer ??= setTimeout(() => {
-      offen = true;
-    }, offenNachMs);
-    if (!offen) {
-      abgewiesen += 1;
-      client.resetAndDestroy();
-      return;
-    }
-    const redis = connect(Number(ziel.port || 6379), ziel.hostname);
-    merke(redis);
-    redis.on("error", () => client.destroy());
-    client.on("close", () => redis.destroy());
-    redis.on("close", () => client.destroy());
-    client.pipe(redis).pipe(client);
-  });
-  await new Promise<void>((resolve) =>
-    server.listen(0, "127.0.0.1", () => resolve()),
-  );
-  const adresse = server.address();
-  if (!adresse || typeof adresse === "string") {
-    throw new Error("Weiche ohne Port");
-  }
-  const url = new URL(redisUrl);
-  url.hostname = "127.0.0.1";
-  url.port = String(adresse.port);
-  return {
-    url: url.toString(),
-    abgewiesen: () => abgewiesen,
-    schliessen: async () => {
-      clearTimeout(timer);
-      for (const s of sockets) s.destroy();
-      await new Promise((r) => server.close(r));
-    },
-  };
-}
 
 let weiche: Weiche | null = null;
 let collab: Pruefserver | null = null;
