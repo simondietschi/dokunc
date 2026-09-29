@@ -129,6 +129,14 @@ describe("sanitizeFilename()", () => {
     expect(sanitizeFilename("harmlos\u202Efdp.exe")).toBe("harmlosfdp.exe");
   });
 
+  it("kuerzt in Codepoints und zerschneidet kein Emoji", () => {
+    const rakete = "\u{1F680}";
+    const name = sanitizeFilename(`${"x".repeat(199)}${rakete}.png`);
+    expect(name).toBe(`${"x".repeat(199)}${rakete}`);
+    expect(name.isWellFormed()).toBe(true);
+    expect([...sanitizeFilename(rakete.repeat(300))]).toHaveLength(200);
+  });
+
   it("leer -> datei", () => {
     expect(sanitizeFilename("")).toBe("datei");
     expect(sanitizeFilename("\u0001\u0002")).toBe("datei");

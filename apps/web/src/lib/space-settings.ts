@@ -6,6 +6,14 @@ import { z } from "zod";
  * genutzt — deshalb ohne "server-only".
  */
 
+/**
+ * Grenzen in Codepoints, wie zod sie zaehlt (lib/text-length). Das
+ * Einstellungsformular reicht dieselben Zahlen als minLength/maxLength
+ * an den Browser, und der zaehlt UTF-16-Einheiten: bei Emoji sperrt das
+ * Feld frueher als der Server, und ein Name aus einem einzelnen Emoji
+ * besteht minLength und scheitert erst hier. Auch die Anlage eines Space
+ * (createSpaceAction) prueft mit diesem Schema.
+ */
 export const SPACE_NAME_MIN = 2;
 export const SPACE_NAME_MAX = 80;
 export const SPACE_DESCRIPTION_MAX = 300;

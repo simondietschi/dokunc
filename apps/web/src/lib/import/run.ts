@@ -33,6 +33,7 @@ import {
   type JsonNode,
 } from "./types";
 import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
+import { truncateText } from "@/lib/text-length";
 import { nextSiblingPosition } from "@/lib/page-position";
 
 /** Obergrenze fuer Seiten pro Import (Transaktionsdauer, UI). */
@@ -177,7 +178,8 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
               data: {
                 spaceId: opts.spaceId,
                 parentId,
-                title: node.title.slice(0, 200) || DEFAULT_PAGE_TITLE,
+                // Wie PAGE_TITLE_MAX in lib/page-guards, in Codepoints.
+                title: truncateText(node.title, 200) || DEFAULT_PAGE_TITLE,
                 position: base + i,
                 content: emptyDoc() as object,
                 textContent: "",
@@ -309,7 +311,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
             pageId,
             uploaderId: opts.userId,
             storedName: stored.file.storedName,
-            name: name.slice(0, 255),
+            name: truncateText(name, 255),
             mimeType: stored.file.mimeType,
             size: stored.file.size,
           },

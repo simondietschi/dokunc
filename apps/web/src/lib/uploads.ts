@@ -1,6 +1,7 @@
 import "server-only";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { truncateText } from "./text-length";
 
 // Leerer Wert (wie in .env.example) zaehlt als "nicht gesetzt".
 export const UPLOAD_DIR =
@@ -132,7 +133,9 @@ export function sanitizeFilename(original: string): string {
     .replace(/[\\/]/g, "_")
     .replace(/\s+/g, " ")
     .trim();
-  const trimmed = cleaned.slice(0, 200).trim();
+  // In Codepoints gekappt (lib/text-length): slice() nach UTF-16-
+  // Einheiten konnte ein Emoji am Ende zerschneiden.
+  const trimmed = truncateText(cleaned, 200).trim();
   return trimmed || "datei";
 }
 

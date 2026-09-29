@@ -3,6 +3,7 @@
  */
 
 import { pageTitle } from "./page-title";
+import { truncateText } from "./text-length";
 
 /**
  * Obergrenze für eine Sucheingabe.
@@ -19,7 +20,10 @@ export const MAX_QUERY_LENGTH = 100;
 export function normalizeQuery(raw: string | null | undefined): string {
   // NUL-Zeichen lehnt Postgres in jedem Textparameter ab (22021): ?q=%00
   // warf in der Suche, statt nichts zu finden. Keine Eingabe braucht eines.
-  return (raw ?? "").replaceAll("\0", "").trim().slice(0, MAX_QUERY_LENGTH);
+  // Gekappt in Codepoints (lib/text-length): slice() nach UTF-16-Einheiten
+  // konnte ein Emoji am Ende halbieren, und gesucht wurde dann nach dem
+  // Ersatzzeichen U+FFFD.
+  return truncateText((raw ?? "").replaceAll("\0", "").trim(), MAX_QUERY_LENGTH);
 }
 
 /**

@@ -110,6 +110,15 @@ describe("normalizeQuery()", () => {
     expect(normalizeQuery("x".repeat(150))).toHaveLength(MAX_QUERY_LENGTH);
   });
 
+  it("kappt in Codepoints und zerschneidet kein Emoji", () => {
+    const rakete = "\u{1F680}";
+    // 99 Buchstaben und ein Emoji sind 100 Zeichen, aber 101 Einheiten.
+    const q = normalizeQuery(`${"x".repeat(99)}${rakete}yz`);
+    expect(q).toBe(`${"x".repeat(99)}${rakete}`);
+    expect(q.isWellFormed()).toBe(true);
+    expect([...normalizeQuery(rakete.repeat(150))]).toHaveLength(MAX_QUERY_LENGTH);
+  });
+
   it("macht aus fehlender Eingabe einen leeren String", () => {
     // Die Routen lesen einen Query-Parameter, der fehlen kann; die
     // Palette vergleicht ihr Ergebnis damit. Beide muessen denselben

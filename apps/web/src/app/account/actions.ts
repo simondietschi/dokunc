@@ -20,6 +20,7 @@ import {
   orphanedSpacesFor,
 } from "@/lib/account-deletion";
 import { isSerializationConflict } from "@/lib/concurrent-change";
+import { userNameSchema } from "@/lib/user-name";
 
 export type AccountState = { error?: string; success?: string } | undefined;
 
@@ -28,8 +29,12 @@ export async function updateProfileAction(
   form: FormData,
 ): Promise<AccountState> {
   const user = await requireUser();
-  const name = str(form, "name");
-  if (name.length < 2) return { error: "Name zu kurz" };
+  // Dieselbe Regel wie bei der Registrierung (lib/user-name). Hier stand
+  // `name.length < 2`: das zählte UTF-16-Einheiten, liess also ein
+  // einzelnes Emoji durch, und kannte keine Obergrenze.
+  const parsed = userNameSchema.safeParse(str(form, "name"));
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  const name = parsed.data;
   await prisma.user.update({ where: { id: user.id }, data: { name } });
   revalidatePath("/account");
   return { success: "Profil aktualisiert." };

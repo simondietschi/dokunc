@@ -9,6 +9,7 @@ import {
 import { insertAt, positionUpdates } from "./page-move";
 import { lockSiblingOrder, nextSiblingPosition } from "./page-position";
 import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
+import { truncateText } from "@/lib/text-length";
 
 /**
  * Bindung von Objekt-IDs an das, was die handelnde Person tatsächlich
@@ -200,7 +201,11 @@ export async function renamePageInSpace(
     // kein maxLength. Ohne das Kappen landete ein Titel bis zur Grösse
     // des Action-Limits im Seitenbaum, in den Breadcrumbs und in jeder
     // Seitenliste — überall dort, wo er ungekürzt gerendert wird.
-    data: { title: title.slice(0, PAGE_TITLE_MAX) || DEFAULT_PAGE_TITLE },
+    // Gekappt in Codepoints (lib/text-length): slice() nach UTF-16-
+    // Einheiten konnte ein Emoji an der Grenze zerschneiden.
+    data: {
+      title: truncateText(title, PAGE_TITLE_MAX) || DEFAULT_PAGE_TITLE,
+    },
   });
   return count > 0;
 }

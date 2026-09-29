@@ -5,6 +5,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { aiAvailable, assist, isAssistAction } from "@/lib/ai";
 import { log } from "@/lib/log";
 import { RATE_LIMITS } from "@/lib/rate-limits";
+import { textLength } from "@/lib/text-length";
 
 export const runtime = "nodejs";
 // KI-Antworten können dauern — großzügiges Zeitfenster.
@@ -71,7 +72,9 @@ export async function POST(req: Request) {
       { status: 400 },
     );
   }
-  if (text.length > 20_000) {
+  // Dieselbe Grenze wie bei "Frag dein Wiki", in Codepoints gezaehlt
+  // (lib/text-length).
+  if (textLength(text) > 20_000) {
     return NextResponse.json(
       { error: "Text zu lang (max. 20.000 Zeichen)" },
       { status: 413 },
