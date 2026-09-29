@@ -55,6 +55,17 @@ updates:
       # Laufzeit ist Node 26 (engines, .nvmrc, Dockerfile, CI)
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # TypeScript 7 (nativer Compiler in Go) exportiert keine Compiler-API
+      # mehr; typescript-eslint braucht sie und nimmt bis 8.71.0 nur
+      # ">=4.8.4 <6.1.0" (ESLint liefe still ueber ein zweites TS 6). Und
+      # typescript landet ueber den optionalen Peer von prisma,
+      # @prisma/client und valibot im Laufzeit-Image: das Go-Binary von
+      # 7.0.2 (Go 1.26.4, x/text 0.38.0) bringt 10 HIGH, Trivy im Job
+      # docker wird rot (PR #11). next build kann 7 schon (tsc-CLI).
+      # Wieder pruefen, wenn typescript-eslint 7 in den peerDependencies
+      # fuehrt UND ein 7er-Release den Trivy-Scan des Images besteht.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: docker
     directory: "/"
