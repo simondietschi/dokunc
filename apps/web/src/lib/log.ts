@@ -6,8 +6,9 @@ import pino from "pino";
  *
  * `err.command.args`: ioredis haengt an jeden Fehler einer Redis-Antwort
  * den Befehl samt Argumenten an. Scheitert die Anmeldung (WRONGPASS nach
- * einer Passwortrotation), steht dort das Passwort aus REDIS_URL, und
- * derselbe Fehler lehnt auch alle wartenden Befehle ab. Seit die Fehler
+ * einer Passwortrotation), steht dort das Passwort aus REDIS_URL — seit
+ * ioredis 6 als `HELLO 3 AUTH <user> <passwort>`, davor als `AUTH` —,
+ * und derselbe Fehler lehnt auch alle wartenden Befehle ab. Seit die Fehler
  * als Objekt geloggt werden (Typ, Stack und Zusatzfelder statt nur der
  * Meldung), gaebe der Standard-Serializer genau dieses Feld mit aus.
  *

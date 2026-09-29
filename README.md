@@ -813,7 +813,7 @@ folgenden nutzt:
   `docker compose`, auch `scripts/backup.sh`;
 - einen eigenen `entrypoint` für `redis`: er ersetzt den Start mit
   Passwort, Redis läuft dann ohne (die App schickt ihr Passwort trotzdem,
-  ioredis warnt nur).
+  Redis nimmt die Anmeldung ohne Meldung an).
 
 Ein eigenes `command` für `redis` bleibt wirksam, das Passwort gilt
 trotzdem; es ersetzt aber `--maxmemory 384mb` aus `docker-compose.yml`,

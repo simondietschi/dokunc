@@ -76,9 +76,10 @@ import { createAttemptLimiter, createTicketLedger } from "./redis-guards";
 const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
   base: { app: "dokunc-collab" },
-  // ioredis haengt an Fehler den Befehl samt Argumenten an; bei einem
-  // gescheiterten AUTH steht dort das Passwort aus REDIS_URL. jose haengt
-  // an Claim-Fehler den Inhalt des Tokens an. Dieselbe Schwaerzung wie in
+  // ioredis haengt an Fehler den Befehl samt Argumenten an; bei einer
+  // gescheiterten Anmeldung (HELLO 3 AUTH <user> <passwort>) steht dort
+  // das Passwort aus REDIS_URL. jose haengt an Claim-Fehler den Inhalt
+  // des Tokens an. Dieselbe Schwaerzung wie in
   // apps/web/src/lib/log.ts (dort mit Begruendung und Test); dazu die
   // Ursache, weil verifyTicket den Fehler von jose als `cause` weiterreicht.
   // Der heutige Serializer faltet sie nur in Meldung und Stack; der
@@ -554,8 +555,14 @@ let lastAddressFullLogAt = 0;
 // Koordination der Instanzen liefe nicht, während alle übrigen
 // Redis-Zugriffe desselben Prozesses funktionieren.
 //
-// Der Cast überbrückt nur, dass die Extension eine eigene, ältere
-// ioredis-Typfassung mitbringt — zur Laufzeit ist es dieselbe Klasse.
+// Die Extension bringt ein eigenes, älteres ioredis mit (5.6), dieser
+// Prozess nutzt ioredis 6. Mit `redis` ruft sie aber nur `duplicate()`
+// auf dem übergebenen Client auf: Pub/Sub und die Sperre vor dem
+// Speichern (Redlock) laufen also über ioredis 6 aus diesem Prozess,
+// mit RESP3 und denselben Antwortformen wie unter RESP2 (Vorgabe
+// replyMapping "legacy"). Ihr eigenes ioredis braucht sie nur, wenn sie
+// selbst aus Host und Port verbindet, was hier nie geschieht. Der Cast
+// überbrückt nur die abweichenden Typfassungen.
 type HaRedisInstance = NonNullable<
   ConstructorParameters<typeof HocuspocusRedis>[0]["redis"]
 >;

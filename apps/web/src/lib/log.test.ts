@@ -16,25 +16,38 @@ function probeLogger() {
   return { logger: pino({ redact: LOG_REDACT }, stream), lines };
 }
 
-/** So sieht ein Fehler aus ioredis aus, wenn AUTH scheitert. */
-function authFehler() {
-  const e = new Error("WRONGPASS invalid username-password pair");
+/**
+ * So sieht ein Fehler aus ioredis aus, wenn die Anmeldung scheitert.
+ * ioredis 6 meldet sich mit HELLO 3 an und schickt das Passwort darin
+ * mit (Benutzer "default", wenn REDIS_URL keinen nennt); ioredis 5 und
+ * ein Redis vor Version 6 nehmen AUTH mit dem Passwort allein.
+ */
+function authFehler(command: { name: string; args: string[] }) {
+  const e = new Error(
+    "WRONGPASS invalid username-password pair or user is disabled.",
+  );
   e.name = "ReplyError";
-  Object.assign(e, { command: { name: "auth", args: ["geheim-123"] } });
+  Object.assign(e, { command });
   return e;
 }
 
 describe("LOG_REDACT", () => {
-  it("schreibt das Redis-Passwort eines AUTH-Fehlers nicht ins Log", () => {
-    const { logger, lines } = probeLogger();
-    logger.warn({ err: authFehler() }, "Redis nicht erreichbar");
-    const zeile = lines.join("");
-    expect(zeile).not.toContain("geheim-123");
-    // Der Rest des Fehlers bleibt lesbar: Meldung und Befehlsname.
-    const eintrag = JSON.parse(zeile);
-    expect(eintrag.err.message).toContain("WRONGPASS");
-    expect(eintrag.err.command.name).toBe("auth");
-  });
+  it.each([
+    { name: "hello", args: ["3", "AUTH", "default", "geheim-123"] },
+    { name: "auth", args: ["geheim-123"] },
+  ])(
+    "schreibt das Redis-Passwort einer gescheiterten Anmeldung ($name) nicht ins Log",
+    (command) => {
+      const { logger, lines } = probeLogger();
+      logger.warn({ err: authFehler(command) }, "Redis nicht erreichbar");
+      const zeile = lines.join("");
+      expect(zeile).not.toContain("geheim-123");
+      // Der Rest des Fehlers bleibt lesbar: Meldung und Befehlsname.
+      const eintrag = JSON.parse(zeile);
+      expect(eintrag.err.message).toContain("WRONGPASS");
+      expect(eintrag.err.command.name).toBe(command.name);
+    },
+  );
 
   it("schreibt den Inhalt eines ID-Tokens aus einem jose-Fehler nicht ins Log", () => {
     // So kommt der Fehler aus exchangeCode, wenn etwa die Client-ID

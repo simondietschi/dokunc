@@ -32,10 +32,11 @@ type RedisOptionen = {
   lazy: boolean;
   /**
    * Wird beim ERSTEN Verbindungsfehler dieser Verbindung gerufen, danach
-   * nie wieder. ioredis probiert im Sekundentakt endlos weiter; ohne die
-   * Sperre stuende dieselbe Meldung dauerhaft mehrmals pro Minute im
-   * Log. Ohne Rueckruf bleibt der Ausfall hier still — dann meldet ihn
-   * der Aufrufer an der Stelle, an der ein Befehl scheitert.
+   * nie wieder. ioredis probiert endlos weiter, mit wachsendem Abstand
+   * bis etwa fuenf Sekunden (Vorgabe von ioredis 6); ohne die Sperre
+   * stuende dieselbe Meldung dauerhaft mehrmals pro Minute im Log. Ohne
+   * Rueckruf bleibt der Ausfall hier still — dann meldet ihn der
+   * Aufrufer an der Stelle, an der ein Befehl scheitert.
    */
   onFirstError?: (e: Error) => void;
 };
