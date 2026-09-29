@@ -6,10 +6,14 @@ import { Redis } from "ioredis";
  *
  * Vorher baute jeder Nutzer seine eigene: dieselbe Auswertung von
  * REDIS_URL, dasselbe "ohne Variable eben kein Redis", derselbe
- * Fehler-Handler. Der Handler ist dabei kein Beiwerk — ioredis wirft
- * einen Verbindungsfehler ohne Zuhoerer als unbehandeltes Ereignis, was
- * den Prozess beendet. Wer die Fabrik hier benutzt, kann ihn nicht
- * vergessen.
+ * Fehler-Handler. Der Handler ist dabei kein Beiwerk: ohne Zuhoerer
+ * schreibt ioredis jeden Verbindungsfehler unstrukturiert als
+ * "[ioredis] Unhandled error event" samt Stack auf stderr, bei einem
+ * Ausfall alle zwei Sekunden einen, vorbei am strukturierten Log. Einige
+ * wenige andere Fehler (etwa eine aus dem Tritt geratene Befehlsschlange)
+ * gibt es dagegen als echtes unbehandeltes Ereignis weiter, und das
+ * beendet den Prozess. Wer die Fabrik hier benutzt, kann den Handler
+ * nicht vergessen.
  *
  * Bewusst KEIN gemeinsamer Client fuer alle Aufrufer: die Nutzer
  * unterscheiden sich in der Zahl der Versuche je Befehl, und manche
@@ -61,7 +65,14 @@ type RedisOptionen = {
  * Vorgabe von ioredis 6 wartete jeder Befehl bei einem laengeren Ausfall
  * etwa 10 s (ein Versuch) bzw. 15 s (zwei), bevor der Aufrufer seinen
  * Ausweg nehmen kann (Bremse im Speicher, stilles Auslassen) — hier
- * hoechstens 4 bzw. 6 s.
+ * hoechstens etwa 4 bzw. 6 s.
+ *
+ * Diese Grenze gilt, wenn jeder Verbindungsversuch sofort abgewiesen
+ * wird (Redis-Prozess weg, Port zu). Ist der Host gar nicht erreichbar
+ * (Netz getrennt, Pakete verworfen), wartet jeder Versuch zusaetzlich
+ * das connectTimeout von ioredis ab, 10 s: dann haengt ein Befehl bis
+ * etwa 24 bzw. 36 s (gemessen mit frischem Client: 20 bzw. 30 s). Das
+ * war mit ioredis 5 genauso; retryStrategy aendert daran nichts.
  *
  * Dieselbe Rechnung steht in apps/collab/src/redis-client.ts.
  */

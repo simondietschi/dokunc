@@ -19,7 +19,14 @@ import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
  * sind. Bei zwei Versuchen je Befehl waren das mit der Vorgabe von
  * ioredis 6 etwa 15 s, bevor Bremse und Ticketverbrauch (./redis-guards)
  * auf ihren Speicher im Prozess ausweichen konnten — waehrenddessen hing
- * jeder Verbindungsaufbau. Hier hoechstens 6 s.
+ * jeder Verbindungsaufbau. Hier hoechstens etwa 6 s.
+ *
+ * Diese Grenze gilt, wenn jeder Verbindungsversuch sofort abgewiesen
+ * wird (Redis-Prozess weg, Port zu). Ist der Host gar nicht erreichbar
+ * (Netz getrennt, Pakete verworfen), wartet jeder Versuch zusaetzlich
+ * das connectTimeout von ioredis ab, 10 s: dann haengt ein Befehl bis
+ * etwa 36 s (gemessen mit frischem Client: 30 s). Das war mit ioredis 5
+ * genauso; retryStrategy aendert daran nichts.
  *
  * Dieselbe Rechnung steht in apps/web/src/lib/redis.ts.
  */
