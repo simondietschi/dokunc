@@ -3,6 +3,7 @@
 import { useEffect, useId, useState } from "react";
 import { NodeViewWrapper, type NodeViewProps } from "@tiptap/react";
 import { Pencil, Eye } from "lucide-react";
+import { mermaidConfig } from "@/lib/mermaid-config";
 
 export function MermaidView({ node, updateAttributes, editor }: NodeViewProps) {
   const code = (node.attrs.code as string) ?? "";
@@ -15,13 +16,9 @@ export function MermaidView({ node, updateAttributes, editor }: NodeViewProps) {
     (async () => {
       try {
         const mermaid = (await import("mermaid")).default;
-        mermaid.initialize({
-          startOnLoad: false,
-          securityLevel: "strict",
-          theme: document.documentElement.classList.contains("dark")
-            ? "dark"
-            : "default",
-        });
+        mermaid.initialize(
+          mermaidConfig(document.documentElement.classList.contains("dark")),
+        );
         const { svg } = await mermaid.render(`mmd-${rawId}`, code || " ");
         if (!cancelled) {
           setSvg(svg);
