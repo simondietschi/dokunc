@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { FolderPlus, Users, PenLine, ArrowRight } from "lucide-react";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { SpaceNameInput } from "@/components/space/SpaceNameInput";
 import { createSpaceAction } from "./actions";
 
 const SUGGESTIONS = ["Engineering", "Produkt", "Team-Handbuch", "Wissen"];
@@ -90,14 +90,11 @@ export function Onboarding({ userName }: { userName: string }) {
         style={stagger(4)}
       >
         <div className="flex gap-2">
-          <Input
-            name="name"
+          <SpaceNameInput
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Name deines ersten Space…"
             autoFocus
-            required
-            minLength={2}
             className="h-12 flex-1 text-[15px]"
           />
           <Button type="submit" size="lg">
@@ -161,11 +158,8 @@ export function WaitingForInvite() {
         className="mt-4 flex gap-2"
         style={stagger(4)}
       >
-        <Input
-          name="name"
+        <SpaceNameInput
           placeholder="Eigenen Space starten…"
-          required
-          minLength={2}
           className="h-11 flex-1"
         />
         <Button type="submit">Space erstellen</Button>

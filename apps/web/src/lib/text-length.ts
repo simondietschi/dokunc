@@ -27,6 +27,21 @@
  * einzelnes Emoji durch, weil es zwei Einheiten hat; das lehnt dann erst
  * der Server ab. (Beides in Chromium 141 nachgesehen.)
  *
+ * Frueher sperren gilt auch fuer einen vorbelegten Wert. Hat der Server
+ * einen Wert angenommen, der mehr Einheiten hat als `maxLength` (ein
+ * Space-Name aus 50 Emoji: 50 Codepoints, 100 Einheiten), bleibt er im
+ * Feld gueltig, solange niemand ihn anfasst. Nach der ersten Bearbeitung
+ * meldet der Browser ihn als zu lang und sperrt das Absenden, bis er in
+ * Einheiten passt, auch wenn die Bearbeitung ihn gerade gekuerzt hat
+ * (Chromium 141: 49 Emoji nach einem Backspace, "Please shorten this
+ * text to 80 characters"). Darum traegt jedes Feld, das einen Wert
+ * anlegt, dieselbe `maxLength` wie das Feld, in dem er spaeter
+ * bearbeitet wird (Space-Name: components/space/SpaceNameInput,
+ * Kommentare: CommentTextarea). Dann entsteht ueber die Oberflaeche kein
+ * solcher Wert; nur eine selbst gebaute Anfrage kann einen anlegen, und
+ * wer das tut, muss ihn beim Bearbeiten auf `maxLength` Einheiten
+ * kuerzen.
+ *
  * Eine andere, hiervon unabhaengige Abweichung: in einem mehrzeiligen
  * Feld (textarea) zaehlt `maxLength` einen Zeilenumbruch als ein
  * Zeichen, gesendet wird er aber als CRLF, also als zwei. Ein Text mit

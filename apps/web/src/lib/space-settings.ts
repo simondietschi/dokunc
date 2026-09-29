@@ -7,12 +7,17 @@ import { z } from "zod";
  */
 
 /**
- * Grenzen in Codepoints, wie zod sie zaehlt (lib/text-length). Das
- * Einstellungsformular reicht dieselben Zahlen als minLength/maxLength
- * an den Browser, und der zaehlt UTF-16-Einheiten: bei Emoji sperrt das
+ * Grenzen in Codepoints, wie zod sie zaehlt (lib/text-length). Jedes
+ * Namensfeld, zum Anlegen wie in den Einstellungen, reicht dieselben
+ * Zahlen ueber components/space/SpaceNameInput als minLength/maxLength an
+ * den Browser, und der zaehlt UTF-16-Einheiten: bei Emoji sperrt das
  * Feld frueher als der Server, und ein Name aus einem einzelnen Emoji
- * besteht minLength und scheitert erst hier. Auch die Anlage eines Space
- * (createSpaceAction) prueft mit diesem Schema.
+ * besteht minLength und scheitert erst hier. Ein vorbelegter Name mit
+ * mehr als SPACE_NAME_MAX Einheiten (nur ueber eine selbst gebaute
+ * Anfrage moeglich) sperrt das Einstellungsfeld nach der ersten
+ * Bearbeitung, bis er in Einheiten passt. Die Beschreibung legt nur das
+ * Einstellungsformular an, ihr Feld traegt SPACE_DESCRIPTION_MAX. Auch
+ * die Anlage eines Space (createSpaceAction) prueft mit diesem Schema.
  */
 export const SPACE_NAME_MIN = 2;
 export const SPACE_NAME_MAX = 80;
