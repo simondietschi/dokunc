@@ -94,4 +94,26 @@ describe("rewriteLinks()", () => {
     const out = await rewriteLinks(doc, c);
     expect(out.content?.[0].content?.[0].marks).toEqual([{ type: "bold" }]);
   });
+
+  it("kuerzt das Linkziel im Hinweis in Codepoints, ohne ein Emoji zu zerschneiden", async () => {
+    const R = "\u{1F680}";
+    const linkDoc = (...hrefs: string[]): JsonNode => ({
+      type: "doc",
+      content: hrefs.map((href) => ({
+        type: "paragraph",
+        content: [{ type: "text", text: "x", marks: [{ type: "link", attrs: { href } }] }],
+      })),
+    });
+    // Die Rakete ist der 77. Codepoint: `slice(0, 77)` nach Einheiten
+    // behielt nur ihre vordere Haelfte. 80 Raketen sind 80 Codepoints und
+    // passen ungekuerzt; nach Einheiten (160) wurden sie gekuerzt.
+    const langesZiel = `${"a".repeat(76)}${R}${"b".repeat(10)}.md`;
+    const achtzig = R.repeat(80);
+    const { c, warnings } = ctx();
+    await rewriteLinks(linkDoc(langesZiel, achtzig), c);
+    expect(warnings).toEqual([
+      `Link "${"a".repeat(76)}${R}..." konnte keiner importierten Seite zugeordnet werden.`,
+      `Link "${achtzig}" konnte keiner importierten Seite zugeordnet werden.`,
+    ]);
+  });
 });

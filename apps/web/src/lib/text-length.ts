@@ -10,8 +10,9 @@
  * speichern (ein Codepoint); die Registrierung lehnte einen Namen aus
  * einem Emoji ab, das Profil nahm ihn an.
  *
- * Deshalb zaehlt in der Web-App jede Grenze, die Nutzertext prueft oder
- * vor dem Speichern kappt, Codepoints: wie zod, wie Postgres in einer
+ * Deshalb zaehlt in der Web-App jede Grenze, die Nutzertext prueft, vor
+ * dem Speichern kappt oder fuer eine Anzeige kuerzt (Linkziele in den
+ * Hinweisen des Imports), Codepoints: wie zod, wie Postgres in einer
  * UTF8-Datenbank (`char_length`, und `varchar(n)`, falls je eine Spalte
  * eines bekommt; heute ist jede Textspalte unbegrenztes `text`), und
  * naeher an dem, was man als ein Zeichen sieht. Grapheme waeren noch
