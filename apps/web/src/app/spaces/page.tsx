@@ -16,7 +16,7 @@ import { Button } from "@/components/ui/Button";
 import { SpaceNameInput } from "@/components/space/SpaceNameInput";
 import { Avatar, gradientFor } from "@/components/ui/Avatar";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
-import { logoutAction } from "../(auth)/actions";
+import { LogoutForm } from "@/components/space/LogoutForm";
 import { createSpaceAction, joinSpaceAction } from "./actions";
 import { Onboarding, WaitingForInvite } from "./Onboarding";
 import { PaletteButton } from "@/components/CommandPalette";
@@ -162,11 +162,11 @@ export default async function SpacesPage() {
               {user.name}
             </span>
             <Avatar name={user.name} size={30} className="ml-1" />
-            <form action={logoutAction} className="ml-2">
+            <LogoutForm className="ml-2">
               <Button variant="ghost" size="sm">
                 Abmelden
               </Button>
-            </form>
+            </LogoutForm>
           </div>
         </div>
       </header>

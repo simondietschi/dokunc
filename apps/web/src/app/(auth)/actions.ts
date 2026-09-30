@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@dokunc/db";
-import { createSession, destroySession } from "@/lib/session";
+import { createSession } from "@/lib/session";
 import { safeNext } from "@/lib/safe-redirect";
 import { decideRegistration } from "@/lib/registration";
 import {
@@ -400,11 +400,6 @@ export async function loginAction(
     formData.get("next"),
     formData.get("remember") === "on",
   );
-}
-
-export async function logoutAction() {
-  await destroySession();
-  redirect("/login");
 }
 
 /**

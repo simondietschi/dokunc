@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowLeft, Download, LogOut, Monitor } from "lucide-react";
+import { ArrowLeft, Download, Monitor } from "lucide-react";
 import { prisma } from "@dokunc/db";
 import { isMailConfigured } from "@dokunc/mail";
 import { requireUser } from "@/lib/current-user";
@@ -8,8 +8,6 @@ import { oidcConfig } from "@/lib/oidc";
 import { passwordBlockedBySso } from "@/lib/sso-policy";
 import { countActiveRecoveryCodes } from "@/lib/totp-store";
 import { describeDevice } from "@/lib/user-agent";
-import { Button } from "@/components/ui/Button";
-import { ConfirmButton } from "@/components/ui/ConfirmButton";
 import {
   ProfileForm,
   PasswordForm,
@@ -17,7 +15,7 @@ import {
   DeleteAccountForm,
 } from "./AccountForms";
 import { TwoFactorForm } from "./TwoFactorForm";
-import { logoutEverywhereAction, revokeSessionAction } from "./actions";
+import { LogoutEverywhereForm, RevokeSessionForm } from "./SessionForms";
 
 export const metadata: Metadata = {
   title: "Konto",
@@ -142,31 +140,13 @@ export default async function AccountPage() {
                       </p>
                     </div>
                   </div>
-                  <form action={revokeSessionAction}>
-                    <input type="hidden" name="sessionId" value={s.id} />
-                    <ConfirmButton
-                      title="Gerät abmelden"
-                      message={
-                        current
-                          ? "Dieses Gerät abmelden? Du landest wieder auf der Anmeldeseite."
-                          : "Dieses Gerät abmelden?"
-                      }
-                      confirmLabel="Abmelden"
-                      className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
-                    >
-                      <LogOut className="h-4 w-4" />
-                    </ConfirmButton>
-                  </form>
+                  <RevokeSessionForm sessionId={s.id} current={current} />
                 </li>
               );
             })}
           </ul>
 
-          <form action={logoutEverywhereAction} className="mt-4">
-            <Button variant="secondary" type="submit">
-              Überall abmelden
-            </Button>
-          </form>
+          <LogoutEverywhereForm />
         </div>
 
         <div className="rounded-xl border border-line bg-surface p-5 shadow-soft">

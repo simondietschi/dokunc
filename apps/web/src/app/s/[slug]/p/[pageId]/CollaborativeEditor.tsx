@@ -97,6 +97,7 @@ import {
   guardLocalCopy,
 } from "@/lib/local-copy";
 import { ticketFolge } from "@/lib/ticket-folge";
+import { reportUnsentChanges, watchUnsentChanges } from "@/lib/unsent-changes";
 import {
   TOO_LARGE_DISCARD_LABEL,
   TOO_LARGE_NOTICE,
@@ -573,6 +574,26 @@ export function CollaborativeEditor({
       ydoc.destroy();
     };
   }, [collabUrl, pageId, restoreEpoch, userId]);
+
+  // Ungesendete Eingaben dieses Editors fuer die Rueckfrage beim
+  // Abmelden (components/space/LogoutForm): dort werden alle lokalen
+  // Kopien geloescht. Nur mit Schreibrecht; eine lesende Verbindung
+  // bestaetigt nichts. Updates vom Server und aus den lokalen Kopien
+  // zaehlen nicht.
+  useEffect(() => {
+    if (!conn || !editable) return;
+    const { ydoc, provider } = conn;
+    const beobachter = watchUnsentChanges(
+      ydoc,
+      provider,
+      (origin) => origin === provider || origin instanceof IndexeddbPersistence,
+    );
+    const abmelden = reportUnsentChanges(beobachter.pending);
+    return () => {
+      abmelden();
+      beobachter.stop();
+    };
+  }, [conn, editable]);
 
   const color = useMemo(() => caretColorFor(userId), [userId]);
 

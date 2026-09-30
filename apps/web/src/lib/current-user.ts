@@ -1,13 +1,16 @@
 import "server-only";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { prisma } from "@dokunc/db";
 import {
   getSessionClaims,
+  hasSessionCookie,
   isSessionIdle,
   sessionIdleLimitSeconds,
   touchSession,
   type SessionClaims,
 } from "./session";
+import { isDocumentRequest, sessionEndTarget } from "./session-end";
 
 /**
  * Prüft eine Sitzung anhand bereits gelesener Claims.
@@ -98,9 +101,22 @@ export async function getCurrentUser() {
   return loadSessionUser(await getSessionClaims());
 }
 
+/**
+ * Der angemeldete Nutzer, sonst Umleitung. Endete die Sitzung (das Cookie
+ * ist noch da), fuehrt eine Dokumentanfrage ueber /session-ended: dort
+ * loescht Clear-Site-Data die lokalen Kopien im Browser. Server Actions
+ * und RSC-Abrufe gehen nach /login (lib/session-end, sessionEndTarget).
+ */
 export async function requireUser() {
   const user = await getCurrentUser();
-  if (!user) redirect("/login");
+  if (!user) {
+    redirect(
+      sessionEndTarget({
+        document: isDocumentRequest(await headers()),
+        cookie: await hasSessionCookie(),
+      }),
+    );
+  }
   return user;
 }
 

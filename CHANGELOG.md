@@ -386,6 +386,27 @@ differently on an existing installation, and what to do about it.
   copies without an account. See `docs/admin/local-copies.md`. Nothing
   to do.
 
+- **Signing out and ended sessions:** signing out is now a form post to
+  `/logout`, and the first page opened after a session ended elsewhere
+  (idle timeout `SESSION_IDLE_TIMEOUT`, "Gerät abmelden" or "Überall
+  abmelden" on another device, a password change on another device)
+  passes through `/session-ended` on its way to the sign-in page;
+  "Gerät abmelden" for the own device, "Überall abmelden" and deleting
+  the account go there as well. If a reverse proxy in front of the app
+  only forwards listed paths, allow `/logout` and `/session-ended`;
+  otherwise nothing to do. Both delete all page copies in the browser,
+  and over HTTPS and on `localhost` they send `Clear-Site-Data: "cache",
+  "storage"`: the browser empties the site's cache and storage, which
+  also resets the theme and the table-of-contents setting. Over plain
+  HTTP browsers ignore the header; the sign-in page then deletes the page
+  copies itself, and files of opened pages can stay in the browser cache.
+  A session that expires together with its cookie (`JWT_EXPIRES_IN`)
+  leads straight to the sign-in page, which deletes the page copies
+  without the header. The sign-out button asks first if the editor in
+  that tab has changes the server has not confirmed; other tabs lose
+  such changes without asking. After a rollback to an earlier version,
+  signing out deletes no page copies.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -474,6 +495,10 @@ differently on an existing installation, and what to do about it.
   next person's account. Copies now belong to one account; copies of
   other accounts, copies of pages the server refuses and, without a valid
   session, all copies are deleted, and their number and age are limited.
+- Signing out, an ended session and deleting the account left the local
+  page copies, including protected pages, and the site's cached files in
+  the browser. Signing out and ended sessions now delete the page copies
+  and, over HTTPS, the site's storage and cache (`Clear-Site-Data`).
 
 ### Added
 
@@ -539,6 +564,8 @@ differently on an existing installation, and what to do about it.
   can open, used by wiki links in the editor.
 - `docs/admin/local-copies.md`: what the browser keeps of opened pages,
   and when it is deleted.
+- Routes `POST /logout` (sign out this device) and `GET /session-ended`
+  (finish an ended session in the browser).
 
 ### Changed
 
@@ -586,6 +613,12 @@ differently on an existing installation, and what to do about it.
   names the account in a successful answer (`userId`).
 - The "Offline" status tooltip no longer promises that changes made
   without a connection are sent later; editing needs a connection.
+- The sign-out button asks for confirmation when the editor in the same
+  tab has changes the server has not confirmed yet.
+- "Gerät abmelden" for the own device, "Überall abmelden" and deleting
+  the account reach the sign-in page through `/session-ended`.
+- The "Live" status tooltip says when the tab no longer has a local copy
+  of the page, for example after another tab deleted it.
 
 ### Removed
 

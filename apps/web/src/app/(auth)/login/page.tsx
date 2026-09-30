@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
 import { AuthForm } from "../AuthForm";
+import { LocalDataCleanup } from "@/components/auth/LocalDataCleanup";
+import { getCurrentUser } from "@/lib/current-user";
 import { oidcConfig } from "@/lib/oidc";
 import { setupStatus } from "@/lib/setup-token";
 import { singleParam, type SearchParams } from "@/lib/search-params";
@@ -18,8 +20,14 @@ export default async function LoginPage({
   const next = singleParam(query.next);
   const sso = singleParam(query.sso);
   const status = await setupStatus(await headers());
+  // Ohne gueltige Sitzung keine lokalen Kopien: die Anmeldeseite raeumt
+  // sie weg. Wer angemeldet ist und /login von Hand oeffnet, verliert
+  // nichts.
+  const angemeldet = (await getCurrentUser()) !== null;
   return (
-    <AuthForm
+    <>
+      {!angemeldet && <LocalDataCleanup />}
+      <AuthForm
       mode="login"
       next={next}
       sso={oidcConfig()?.label ?? null}
@@ -29,6 +37,7 @@ export default async function LoginPage({
           ? { tokenNoetig: status.tokenNoetig, tokenDatei: status.tokenDatei }
           : null
       }
-    />
+      />
+    </>
   );
 }

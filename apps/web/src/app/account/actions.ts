@@ -1,6 +1,5 @@
 "use server";
 
-import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
@@ -8,7 +7,6 @@ import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import {
   createSession,
-  destroySession,
   getSessionClaims,
 } from "@/lib/session";
 import { str } from "@/lib/form";
@@ -23,7 +21,21 @@ import { isSerializationConflict } from "@/lib/concurrent-change";
 import { verifyCurrentPassword } from "@/lib/reauth";
 import { userNameSchema } from "@/lib/user-name";
 
-export type AccountState = { error?: string; success?: string } | undefined;
+/**
+ * `sitzungBeendet`: die Action hat die eigene Sitzung beendet. Der
+ * Browser laedt dann /session-ended als Dokument (app/account/
+ * SessionForms); dort gehen Cookie, lokale Kopien und HTTP-Cache
+ * (Clear-Site-Data). Die Action selbst leitet nicht um: eine Umleitung
+ * auf den Route-Handler holte Next intern ab, und der Kopf erreichte den
+ * Browser nie. Sie loescht auch das Cookie nicht: ein geaendertes Cookie
+ * laesst Next die Seite gleich in der Antwort neu aufbauen, und die
+ * fuehrte als weiche Navigation nach /login, bevor der Browser
+ * /session-ended laden konnte. Die Sitzung ist in der Datenbank beendet;
+ * auch ohne JavaScript fuehrt die naechste Seite ueber /session-ended.
+ */
+export type AccountState =
+  | { error?: string; success?: string; sitzungBeendet?: true }
+  | undefined;
 
 export async function updateProfileAction(
   _prev: AccountState,
@@ -136,7 +148,10 @@ export async function updateNotificationPrefsAction(
   };
 }
 
-export async function logoutEverywhereAction() {
+export async function logoutEverywhereAction(
+  _prev: AccountState,
+  _form: FormData,
+): Promise<AccountState> {
   const user = await requireUser();
   await prisma.user.update({
     where: { id: user.id },
@@ -147,8 +162,9 @@ export async function logoutEverywhereAction() {
     data: { revokedAt: new Date() },
   });
   await audit({ action: "auth.sessions_revoked", actorId: user.id });
-  await destroySession();
-  redirect("/login");
+  // Das Cookie bleibt hier stehen (siehe AccountState): /session-ended
+  // loescht es zusammen mit den Daten der Seite im Browser.
+  return { sitzungBeendet: true };
 }
 
 /**
@@ -157,7 +173,10 @@ export async function logoutEverywhereAction() {
  * Anders als "überall abmelden" bleibt der Rest bestehen — genau dafür
  * gibt es die Session-Datensätze.
  */
-export async function revokeSessionAction(form: FormData) {
+export async function revokeSessionAction(
+  _prev: AccountState,
+  form: FormData,
+): Promise<AccountState> {
   const user = await requireUser();
   const sessionId = str(form, "sessionId");
   const { count } = await prisma.session.updateMany({
@@ -172,12 +191,11 @@ export async function revokeSessionAction(form: FormData) {
       targetId: sessionId,
     });
   }
-  // Die eigene Sitzung beendet: dann auch das Cookie wegräumen.
-  if (sessionId === user.sessionId) {
-    await destroySession();
-    redirect("/login");
-  }
+  // Die eigene Sitzung beendet (oben widerrufen): weiter über
+  // /session-ended, das das Cookie und die Daten im Browser löscht.
+  if (sessionId === user.sessionId) return { sitzungBeendet: true };
   revalidatePath("/account");
+  return undefined;
 }
 
 /**
@@ -255,6 +273,7 @@ export async function deleteAccountAction(
     actorId: null,
     metadata: { email: dbUser.email, bySelf: true },
   });
-  await destroySession();
-  redirect("/login");
+  // Mit dem Konto sind seine Sitzungen weg; das Cookie loescht
+  // /session-ended.
+  return { sitzungBeendet: true };
 }

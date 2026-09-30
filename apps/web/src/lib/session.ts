@@ -140,8 +140,23 @@ export async function destroySession() {
         /* Cookie wird trotzdem gelöscht */
       });
   }
+  await dropSessionCookie();
+}
+
+/** Löscht nur das Sitzungs-Cookie; der Datensatz bleibt, wie er ist. */
+export async function dropSessionCookie() {
   const store = await cookies();
   store.delete(COOKIE);
+}
+
+/**
+ * Trägt der Browser ein Sitzungs-Cookie, gültig oder nicht? Dann endete
+ * eine Sitzung (Untätigkeit, Widerruf, "überall abmelden"), und die
+ * nächste Seite führt über /session-ended (lib/session-end).
+ */
+export async function hasSessionCookie(): Promise<boolean> {
+  const store = await cookies();
+  return store.has(COOKIE);
 }
 
 /** Verifizierte Claims (sub + Token-Version + Session) oder null. */

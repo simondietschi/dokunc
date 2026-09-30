@@ -44,6 +44,9 @@ The editor opens only its own account's copy of a page.
 
 | Event | What is deleted |
 |---|---|
+| Signing out (`POST /logout`) | All copies, and over HTTPS the site's storage and cache |
+| The first page opened after the session ended (idle timeout, "Gerät abmelden" or "Überall abmelden", a password change on another device, account deleted), through `GET /session-ended` | All copies, and over HTTPS the site's storage and cache |
+| The sign-in page is shown without a valid session | All copies |
 | The server confirms the account in an editor tab (every connection) | Copies of other accounts and other restore epochs, and all copies made by earlier versions without an account |
 | The server refuses a page for good: access removed, page in the trash or deleted | The copy of that page |
 | The server answers that the session is no longer valid | All copies in the browser |
@@ -56,15 +59,46 @@ another tab may have them open; an open editor refreshes its entry every
 five minutes. A network error, a rate limit, a server error or a refused
 origin (`APP_URL` wrong) deletes nothing.
 
+## Signing out and ended sessions
+
+Without a valid session there are no local copies. Three things enforce
+that:
+
+- `POST /logout` and `GET /session-ended` answer with
+  `Clear-Site-Data: "cache", "storage"`. The browser then deletes the site's
+  IndexedDB and `localStorage` (page copies, theme, table-of-contents
+  setting) and its HTTP cache (including images and files of protected
+  pages). Browsers apply the header only over HTTPS and on `localhost`, and
+  the app sends it only for a page navigation from the site itself or typed
+  in (`Sec-Fetch-Dest: document`, `Sec-Fetch-Site: same-origin` or `none`).
+- The sign-in page deletes all page copies itself when nobody is signed
+  in. This also works over plain HTTP, where the browser cache keeps files
+  of pages that were open.
+- The editor deletes all copies when the server answers that the session
+  is no longer valid.
+
+A reverse proxy that only forwards listed paths must allow `/logout` and
+`/session-ended`. `/logout` accepts only posts from the app's own origin
+(`APP_URL`); otherwise it shows a page that names `APP_URL` and the session
+stays. `/session-ended` changes nothing for a signed-in browser.
+
+The sign-out button asks for confirmation when the editor in the same tab
+has changes the server has not confirmed. Other tabs of the same browser
+lose such changes without a question, and an idle timeout cannot ask.
+
+A session that expires together with its cookie (`JWT_EXPIRES_IN`) sends no
+cookie, so the browser goes straight to the sign-in page; there the page
+copies are deleted without `Clear-Site-Data`.
+
 ## Open tabs
 
-If another tab deletes a copy that is open (limits, another account), the
-editor stays connected and keeps working without a local copy. Its "Offline"
-tooltip then says that changes not yet sent live only in the tab and are lost
-when the tab is closed or reloaded.
+If another tab deletes a copy that is open (limits, another account, signing
+out), the editor stays connected and keeps working without a local copy. Its
+"Live" and "Offline" tooltips then say that changes not yet sent live only in
+the tab and are lost when the tab is closed or reloaded.
 
 ## Rolling back
 
 An earlier version does not know the new names. It leaves the copies made by
-this version in the browsers and creates copies without an account again. The
-next update deletes those.
+this version in the browsers, also when someone signs out, and creates copies
+without an account again. The next update deletes those.

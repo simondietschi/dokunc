@@ -31,7 +31,7 @@ import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { Logo } from "@/components/ui/Logo";
 import type { TemplateOptions } from "@/lib/template-options";
 import { NewPageButton } from "@/components/space/NewPageButton";
-import { logoutAction } from "@/app/(auth)/actions";
+import { LogoutForm } from "./LogoutForm";
 import { PaletteButton } from "@/components/CommandPalette";
 import { pageTitle } from "@/lib/page-title";
 import { bellLabel } from "@/lib/unread-label";
@@ -255,11 +255,11 @@ export function Sidebar({
             {userName}
           </span>
         </div>
-        <form action={logoutAction}>
+        <LogoutForm>
           <button className="rounded-md px-2 py-1 text-xs text-faint transition-colors hover:bg-subtle hover:text-ink">
             Abmelden
           </button>
-        </form>
+        </LogoutForm>
       </div>
       </aside>
     </>

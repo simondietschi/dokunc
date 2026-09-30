@@ -18,8 +18,12 @@ import {
  * - Meldet sich im selben Browser ein anderes Konto an, bricht ein
  *   offener Tab beim naechsten Verbinden ab: nichts, was dort noch nicht
  *   beim Server war, kommt unter dem anderen Konto an.
- * - Loescht ein anderer Tab die Kopie eines offenen Editors (Kuerzen),
- *   bleibt dieser verbunden, und was dort getippt wird, kommt an.
+ * - Loescht ein anderer Tab die Kopie eines offenen Editors (Kuerzen,
+ *   Abmelden), bleibt dieser verbunden, und was dort getippt wird, kommt an.
+ * - Abmelden, eine abgelaufene Sitzung und "Gerät abmelden" loeschen alle
+ *   Kopien und die Daten der Seite im Browser (Clear-Site-Data); ohne den
+ *   Kopf raeumt die Anmeldeseite die Kopien selbst. Eine Marke in
+ *   localStorage zeigt, ob der Kopf gewirkt hat: sie loescht nur er.
  *
  * Eigener Space (per SQL, erstes Konto als OWNER), weitere Konten als
  * MEMBER und Seiten per SQL; alles wird am Ende entfernt.
@@ -250,4 +254,164 @@ test("Kuerzen in einem anderen Tab legt den offenen Editor nicht lahm", async ({
     .poll(() => textContent(p1), { timeout: 30_000 })
     .toContain("nach dem Kuerzen");
   await expect(page.getByText("Live", { exact: true })).toBeVisible();
+  await sagtOhneKopie(page);
+});
+
+/**
+ * Der Editor weiss, dass seine Kopie weg ist: der Status sagt, dass
+ * Ungesendetes nur noch im Tab liegt.
+ */
+async function sagtOhneKopie(page: Page) {
+  await expect(page.getByRole("status").filter({ hasText: /^Live$/ })).toHaveAttribute(
+    "title",
+    /keine lokale Kopie/,
+  );
+}
+
+const MARKE = "e2e-marke";
+
+async function setzeMarke(page: Page) {
+  await page.evaluate((m) => localStorage.setItem(m, "1"), MARKE);
+}
+
+async function marke(page: Page): Promise<string | null> {
+  return page.evaluate((m) => localStorage.getItem(m), MARKE);
+}
+
+/** Alle lokalen Kopien von dokunc in diesem Browserkontext. */
+async function alleKopien(page: Page): Promise<string[]> {
+  return (await idbNames(page)).filter((n) => n.startsWith("dokunc:"));
+}
+
+/** Seite oeffnen, tippen und warten, bis der Server es hat (keine Rueckfrage beim Abmelden). */
+async function mitKopie(page: Page, k: Konto, pageId: string, text: string) {
+  await oeffne(page, pageId);
+  await tippeAmEnde(page, text);
+  await expect.poll(() => textContent(pageId), { timeout: 30_000 }).toContain(text);
+  await kopieVon(page, k.id, pageId);
+}
+
+async function widerrufeSitzungen(userId: string) {
+  await mitDatenbank((db) =>
+    db.query(`UPDATE "Session" SET "revokedAt" = now() WHERE "userId" = $1 AND "revokedAt" IS NULL`, [
+      userId,
+    ]),
+  );
+}
+
+test("Abmelden loescht die Kopien, ein zweites Konto sieht keine alte Kopie", async ({ page }) => {
+  const a = await neuesMitglied("Abmelden A");
+  const b = await neuesMitglied("Abmelden B");
+  const p = await seite(`Abmelden ${ZEIT}`, "Gemeinsame Seite");
+  await login(page, a);
+  await mitKopie(page, a, p, " von A");
+  await setzeMarke(page);
+
+  const abmeldung = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === "/logout" && r.request().method() === "POST",
+  );
+  const start = Date.now();
+  await page.locator("aside").getByRole("button", { name: "Abmelden" }).click();
+  expect((await (await abmeldung).allHeaders())["clear-site-data"]).toBe('"cache", "storage"');
+  await page.waitForURL("**/login");
+  // Clear-Site-Data "cache" leert auch die Skripte der App; die Zeit bis
+  // zur Anmeldeseite steht im Testlauf.
+  console.log(`Abmelden bis zur Anmeldeseite: ${Date.now() - start} ms`);
+  await expect.poll(() => alleKopien(page), { timeout: 15_000 }).toEqual([]);
+  expect(await marke(page)).toBeNull();
+
+  await login(page, b);
+  await oeffne(page, p);
+  await kopieVon(page, b.id, p);
+  const namen = await alleKopien(page);
+  expect(namen.length).toBeGreaterThan(0);
+  expect(namen.every((n) => n.startsWith(`dokunc:v2:${b.id}:`))).toBe(true);
+});
+
+test("Ohne Clear-Site-Data raeumt die Anmeldeseite die Kopien", async ({ page }) => {
+  const a = await neuesMitglied("Abmelden ohne Kopf");
+  const p = await seite(`Ohne Kopf ${ZEIT}`, "Seite ohne Kopf");
+  // Wie ueber reines HTTP: der Browser bekommt den Kopf nicht.
+  await page.route("**/logout", async (route) => {
+    const antwort = await route.fetch({ maxRedirects: 0 });
+    const koepfe = { ...antwort.headers() };
+    delete koepfe["clear-site-data"];
+    await route.fulfill({ response: antwort, headers: koepfe });
+  });
+  await login(page, a);
+  await mitKopie(page, a, p, " ohne Kopf");
+  await setzeMarke(page);
+  await page.locator("aside").getByRole("button", { name: "Abmelden" }).click();
+  await page.waitForURL("**/login");
+  await expect.poll(() => alleKopien(page), { timeout: 15_000 }).toEqual([]);
+  // Die Marke bleibt: geraeumt hat die Seite, nicht der Kopf.
+  expect(await marke(page)).toBe("1");
+});
+
+test("Abgelaufene Sitzung loescht die Kopien ueber /session-ended", async ({ page }) => {
+  const a = await neuesMitglied("Abgelaufen");
+  const p = await seite(`Abgelaufen ${ZEIT}`, "Seite mit Ablauf");
+  await login(page, a);
+  await mitKopie(page, a, p, " vor dem Ablauf");
+  await setzeMarke(page);
+
+  // Wie Untaetigkeit, "Gerät abmelden" von einem anderen Geraet oder
+  // "Überall abmelden": die Sitzung ist in der Datenbank beendet, das
+  // Cookie noch da.
+  await widerrufeSitzungen(a.id);
+  const ende = page.waitForResponse((r) => new URL(r.url()).pathname === "/session-ended");
+  await page.goto(`/s/${space.slug}/p/${p}`);
+  expect((await (await ende).allHeaders())["clear-site-data"]).toBe('"cache", "storage"');
+  await page.waitForURL("**/login");
+  await expect.poll(() => alleKopien(page), { timeout: 15_000 }).toEqual([]);
+  expect(await marke(page)).toBeNull();
+});
+
+test("Dieses Geraet auf der Kontoseite abmelden leert den Speicher", async ({ page }) => {
+  const a = await neuesMitglied("Geraet abmelden");
+  const p = await seite(`Geraet ${ZEIT}`, "Seite vor dem Geraet");
+  await login(page, a);
+  await mitKopie(page, a, p, " vor dem Abmelden");
+  await setzeMarke(page);
+
+  await page.goto("/account");
+  const zeile = page.locator("li").filter({ hasText: "dieses Gerät" });
+  await zeile.getByTitle("Gerät abmelden").click();
+  const ende = page.waitForResponse((r) => new URL(r.url()).pathname === "/session-ended");
+  await page.getByRole("dialog").getByRole("button", { name: "Abmelden", exact: true }).click();
+  expect((await (await ende).allHeaders())["clear-site-data"]).toBe('"cache", "storage"');
+  await page.waitForURL("**/login");
+  await expect.poll(() => alleKopien(page), { timeout: 15_000 }).toEqual([]);
+  expect(await marke(page)).toBeNull();
+});
+
+test("Abmelden und neu anmelden in einem anderen Tab legt den offenen Editor nicht lahm", async ({
+  page,
+}) => {
+  test.setTimeout(180_000);
+  const x = await neuesMitglied("Zwei Tabs, abmelden");
+  const p1 = await seite(`Offen beim Abmelden ${ZEIT}`, "Tab A");
+  await login(page, x);
+  await oeffne(page, p1);
+  const kopie1 = await kopieVon(page, x.id, p1);
+
+  const tab2 = await zweiterTab(page.context());
+  await tab2.goto("/spaces");
+  await tab2.getByRole("button", { name: "Abmelden" }).click();
+  await tab2.waitForURL("**/login");
+  await expect
+    .poll(async () => (await idbNames(tab2)).includes(kopie1), { timeout: 15_000 })
+    .toBe(false);
+  await login(tab2, x);
+
+  // Die alte Verbindung des ersten Tabs bleibt bis zur naechsten
+  // Rechtepruefung des Collab-Servers (hoechstens eine Minute); faellt
+  // sie hierher, verbindet der Tab mit der neuen Sitzung neu.
+  await page.bringToFront();
+  await expect(page.getByText("Live", { exact: true })).toBeVisible({ timeout: 30_000 });
+  await tippeAmEnde(page, " nach dem Abmelden");
+  await expect
+    .poll(() => textContent(p1), { timeout: 30_000 })
+    .toContain("nach dem Abmelden");
+  await sagtOhneKopie(page);
 });

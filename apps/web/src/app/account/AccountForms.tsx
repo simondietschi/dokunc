@@ -11,6 +11,7 @@ import {
 } from "./actions";
 import { Button } from "@/components/ui/Button";
 import { Input, Field } from "@/components/ui/Input";
+import { useSessionEndedNavigation } from "./SessionForms";
 
 type EmailNotificationMode = "INSTANT" | "DAILY" | "OFF";
 
@@ -176,6 +177,8 @@ export function DeleteAccountForm() {
     undefined,
   );
   const [armed, setArmed] = useState(false);
+  // Nach dem Löschen: /session-ended als Dokument (Clear-Site-Data).
+  useSessionEndedNavigation(state);
 
   return (
     <div className="rounded-xl border border-danger/30 bg-surface p-5 shadow-soft">

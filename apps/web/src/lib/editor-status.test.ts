@@ -347,8 +347,11 @@ describe("statusLabel()", () => {
     expect(text).toBe("Offline");
     expect(title).toMatch(/keine lokale Kopie/);
     expect(title).not.toMatch(/bis zur Abmeldung auf diesem Gerät/);
-    // Fuer andere Status aendert die Angabe nichts.
-    expect(statusLabel("connected", { ohneKopie: true })).toEqual({ text: "Live" });
+    // Verbunden sagt es der Tooltip ebenso; ohne die Angabe bleibt "Live" ohne.
+    expect(statusLabel("connected", { ohneKopie: true }).title).toMatch(/keine lokale Kopie/);
+    expect(statusLabel("connected")).toEqual({ text: "Live" });
+    // Fuer eine Ablehnung aendert die Angabe nichts.
+    expect(statusLabel("unauthorized", { ohneKopie: true })).toEqual(statusLabel("unauthorized"));
   });
 
   it("bittet nach einem Restore um Neuladen", () => {

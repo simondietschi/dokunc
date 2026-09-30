@@ -333,10 +333,10 @@ describe("Loeschen mit Pruefung in der Transaktion", () => {
       select: { id: true, email: true, name: true, isAdmin: true },
     });
     mocks.actor = sitzung(weg);
-    const ziel = await umleitung(
-      deleteAccountAction(undefined, formular({ password: PASSWORT })),
-    );
-    expect(ziel).toBe("/login");
+    // Keine Umleitung mehr: der Browser laedt danach /session-ended
+    // (sitzungsende.test.ts).
+    const ergebnis = await deleteAccountAction(undefined, formular({ password: PASSWORT }));
+    expect(ergebnis).toEqual({ sitzungBeendet: true });
     expect(await prisma.user.count({ where: { id: weg.id } })).toBe(0);
   });
 });

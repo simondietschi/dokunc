@@ -134,7 +134,6 @@ export const ERWARTUNG: Record<string, Eintrag> = {
     grund:
       "Anmeldung ohne Space-Rolle: Passwortweg für Konten mit SSO-Bindung und den Schalter SSO_ENFORCEMENT",
   },
-  "action:app/(auth)/actions.ts#logoutAction": OFFEN,
   "action:app/(auth)/actions.ts#registerAction": {
     stand: "extern",
     tests: [
@@ -158,8 +157,18 @@ export const ERWARTUNG: Record<string, Eintrag> = {
   },
   "action:app/account/actions.ts#changePasswordAction": PASSWORT_BESTAETIGEN,
   "action:app/account/actions.ts#deleteAccountAction": PASSWORT_BESTAETIGEN,
-  "action:app/account/actions.ts#logoutEverywhereAction": OFFEN,
-  "action:app/account/actions.ts#revokeSessionAction": OFFEN,
+  "action:app/account/actions.ts#logoutEverywhereAction": {
+    stand: "extern",
+    tests: ["apps/web/test/integration/sitzungsende.test.ts"],
+    grund:
+      "Nur die eigenen Sitzungen: widerruft alle Sitzungen der angemeldeten Person und keine andere",
+  },
+  "action:app/account/actions.ts#revokeSessionAction": {
+    stand: "extern",
+    tests: ["apps/web/test/integration/sitzungsende.test.ts"],
+    grund:
+      "Nur eigene Sitzungen: die Sitzung einer anderen Person bleibt, die eigene endet mit sitzungBeendet",
+  },
   "action:app/account/actions.ts#updateNotificationPrefsAction": OFFEN,
   "action:app/account/actions.ts#updateProfileAction": OFFEN,
   "action:app/account/totp-actions.ts#cancelTotpSetupAction": OFFEN,
@@ -490,6 +499,17 @@ export const ERWARTUNG: Record<string, Eintrag> = {
   },
   "action:app/spaces/actions.ts#createSpaceAction": OFFEN,
   "action:app/spaces/actions.ts#joinSpaceAction": OFFEN,
+  "route:app/(auth)/logout/route.ts#POST": {
+    stand: "extern",
+    tests: ["apps/web/src/app/(auth)/logout/route.test.ts", "e2e/local-copies.spec.ts"],
+    grund:
+      "Abmelden ohne Space-Rolle: nur von der eigenen Herkunft, beendet nur die Sitzung dieses Geräts",
+  },
+  "route:app/(auth)/session-ended/route.ts#GET": {
+    stand: "oeffentlich",
+    grund:
+      "Schliesst eine beendete Sitzung im Browser ab; mit gültiger Sitzung nur eine Weiterleitung, ohne Sitzung löscht sie nur Daten dieses Browsers",
+  },
   "route:app/api/account/export/route.ts#GET": OFFEN,
   "route:app/api/ai/assist/route.ts#POST": OFFEN,
   "route:app/api/auth/oidc/callback/route.ts#GET": {
@@ -567,9 +587,6 @@ export const ERWARTUNG: Record<string, Eintrag> = {
  * "extern"/"oeffentlich"); wer einen Eintrag prüft, streicht ihn hier.
  */
 export const OFFEN_BESTAND: readonly string[] = [
-  "action:app/(auth)/actions.ts#logoutAction",
-  "action:app/account/actions.ts#logoutEverywhereAction",
-  "action:app/account/actions.ts#revokeSessionAction",
   "action:app/account/actions.ts#updateNotificationPrefsAction",
   "action:app/account/actions.ts#updateProfileAction",
   "action:app/account/totp-actions.ts#cancelTotpSetupAction",

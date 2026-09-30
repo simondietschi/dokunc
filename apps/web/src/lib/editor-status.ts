@@ -209,7 +209,13 @@ export function statusLabel(
 } {
   switch (status) {
     case "connected":
-      return { text: "Live" };
+      return o.ohneKopie
+        ? {
+            text: "Live",
+            title:
+              "Verbunden. Dieser Tab hat keine lokale Kopie der Seite: Was bei einem Verbindungsabbruch noch nicht beim Server angekommen ist, geht verloren, wenn der Tab geschlossen oder neu geladen wird.",
+          }
+        : { text: "Live" };
     case "unauthorized":
       return {
         text: "Kein Zugriff",
