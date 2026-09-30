@@ -107,7 +107,7 @@ Change `packages/db/prisma/schema.prisma` only together with a migration (`pnpm 
     psql -h localhost -U dokunc -d dokunc -c 'CREATE DATABASE dokunc_schatten'
     SHADOW_DATABASE_URL=postgresql://dokunc:dokunc@localhost:5432/dokunc_schatten pnpm --filter @dokunc/db migrate:check
 
-A migration that drops a column or a table deletes its content on every installation. Prisma writes `DROP COLUMN` plus `ADD COLUMN` for a renamed field; write such a migration by hand with `RENAME COLUMN` instead. If the loss is intended, put the line `-- Datenverlust gewollt: <reason>` (a reason of at least ten characters) into the comment block directly above the statement, without a blank line in between, and add an upgrade note. `apps/web/src/migrationen.test.ts` rejects every `DROP COLUMN` and `DROP TABLE` without it.
+A migration that drops a column or a table deletes its content on every installation. Prisma writes `DROP COLUMN` plus `ADD COLUMN` for a renamed field; write such a migration by hand with `RENAME COLUMN` instead. If the loss is intended, put the line `-- Datenverlust gewollt: <reason>` (a reason of at least ten characters) into the comment block directly above the statement, without a blank line in between, and add an upgrade note. `apps/web/src/migrationen.test.ts` rejects every `DROP COLUMN` and `DROP TABLE` without it, and also a column dropped in `ALTER TABLE` without the word `COLUMN` (`DROP "x"`).
 
 ## What is not rewritten
 

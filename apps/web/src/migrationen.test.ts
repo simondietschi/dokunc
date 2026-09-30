@@ -34,7 +34,17 @@ export type Verstoss = { zeile: number; art: "DROP COLUMN" | "DROP TABLE" };
 type Anweisung = { code: string; zeilen: number[]; markiert: boolean };
 
 /**
- * Anweisungen mit DROP COLUMN oder DROP TABLE ohne Markierung.
+ * In ALTER TABLE ist COLUMN optional: `DROP "x"` und `DROP IF EXISTS x`
+ * entfernen eine Spalte samt Inhalt. Kein Spaltenverlust sind DROP
+ * CONSTRAINT und die Aenderungen einer Spalte (ALTER COLUMN x DROP
+ * DEFAULT, NOT NULL, EXPRESSION, IDENTITY).
+ */
+const ALTER_TABLE = /^\s*ALTER\s+TABLE\b/i;
+const DROP_OHNE_COLUMN = /\bDROP\s+(?!(?:COLUMN|CONSTRAINT|DEFAULT|NOT|EXPRESSION|IDENTITY)\b)/i;
+
+/**
+ * Anweisungen mit DROP COLUMN oder DROP TABLE ohne Markierung; in ALTER
+ * TABLE auch DROP ohne das Wort COLUMN.
  *
  * Eine Anweisung reicht bis zum naechsten `;`, auch ueber mehrere Zeilen.
  * `--`-Kommentare zaehlen nicht als Code. Die Markierung muss im
@@ -81,12 +91,18 @@ export function dropOhneMarkierung(sql: string): Verstoss[] {
   return verstoesse;
 
   function pruefe(a: Anweisung) {
-    const treffer = /\bDROP\s+(COLUMN|TABLE)\b/i.exec(a.code);
-    if (!treffer || a.markiert) return;
+    if (a.markiert) return;
+    const treffer = [
+      /\bDROP\s+(COLUMN|TABLE)\b/i.exec(a.code),
+      ALTER_TABLE.test(a.code) ? DROP_OHNE_COLUMN.exec(a.code) : null,
+    ]
+      .filter((t) => t !== null)
+      .sort((x, y) => x.index - y.index)[0];
+    if (!treffer) return;
     const zeilenVorher = a.code.slice(0, treffer.index).split("\n").length - 1;
     verstoesse.push({
       zeile: a.zeilen[zeilenVorher] ?? a.zeilen[0],
-      art: treffer[1].toUpperCase() === "COLUMN" ? "DROP COLUMN" : "DROP TABLE",
+      art: treffer[1]?.toUpperCase() === "TABLE" ? "DROP TABLE" : "DROP COLUMN",
     });
   }
 }
@@ -150,6 +166,25 @@ describe("dropOhneMarkierung", () => {
       [MARKE, 'ALTER TABLE "A" DROP COLUMN "c"; DROP TABLE "B";'],
       [{ zeile: 2, art: "DROP TABLE" }],
     ],
+    // In ALTER TABLE ist COLUMN optional: DROP "x" entfernt die Spalte.
+    ["DROP ohne COLUMN", ["-- AlterTable", 'ALTER TABLE "Page"', '  DROP "x";'], [{ zeile: 3, art: "DROP COLUMN" }]],
+    ["DROP IF EXISTS ohne COLUMN", ['ALTER TABLE "Page" DROP IF EXISTS "x";'], [{ zeile: 1, art: "DROP COLUMN" }]],
+    [
+      "DROP ohne COLUMN nach einer anderen Aenderung",
+      ['ALTER TABLE "Page" ADD COLUMN "y" TEXT,', '  DROP x;'],
+      [{ zeile: 2, art: "DROP COLUMN" }],
+    ],
+    ["DROP ohne COLUMN mit Markierung", [MARKE, 'ALTER TABLE "Page" DROP "x";'], []],
+    [
+      "DROP DEFAULT, NOT NULL, EXPRESSION und IDENTITY einer Spalte",
+      [
+        'ALTER TABLE "Page" ALTER COLUMN "x" DROP DEFAULT,',
+        '  ALTER COLUMN "y" DROP NOT NULL, ALTER "z" DROP EXPRESSION IF EXISTS;',
+        'ALTER TABLE "A" ALTER COLUMN "id" DROP IDENTITY;',
+      ],
+      [],
+    ],
+    ["DROP ohne COLUMN ausserhalb von ALTER TABLE", ['DROP TYPE "Rolle";', 'DROP SEQUENCE "s";'], []],
   ] as const)("%s", (_fall, zeilen, erwartet) => {
     expect(dropOhneMarkierung(zeilen.join("\n"))).toEqual(erwartet);
   });
