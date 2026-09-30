@@ -96,7 +96,11 @@ describe("checkConfigAtStartup", () => {
       [30, "Konfiguration geprueft"],
     ]);
     expect(zeilen[0].variable).toBe("HINWEIS");
-    expect(zeilen[1].config).toEqual({ LOG_LEVEL: "debug", MAIL_FROM_ADDRESS: null, HINWEIS: "ja" });
+    expect(zeilen[1].config).toEqual({
+      LOG_LEVEL: "debug",
+      MAIL_FROM_ADDRESS: "dokunc <no-reply@localhost>",
+      HINWEIS: "ja",
+    });
     // Leer zaehlt nicht als gesetzt.
     expect(zeilen[1].unchecked).toEqual(["APP_SECRET", "DATABASE_URL", "SMTP_PASSWORD"]);
     const text = JSON.stringify(zeilen);

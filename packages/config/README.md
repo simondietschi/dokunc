@@ -38,12 +38,16 @@ collaboration server in `apps/collab/src/config-variablen.ts`.
    Messages are German like the other log messages and name the variable,
    the allowed values and (unless the variable is secret) the value.
 2. Declare the variable with `defineVariable({ name, dienste, beschreibung,
-   vorgabe, geheim, parse, querpruefung })` in the list that matches the
-   services reading it (see above). Every list is sorted by `name`.
+   vorgabe, geheim, parse, querpruefung, anzeige })` in the list that
+   matches the services reading it (see above). Every list is sorted by
+   `name`.
    Warnings about a single value come from the parser (`hinweise`);
    checks against other variables go into `querpruefung`, with the names
    they read in `liest`. A cross-check is skipped only when one of those
-   variables has an error of its own.
+   variables has an error of its own. When the startup log should show
+   another value than the parsed one (for example a default derived from
+   another variable), add `anzeige`; if it throws, the log shows
+   "(Anzeige fehlgeschlagen)" for that variable.
 3. Add a commented block to `.env.example` (German, like the rest of the
    file). For a variable of the web app or the collaboration server, also
    add `NAME: ${NAME:-}` under `services.app.environment` in

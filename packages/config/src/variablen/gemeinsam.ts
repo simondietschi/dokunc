@@ -1,5 +1,15 @@
 import { parseLogLevel } from "../log";
-import { defineVariable, type Variable } from "../variable";
+import { defineVariable, type Umgebung, type Variable } from "../variable";
+
+/**
+ * Der Absender ohne MAIL_FROM_ADDRESS, wie ihn fromAddress() in
+ * packages/mail/src/index.ts bildet: Host aus APP_URL. Wirft bei
+ * unbrauchbarer APP_URL wie dort.
+ */
+function abgeleiteterAbsender(env: Umgebung): string {
+  const appUrl = (env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
+  return `dokunc <no-reply@${new URL(appUrl).hostname}>`;
+}
 
 /**
  * Variablen, die die Web-App und der Collab-Server beide lesen.
@@ -24,5 +34,8 @@ export const GEMEINSAME_VARIABLEN: readonly Variable[] = [
     // (packages/mail, fromAddress). Hier steht er, damit das Startlog
     // den wirksamen Absender zeigt.
     parse: (roh) => ({ ok: true, wert: roh ?? null }),
+    // Das Startlog zeigt den Absender, den die Mails tragen, auch ohne
+    // Wert; bei unbrauchbarer APP_URL "(Anzeige fehlgeschlagen)".
+    anzeige: (wert, env) => wert ?? abgeleiteterAbsender(env),
   }),
 ];
