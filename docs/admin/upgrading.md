@@ -67,10 +67,12 @@ servers behind a load balancer:
   never pays. When editors of one page are connected to different servers,
   the servers save that page in turn, so almost every save finds a state
   another server saved. It then reads that whole state from the database
-  (up to `COLLAB_MAX_DOC_MB`, 16 MB by default), decodes it and checks it
-  against its editor schema, even though Redis has usually synchronised
-  the content already. Each server runs at most four such saves at a
-  time, and each holds the decoded state in memory while it runs.
+  (roughly `COLLAB_MAX_DOC_MB` at most, 16 MB by default: the change that
+  crosses the limit is still saved, and `0` removes the limit), decodes it
+  and checks it against its editor schema, even though Redis has usually
+  synchronised the content already. Each server runs at most four such
+  saves at a time, and each holds the decoded state in memory while it
+  runs.
 - If a collaboration server finds block types or marks its editor does not
   know in the state another server saved, it checks the recorded editor
   version. A newer server records its version before it accepts editors, so
