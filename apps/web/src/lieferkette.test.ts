@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,6 +29,7 @@ type Obj = Record<string, unknown>;
 
 type Schritt = {
   name?: string;
+  id?: string;
   uses?: string;
   run?: string;
   if?: unknown;
@@ -42,6 +44,7 @@ type Job = {
   "continue-on-error"?: unknown;
   "timeout-minutes"?: number;
   permissions?: unknown;
+  env?: Record<string, unknown>;
   services?: Record<string, { image?: string }>;
   strategy?: { matrix?: Record<string, unknown> };
   steps?: Schritt[];
@@ -160,6 +163,10 @@ function updateKette(): string[] {
 
 function schritte(wf: Workflow): Schritt[] {
   return Object.values(wf.jobs).flatMap((j) => j.steps ?? []);
+}
+
+function git(...args: string[]) {
+  return spawnSync("git", args, { cwd: ROOT, encoding: "utf8" });
 }
 
 function runZeilen(schritt: Schritt | undefined): string[] {
@@ -443,6 +450,72 @@ describe("Lieferkette", () => {
         }
       }
     }
+  });
+
+  it("CI: gitleaks prueft die Historie des geprueften Stands mit fester Version und Pruefsumme", () => {
+    const job = ci().jobs.geheimnisse;
+    expect(job, "Job geheimnisse fehlt").toBeDefined();
+    // Das Gate darf nicht still uebersprungen oder gruen gemacht werden
+    expect(job?.if).toBeUndefined();
+    expect(job?.["continue-on-error"]).toBeUndefined();
+    const schritte = job?.steps ?? [];
+    for (const s of schritte) expect(s["continue-on-error"], s.name).toBeUndefined();
+    expect(String(job?.env?.GITLEAKS_VERSION)).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(String(job?.env?.GITLEAKS_SHA256)).toMatch(/^[0-9a-f]{64}$/);
+
+    // Ohne ganze Historie saehe gitleaks nur den letzten Commit
+    const checkout = schritte.find((s) => s.uses?.startsWith("actions/checkout@"));
+    expect(checkout?.with?.["fetch-depth"]).toBe(0);
+    expect(checkout?.with?.["persist-credentials"]).toBe(false);
+
+    // Erst die Pruefsumme, dann entpacken und ausfuehren
+    const installation = schritte.find((s) => (s.run ?? "").includes("sha256sum"));
+    const text = installation?.run ?? "";
+    expect(text).toContain("${GITLEAKS_VERSION}");
+    expect(text).toContain("sha256sum -c");
+    expect(text.indexOf("tar ")).toBeGreaterThan(text.indexOf("sha256sum -c"));
+
+    const pruefung = schritte.find((s) => /\/gitleaks"? git /.test(s.run ?? ""));
+    expect(pruefung, "Pruefschritt fehlt").toBeDefined();
+    expect(pruefung?.if).toBeUndefined();
+    const befehl = runZeilen(pruefung).join(" ");
+    expect(befehl).toContain(" git . ");
+    // Ein Fund laesst den Lauf scheitern
+    expect(befehl).toMatch(/--exit-code 1(\s|$)/);
+    // Fundstelle und Fingerabdruck im Log, der Wert geschwaerzt
+    expect(befehl).toMatch(/ (--verbose|-v)(\s|$)/);
+    expect(befehl).toMatch(/ --redact(\s|$)/);
+    // Nur die Historie von HEAD: ohne --log-opts nimmt gitleaks
+    // "git log --all", und fetch-depth 0 holt jeden Branch. Ein Fund in
+    // einem fremden Branch machte sonst jeden Lauf rot.
+    expect(befehl).toContain(' --log-opts="--full-history HEAD"');
+  });
+
+  it("gitleaks: Ausnahmen eng und begruendet", () => {
+    const zeilen = lesen(".gitleaksignore").split("\n");
+    const flach = git("rev-parse", "--is-shallow-repository").stdout.trim() === "true";
+    let eintraege = 0;
+    zeilen.forEach((z, i) => {
+      if (z.trim() === "" || z.startsWith("#")) return;
+      eintraege++;
+      // Fingerabdruck, wie gitleaks ihn ausgibt: mit Commit (nur dieser
+      // Fund) oder ohne (dieselbe Stelle in jedem Commit, etwa fuer einen
+      // Pull-Request, der per Squash oder Rebase neue Commits bekommt)
+      const m = /^(?:([0-9a-f]{40}):)?([^:\s]+):([a-z0-9-]+):(\d+)$/.exec(z);
+      expect(m, `Zeile ${i + 1}: ${z}`).not.toBeNull();
+      // Direkt darueber eine Begruendung oder ein weiterer Fingerabdruck
+      // desselben Absatzes
+      expect(zeilen[i - 1] ?? "", `Zeile ${i + 1} ohne Begruendung`).toMatch(/^(#|[0-9a-f]{40}:|[^:\s]+:[a-z0-9-]+:\d+$)/);
+      // Die Datei gibt es (im genannten Commit). Im flachen Checkout der
+      // CI fehlen die alten Commits; dort bleibt es bei der Form.
+      if (flach || !m) return;
+      const [, commit, datei] = m;
+      const gefunden = commit
+        ? git("cat-file", "-e", `${commit}:${datei}`).status === 0
+        : git("log", "-1", "--format=%H", "--", datei).stdout.trim() !== "";
+      expect(gefunden, `Zeile ${i + 1}: ${datei} nicht gefunden`).toBe(true);
+    });
+    expect(eintraege).toBeGreaterThan(0);
   });
 
   it("Dependabot: Oekosysteme, Karenzzeit, exakte Overrides und Hauptversionen", () => {

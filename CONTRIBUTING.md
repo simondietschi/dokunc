@@ -64,7 +64,7 @@ For example `fix/redis-reconnect` or `feat/page-labels`, with the types from the
 
 | Check | Runs on | Fails when |
 |---|---|---|
-| CI (`.github/workflows/ci.yml`): known vulnerabilities, lint, types, unit, integration and end-to-end tests, Docker stack | pushes, pull requests, weekly | a step fails or a time limit is reached |
+| CI (`.github/workflows/ci.yml`): known vulnerabilities, secrets in the Git history (gitleaks), lint, types, unit, integration and end-to-end tests, Docker stack | pushes, pull requests, weekly | a step fails or a time limit is reached |
 | CodeQL (`.github/workflows/codeql.yml`): JavaScript/TypeScript and the workflows | pull requests, pushes to `main`, weekly | the analysis fails; new alerts show in the pull request |
 | PR title (`.github/workflows/pr-title.yml`) | pull requests | the title does not follow the rules above |
 
@@ -72,10 +72,13 @@ A newer push to a pull request cancels the CI run that is still going for its pr
 
 **CodeQL alert.** Fix it, or dismiss it in the Security tab with a reason. Test code (`e2e/`, `apps/web/test/`, `*.test.ts`, `*.test.tsx`) is not analysed; it never runs in an installation.
 
+**gitleaks finding.** The log of the step "Historie pruefen" names file, line, commit and fingerprint; the value itself is redacted. Treat the value as leaked: the repository is public, and the value was visible from the moment it was pushed. Revoke it first. Rewriting history does not undo the leak and is not done here. If the finding is a false positive, add its fingerprint to `.gitleaksignore`, with a comment line above it that says why. The printed fingerprint contains the commit (`<commit>:<file>:<rule>:<line>`); in a pull request that is not merged yet, use the form without the commit (`<file>:<rule>:<line>`) or mark the line with a `gitleaks:allow` comment, because a squash or rebase merge creates new commits and the fingerprint would no longer match on `main`.
+
 ## Maintainers
 
 These rules rely on repository settings that are not stored in the repository:
 
 - **Merging:** "Allow merge commits" with the default commit message "Pull request title", so the subject on `main` is the checked title. Rebase merging is off. Squash merging is off, or its default commit message is "Pull request title"; otherwise a pull request with a single commit lands with that commit's subject.
 - **Required checks:** a ruleset for `main` requires the checks above once each of them has passed on `main`.
+- **Secret scanning:** "Secret Protection" and its push protection are on for the repository (Settings → Advanced Security). Push protection blocks known token formats before they land; gitleaks in CI covers the history and generic secrets.
 - **Code scanning:** CodeQL "Default setup" stays off; while it is on, GitHub rejects the results of `codeql.yml`. The CodeQL checks become required only after the alerts of the first analysis of `main` have been triaged.

@@ -53,6 +53,8 @@ differently on an existing installation, and what to do about it.
   and TypeScript code and the GitHub Actions workflows, on pull requests,
   pushes to `main` and weekly; results appear under Security → Code
   scanning.
+- CI scans the Git history for committed secrets with gitleaks (pinned
+  version and checksum); a finding fails the run.
 
 ### Changed
 

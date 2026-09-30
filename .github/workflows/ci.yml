@@ -80,6 +80,51 @@ jobs:
           exit-code: "1"
           trivyignores: .trivyignore.yaml
 
+  # Geheimnisse in der Git-Historie des geprueften Stands: bei einem
+  # Pull-Request main plus seine Commits, sonst der Branch. Nur HEAD, nicht
+  # alle Branches: ohne --log-opts nimmt gitleaks "git log --all", und
+  # fetch-depth 0 holt jeden Branch; ein Fund in einem fremden Branch
+  # machte dann jeden Lauf rot. Knapp 200 Commits dauern unter 2 s.
+  # Das Binary der Release statt der gitleaks-Action: kein fremder Code
+  # mit dem Token, keine Lizenzfrage. Version und Pruefsumme von Hand
+  # heben (gitleaks_<version>_checksums.txt der Release); Dependabot sieht
+  # sie nicht. Fehlalarme: Fingerabdruck mit Begruendung in
+  # .gitleaksignore (CONTRIBUTING.md).
+  geheimnisse:
+    name: Geheimnisse in der Historie (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Ganze Historie; ohne sie saehe gitleaks nur den letzten Commit
+          fetch-depth: 0
+          persist-credentials: false
+      - name: gitleaks installieren
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
+      # --verbose zeigt je Fund Datei, Zeile, Commit und Fingerabdruck,
+      # --redact ersetzt den gefundenen Wert im Log durch REDACTED
+      - name: Historie pruefen
+        id: pruefen
+        run: '"$RUNNER_TEMP/gitleaks" git . --no-banner --redact --verbose --exit-code 1 --log-opts="--full-history HEAD"'
+      - name: Hinweis bei einem Fund
+        if: failure() && steps.pruefen.outcome == 'failure'
+        run: |
+          {
+            echo "### gitleaks found a possible secret"
+            echo "The log of the step \"Historie pruefen\" shows file, line, commit and fingerprint; the value itself is redacted."
+            echo "Treat the value as leaked and revoke it first: the repository is public, and rewriting history does not undo that."
+            echo "If it is a false positive, add its fingerprint to .gitleaksignore with a comment that says why (CONTRIBUTING.md)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
   build-test:
     runs-on: ubuntu-latest
     timeout-minutes: 15

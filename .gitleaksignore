@@ -1,0 +1,4 @@
+# Fehlalarm generic-api-key: Baumschluessel "Handbuch/Kapitel 1" und
+# "Handbuch/Kapitel 2" im Test des Import-Baums (key: "..."), kein Geheimnis.
+755cc2fc42ed9e8ba3b120cecf2d15664198e279:apps/web/src/lib/import/tree.test.ts:generic-api-key:39
+755cc2fc42ed9e8ba3b120cecf2d15664198e279:apps/web/src/lib/import/tree.test.ts:generic-api-key:40
