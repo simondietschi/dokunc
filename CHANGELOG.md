@@ -449,7 +449,8 @@ differently on an existing installation, and what to do about it.
 - `TRUSTED_PROXIES` for the bundled Caddy: upstream proxies whose
   `X-Forwarded-For` it keeps. The web app and the collaboration server
   check its format at startup and warn (reason `address_is_proxy`) when
-  the client address they find is one of these proxies.
+  the client address they find is one of these proxies and
+  `X-Forwarded-For` names more addresses before it.
 - Settings for the web app's rate limits per client address
   (`RATE_LIMIT_LOGIN_PER_IP`, `RATE_LIMIT_REGISTER_PER_IP`,
   `RATE_LIMIT_RESET_REQUEST_PER_IP`, `RATE_LIMIT_RESET_SUBMIT_PER_IP`,

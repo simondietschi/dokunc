@@ -318,8 +318,46 @@ describe("resolveClientAddress mit vertrauten Proxys", () => {
     });
   });
 
-  it("hat dafuer einen eigenen Hinweis", () => {
+  it("meldet nichts, wenn TRUSTED_PROXIES auch die Clients umfasst und die Zahl stimmt", () => {
+    // Intranet hinter einem Load Balancer: die Clients liegen im selben
+    // privaten Netz wie der Balancer, TRUSTED_PROXIES ist private_ranges
+    // oder ein weites Netz, TRUSTED_PROXY_HOPS ist mit 2 richtig. Links
+    // der gefundenen Adresse steht nichts, sie ist also die des Clients;
+    // der Rat, TRUSTED_PROXY_HOPS zu erhoehen, waere hier falsch.
+    for (const roh of ["private_ranges", "10.0.0.0/8"]) {
+      const weit = parseNetworkList(roh, { trenner: "nur-leerraum", privateRanges: true });
+      if (!weit.ok) throw new Error(weit.fehler);
+      expect(resolveClientAddress("10.1.1.1, 10.0.0.5", undefined, 2, weit.wert), roh).toEqual({
+        adresse: "10.1.1.1",
+        problem: null,
+        eintraege: 2,
+      });
+      // Collab ohne Proxy davor: die Gegenstelle liegt im Netz, ein Header
+      // fehlt, also steht auch hier niemand weiter links.
+      expect(resolveClientAddress(undefined, "10.1.1.1", 0, weit.wert), roh).toEqual({
+        adresse: "10.1.1.1",
+        problem: null,
+        eintraege: 0,
+      });
+    }
+  });
+
+  it("meldet weiter, wenn vor dem Proxy noch ein Eintrag steht", () => {
+    // Collab direkt hinter einem Proxy, TRUSTED_PROXY_HOPS 0: der Header
+    // nennt, wer davor stand.
+    expect(resolveClientAddress("203.0.113.9", "10.0.0.5", 0, proxys)).toEqual({
+      adresse: "10.0.0.5",
+      problem: "address_is_proxy",
+      eintraege: 1,
+    });
+  });
+
+  it("hat dafuer einen eigenen Hinweis, der auch das Einschraenken nennt", () => {
     expect(ADRESS_HINWEIS.address_is_proxy).toContain("TRUSTED_PROXY_HOPS erhoehen");
+    // Umfasst TRUSTED_PROXIES Client-Netze, kann die Adresse die eines
+    // Clients sein, der selbst X-Forwarded-For mitschickt: dann die Liste
+    // einschraenken, nicht die Zahl erhoehen.
+    expect(ADRESS_HINWEIS.address_is_proxy).toMatch(/TRUSTED_PROXIES auf die Proxys einschraenken/);
     expect(adressMeldung("address_is_proxy")).toBe("Client-Adresse vermutlich die eines Proxys");
   });
 });

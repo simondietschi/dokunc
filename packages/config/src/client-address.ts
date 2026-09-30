@@ -253,7 +253,11 @@ export type AdressProblem =
   | "not_an_ip"
   /** Nur mit Socket (Collab): TRUSTED_PROXY_HOPS 0, aber der Header ist da. */
   | "hops_zero_with_header"
-  /** Die ermittelte Adresse steht in TRUSTED_PROXIES: TRUSTED_PROXY_HOPS zu niedrig. */
+  /**
+   * Die ermittelte Adresse steht in TRUSTED_PROXIES, und X-Forwarded-For
+   * hat links von ihr noch Eintraege: TRUSTED_PROXY_HOPS vermutlich zu
+   * niedrig.
+   */
   | "address_is_proxy";
 
 export type Aufloesung = {
@@ -287,9 +291,15 @@ function eintraegeAus(forwardedFor: string | string[] | null | undefined): strin
  * der Header fehlt; ein Client kann ihn aber vorher selbst setzen. Dort
  * ergibt 0 also keine Adresse und kein Problem.
  *
- * `vertrauteProxys` (TRUSTED_PROXIES): liegt die ermittelte Adresse darin,
- * ist sie die eines vorgelagerten Proxys, und TRUSTED_PROXY_HOPS ist zu
- * niedrig. Die Adresse bleibt, das Problem `address_is_proxy` meldet es.
+ * `vertrauteProxys` (TRUSTED_PROXIES): liegt die ermittelte Adresse darin
+ * und steht links von ihr noch ein Eintrag, ist sie vermutlich die eines
+ * vorgelagerten Proxys, und TRUSTED_PROXY_HOPS ist zu niedrig. Die Adresse
+ * bleibt, das Problem `address_is_proxy` meldet es. Ohne Eintrag links
+ * davon ist sie die des Clients: umfasst TRUSTED_PROXIES auch Client-Netze
+ * (private_ranges im Intranet hinter einem Load Balancer), waere der Rat,
+ * TRUSTED_PROXY_HOPS zu erhoehen, falsch und schaedlich. Dann landeten
+ * echte Anfragen unter unknown, und ein Client, der selbst Eintraege
+ * voranstellt, waehlte seine Adresse.
  */
 export function resolveClientAddress(
   forwardedFor: string | string[] | null | undefined,
@@ -299,8 +309,10 @@ export function resolveClientAddress(
 ): Aufloesung {
   const eintraege = eintraegeAus(forwardedFor);
   const anzahl = eintraege.length;
+  // Links der gefundenen Adresse steht noch ein Eintrag: bei hops 0 jeder
+  // Eintrag des Headers, sonst einer vor Position `hops` von rechts.
   const mitProxyPruefung = (a: Aufloesung): Aufloesung =>
-    a.adresse !== null && vertrauteProxys?.enthaelt(a.adresse)
+    a.adresse !== null && anzahl > hops && vertrauteProxys?.enthaelt(a.adresse)
       ? { ...a, problem: "address_is_proxy" }
       : a;
   if (hops <= 0) {
@@ -328,7 +340,7 @@ export const ADRESS_HINWEIS: Record<AdressProblem, string> = {
   hops_zero_with_header:
     "X-Forwarded-For vorhanden, aber TRUSTED_PROXY_HOPS ist 0. Steht ein Proxy davor, zaehlen alle Verbindungen unter dessen Adresse (docs/admin/network.md).",
   address_is_proxy:
-    "Die ermittelte Adresse steht in TRUSTED_PROXIES, gehoert also einem vorgelagerten Proxy: TRUSTED_PROXY_HOPS erhoehen (mit dem mitgelieferten Caddy 1 plus die Zahl der Proxys davor, docs/admin/network.md).",
+    "Die ermittelte Adresse steht in TRUSTED_PROXIES, und X-Forwarded-For nennt davor weitere Adressen: sie gehoert vermutlich einem vorgelagerten Proxy. Dann TRUSTED_PROXY_HOPS erhoehen (mit dem mitgelieferten Caddy 1 plus die Zahl der Proxys davor). Umfasst TRUSTED_PROXIES auch Netze von Clients (etwa private_ranges), ist es eher ein Client, der selbst X-Forwarded-For schickt: dann TRUSTED_PROXIES auf die Proxys einschraenken und TRUSTED_PROXY_HOPS lassen (docs/admin/network.md).",
 };
 
 /** Text der Logzeile zu einem Problem. */

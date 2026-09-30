@@ -60,7 +60,7 @@ requests do get an address, but probably the wrong one:
 
 | `reason` | Meaning | What to do |
 |---|---|---|
-| `address_is_proxy` | The address found is listed in `TRUSTED_PROXIES`, so it belongs to an upstream proxy. Everybody behind that proxy shares its address. | Raise `TRUSTED_PROXY_HOPS`: 1 for the bundled Caddy plus 1 for each proxy in front of it. |
+| `address_is_proxy` | The address found is listed in `TRUSTED_PROXIES`, and `X-Forwarded-For` names more addresses to the left of it. The address probably belongs to an upstream proxy, and everybody behind that proxy shares it. | Raise `TRUSTED_PROXY_HOPS`: 1 for the bundled Caddy plus 1 for each proxy in front of it. If `TRUSTED_PROXIES` also covers client networks (for example `private_ranges` in an intranet), the address is more likely that of a client that sent its own `X-Forwarded-For`: then list only the proxies in `TRUSTED_PROXIES` and leave `TRUSTED_PROXY_HOPS` as it is. One hop too many makes requests count as unknown and lets clients choose their address. |
 | `hops_zero_with_header` | Collaboration server only: `TRUSTED_PROXY_HOPS` is 0, but a connection carries `X-Forwarded-For`. | If a proxy sits in front of the server, every connection counts under the proxy's address; set `TRUSTED_PROXY_HOPS` to the number of proxies. A client that connects directly can also send the header itself; then the line means nothing. |
 
 At startup, the web app also warns when it runs with `NODE_ENV=production`
@@ -111,7 +111,11 @@ Caddy**.
 **Never list client networks** in `TRUSTED_PROXIES`, and do not use
 `private_ranges` if clients in a private network can reach Caddy directly:
 whoever is listed can claim any client address, and with it a fresh
-rate-limit counter for every request.
+rate-limit counter for every request. If clients reach Caddy only through
+the load balancer, a list that also covers them (such as `private_ranges`
+in an intranet) is safe for Caddy, but requests from clients that send
+their own `X-Forwarded-For` then cause the warning `address_is_proxy`
+below.
 
 ### Checking the result
 
