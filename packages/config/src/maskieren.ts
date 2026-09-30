@@ -3,6 +3,9 @@ import type { Umgebung, Variable } from "./variable";
 /** Laengere Werte kuerzt das Startlog (etwa lange Listen). */
 export const MAX_ANZEIGE = 200;
 
+/** Steht im Startlog statt des Werts, wenn die Anzeige einer Variable wirft. */
+export const ANZEIGE_FEHLGESCHLAGEN = "(Anzeige fehlgeschlagen)";
+
 /** Ersetzt das Passwort einer URL durch ***; andere Texte bleiben. */
 function ohneUrlPasswort(text: string): string {
   let url: URL;
@@ -50,7 +53,14 @@ export function maskValue(wert: unknown, geheim = false): unknown {
   return sauber;
 }
 
-/** Die wirksame Konfiguration fuer das Startlog, je Variable maskiert. */
+/**
+ * Die wirksame Konfiguration fuer das Startlog, je Variable maskiert.
+ *
+ * Wirft die Anzeige einer Variable, steht dort ANZEIGE_FEHLGESCHLAGEN
+ * (bei geheimen "***"), und die anderen Variablen erscheinen wie sonst:
+ * die Anzeige dient nur dem Log und darf den Start nicht aufhalten. Die
+ * Meldung des Fehlers erscheint nicht, sie koennte Werte enthalten.
+ */
 export function maskedConfig(
   variablen: readonly Variable[],
   werte: Readonly<Record<string, unknown>>,
@@ -59,7 +69,13 @@ export function maskedConfig(
   const aus: Record<string, unknown> = {};
   for (const v of variablen) {
     if (!(v.name in werte)) continue;
-    const wert = v.anzeige ? v.anzeige(werte[v.name], env) : werte[v.name];
+    let wert: unknown;
+    try {
+      wert = v.anzeige ? v.anzeige(werte[v.name], env) : werte[v.name];
+    } catch {
+      aus[v.name] = v.geheim ? "***" : ANZEIGE_FEHLGESCHLAGEN;
+      continue;
+    }
     aus[v.name] = maskValue(wert, v.geheim);
   }
   return aus;

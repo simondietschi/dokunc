@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_ANZEIGE, maskValue, maskedConfig } from "./maskieren";
+import { ANZEIGE_FEHLGESCHLAGEN, MAX_ANZEIGE, maskValue, maskedConfig } from "./maskieren";
 import { defineVariable } from "./variable";
 
 describe("maskValue", () => {
@@ -67,5 +67,36 @@ describe("maskedConfig", () => {
       A: "<x>",
       B_SECRET: "***",
     });
+  });
+  it("zeigt einen festen Text, wenn eine Anzeige wirft, und macht mit den anderen weiter", () => {
+    const wirft = (meldung: string) => () => {
+      throw new Error(meldung);
+    };
+    const variablen = [
+      defineVariable<string>({
+        name: "A",
+        dienste: ["web"],
+        beschreibung: "A.",
+        parse: (r) => ({ ok: true, wert: r ?? "" }),
+        anzeige: wirft("Invalid URL"),
+      }),
+      defineVariable<string>({
+        name: "B_SECRET",
+        dienste: ["web"],
+        beschreibung: "B.",
+        geheim: true,
+        parse: (r) => ({ ok: true, wert: r ?? "" }),
+        anzeige: wirft("kaputt: geheim-2"),
+      }),
+      defineVariable<string>({
+        name: "C",
+        dienste: ["web"],
+        beschreibung: "C.",
+        parse: (r) => ({ ok: true, wert: r ?? "" }),
+      }),
+    ];
+    const aus = maskedConfig(variablen, { A: "a", B_SECRET: "geheim-2", C: "c" }, {});
+    expect(aus).toEqual({ A: ANZEIGE_FEHLGESCHLAGEN, B_SECRET: "***", C: "c" });
+    expect(JSON.stringify(aus)).not.toContain("geheim-2");
   });
 });

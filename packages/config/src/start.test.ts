@@ -1,6 +1,7 @@
 import { Writable } from "node:stream";
 import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
+import { ANZEIGE_FEHLGESCHLAGEN } from "./maskieren";
 import { EXIT_KONFIGURATION, checkConfigAtStartup } from "./start";
 import { GEMEINSAME_VARIABLEN } from "./variablen/gemeinsam";
 import { defineVariable } from "./variable";
@@ -102,5 +103,30 @@ describe("checkConfigAtStartup", () => {
     for (const geheim of ["nie-im-log", "auch-nicht-im-log", "pw-nie-im-log"]) {
       expect(text).not.toContain(geheim);
     }
+  });
+  it("schreibt die Startzeile auch, wenn eine Anzeige wirft", () => {
+    const { log, zeilen } = probeLog("info");
+    const exit = vi.fn();
+    const werte = checkConfigAtStartup({
+      dienst: "web",
+      variablen: [
+        defineVariable<string>({
+          name: "ANZEIGE_WIRFT",
+          dienste: ["web"],
+          beschreibung: "Display throws.",
+          parse: (r) => ({ ok: true, wert: r ?? "" }),
+          anzeige: () => {
+            throw new TypeError("Invalid URL");
+          },
+        }),
+      ],
+      env: { ANZEIGE_WIRFT: "x" },
+      log,
+      exit,
+    });
+    expect(exit).not.toHaveBeenCalled();
+    expect(werte).toEqual({ ANZEIGE_WIRFT: "x" });
+    expect(zeilen.map((z) => [z.level, z.msg])).toEqual([[30, "Konfiguration geprueft"]]);
+    expect(zeilen[0].config).toEqual({ ANZEIGE_WIRFT: ANZEIGE_FEHLGESCHLAGEN });
   });
 });
