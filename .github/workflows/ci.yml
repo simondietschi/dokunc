@@ -18,6 +18,17 @@ on:
 permissions:
   contents: read
 
+# Ein neuer Push auf einen Pull-Request bricht dessen laufenden Lauf ab:
+# die Gruppe ist dann der Ref des Pull-Requests (refs/pull/N/merge). Jeder
+# andere Lauf (Push auf main oder einen Branch, Montagslauf, Handstart)
+# bekommt mit der run_id eine eigene Gruppe und laeuft zu Ende; so hat
+# jeder Commit auf main seinen vollstaendigen Lauf. Push und
+# Pull-Request desselben Branches laufen weiter beide (verschiedene
+# Ereignisse). lieferkette.test.ts haelt den Ausdruck fest.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: true
+
 # Jeder Job hat eine Zeitgrenze. Ohne sie lief ein Haenger bis zur Grenze
 # von GitHub (6 h): der e2e-Job von PR #12 hing nach dem letzten
 # Playwright-Test. Die laengsten Laeufe bis Ende September 2026, auf ganze
@@ -147,8 +158,9 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    # Abstand zur Grenze des Schritts "E2E tests": siehe dort
-    timeout-minutes: 55
+    # Summe der Schrittgrenzen (Integrationstests 15, E2E 35) plus 10 min
+    # fuer die unbegrenzten Schritte und den Upload; siehe "E2E tests"
+    timeout-minutes: 60
     services:
       # Images wie in docker-compose.yml (db, redis); lieferkette.test.ts
       # haelt beide gleich, Dependabot pflegt nur die Compose-Datei.
@@ -210,7 +222,12 @@ jobs:
 
       # Autorisierungstests gegen die echte Datenbank: die Regeln
       # stecken in den Abfragen, ein Mock würde sie nur nachbauen.
+      # Gemessen bis 3:42 (Ende September 2026); die Tests des
+      # Collab-Servers mit eigenen Prozessen kommen noch dazu. Haengt ein
+      # Test, scheitert der Schritt nach 15 min, statt dass die Grenze des
+      # Jobs ablaeuft und den Upload unten mitnimmt.
       - name: Authorization integration tests
+        timeout-minutes: 15
         run: pnpm test:integration
 
       - name: Build web
@@ -233,10 +250,11 @@ jobs:
       # liefe verwaist weiter, ohne Zusammenfassung und Annotationen im Log,
       # und der Upload unten kaeme, waehrend es noch in test-results/
       # schreibt. Der Schritt gilt aber als gescheitert, der Upload laeuft.
-      # 3. Grenze des Jobs, 20 min ueber der des Schritts: fuer die Schritte
-      # davor (bis 6 min, die Integrationstests wachsen) und den Upload.
-      # Laeuft sie zuerst ab, bricht GitHub den Job ab (cancelled), und der
-      # Upload mit failure() entfaellt, wie in PR #12.
+      # 3. Grenze des Jobs, 10 min ueber der Summe der Schrittgrenzen
+      # (Integrationstests und dieser Schritt): fuer die unbegrenzten
+      # Schritte davor und den Upload. Laeuft sie zuerst ab, bricht GitHub
+      # den Job ab (cancelled), und der Upload mit failure() entfaellt, wie
+      # in PR #12.
       - name: E2E tests
         timeout-minutes: 35
         run: pnpm test:e2e --global-timeout 1800000

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -12,8 +12,8 @@ import { parse } from "yaml";
  * gegen den CI-Schritt, der ihn ausfuehrt; exakt gepinnte Overrides
  * gegen die Ausnahmen von Dependabot; die pnpm-Version an jeder Stelle;
  * die Ausnahmen fuer pnpm audit und Trivy (eng und befristet); die
- * Zeitgrenzen der CI-Jobs; die Service-Images des e2e-Jobs gegen
- * docker-compose.yml. Das Geruest des Workflows steht in einem Test. Ob
+ * Zeitgrenzen und die concurrency-Gruppen aller Workflows; die
+ * Service-Images des e2e-Jobs gegen docker-compose.yml. Das Geruest des Workflows steht in einem Test. Ob
  * die Befehle wirklich laufen, prueft der CI-Job docker, ob die Gates
  * greifen, die Jobs audit und docker.
  */
@@ -48,10 +48,43 @@ type Job = {
 type Workflow = {
   on: Obj;
   permissions?: unknown;
+  concurrency?: { group?: string; "cancel-in-progress"?: unknown };
   jobs: Record<string, Job>;
 };
 
 const ci = (): Workflow => parse(lesen(".github/workflows/ci.yml"));
+
+/** Alle Workflows mit Dateinamen, auch kuenftige. */
+function workflows(): [string, Workflow][] {
+  return readdirSync(join(ROOT, ".github/workflows"))
+    .filter((d) => /\.ya?ml$/.test(d))
+    .sort()
+    .map((d) => [d, parse(lesen(`.github/workflows/${d}`)) as Workflow]);
+}
+
+/** Ausloeser eines Workflows; `on` darf Text, Liste oder Objekt sein. */
+function ereignisse(wf: Workflow): string[] {
+  const on = wf.on as unknown;
+  if (typeof on === "string") return [on];
+  if (Array.isArray(on)) return on.map(String);
+  return Object.keys(on as Obj);
+}
+
+/**
+ * concurrency-Gruppe: bei einem Pull-Request dessen Ref
+ * (refs/pull/N/merge), sonst die run_id des Laufs. Ein neuer Push auf
+ * einen Pull-Request bricht so dessen laufenden Lauf ab; jeder andere
+ * Lauf (Push auf main oder einen Branch, Montagslauf, Handstart) hat eine
+ * eigene Gruppe und laeuft zu Ende. Mit der Gruppe github.ref allein
+ * teilten sich alle Pushes auf main eine Gruppe, und ein dritter Push
+ * braeche den Lauf des zweiten ab. Fester Text statt eines Auswerters der
+ * Ausdruckssprache: der Ausdruck ist kurz genug, um ihn zu lesen.
+ */
+const GRUPPE_JE_PR =
+  "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}";
+/** Fuer Workflows, die nur auf Pull-Requests laufen (auch pull_request_target). */
+const GRUPPE_PR_NUMMER =
+  "${{ github.workflow }}-${{ github.event.pull_request.number }}";
 const dependabot = (): {
   version: number;
   updates: {
@@ -225,16 +258,51 @@ describe("Lieferkette", () => {
     );
   });
 
-  it("CI: jeder Job hat eine Zeitgrenze, Playwright ein Budget darunter", () => {
+  it("Alle Workflows: jeder Job hat eine Zeitgrenze, Playwright ein Budget darunter", () => {
     // Ohne timeout-minutes laeuft ein Haenger bis zur Grenze von GitHub
-    // (360 min), wie der e2e-Job von PR #12.
-    const wf = ci();
-    for (const [name, job] of Object.entries(wf.jobs)) {
-      const grenze = job["timeout-minutes"];
-      expect(Number.isInteger(grenze), name).toBe(true);
-      expect(grenze, name).toBeGreaterThan(0);
-      expect(grenze, name).toBeLessThan(360);
+    // (360 min), wie der e2e-Job von PR #12. Das gilt fuer jeden Workflow,
+    // auch einen kuenftigen.
+    for (const [datei, wf] of workflows()) {
+      for (const [name, job] of Object.entries(wf.jobs)) {
+        const wo = `${datei}:${name}`;
+        const grenze = job["timeout-minutes"] ?? 0;
+        expect(Number.isInteger(job["timeout-minutes"]), `${wo} ohne Zeitgrenze`).toBe(true);
+        expect(grenze, wo).toBeGreaterThan(0);
+        expect(grenze, wo).toBeLessThan(360);
+        // Laeuft die Grenze eines Schritts ab, gilt er als gescheitert, und
+        // Schritte mit failure() laufen noch; laeuft die des Jobs ab,
+        // bricht GitHub ihn ab (cancelled), und sie entfallen. Die
+        // Jobgrenze liegt deshalb mindestens 10 min ueber der Summe der
+        // begrenzten Schritte: fuer die unbegrenzten davor (Checkout,
+        // Install, Build) und die danach (Upload).
+        const begrenzt = (job.steps ?? []).flatMap((s) =>
+          s["timeout-minutes"] === undefined ? [] : [s["timeout-minutes"]],
+        );
+        for (const g of begrenzt) {
+          expect(Number.isInteger(g) && g > 0, `${wo}: Schrittgrenze ${g}`).toBe(true);
+        }
+        if (begrenzt.length > 0) {
+          const summe = begrenzt.reduce((a, b) => a + b, 0);
+          expect(grenze, `${wo}: ${begrenzt.join(" + ")} + 10`).toBeGreaterThanOrEqual(
+            summe + 10,
+          );
+        }
+      }
     }
+
+    // Die Integrationstests laufen im Job e2e vor Playwright. Haengen sie,
+    // soll ihr Schritt scheitern und nicht die Grenze des Jobs ablaufen.
+    const wf = ci();
+    const e2e = wf.jobs.e2e;
+    const integration = e2e?.steps?.find((s) =>
+      runZeilen(s).includes("pnpm test:integration"),
+    );
+    expect(integration, "Schritt mit pnpm test:integration fehlt").toBeDefined();
+    expect(
+      Number.isInteger(integration?.["timeout-minutes"]),
+      `${integration?.name} ohne Zeitgrenze`,
+    ).toBe(true);
+
     // Playwright bricht mit seinem Budget (--global-timeout) selbst ab,
     // mit Zusammenfassung und Annotationen, und endet binnen 30 s danach.
     // Die Grenze des Schritts liegt mindestens 3 min darueber und faengt
@@ -244,7 +312,6 @@ describe("Lieferkette", () => {
     // sie Abstand zur Grenze des Schritts: fuer die Schritte davor (bis
     // 6 min Ende September 2026) und den Upload. Nur "Schritt < Job"
     // liesse 29 zu 30 durch.
-    const e2e = wf.jobs.e2e;
     const playwright = e2e?.steps?.find((s) =>
       runZeilen(s).some((z) => /^pnpm test:e2e(\s|$)/.test(z)),
     );
@@ -262,6 +329,25 @@ describe("Lieferkette", () => {
     expect(Number.isInteger(schritt)).toBe(true);
     expect(schritt - budgetMin).toBeGreaterThanOrEqual(3);
     expect(job - schritt).toBeGreaterThanOrEqual(15);
+  });
+
+  it("Alle Workflows: ein neuer Push bricht nur den Lauf desselben Pull-Requests ab", () => {
+    const alle = workflows();
+    expect(alle.map(([datei]) => datei)).toContain("ci.yml");
+    for (const [datei, wf] of alle) {
+      const c = wf.concurrency;
+      expect(c, `${datei} ohne concurrency`).toBeDefined();
+      expect(c?.["cancel-in-progress"], datei).toBe(true);
+      // Laeuft ein Workflow auch auf Pushes, nach Zeitplan oder von Hand,
+      // behaelt jeder dieser Laeufe seine eigene Gruppe (run_id): jeder
+      // Commit auf main bekommt seinen vollstaendigen Lauf.
+      const nurPr = ereignisse(wf).every(
+        (e) => e === "pull_request" || e === "pull_request_target",
+      );
+      expect(nurPr ? [GRUPPE_JE_PR, GRUPPE_PR_NUMMER] : [GRUPPE_JE_PR], datei).toContain(
+        c?.group,
+      );
+    }
   });
 
   it("Dependabot: Oekosysteme, Karenzzeit, exakte Overrides und Hauptversionen", () => {
