@@ -357,4 +357,16 @@ describe("Konventionen", () => {
     expect(text).toContain("merge=union");
     expect(lesen(".gitattributes")).toMatch(/^CHANGELOG\.md merge=union$/m);
   });
+
+  it("CONTRIBUTING: der PR-Titel wird Betreff auf main und Grundlage der Changelog-Zeile", () => {
+    // Der gepruefte Titel ist das, woraus Werkzeuge fuer Conventional
+    // Commits den Changelog bauen. Solange keins eingerichtet ist,
+    // schreibt der Pull-Request seinen Eintrag von Hand; beides steht bei
+    // den Pull-Requests, wo Beitragende den Titel waehlen.
+    const text = lesen("CONTRIBUTING.md");
+    const prs = /^## Pull requests\n([\s\S]*?)^## /m.exec(text)?.[1] ?? "";
+    expect(prs).toContain("becomes the subject of the commit on `main`");
+    expect(prs).toMatch(/changelog[^\n]*from these subjects/i);
+    expect(prs).toContain("to `CHANGELOG.md` by hand");
+  });
 });

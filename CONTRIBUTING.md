@@ -50,6 +50,7 @@ Rules for entries:
 ## Pull requests
 
 - The title has the same format as a commit subject and becomes the subject of the commit on `main`. Choose the type for the pull request as a whole.
+- Tools that generate a changelog from Conventional Commits, such as release-please, build its lines from these subjects, so write the title as the line a reader of the changelog should see. No such tool is set up here yet: a pull request whose change needs an entry (see "Changelog") adds it to `CHANGELOG.md` by hand.
 - The workflow "PR-Titel" checks the title whenever the pull request is opened, edited, reopened or updated. It runs the check as it is on the target branch, so a change to the check takes effect once it is merged.
 - GitHub's revert button suggests `Revert "<title>"`. Rename it to `revert: <title>`.
 - Dependabot titles follow these rules through `commit-message` in `.github/dependabot.yml`. Dependabot does not shorten its titles, so the length limit does not apply to them.
