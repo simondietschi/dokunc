@@ -397,11 +397,29 @@ describe("Import: Ruecknahme nach dem Anlegen", () => {
     const f = pages.find((p) => p.title === "Fremd")!;
     expect(f.id).toBe(fremd!.id);
     // An die Zielstelle des Imports, hinter das vorhandene Kind, und
-    // weiter unter dem Schutz der Zielseite — nicht offen an der Wurzel.
-    // ... danach auf die Zielseite, nicht auf null.
+    // weiter geschuetzt — nicht offen an der Wurzel. Den Schutz der
+    // importierten Seite, die jetzt verschwindet, uebernimmt sie selbst:
+    // eigene Wurzel mit deren Freigaben, wie beim endgueltigen Loeschen.
     expect(f.parentId).toBe(ziel.id);
     expect(f.position).toBeGreaterThan(pages.find((p) => p.title === "Alt")!.position);
-    expect(f.accessRootId).toBe(ziel.id);
+    expect(f.accessRootId).toBe(f.id);
+    expect(
+      await prisma.pageGrant.findMany({
+        where: { pageId: f.id },
+        select: { userId: true },
+      }),
+    ).toEqual([{ userId: admin }]);
+    expect(
+      await prisma.auditLog.findMany({
+        where: { action: "page.protection_carried", targetId: f.id },
+        select: { actorId: true, metadata: true },
+      }),
+    ).toEqual([
+      {
+        actorId: admin,
+        metadata: { via: "import", fromRootId: wikiId, grants: 1 },
+      },
+    ]);
   });
 
   it("echter Fehler, und waehrend der Ruecknahme laeuft die Zeitgrenze ab: gemeldet und geloggt wird der Fehler", async () => {

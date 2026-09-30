@@ -233,13 +233,14 @@ describe("Papierkorb", () => {
     const space = await neuerSpace();
     const wurzel = await seite(space, { deletedAt: vor(40), isRestricted: true });
     await prisma.page.update({ where: { id: wurzel }, data: { accessRootId: wurzel } });
+    await prisma.pageGrant.create({ data: { pageId: wurzel, userId } });
     const geloeschtesKind = await seite(space, { parentId: wurzel, deletedAt: vor(45) });
     const lebendesKind = await seite(space, { parentId: wurzel });
     await prisma.page.update({ where: { id: lebendesKind }, data: { accessRootId: wurzel } });
     const jung = await seite(space, { deletedAt: vor(10) });
     const eltern = await seite(space);
     const unterLebendem = await seite(space, { parentId: eltern, deletedAt: vor(40) });
-    auditTargets.push(wurzel, unterLebendem, jung);
+    auditTargets.push(wurzel, unterLebendem, jung, lebendesKind);
 
     // Frist 0: nichts
     await lauf({ trashDays: 0 });
@@ -255,8 +256,37 @@ describe("Papierkorb", () => {
     expect(rest.map((p) => p.id)).not.toContain(geloeschtesKind);
     const kind = rest.find((p) => p.id === lebendesKind)!;
     expect(kind.parentId).toBeNull();
-    // Die Wurzel war geschuetzt; das abgehaengte Kind ist es nicht mehr.
-    expect(kind.accessRootId).toBeNull();
+    // Die Wurzel war geschuetzt; das abgehaengte Kind behaelt ihren Schutz
+    // als eigene Wurzel, mit ihren Freigaben (sie selbst ist weg).
+    expect(kind.accessRootId).toBe(lebendesKind);
+    expect(
+      (await prisma.page.findUniqueOrThrow({ where: { id: lebendesKind } }))
+        .isRestricted,
+    ).toBe(true);
+    expect(
+      await prisma.pageGrant.findMany({
+        where: { pageId: lebendesKind },
+        select: { userId: true, groupId: true },
+      }),
+    ).toEqual([{ userId, groupId: null }]);
+    const uebernahme = await prisma.auditLog.findMany({
+      where: { action: "page.protection_carried", targetId: lebendesKind },
+      select: { actorId: true, ip: true, spaceId: true, metadata: true },
+    });
+    expect(uebernahme).toEqual([
+      {
+        actorId: null,
+        ip: null,
+        spaceId: space,
+        metadata: {
+          via: "purge",
+          fromRootId: wurzel,
+          grants: 1,
+          sourcePageId: wurzel,
+          automatisch: true,
+        },
+      },
+    ]);
 
     const eintraege = await prisma.auditLog.findMany({
       where: { action: "page.purged", targetId: { in: [wurzel, unterLebendem] } },

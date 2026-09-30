@@ -6,7 +6,7 @@ import { PAGE_ACCESS_CHANNEL } from "@dokunc/editor";
 /**
  * Seitenschutz auf den Wegen, die eine Seite neu entstehen lassen oder
  * umhängen: Kopie, Seite aus Vorlage, Vorlage aus geschützter Seite,
- * Verschieben.
+ * Verschieben, Wiederherstellen und endgültiges Löschen.
  *
  * Geprüft wird die echte Action gegen die echte Datenbank, als Person
  * der Welt aus der Rechtematrix (rechtematrix-welt.ts). Ersetzt sind nur
@@ -42,7 +42,9 @@ vi.mock("next/headers", async () =>
 );
 
 const { baueWelt, raeumeWelt, Umleitung } = await import("./rechtematrix-welt");
-const { createPageAction } = await import("@/app/s/[slug]/actions");
+const { createPageAction, purgePageAction, restorePageAction } = await import(
+  "@/app/s/[slug]/actions"
+);
 const { movePageAction } = await import("@/app/s/[slug]/move-actions");
 const { createFromTemplateAction, duplicatePageAction, saveAsTemplateAction } =
   await import("@/app/s/[slug]/template-actions");
@@ -52,6 +54,7 @@ const { BestaetigungNoetig, schutzwechselToken } = await import(
 const { readablePageRole, refreshAccessRoots, setPageRestricted } = await import(
   "@/lib/page-access"
 );
+const { trashPageTree } = await import("@/lib/page-guards");
 
 type Welt = Awaited<ReturnType<typeof baueWelt>>;
 type Person = Welt["personen"]["OWNER"];
@@ -666,5 +669,122 @@ describe("Zug", () => {
     expect(zurueck.revokedAt).not.toBeNull();
     expect(bleibt.revokedAt).toBeNull();
     expect((await changed(c))[0]?.metadata).toMatchObject({ sharesRevoked: 1 });
+  });
+});
+
+describe("Papierkorb", () => {
+  async function geschuetzterAst() {
+    const r = await seite("Personalakten");
+    const k = await seite("Akte Muster", { parentId: r });
+    await w.schuetze(r);
+    return { r, k };
+  }
+  function als(p: Person, lauf: () => Promise<unknown>) {
+    return w.alsPerson(p, lauf);
+  }
+
+  it.each(["MEMBER_FREIGABE", "ADMIN"] as const)(
+    "eine Unterseite, deren geschützte Elternseite im Papierkorb bleibt, kommt geschützt zurück (%s)",
+    async (akteur) => {
+      const { MEMBER, MEMBER_FREIGABE } = w.personen;
+      const { r, k } = await geschuetzterAst();
+      await trashPageTree(w.space.id, r);
+
+      await als(w.personen[akteur], () =>
+        restorePageAction(formular({ pageId: k })),
+      );
+
+      expect(await zeile(k)).toMatchObject({
+        parentId: null,
+        isRestricted: true,
+        accessRootId: k,
+      });
+      expect(await grants(k)).toEqual(await grants(r));
+      expect(await sieht(MEMBER, k)).toBe(false);
+      expect(await sieht(MEMBER_FREIGABE, k)).toBe(true);
+      expect((await carried(k))[0]).toMatchObject({
+        actorId: w.personen[akteur].id,
+        metadata: { via: "restore", fromRootId: r, grants: 3 },
+      });
+    },
+  );
+
+  it("eine selbst geschützte Seite kommt ohne Übernahme zurück", async () => {
+    const p = await seite("Eigene Wurzel");
+    await w.schuetze(p);
+    const vorher = await grants(p);
+    await trashPageTree(w.space.id, p);
+
+    await als(w.personen.ADMIN, () => restorePageAction(formular({ pageId: p })));
+
+    expect(await zeile(p)).toMatchObject({ isRestricted: true, accessRootId: p });
+    expect(await grants(p)).toEqual(vorher);
+    expect(await carried(p)).toEqual([]);
+  });
+
+  it("endgültiges Löschen einer geschützten Wurzel: das lebende Kind behält deren Schutz", async () => {
+    const { MEMBER, MEMBER_FREIGABE, ADMIN } = w.personen;
+    const { r, k } = await geschuetzterAst();
+    const enkel = await seite("Anlage", { parentId: k });
+    await trashPageTree(w.space.id, r);
+    // Das Kind wieder ins Leben holen, ohne die Elternseite.
+    await prisma.page.updateMany({
+      where: { id: { in: [k, enkel] } },
+      data: { deletedAt: null },
+    });
+    const grantsVorher = await grants(r);
+
+    await als(ADMIN, () => purgePageAction(formular({ pageId: r })));
+
+    expect(await prisma.page.count({ where: { id: r } })).toBe(0);
+    expect(await zeile(k)).toMatchObject({
+      parentId: null,
+      isRestricted: true,
+      accessRootId: k,
+    });
+    expect(await zeile(enkel)).toMatchObject({ accessRootId: k });
+    expect(await grants(k)).toEqual(grantsVorher);
+    expect(await sieht(MEMBER, enkel)).toBe(false);
+    expect(await sieht(MEMBER_FREIGABE, enkel)).toBe(true);
+    expect((await carried(k))[0]).toMatchObject({
+      actorId: ADMIN.id,
+      metadata: { via: "purge", fromRootId: r, grants: 3 },
+    });
+  });
+
+  it("endgültiges Löschen einer Zwischenseite: das lebende Kind übernimmt die Freigaben der lebenden Wurzel", async () => {
+    const { MEMBER, OWNER } = w.personen;
+    const { r, k: x } = await geschuetzterAst();
+    const l = await seite("Lebend", { parentId: x });
+    await prisma.page.update({ where: { id: x }, data: { deletedAt: new Date() } });
+
+    await als(OWNER, () => purgePageAction(formular({ pageId: x })));
+
+    expect(await zeile(l)).toMatchObject({
+      parentId: null,
+      isRestricted: true,
+      accessRootId: l,
+    });
+    expect(await grants(l)).toEqual(await grants(r));
+    expect(await sieht(MEMBER, l)).toBe(false);
+    expect((await carried(l))[0]?.metadata).toMatchObject({
+      via: "purge",
+      fromRootId: r,
+    });
+  });
+
+  it("ein offenes lebendes Kind bleibt beim endgültigen Löschen offen, ohne Audit", async () => {
+    const p = await seite("Offen im Papierkorb");
+    const kind = await seite("Offenes Kind", { parentId: p });
+    await prisma.page.update({ where: { id: p }, data: { deletedAt: new Date() } });
+
+    await als(w.personen.ADMIN, () => purgePageAction(formular({ pageId: p })));
+
+    expect(await zeile(kind)).toMatchObject({
+      parentId: null,
+      isRestricted: false,
+      accessRootId: null,
+    });
+    expect(await carried(kind)).toEqual([]);
   });
 });

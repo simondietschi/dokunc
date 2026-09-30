@@ -227,6 +227,28 @@ export async function copyPageGrants(
 }
 
 /**
+ * Schutz übernehmen für eine bestehende Seite, die ihre Schutzwurzel
+ * verliert: beim Wiederherstellen unter einer noch gelöschten
+ * Elternseite, beim Abhängen vor dem endgültigen Löschen, bei der
+ * Rücknahme eines Imports. `pageId` wird selbst geschützt und bekommt
+ * eine Kopie der Freigaben von `fromRootId` (siehe `copyPageGrants`).
+ *
+ * Rohes SQL für isRestricted: `update` setzte über @updatedAt auch den
+ * Zeitstempel, und der Aufbewahrungsjob stellte nachts Seiten als
+ * "zuletzt geändert" ins Dashboard. Vor dem Löschen der alten Wurzel
+ * aufzurufen (die Kaskade nähme ihre Freigaben mit), und der Aufrufer
+ * zieht danach `refreshAccessRoots` nach, im selben Zug.
+ */
+export async function carryProtection(
+  tx: Pick<typeof prisma, "$executeRaw" | "pageGrant">,
+  pageId: string,
+  fromRootId: string,
+): Promise<number> {
+  await tx.$executeRaw`UPDATE "Page" SET "isRestricted" = true WHERE id = ${pageId}`;
+  return copyPageGrants(tx, pageId, fromRootId);
+}
+
+/**
  * Schutz einer Seite setzen oder aufheben.
  *
  * Wer schützt, wird selbst eingetragen: sonst verschwindet die Seite

@@ -520,7 +520,7 @@ export function createRetentionDeps(
           if (row?.juengste && row.juengste.getTime() >= cutoff.getTime()) {
             continue;
           }
-          const { purged } = await purgeTree(root.spaceId, root.id);
+          const { purged, detached } = await purgeTree(root.spaceId, root.id);
           if (!purged) continue;
           entfernt += 1;
           await audit({
@@ -531,6 +531,25 @@ export function createRetentionDeps(
             ip: null,
             metadata: { title: root.title, automatisch: true, fristTage: days },
           });
+          // Abgehaengte Kinder, die den Schutz ihrer Wurzel uebernommen
+          // haben: wie von Hand, nur ohne handelnde Person.
+          for (const d of detached) {
+            if (!d.carriedFrom) continue;
+            await audit({
+              action: "page.protection_carried",
+              actorId: null,
+              spaceId: root.spaceId,
+              targetId: d.id,
+              ip: null,
+              metadata: {
+                via: "purge",
+                fromRootId: d.carriedFrom,
+                grants: d.grants,
+                sourcePageId: root.id,
+                automatisch: true,
+              },
+            });
+          }
         } catch (err) {
           log.warn(
             { err, pageId: root.id, spaceId: root.spaceId },

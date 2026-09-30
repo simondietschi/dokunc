@@ -139,6 +139,7 @@ export async function runImport(opts: ImportOptions): Promise<ImportResult> {
     const undone = await rollbackImport(journal, {
       spaceId: opts.spaceId,
       parentId: opts.parentId,
+      actorId: opts.userId,
     });
     // Ohne den Fehler selbst: den protokolliert die Route mit dem Grund,
     // den nur sie einordnen kann (Zeitgrenze, Abbruch der Person, Fehler).

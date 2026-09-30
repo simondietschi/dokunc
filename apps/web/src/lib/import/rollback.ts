@@ -1,7 +1,8 @@
 import "server-only";
 import { Prisma, prisma } from "@dokunc/db";
+import { audit } from "@/lib/audit";
 import { log } from "@/lib/log";
-import { refreshAccessRoots } from "@/lib/page-access";
+import { carryProtection, refreshAccessRoots } from "@/lib/page-access";
 import { nextSiblingPosition } from "@/lib/page-position";
 import { removeImportedImage } from "./files";
 
@@ -85,7 +86,12 @@ export class ImportRolledBack extends Error {
  */
 const ROLLBACK_TIMEOUT_MS = 30_000;
 
-type RollbackTarget = { spaceId: string; parentId: string | null };
+type RollbackTarget = {
+  spaceId: string;
+  parentId: string | null;
+  /** Wer importiert hat; für das Audit übernommener Schutzwurzeln. */
+  actorId?: string;
+};
 
 /**
  * Nimmt alles zurueck, was im Journal steht. Gibt true zurueck, wenn das
@@ -104,6 +110,11 @@ type RollbackTarget = { spaceId: string; parentId: string | null };
  * Ebene wie beim Leeren des Papierkorbs: liegt das Ziel unter einer
  * geschuetzten Seite, haben sie deren Schutz geerbt, und an der obersten
  * Ebene waeren sie ploetzlich fuer den ganzen Space offen.
+ *
+ * Lag eine solche Seite unter einer importierten Seite, die inzwischen
+ * geschuetzt wurde, behaelt sie diesen Schutz als eigene Wurzel mit einer
+ * Kopie der Freigaben (`carryProtection`, wie beim endgueltigen
+ * Loeschen), vor dem Loeschen der Wurzel; das steht im Audit.
  */
 export async function rollbackImport(
   journal: ImportJournal,
@@ -111,6 +122,7 @@ export async function rollbackImport(
 ): Promise<boolean> {
   await journal.settle();
   const pageIds = [...journal.pageIds];
+  const carried: { id: string; fromRootId: string; grants: number }[] = [];
   try {
     if (pageIds.length > 0 || journal.attachmentIds.length > 0) {
       await prisma.$transaction(
@@ -128,9 +140,10 @@ export async function rollbackImport(
             `;
             const foreign = await tx.page.findMany({
               where: { parentId: { in: pageIds }, id: { notIn: pageIds } },
-              select: { id: true },
+              select: { id: true, isRestricted: true, accessRootId: true },
               orderBy: [{ position: "asc" }, { createdAt: "asc" }],
             });
+            const imported = new Set(pageIds);
             if (foreign.length > 0) {
               const first = await nextSiblingPosition(
                 tx,
@@ -138,6 +151,20 @@ export async function rollbackImport(
                 target.parentId,
               );
               for (let i = 0; i < foreign.length; i++) {
+                const f = foreign[i];
+                // Die Schutzwurzel ist eine importierte Seite, die gleich
+                // verschwindet: ihren Schutz behalten.
+                if (
+                  !f.isRestricted &&
+                  f.accessRootId &&
+                  imported.has(f.accessRootId)
+                ) {
+                  carried.push({
+                    id: f.id,
+                    fromRootId: f.accessRootId,
+                    grants: await carryProtection(tx, f.id, f.accessRootId),
+                  });
+                }
                 await tx.page.update({
                   where: { id: foreign[i].id },
                   data: { parentId: target.parentId, position: first + i },
@@ -171,6 +198,16 @@ export async function rollbackImport(
       "Import: Ruecknahme fehlgeschlagen",
     );
     return false;
+  }
+
+  for (const c of carried) {
+    await audit({
+      action: "page.protection_carried",
+      actorId: target.actorId ?? null,
+      spaceId: target.spaceId,
+      targetId: c.id,
+      metadata: { via: "import", fromRootId: c.fromRootId, grants: c.grants },
+    });
   }
 
   // Erst nach dem Commit: eine Zeile ohne Datei waere ein kaputtes Bild,

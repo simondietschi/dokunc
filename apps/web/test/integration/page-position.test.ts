@@ -283,7 +283,7 @@ describe("Ans Ende der obersten Ebene", () => {
     const kind = await seite("kind-sperre", 0, { parentId: eltern });
     await trashPageTree(raum, eltern);
 
-    let wiederherstellen: Promise<void> | undefined;
+    let wiederherstellen: Promise<unknown> | undefined;
     await prisma.$transaction(
       async (halter) => {
         await lockSiblingOrder(halter, raum, null);

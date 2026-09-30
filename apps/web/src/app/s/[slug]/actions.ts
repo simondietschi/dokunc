@@ -172,19 +172,15 @@ export async function restorePageAction(form: FormData) {
     revalidatePath(`/s/${space.slug}/trash`);
     return;
   }
-  // Alle drei Schritte in EINEM Zug. Getrennt ausgeführt bleibt nach
-  // einem Abbruch eine Seite sichtbar im Baum stehen, aber unter einem
-  // noch gelöschten Elternteil und mit einer position aus der alten
-  // Geschwisterliste — und im schlimmsten Fall mit der Zugriffswurzel
-  // von vorher, also offen für die Falschen.
-  await prisma.$transaction(async (tx) => {
-    // Seite + (geloeschten) Unterbaum wiederherstellen und, falls die
-    // Elternseite noch im Papierkorb liegt, an die oberste Ebene haengen.
-    await restorePageTree(space.id, page.id, tx);
-    // Der Ast kann dabei unter einer geschuetzten Seite hervorgeholt
-    // worden sein; die materialisierte Zugriffswurzel muss das nachziehen.
-    await refreshAccessRoots(page.id, tx);
-  });
+  // Seite + (geloeschten) Unterbaum wiederherstellen und, falls die
+  // Elternseite noch im Papierkorb liegt, an die oberste Ebene haengen —
+  // mit dem Schutz, unter dem sie lag, und nachgezogener Zugriffswurzel.
+  // Alle Schritte in EINEM Zug (restorePageTree): getrennt ausgeführt
+  // bliebe nach einem Abbruch eine Seite unter einem noch gelöschten
+  // Elternteil stehen, oder offen für die Falschen.
+  const { carriedFrom, grants } = await prisma.$transaction((tx) =>
+    restorePageTree(space.id, page.id, tx),
+  );
   await audit({
     action: "page.restored",
     actorId: user.id,
@@ -192,6 +188,15 @@ export async function restorePageAction(form: FormData) {
     targetId: page.id,
     metadata: { title: page.title },
   });
+  if (carriedFrom) {
+    await audit({
+      action: "page.protection_carried",
+      actorId: user.id,
+      spaceId: space.id,
+      targetId: page.id,
+      metadata: { via: "restore", fromRootId: carriedFrom, grants },
+    });
+  }
   revalidatePath(`/s/${space.slug}/trash`);
   revalidatePath(`/s/${space.slug}`, "layout");
 }
@@ -219,8 +224,8 @@ export async function purgePageAction(form: FormData) {
   // aber NUR er. Lebende Unterseiten unter einem noch geloeschten
   // Elternteil sind ein voellig normaler Zustand (restorePageAction
   // stellt nur nach unten wieder her); purgeTrashedTree haengt sie vorher
-  // ab und zieht ihre Zugriffswurzeln nach.
-  await purgeTrashedTree(space.id, page.id);
+  // ab, mit dem Schutz, unter dem sie lagen.
+  const { detached } = await purgeTrashedTree(space.id, page.id);
   await audit({
     action: "page.purged",
     actorId: user.id,
@@ -228,6 +233,21 @@ export async function purgePageAction(form: FormData) {
     targetId: page.id,
     metadata: { title: page.title },
   });
+  for (const d of detached) {
+    if (!d.carriedFrom) continue;
+    await audit({
+      action: "page.protection_carried",
+      actorId: user.id,
+      spaceId: space.id,
+      targetId: d.id,
+      metadata: {
+        via: "purge",
+        fromRootId: d.carriedFrom,
+        grants: d.grants,
+        sourcePageId: page.id,
+      },
+    });
+  }
 
   revalidatePath(`/s/${space.slug}/trash`);
   revalidatePath(`/s/${space.slug}`, "layout");

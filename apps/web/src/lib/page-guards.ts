@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma, type Prisma, type SpaceRole } from "@dokunc/db";
 import {
+  carryProtection,
   refreshAccessRoots,
   seesEverything,
   visiblePageSql,
@@ -288,6 +289,14 @@ export async function trashPageTree(
  * und Verschieben durcheinandergeraten. Wer nur den ersten Schritt
  * aufriefe, bekäme genau diesen halben Zustand.
  *
+ * Hing die Seite unter einer Schutzwurzel, behält sie deren Schutz: an
+ * der obersten Ebene wird sie selbst Schutzwurzel mit einer Kopie der
+ * Freigaben (`carryProtection`). Sonst stünde eine vertrauliche Seite
+ * nach dem Wiederherstellen offen im Space. Auch die Zugriffswurzeln
+ * zieht diese Funktion selbst nach, aus demselben Grund wie oben.
+ * Rückgabe: woher der Schutz übernommen wurde (null = keiner) und wie
+ * viele Freigaben.
+ *
  * Nur im Client einer laufenden Transaktion: die Schritte müssen
  * gemeinsam gelten, und die Sperre der Geschwisterreihe (siehe unten)
  * hält nur innerhalb einer Transaktion.
@@ -295,8 +304,8 @@ export async function trashPageTree(
 export async function restorePageTree(
   spaceId: string,
   pageId: string,
-  tx: Pick<typeof prisma, "$executeRaw" | "$queryRaw" | "page">,
-): Promise<void> {
+  tx: Pick<typeof prisma, "$executeRaw" | "$queryRaw" | "page" | "pageGrant">,
+): Promise<{ carriedFrom: string | null; grants: number }> {
   // Die Sperre der obersten Geschwisterreihe ZUERST, vor jeder
   // Zeilensperre. detachLiveChildren (endgültiges Löschen) nimmt sie
   // ebenfalls als Erstes und sperrt danach Zeilen im selben Unterbaum.
@@ -320,14 +329,31 @@ export async function restorePageTree(
   `;
 
   // Nur die oberste Seite kann noch an einem gelöschten Elternteil
-  // hängen; alles darunter ist eben mit ihr zurückgekommen.
-  const [stranded] = await tx.$queryRaw<{ isTemplate: boolean }[]>`
-    SELECT p."isTemplate" FROM "Page" p
+  // hängen; alles darunter ist eben mit ihr zurückgekommen. Gelesen auf
+  // der eben gesperrten Zeile: die alte Wurzel gilt noch.
+  const [stranded] = await tx.$queryRaw<
+    { isTemplate: boolean; isRestricted: boolean; accessRootId: string | null }[]
+  >`
+    SELECT p."isTemplate", p."isRestricted", p."accessRootId" FROM "Page" p
     JOIN "Page" parent ON parent.id = p."parentId"
     WHERE p.id = ${pageId} AND p."spaceId" = ${spaceId}
       AND parent."deletedAt" IS NOT NULL
   `;
-  if (!stranded) return;
+  if (!stranded) {
+    // Unter einer lebenden Elternseite: deren Wurzel gilt.
+    await refreshAccessRoots(pageId, tx);
+    return { carriedFrom: null, grants: 0 };
+  }
+
+  // Die alte Wurzel liegt im Papierkorb oder lebt; ihre Freigaben gibt
+  // es in beiden Fällen noch.
+  const carriedFrom =
+    !stranded.isRestricted && stranded.accessRootId
+      ? stranded.accessRootId
+      : null;
+  const grants = carriedFrom
+    ? await carryProtection(tx, pageId, carriedFrom)
+    : 0;
 
   // Ans Ende der obersten Ebene, nach derselben Regel wie jede neu
   // angelegte Seite: Vorlagen zählen dort nicht mit, und die Sperre der
@@ -343,6 +369,8 @@ export async function restorePageTree(
     UPDATE "Page" SET "parentId" = NULL, position = ${position}
     WHERE id = ${pageId} AND "spaceId" = ${spaceId}
   `;
+  await refreshAccessRoots(pageId, tx);
+  return { carriedFrom, grants };
 }
 
 /**
@@ -356,9 +384,10 @@ export async function restorePageTree(
  * Abhängen würde sie still mitgelöscht — samt Versionen, Kommentaren
  * und eigenem Unterbaum.
  *
- * Der Aufrufer muss für die zurückgegebenen Äste `refreshAccessRoots`
- * nachziehen: sie haben ihre Zugriffswurzel im gelöschten Unterbaum
- * verloren.
+ * Der Aufrufer muss für die zurückgegebenen Äste den Schutz übernehmen
+ * und `refreshAccessRoots` nachziehen: ihre Zugriffswurzel liegt womöglich
+ * im gelöschten Unterbaum. Zurück kommen die alten Werte von
+ * `accessRootId` und `isRestricted` (das UPDATE ändert sie nicht).
  */
 export async function detachLiveChildren(
   spaceId: string,
@@ -366,12 +395,14 @@ export async function detachLiveChildren(
   // Ohne Vorgabe: die Sperre aus nextSiblingPosition hält nur innerhalb
   // einer Transaktion.
   tx: Pick<typeof prisma, "$queryRaw" | "$executeRaw" | "page">,
-): Promise<{ id: string }[]> {
+): Promise<{ id: string; accessRootId: string | null; isRestricted: boolean }[]> {
   // Die erste freie Position auf oberster Ebene nach derselben Regel wie
   // beim Anlegen (Vorlagen zählen nicht mit) und unter derselben Sperre;
   // die abgehängten Äste reihen sich von dort an hintereinander ein.
   const first = await nextSiblingPosition(tx, spaceId, null);
-  return tx.$queryRaw<{ id: string }[]>`
+  return tx.$queryRaw<
+    { id: string; accessRootId: string | null; isRestricted: boolean }[]
+  >`
     WITH RECURSIVE sub AS (
       SELECT id FROM "Page"
       WHERE id = ${pageId} AND "spaceId" = ${spaceId}
@@ -388,7 +419,7 @@ export async function detachLiveChildren(
     UPDATE "Page" SET "parentId" = NULL,
       position = ${first - 1}::int + orphan.n
     FROM orphan WHERE "Page".id = orphan.id
-    RETURNING "Page".id
+    RETURNING "Page".id, "Page"."accessRootId", "Page"."isRestricted"
   `;
 }
 
@@ -400,28 +431,46 @@ export async function detachLiveChildren(
  * oder weg ist. Zeitgrenze wie deleteSpaceWithUploads: ein grosser Ast mit
  * Versionen, Kommentaren und Chunks braucht laenger als Prismas Vorgabe von
  * 5 s. Die Rechtepruefung (subtreeHasHiddenPages) macht der Aufrufer, wo
- * es eine handelnde Person gibt.
+ * es eine handelnde Person gibt, ebenso das Audit der Uebernahmen.
+ *
+ * Ein abgehaengtes Kind unter einer Schutzwurzel behaelt deren Schutz als
+ * eigene Wurzel (`carryProtection`), VOR dem Loeschen: die Kaskade naehme
+ * die Freigaben der Wurzel sonst mit, und `accessRoot` (ON DELETE SET
+ * NULL) setzte die Wurzel der Kinder auf null, also offen. Alles in einem
+ * Zug, damit dazwischen kein Moment liegt, in dem sie offen stehen.
  */
 export async function purgeTrashedTree(
   spaceId: string,
   pageId: string,
-): Promise<{ purged: boolean; detached: { id: string }[] }> {
-  const { purged, detached } = await prisma.$transaction(
+): Promise<{
+  purged: boolean;
+  detached: { id: string; carriedFrom: string | null; grants: number }[];
+}> {
+  return prisma.$transaction(
     async (tx) => {
       const orphans = await detachLiveChildren(spaceId, pageId, tx);
+      const detached: { id: string; carriedFrom: string | null; grants: number }[] =
+        [];
+      for (const o of orphans) {
+        const carriedFrom =
+          !o.isRestricted && o.accessRootId ? o.accessRootId : null;
+        detached.push({
+          id: o.id,
+          carriedFrom,
+          grants: carriedFrom ? await carryProtection(tx, o.id, carriedFrom) : 0,
+        });
+      }
       // Jetzt trifft die Kaskade nur noch geloeschte Seiten.
       const { count } = await tx.page.deleteMany({
         where: { id: pageId, spaceId, NOT: { deletedAt: null } },
       });
-      return { purged: count > 0, detached: orphans };
+      // Die abgehaengten Aeste haben ihre Zugriffswurzel womoeglich im
+      // geloeschten Unterbaum verloren: neu berechnen, im selben Zug.
+      for (const o of detached) await refreshAccessRoots(o.id, tx);
+      return { purged: count > 0, detached };
     },
     { timeout: 120_000, maxWait: 10_000 },
   );
-  // Die abgehaengten Aeste haben ihre Zugriffswurzel im geloeschten
-  // Unterbaum verloren; sie muessen neu berechnet werden, sonst stuende
-  // eine geschuetzte Seite ploetzlich offen da.
-  for (const o of detached) await refreshAccessRoots(o.id);
-  return { purged, detached };
 }
 
 /**

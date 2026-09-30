@@ -69,6 +69,17 @@ differently on an existing installation, and what to do about it.
   a page is recorded as `page.protection_changed` in the audit log and
   revokes the share links of the moved pages. Nothing else to do.
 
+- **Restored and detached pages:** a page restored while its protected
+  parent stays in the trash, and a live sub-page detached when a protected
+  page above it is permanently deleted (by hand or by the trash retention
+  job), now keep that protection as a protected page of their own, with a
+  copy of the access list. The same applies to pages created below
+  imported pages when the import is rolled back. Each case is recorded as
+  `page.protection_carried`; entries of the retention job have no actor
+  and `automatisch: true`. Pages restored or detached before this update
+  keep their current visibility: check the top-level pages named in
+  earlier `page.restored` and `page.purged` audit entries.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -92,6 +103,10 @@ differently on an existing installation, and what to do about it.
   immediately instead of after up to 60 seconds, and share links in the
   moved subtree no longer come back to life when it leaves the protected
   area.
+- Restoring a page whose protected parent is still in the trash,
+  permanently deleting a page with live sub-pages (by hand or by the trash
+  retention job) and rolling back an import no longer make the affected
+  pages visible to the whole space.
 
 ### Added
 
