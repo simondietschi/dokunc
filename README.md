@@ -170,8 +170,9 @@ erzeugt und im Volume `app_data` abgelegt (überlebt Neustarts und Updates).
 Danach:
 
 - App: <https://localhost:7891> (TLS über den Caddy-Proxy; Port über `APP_PORT` in `.env` änderbar)
-- Die erste Registrierung wird Instanz-Admin (→ `docs/admin/first-account.md`);
-  danach ist die Anmeldung nur noch per Einladung möglich.
+- **Erstes Konto und Einrichtungs-Token** → `docs/admin/first-account.md`
+- Die erste Registrierung wird Instanz-Admin; danach ist die Anmeldung nur
+  noch per Einladung möglich.
 - Status: `docker compose ps` · Logs: `docker compose logs -f app`
 - Stoppen: `docker compose down` (Daten bleiben). Update und Rückweg:
   siehe „Update und Rückweg“ unten.
@@ -206,6 +207,8 @@ APP_PORT=443
 COMPOSE_FILE=docker-compose.yml:docker-compose.domain.yml
 POSTGRES_PASSWORD=<eigenes Passwort>
 ```
+
+**Erstes Konto und Einrichtungs-Token** → `docs/admin/first-account.md`
 
 `APP_SECRET` gehört nicht in diese Liste: das beim ersten Start erzeugte
 Secret im Volume `app_data` gilt für die Domain genauso. Ein eigenes
@@ -271,7 +274,7 @@ Die Datei nur einbinden, wenn der Server IPv6 hat, sonst startet der
 Proxy nicht. Welche Adressen der Proxy tatsächlich belegt, zeigt
 `docker compose ps proxy` in der Spalte `PORTS`.
 
-Dann `docker compose up -d` (erstes Konto → `docs/admin/first-account.md`). Aktualisiert wird wie im Abschnitt „Update
+Dann `docker compose up -d`. Aktualisiert wird wie im Abschnitt „Update
 und Rückweg“ beschrieben; weil keine versionierte Datei geändert ist,
 läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
 `APP_SECRET` hat Vorrang vor dem automatisch erzeugten; ein anderer Wert
