@@ -5,14 +5,38 @@ import { guardUpload, type UploadReadLimits } from "./upload-read";
  * Frist fuer das Lesen des Uploads: wer tropfenweise liefert, verliert
  * seinen Platz nach der Anfangsfrist; wer zuegig liefert, wird nie
  * abgebrochen, auch wenn der Upload laenger dauert als die Anfangsfrist.
- * Echte Zeit mit kleinen Werten, damit Strom und Timer so zusammenspielen
- * wie in der Route.
+ * Echte Wartezeiten mit kleinen Werten, damit Strom und Timer so
+ * zusammenspielen wie in der Route. Ob die Frist abgelaufen ist, misst
+ * guardUpload in den Faellen, die von der Zeit zwischen den Bloecken
+ * abhaengen, aber an der Uhr der Quelle, die nur mit jedem gelieferten
+ * Block weiterlaeuft: auf einem ausgelasteten Rechner dehnen sich die
+ * echten Wartezeiten, und ein zuegiger Upload saehe dann nach der echten
+ * Uhr wie ein tropfender aus.
  */
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Quelle, die `chunks` Bloecke zu `size` Bytes im Abstand `everyMs` liefert. */
-function source(chunks: number, size: number, everyMs: number) {
+/** Uhr, die nur weiterlaeuft, wenn eine Quelle einen Block liefert. */
+function quellenUhr() {
+  let jetzt = 0;
+  return {
+    now: () => jetzt,
+    weiter: (ms: number) => {
+      jetzt += ms;
+    },
+  };
+}
+
+/**
+ * Quelle, die `chunks` Bloecke zu `size` Bytes im Abstand `everyMs`
+ * liefert. Mit `uhr` stellt sie die Uhr bei jedem Block um `everyMs` vor.
+ */
+function source(
+  chunks: number,
+  size: number,
+  everyMs: number,
+  uhr?: { weiter: (ms: number) => void },
+) {
   let sent = 0;
   let cancelled: unknown = null;
   const stream = new ReadableStream<Uint8Array>({
@@ -24,6 +48,7 @@ function source(chunks: number, size: number, everyMs: number) {
       await sleep(everyMs);
       // Ein schon begonnener Block zaehlt nach dem Abbruch nicht mehr.
       if (cancelled) return;
+      uhr?.weiter(everyMs);
       sent += 1;
       controller.enqueue(new Uint8Array(size).fill(sent));
     },
@@ -52,11 +77,11 @@ const limits = (over: Partial<UploadReadLimits> = {}): UploadReadLimits => ({
 
 describe("guardUpload()", () => {
   it("reicht einen zuegigen Upload unveraendert durch, auch ueber die Anfangsfrist hinaus", async () => {
-    // 20 Bloecke zu 1000 Bytes alle 10 ms: rund 200 ms, doppelt so lange
-    // wie die Anfangsfrist, aber mit rund 100 000 B/s weit ueber dem
-    // Mindesttempo.
-    const src = source(20, 1000, 10);
-    const g = guardUpload(src.stream, limits());
+    // 20 Bloecke zu 1000 Bytes alle 10 ms: 200 ms, doppelt so lange wie
+    // die Anfangsfrist, aber mit 100 000 B/s weit ueber dem Mindesttempo.
+    const uhr = quellenUhr();
+    const src = source(20, 1000, 10, uhr);
+    const g = guardUpload(src.stream, limits(), uhr.now);
     const out = await drain(g.body);
     expect(out).toBeInstanceOf(Uint8Array);
     expect((out as Uint8Array).length).toBe(20_000);
@@ -64,22 +89,24 @@ describe("guardUpload()", () => {
     expect((out as Uint8Array)[19_999]).toBe(20);
     expect(g.stopped()).toBeNull();
     expect(src.cancelled()).toBeNull();
+    expect(uhr.now()).toBe(200);
   });
 
   it("bricht einen tropfenden Upload nach der Anfangsfrist ab und liest die Quelle nicht weiter", async () => {
     // 1 Byte alle 20 ms: 50 B/s, weit unter dem Mindesttempo.
-    const src = source(1000, 1, 20);
-    const g = guardUpload(src.stream, limits());
-    const start = Date.now();
+    const uhr = quellenUhr();
+    const src = source(1000, 1, 20, uhr);
+    const g = guardUpload(src.stream, limits(), uhr.now);
     const out = await drain(g.body);
-    const dauer = Date.now() - start;
 
     expect(out).toBeInstanceOf(Error);
     expect(g.stopped()).toBe("zu-langsam");
-    // Kurz nach der Anfangsfrist (100 ms plus ein paar ms fuer die
-    // angekommenen Bytes), nicht erst am Ende der Quelle (20 s).
-    expect(dauer).toBeGreaterThanOrEqual(90);
-    expect(dauer).toBeLessThan(1_000);
+    // Kurz nach der Anfangsfrist, nicht erst am Ende der Quelle (1000
+    // Bloecke): nach Block 5 (100 ms) laeuft die Frist noch 0,5 ms (100 ms
+    // plus 0,1 ms je angekommenes Byte), Block 6 kommt bei 120 ms, danach
+    // ist Schluss.
+    expect(src.sent()).toBe(6);
+    expect(uhr.now()).toBe(120);
     expect(src.cancelled()).toBe("zu-langsam");
     const gesendet = src.sent();
     await sleep(100);
@@ -123,8 +150,9 @@ describe("guardUpload()", () => {
   });
 
   it("bricht ab, sobald mehr als maxBytes ankommen", async () => {
-    const src = source(10, 1000, 1);
-    const g = guardUpload(src.stream, limits({ maxBytes: 2500 }));
+    const uhr = quellenUhr();
+    const src = source(10, 1000, 1, uhr);
+    const g = guardUpload(src.stream, limits({ maxBytes: 2500 }), uhr.now);
     const out = await drain(g.body);
     expect(out).toBeInstanceOf(Error);
     expect(g.stopped()).toBe("zu-gross");
