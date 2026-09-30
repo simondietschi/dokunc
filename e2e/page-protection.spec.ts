@@ -15,13 +15,14 @@ import {
  *
  * 1. Die Verwaltung bestaetigt jeden Zug, der den Schutz einer Seite
  *    aufhebt, im Dialog "Schutz ändert sich": im Dialog "Verschieben
- *    nach…" und beim Ziehen im Seitenbaum (Abbrechen laesst alles, wie es
- *    war). "Als Vorlage speichern…" auf einer geschuetzten Seite fragt
- *    ebenso nach.
+ *    nach…" (danach zeigt "Zugriff" keinen Schutz mehr) und beim Ziehen
+ *    im Seitenbaum (Abbrechen laesst alles, wie es war). "Als Vorlage
+ *    speichern…" auf einer geschuetzten Seite fragt ebenso nach.
  * 2. Ein MEMBER ohne Freigabe sieht den Titel einer geschuetzten Seite
  *    nicht, auch nicht ueber einen Wiki-Link, der ihn beim Verlinken
- *    gespeichert hat; ein offenes Ziel zeigt seinen aktuellen Titel. Im
- *    Papierkorb fehlt ihm der Knopf "Endgültig löschen".
+ *    gespeichert hat; ein offenes Ziel zeigt seinen aktuellen Titel.
+ *    Legt er selbst eine Seite in den Papierkorb, steht sie dort mit
+ *    "Wiederherstellen", aber ohne "Endgültig löschen".
  *
  * Eigener Space (per SQL, erstes Konto als OWNER) mit einem zweiten
  * Konto als MEMBER; beide werden am Ende entfernt. Die Seiten entstehen
@@ -65,15 +66,14 @@ async function seite(o: {
   schutzwurzel?: string | null;
   content?: unknown;
   position?: number;
-  imPapierkorb?: boolean;
 }): Promise<Seite> {
   const id = neueId();
   const wurzel = o.geschuetzt ? id : (o.schutzwurzel ?? null);
   await mitDatenbank((db) =>
     db.query(
       `INSERT INTO "Page" (id, "spaceId", "parentId", title, content, position,
-         "isRestricted", "accessRootId", "deletedAt", "updatedAt")
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, now())`,
+         "isRestricted", "accessRootId", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, now())`,
       [
         id,
         space.id,
@@ -83,11 +83,21 @@ async function seite(o: {
         o.position ?? 0,
         !!o.geschuetzt,
         wurzel,
-        o.imPapierkorb ? new Date() : null,
       ],
     ),
   );
   return { id, title: o.title };
+}
+
+/** Liegt die Seite im Papierkorb? */
+async function imPapierkorb(id: string): Promise<boolean> {
+  return mitDatenbank(async (db) => {
+    const r = await db.query<{ weg: boolean }>(
+      `SELECT "deletedAt" IS NOT NULL AS weg FROM "Page" WHERE id = $1`,
+      [id],
+    );
+    return r.rows[0]?.weg ?? false;
+  });
 }
 
 async function zeile(id: string) {
@@ -129,6 +139,8 @@ test("Verwaltung bestätigt Schutzwechsel beim Verschieben und bei der Vorlage",
 
   await test.step("Verschieben nach…: Rückfrage, dann an die oberste Ebene", async () => {
     await page.goto(`/s/${space.slug}/p/${c.id}`);
+    // Vorher: geerbter Schutz.
+    await expect(page.getByTitle("Zugriff: geschützt")).toBeVisible({ timeout: 15_000 });
     await page.getByRole("button", { name: "Weitere Aktionen" }).click();
     await page.getByRole("menuitem", { name: /Verschieben nach/ }).click();
     const dialog = page.getByRole("dialog", { name: /Verschieben nach/ });
@@ -144,6 +156,18 @@ test("Verwaltung bestätigt Schutzwechsel beim Verschieben und bei der Vorlage",
 
     await expect.poll(() => zeile(c.id)).toEqual({ parentId: null, accessRootId: null });
     expect(await bestaetigterWechsel(c.id, "move")).toBe(true);
+
+    // Nachher zeigt "Zugriff" die Seite offen.
+    await page.goto(`/s/${space.slug}/p/${c.id}`);
+    const zugriff = page.getByTitle("Zugriff", { exact: true });
+    await expect(zugriff).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByTitle("Zugriff: geschützt")).toHaveCount(0);
+    await zugriff.click();
+    const zugriffDialog = page.getByRole("dialog", { name: "Zugriff auf diese Seite" });
+    await expect(zugriffDialog).toContainText("Alle mit Zugang zum Space sehen diese Seite.");
+    await expect(zugriffDialog).not.toContainText(p.title);
+    await zugriffDialog.getByRole("button", { name: "Schliessen" }).click();
+    await expect(zugriffDialog).toBeHidden();
   });
 
   await test.step("Seitenbaum: Abbrechen lässt alles, Bestätigen verschiebt", async () => {
@@ -251,7 +275,8 @@ test("MEMBER ohne Freigabe: kein Titel geschützter Ziele, kein endgültiges Lö
       ],
     },
   });
-  const weg = await seite({ title: `Aussortiert ${ZEIT}`, imPapierkorb: true });
+  // Offen und lebend: das Mitglied legt sie gleich selbst in den Papierkorb.
+  const aussortiert = await seite({ title: `Aussortiert ${ZEIT}`, position: 1 });
 
   await alsMitglied(browser, async (page) => {
     await test.step("Wiki-Links zeigen nur, was das Mitglied öffnen darf", async () => {
@@ -268,10 +293,23 @@ test("MEMBER ohne Freigabe: kein Titel geschützter Ziele, kein endgültiges Lö
       expect(html).not.toContain(`Offen alt ${ZEIT}`);
     });
 
+    await test.step("Mitglied legt eine offene Seite in den Papierkorb", async () => {
+      await page.goto(`/s/${space.slug}/p/${aussortiert.id}`);
+      // Erst wenn der Editor steht, ruht das Layout unter dem Menü.
+      await waitForLive(page);
+      await page.getByRole("button", { name: "Weitere Aktionen" }).click();
+      await page.getByTitle("Seite löschen").click();
+      await page.getByRole("dialog").getByRole("button", { name: "Ja, fortfahren" }).click();
+      await page.waitForURL(`**/s/${space.slug}`);
+      await expect.poll(() => imPapierkorb(aussortiert.id)).toBe(true);
+    });
+
     await test.step("Papierkorb: Eintrag sichtbar, Knopf fehlt, Hinweis da", async () => {
       await page.goto(`/s/${space.slug}/trash`);
-      await expect(page.getByText(weg.title)).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByRole("button", { name: /Wiederherstellen/ }).first()).toBeVisible();
+      const eintrag = page.locator("li").filter({ hasText: aussortiert.title });
+      await expect(eintrag).toBeVisible({ timeout: 15_000 });
+      await expect(eintrag.getByRole("button", { name: /Wiederherstellen/ })).toBeVisible();
+      await expect(eintrag.getByTitle("Endgültig löschen")).toHaveCount(0);
       await expect(page.getByRole("button", { name: "Endgültig löschen" })).toHaveCount(0);
       await expect(
         page.getByText("Endgültig löschen kann nur die Space-Verwaltung."),
