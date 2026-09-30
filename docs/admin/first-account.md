@@ -25,11 +25,14 @@ this first step with a one-time setup token.
   points to `localhost` (or `127.0.0.1`, `[::1]`, a name under
   `.localhost`), and every name the request carries is such a host name:
   the `Host` header, each entry of `X-Forwarded-Host`, each `host=` in
-  `Forwarded`, and the `Origin` of a form submission. The registration
-  form must carry an `Origin` (browsers always send one); a submission
-  without it needs the token. This is the case for the Docker quick start
-  at `https://localhost:7891` and for development. Without `APP_URL`, or
-  with your own domain, the token is needed.
+  `Forwarded`, and the `Origin` of a form submission. This is the case for
+  the Docker quick start at `https://localhost:7891` and for development.
+  Without `APP_URL`, or with your own domain, the token is needed.
+- A form submission without `Origin` always needs the token. Browsers
+  send one with every form, so this only turns away requests built by
+  hand that leave it out. It does not prove where a request comes from:
+  a script can just as well send a local name in `Origin` (see
+  "Remaining risk").
 - When the first account exists, the file is deleted, and
   `auth.first_admin_created` is recorded in the audit log, with
   `setupToken: "required"` or `"not_required"`. After that, new accounts
@@ -77,7 +80,8 @@ the provider is down.
 ## Remaining risk
 
 The exception for the machine itself relies on the host names the request
-carries. Set `APP_URL` to your public address before the instance is
+carries, and apart from a `Host` that your proxy sets, the client chooses
+them. Set `APP_URL` to your public address before the instance is
 reachable from outside; with that, the token is always needed. While
 `APP_URL` is still `localhost`:
 
@@ -90,15 +94,21 @@ reachable from outside; with that, the token is always needed. While
   nginx with `proxy_pass http://localhost:3000` and no `Host` header set)
   is covered as long as it passes the public name in `X-Forwarded-Host` or
   `Forwarded`, as Apache does by default: the token is then needed.
-- A proxy that rewrites `Host` and passes no public name at all hides where
-  the request came from. The registration forms still need the token: a
-  browser names your domain in `Origin`, and a request without `Origin`
-  never counts as local. What remains is the return from a single sign-on
-  provider, which is a plain link without `Origin`: dokunc cannot tell it
-  apart from a local one. Someone can use this only if single sign-on is
-  configured, the provider accepts the `localhost` redirect URI that
-  dokunc derives from `APP_URL`, and that person has an account at the
-  provider with a confirmed email address. Set `APP_URL` first.
+- **A proxy that rewrites `Host` to `localhost` and passes no public name
+  at all is not covered.** dokunc then cannot tell a request from outside
+  apart from one on the machine itself, and anyone who reaches the
+  instance can create the first admin without the token: with a password
+  registration, because a script sends local names in every header,
+  `Origin` included, and through single sign-on, if it is configured, the
+  provider accepts the `localhost` redirect URI that dokunc derives from
+  `APP_URL`, and that person has an account there with a confirmed email
+  address. A browser that opens the site under your domain does not get
+  this far: the pages show no token field, because they look local too,
+  and the registration and sign-in forms fail with a server error, because
+  Next.js rejects a form whose `Origin` names neither the host it sees nor
+  `APP_URL`. The only protection is to set `APP_URL` to your public
+  address, or to have the proxy pass `Host` or `X-Forwarded-Host` (nginx:
+  `proxy_set_header Host $host;`), before the instance is reachable.
 
 ## Checking the setup form by hand
 

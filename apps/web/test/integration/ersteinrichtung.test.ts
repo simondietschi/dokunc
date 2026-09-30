@@ -479,7 +479,9 @@ describe("Server Action ohne Origin", () => {
   // Header), bei APP_URL auf localhost. Browser schicken bei jedem POST
   // einer Server Action ein Origin; eine Anfrage ohne ist von Hand gebaut,
   // und Next lässt sie mit einer Warnung durch. X-Forwarded-Host setzt
-  // Next selbst auf den Host.
+  // Next selbst auf den Host. Das hält nur Anfragen ohne Origin ab: mit
+  // einem lokalen Origin (letzter Fall) geht es hinter diesem Proxy ohne
+  // Token, das dokumentierte Restrisiko (docs/admin/first-account.md).
   beforeEach(() => {
     vi.stubEnv("APP_URL", "http://localhost:3000");
     mocks.host = "localhost:3000";

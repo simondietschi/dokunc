@@ -26,9 +26,16 @@ import { log } from "./log";
  * Host vergleicht. Der Host allein genügte auch nicht: ein Proxy, der
  * `Host` auf localhost umschreibt und den öffentlichen Namen in
  * X-Forwarded-Host weitergibt, sieht für ihn wie dieser Rechner aus.
- * Gibt er gar keinen Namen weiter, bleibt in einer Server Action das
- * Origin des Browsers; eine Action ohne Origin gilt darum nie als lokal
- * (NamenOptionen.aktion).
+ *
+ * Gibt ein solcher Proxy gar keinen Namen weiter, lässt sich eine Anfrage
+ * von aussen nicht von einer lokalen unterscheiden: ausser dem Host, den
+ * der Proxy setzt, wählt der Client jeden Namen selbst, auch Origin. Ein
+ * Skript mit `Origin: http://localhost` legt dort das erste Konto ohne
+ * Token an. Dagegen hilft nur APP_URL mit der öffentlichen Adresse oder
+ * ein Proxy, der Host oder X-Forwarded-Host weitergibt
+ * (docs/admin/first-account.md, "Remaining risk"). Dass eine Action ohne
+ * Origin nie als lokal gilt (NamenOptionen.aktion), weist nur von Hand
+ * gebaute Anfragen ab, die es weglassen.
  */
 
 export const SETUP_TOKEN_DATEI_VORGABE = "/app/data/setup_token";
@@ -80,10 +87,10 @@ export type NamenOptionen = {
    * Die Anfrage ist eine Server Action (POST): ohne Origin gilt sie nicht
    * als lokal. Browser schicken bei jedem POST einer Action ein Origin;
    * fehlt es, ist die Anfrage von Hand gebaut, und Next lässt sie mit
-   * einer Warnung durch. Hinter einem Proxy, der `Host` auf localhost
-   * umschreibt und keinen Namen weitergibt, wäre sie sonst nicht von
-   * einer lokalen zu unterscheiden. Seiten und der Rücksprung vom
-   * Anbieter sind GET-Navigationen ohne Origin und bleiben aussen vor.
+   * einer Warnung durch. Das ist nur eine Härtung: wer die Anfrage von
+   * Hand baut, kann ebenso ein lokales Origin mitschicken (siehe oben).
+   * Seiten und der Rücksprung vom Anbieter sind GET-Navigationen ohne
+   * Origin und bleiben aussen vor.
    */
   aktion?: boolean;
 };
