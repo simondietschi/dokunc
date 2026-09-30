@@ -7,7 +7,7 @@ import { reloadUntil } from "./wait";
  * einmalig an, statt "gesendet" zu melden, und die eingeladene Person
  * kommt mit genau diesem Link hinein.
  *
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer (Admin-Person der
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (Admin-Person der
  * Instanz, Owner des ersten Space). CI und `next start` laufen mit
  * NODE_ENV=production, ohne SMTP und ohne INVITE_LINK_WITHOUT_MAIL
  * (Vorgabe admins). Danach ist ein zweites Konto Mitglied im ersten

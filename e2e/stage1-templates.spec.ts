@@ -4,7 +4,7 @@ import { pageTree, resetLoginRateLimit } from "./helpers";
 /**
  * E2E für Seitenvorlagen und Duplizieren: Seite anlegen, duplizieren,
  * als Vorlage speichern, Seite aus einer Standardvorlage erstellen.
- * Nutzt den in editor.spec.ts angelegten Nutzer (serieller Lauf).
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf).
  */
 
 const EMAIL = "e2e@dokunc.dev";

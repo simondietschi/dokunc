@@ -1,13 +1,14 @@
 import { test, expect, type Page } from "@playwright/test";
+import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * End-to-End: kompletter Editor-Pfad durch den echten Stack —
- * Registrierung, Space, TipTap-Editor, authentifizierter Collab-
+ * Anmeldung, Space, TipTap-Editor, authentifizierter Collab-
  * WebSocket, Slash-Menü, Persistenz (Yjs -> Postgres) und
  * Realtime-Sync zwischen zwei Tabs.
  *
- * Die DB wird im globalSetup geleert; dieser Test registriert den
- * ersten Nutzer (wird Instanz-Admin).
+ * Konto, Space und Willkommensseite legt first-account.setup.ts an
+ * (Projekt erstes-konto); dieser Test meldet sich nur an.
  */
 
 const EMAIL = "e2e@dokunc.dev";
@@ -29,48 +30,24 @@ test("Editor funktioniert end-to-end (inkl. Realtime)", async ({
   const jsErrors: string[] = [];
   page.on("pageerror", (e) => jsErrors.push(String(e)));
 
-  await test.step("Registrierung (erster Nutzer -> Admin)", async () => {
-    // Retry-fest: Existiert der Nutzer aus einem früheren Versuch
-    // bereits (CI-Retry), stattdessen einloggen.
-    await page.goto("/register");
-    await page.fill('input[name="name"]', "E2E Tester");
+  await test.step("Anmelden", async () => {
+    await resetLoginRateLimit();
+    await page.goto("/login");
     await page.fill('input[name="email"]', EMAIL);
     await page.fill('input[name="password"]', PASS);
     await page.click('button[type="submit"]');
-    // Ohne gültige Einladung antwortet /register bewusst generisch (die
-    // Existenz eines Kontos wird nie preisgegeben) — beide Meldungen
-    // bedeuten hier "gibt es schon, also einloggen".
-    const outcome = await Promise.race([
-      page.waitForURL("**/spaces").then(() => "ok" as const),
-      page
-        .getByText(/bereits registriert|nur per Einladung/)
-        .waitFor({ timeout: 15_000 })
-        .then(() => "exists" as const),
-    ]);
-    if (outcome === "exists") {
-      await page.goto("/login");
-      await page.fill('input[name="email"]', EMAIL);
-      await page.fill('input[name="password"]', PASS);
-      await page.click('button[type="submit"]');
-      await page.waitForURL("**/spaces");
-    }
+    await page.waitForURL("**/spaces");
   });
 
-  await test.step("Space anlegen", async () => {
-    // Retry-fest: Space aus früherem Versuch wiederverwenden.
-    const existing = page.locator('a[href^="/s/"]', {
-      hasText: "E2E Space",
-    });
-    if (await existing.count()) {
-      await existing.first().click();
-    } else {
-      await page.fill('input[name="name"]', "E2E Space");
-      await page.click("text=Space erstellen");
-    }
+  await test.step("Willkommensseite im Space öffnen", async () => {
+    await page.locator('a[href^="/s/"]', { hasText: "E2E Space" }).first().click();
     await page.waitForURL("**/s/**");
-    // Die Space-Startseite ist ein Dashboard — zur ersten Seite in der
-    // Sidebar navigieren.
-    await page.locator('aside a[href*="/p/"]').first().click();
+    // Die Space-Startseite ist ein Dashboard. Die Seite gezielt im Baum
+    // waehlen: andere Dateien der Suite legen im selben Space Seiten an.
+    await pageTree(page)
+      .locator('a[href*="/p/"]', { hasText: "Willkommen" })
+      .first()
+      .click();
     await page.waitForURL("**/p/**");
   });
 

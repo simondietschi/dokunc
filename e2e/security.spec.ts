@@ -8,7 +8,7 @@ import { TOTP_STEP_SECONDS, totpAt } from "../apps/web/src/lib/totp";
  * Wiederherstellungscode einlösen (genau einmal), Codes erneuern (die
  * alten gelten bis zur Bestätigung) und wieder abschalten.
  *
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer (serieller Lauf)
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf)
  * und rechnet die Codes mit derselben Bibliothek, die der Server prüft —
  * geprüft wird der Ablauf, nicht die Formel (die decken die
  * RFC-Testvektoren in totp.test.ts ab).

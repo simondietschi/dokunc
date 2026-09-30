@@ -19,7 +19,7 @@ import { resetLoginRateLimit } from "./helpers";
  * brach die Adresse auf, der Rest wurde Markup (hier eine sofortige
  * Weiterleitung). Dann druckte die Ansicht auch mit Nonce nicht.
  *
- * Seite und Space entstehen per SQL (Nutzer aus editor.spec.ts) und
+ * Seite und Space entstehen per SQL (Nutzer aus first-account.setup.ts) und
  * werden am Ende wieder entfernt.
  */
 

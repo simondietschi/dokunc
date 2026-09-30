@@ -13,7 +13,7 @@ import { pageTree, resetLoginRateLimit } from "./helpers";
  *     Yjs-Dokument liegt im Speicher des Collab-Servers und ueberschriebe
  *     den wiederhergestellten Stand beim naechsten Speichern.
  *
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer (serieller Lauf,
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf,
  * die Datei laeuft alphabetisch nach den stage1-Dateien).
  */
 

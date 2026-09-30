@@ -3,7 +3,7 @@ import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E für Mail-Einstellungen im Konto und den Versionsvergleich.
- * Nutzt den in editor.spec.ts angelegten Nutzer (serieller Lauf). Der
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf). Der
  * Mail-Versand selbst ist ohne SMTP nicht prüfbar; getestet wird die
  * Einstellung (Speichern, nach Reload gesetzt).
  */

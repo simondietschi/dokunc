@@ -14,7 +14,7 @@ import { resetLoginRateLimit } from "./helpers";
  * Sperre entfernt. Vorher dispatchten diese Wege in den gesperrten
  * Editor, und die Aenderung blieb nur im Browser liegen.
  *
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer (serieller Lauf).
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf).
  */
 
 const EMAIL = "e2e@dokunc.dev";

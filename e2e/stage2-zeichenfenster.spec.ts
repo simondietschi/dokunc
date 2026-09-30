@@ -13,7 +13,7 @@ import { pageTree, resetLoginRateLimit } from "./helpers";
  * embed.diagrams.net: der Lauf braucht kein Netz, und der Test steuert,
  * wann der Editor eine Aenderung meldet.
  *
- * Nutzt den in editor.spec.ts angelegten Nutzer (serieller Lauf).
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf).
  */
 
 const EMAIL = "e2e@dokunc.dev";

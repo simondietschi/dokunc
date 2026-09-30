@@ -5,7 +5,7 @@ import { reloadUntil } from "./wait";
 /**
  * E2E für die "next level"-Features: Wiki-Links + Backlinks,
  * Kommentare, sowie die "Frag dein Wiki"-Seite (Fallback ohne API-Key).
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer (serieller Lauf).
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf).
  */
 
 const EMAIL = "e2e@dokunc.dev";
@@ -272,7 +272,8 @@ test("⌘K-Palette: suchen, springen, Aktionen", async ({ page }) => {
   // Leerer Zustand zeigt zuletzt aktualisierte Seiten + Aktionen
   await expect(page.getByText("Aktionen", { exact: true })).toBeVisible();
 
-  // Suche findet die in editor.spec angelegte Seite und springt dorthin
+  // Suche findet die Willkommensseite aus first-account.setup.ts und
+  // springt dorthin
   await input.fill("Willkommen");
   const hit = page.getByRole("option").filter({ hasText: "Willkommen" });
   await expect(hit.first()).toBeVisible();

@@ -4,7 +4,7 @@ import { reloadUntil } from "./wait";
 
 /**
  * E2E fuer Favoriten, "Zuletzt besucht" und das Space-Dashboard.
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer (serieller Lauf,
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf,
  * die Datei laeuft alphabetisch nach features.spec.ts).
  */
 

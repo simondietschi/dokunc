@@ -10,7 +10,7 @@ import { resetLoginRateLimit } from "./helpers";
  * Wann der Collab-Server die Meldung anlegt, pruefen die
  * Integrationstests (page-updated-collab.test.ts). Hier werden Versionen
  * und Meldung per SQL gesaet, damit der Ablauf nicht an der Drossel von
- * zwei Minuten haengt. Nutzt den in editor.spec.ts angelegten Nutzer.
+ * zwei Minuten haengt. Nutzt das in first-account.setup.ts angelegte erste Konto.
  */
 
 const EMAIL = "e2e@dokunc.dev";

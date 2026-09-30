@@ -6,7 +6,7 @@ import { pageTree, resetLoginRateLimit } from "./helpers";
 /**
  * E2E fuer Anhaenge: Datei per Slash-Befehl hochladen, Anhangskarte im
  * Editor, Auslieferung nur fuer angemeldete Mitglieder (401 anonym),
- * SVG nie inline. Nutzt den in editor.spec.ts angelegten Nutzer.
+ * SVG nie inline. Nutzt das in first-account.setup.ts angelegte erste Konto.
  */
 
 const EMAIL = "e2e@dokunc.dev";

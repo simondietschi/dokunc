@@ -11,7 +11,7 @@ import { resetLoginRateLimit, waitForLive } from "./helpers";
  * Spruenge einzeln sieht (beim Laden, und das Festhalten danach), wird
  * das Collab-Ticket um 1.5 s verzoegert: beim ersten Sprung steht der
  * Inhalt sicher noch nicht da. Seite, Kommentare und Meldungen kommen
- * per SQL; Nutzer und Space aus editor.spec.ts.
+ * per SQL; Nutzer und Space aus first-account.setup.ts.
  */
 
 const EMAIL = "e2e@dokunc.dev";

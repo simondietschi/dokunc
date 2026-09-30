@@ -14,8 +14,7 @@ import { test, expect } from "@playwright/test";
  * zusaetzlich die Konsole ab: eine blockierte Ressource meldet der
  * Browser dort und sonst nirgends.
  *
- * Laeuft als erste Datei (alphabetisch vor editor.spec.ts) und braucht
- * keinen Bestand: /login ist ohne Anmeldung erreichbar.
+ * Braucht keinen Bestand: /login ist ohne Anmeldung erreichbar.
  */
 
 function scriptSrc(csp: string): string {

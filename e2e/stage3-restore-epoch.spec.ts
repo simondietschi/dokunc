@@ -14,7 +14,7 @@ import { resetLoginRateLimit } from "./helpers";
  * macht: Datenbankwerte zurueckschreiben, neue Epoche, Sitzungen
  * widerrufen. Den Weg des Skripts selbst geht der CI-Job docker.
  *
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer (serieller Lauf).
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf).
  */
 
 const EMAIL = "e2e@dokunc.dev";

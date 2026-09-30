@@ -14,7 +14,7 @@ import { resetLoginRateLimit } from "./helpers";
  * gaelte deren Header-CSP weiter, und der Test waere auch ohne die
  * Meta-CSP im Export gruen.
  *
- * Seite und Space entstehen per SQL (Nutzer aus editor.spec.ts) und
+ * Seite und Space entstehen per SQL (Nutzer aus first-account.setup.ts) und
  * werden am Ende wieder entfernt.
  */
 

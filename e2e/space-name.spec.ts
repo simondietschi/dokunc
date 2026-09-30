@@ -16,7 +16,7 @@ import { resetLoginRateLimit } from "./helpers";
  * es entsteht erst im Browser. Seither tragen alle Namensfelder dieselben
  * Grenzen (components/space/SpaceNameInput).
  *
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer; der Space wird am
+ * Nutzt das in first-account.setup.ts angelegte erste Konto; der Space wird am
  * Ende ueber die Oberflaeche wieder geloescht.
  */
 

@@ -17,8 +17,8 @@ export default defineConfig({
   // unschuldige Zeile.
   timeout: 180_000,
   expect: { timeout: 15_000 },
-  // Sequenziell: features.spec setzt auf den in editor.spec angelegten
-  // ersten Nutzer/Space auf (Invite-only). Dateien laufen alphabetisch.
+  // Sequenziell, ein Worker: die Dateien teilen die Datenbank (siehe
+  // projects).
   fullyParallel: false,
   workers: 1,
   retries: CI ? 1 : 0,
@@ -35,6 +35,23 @@ export default defineConfig({
       : {},
     trace: CI ? "retain-on-failure" : "off",
   },
+  // Die Suite teilt einen Bestand: first-account.setup.ts registriert das
+  // erste Konto (Instanz-Admin) und legt den ersten Space mit der Seite
+  // "Willkommen" an; alle Dateien ausser csp.spec.ts melden sich damit
+  // an. Das Projekt "erstes-konto" laeuft deshalb vor der Suite,
+  // unabhaengig vom Dateinamen, auch wenn nur eine einzelne Datei laeuft
+  // (Abhaengigkeiten laufen immer ganz). Frueher hing das an der
+  // alphabetischen Reihenfolge: eine Datei vor "editor.spec.ts" (auch
+  // "editor-x.spec.ts", "-" sortiert vor ".") fand kein Konto. Eine
+  // eigene Datei statt editor.spec.ts: Playwright startet die Suite nur,
+  // wenn das Abhaengigkeitsprojekt ganz gruen ist; ein roter Editor-Test
+  // hielte sonst alle uebrigen an. Scheitert die Einrichtung, meldet
+  // Playwright die Suite als nicht gelaufen. In "suite" laufen die
+  // Dateien weiter alphabetisch und seriell.
+  projects: [
+    { name: "erstes-konto", testMatch: /first-account\.setup\.ts$/ },
+    { name: "suite", dependencies: ["erstes-konto"] },
+  ],
   // gracefulShutdown: Playwright beendet die Server sonst mit SIGKILL an
   // die Prozessgruppe. pnpm 11.27.1 startet das Skript in einer eigenen
   // Sitzung (11.13.1 tat das nicht) und reicht nur Signale weiter, die es

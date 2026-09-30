@@ -11,7 +11,7 @@ import { reloadUntil } from "./wait";
  * echte Datenbankzeilen — dafür braucht es mehrere Konten, und die
  * entstehen hier nur über Einladungslinks.
  *
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer (serieller Lauf).
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf).
  */
 
 const EMAIL = "e2e@dokunc.dev";

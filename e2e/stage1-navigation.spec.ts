@@ -4,7 +4,7 @@ import { dragUntil, pageTree, resetLoginRateLimit } from "./helpers";
 /**
  * E2E fuer Navigation (Stufe 1): Seiten verschieben (Dialog + Drag and
  * Drop im Seitenbaum), Brotkrumen und Inhaltsverzeichnis.
- * Nutzt den in editor.spec.ts angelegten Nutzer (serieller Lauf, diese
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf, diese
  * Datei laeuft alphabetisch nach features.spec.ts).
  */
 

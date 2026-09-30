@@ -74,6 +74,10 @@ A newer push to a pull request cancels the CI run that is still going for its pr
 
 **gitleaks finding.** The log of the step "Historie pruefen" names file, line, commit and fingerprint; the value itself is redacted. Treat the value as leaked: the repository is public, and the value was visible from the moment it was pushed. Revoke it first. Rewriting history does not undo the leak and is not done here. If the finding is a false positive, add its fingerprint to `.gitleaksignore`, with a comment line above it that says why. The printed fingerprint contains the commit (`<commit>:<file>:<rule>:<line>`); in a pull request that is not merged yet, use the form without the commit (`<file>:<rule>:<line>`) or mark the line with a `gitleaks:allow` comment, because a squash or rebase merge creates new commits and the fingerprint would no longer match on `main`.
 
+## End-to-end tests
+
+`pnpm test:e2e` empties the database that `DATABASE_URL` points to; only local hosts are accepted. `e2e/first-account.setup.ts` registers the first account and creates the first space with its page "Willkommen". It runs as the Playwright project `erstes-konto` before every other file, also when you run a single file; the other files log in with that account.
+
 ## Maintainers
 
 These rules rely on repository settings that are not stored in the repository:

@@ -22,7 +22,7 @@ import { resetLoginRateLimit, waitForLive } from "./helpers";
  * - Umbruch und Mindestbreite an Knotengroessen im SVG (getBBox, also in
  *   SVG-Einheiten und unabhaengig von der Skalierung der Seite).
  *
- * Nutzt den in editor.spec.ts angelegten ersten Nutzer; jeder Test legt
+ * Nutzt das in first-account.setup.ts angelegte erste Konto; jeder Test legt
  * eine eigene Seite an.
  */
 
