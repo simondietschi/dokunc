@@ -142,6 +142,16 @@ describe("markdownToDoc()", () => {
     expect(text).toContain("Welt");
   });
 
+  it("eingebettetes Roh-HTML: Links behalten ihr href, eine Seiten-ID zaehlt nicht", () => {
+    const { doc } = markdownToDoc(
+      'Siehe <a data-page-id="cfremdfremdfremdfremdfrem" href="Ziel.md">Ziel</a>.\n',
+    );
+    expect(findNodes(doc, "wikiLink")).toEqual([]);
+    const ziel = findNodes(doc, "text").find((t) => t.text === "Ziel");
+    expect(ziel?.marks?.map((m) => [m.type, m.attrs?.href])).toEqual([["link", "Ziel.md"]]);
+    expect(JSON.stringify(doc)).not.toContain("cfremd");
+  });
+
   it("leere Datei ergibt ein Dokument mit leerem Absatz", () => {
     const { title, doc } = markdownToDoc("");
     expect(title).toBeNull();

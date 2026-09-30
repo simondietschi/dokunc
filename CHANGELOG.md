@@ -607,3 +607,8 @@ differently on an existing installation, and what to do about it.
 - Caddy's `{client_ip}` (access log, matchers) no longer takes the leftmost
   `X-Forwarded-For` entry, which the client can write, from a trusted
   proxy.
+- Importing an HTML or Markdown file with a link that carried a
+  `data-page-id` attribute but no link target left that page empty ("…
+  konnte nicht gespeichert werden; die Seite bleibt leer."). Such links
+  are now imported as text; links with a target are resolved by their
+  target as before, also when they carry a `data-page-id`.

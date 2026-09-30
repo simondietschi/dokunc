@@ -129,6 +129,17 @@ function buildRules(format: ImportFormat): { rules: Rule[]; dataUrls: string[] }
       };
     },
 
+    // --- Links: keine Seiten-IDs aus der Datei ---
+    // Das Schema liest <a data-page-id> als Wiki-Link auf genau diese ID.
+    // In einer Importdatei stammt sie von einer anderen Instanz (aeltere
+    // HTML-Exporte) oder ist erfunden; ein Link darauf scheiterte beim
+    // Speichern der Backlinks und liesse die Seite leer. Das Ziel ergibt
+    // sich aus href (lib/import/links), ohne href bleibt Text.
+    (tag) =>
+      tag.name === "a" && tag.attrs.has("data-page-id")
+        ? { action: "rewrite", attrs: { "data-page-id": null, "data-label": null } }
+        : null,
+
     // --- Listen: Aufgabenlisten (GFM-HTML, Confluence, Notion) ---
     (tag, ctx): Decision | null => {
       if (tag.name !== "ul" && tag.name !== "ol") return null;

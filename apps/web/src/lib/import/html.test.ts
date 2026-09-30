@@ -216,4 +216,19 @@ describe("generisches HTML", () => {
     expect(htmlTitle("<body><h1>Nur &amp; H1</h1></body>", "markdown")).toBe("Nur & H1");
     expect(htmlTitle("<p>nichts</p>", "markdown")).toBeNull();
   });
+
+  it("uebernimmt keine Seiten-ID aus der Datei: das Ziel kommt aus href", () => {
+    // So schrieben aeltere HTML-Exporte Wiki-Links. Die ID gehoert zur
+    // Instanz, aus der exportiert wurde, oder ist frei erfunden.
+    const { doc } = htmlToDoc(
+      '<body><p>Siehe <a data-page-id="cfremdfremdfremdfremdfrem" data-label="Geheim" class="dk-wikilink" href="Ziel.html">Ziel</a> und <a data-page-id="cfremdfremdfremdfremdfrem">ohne Ziel</a>.</p></body>',
+      "markdown",
+    );
+    expect(findNodes(doc, "wikiLink")).toEqual([]);
+    const texte = findNodes(doc, "text");
+    const ziel = texte.find((t) => t.text === "Ziel");
+    expect(ziel?.marks?.map((m) => [m.type, m.attrs?.href])).toEqual([["link", "Ziel.html"]]);
+    expect(texte.find((t) => t.text === "ohne Ziel")?.marks).toBeUndefined();
+    expect(JSON.stringify(doc)).not.toMatch(/cfremd|Geheim/);
+  });
 });
