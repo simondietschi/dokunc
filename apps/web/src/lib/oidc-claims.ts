@@ -254,19 +254,45 @@ export function bestimmeSubject(
 }
 
 /**
+ * ID-Token und Userinfo zusammen: das ID-Token gewinnt bei jedem Claim,
+ * den es trägt; was ihm fehlt, kommt aus Userinfo.
+ *
+ * Ausgenommen sind die Aussagen zur Adresse (`email_verified`,
+ * `xms_edov`) aus Userinfo, wenn das ID-Token in `email` eine Adresse
+ * trägt und Userinfo nicht dieselbe nennt: eine Aussage gilt der
+ * Adresse, neben der sie steht. Sonst bestätigte die Aussage über
+ * Adresse B die Adresse A aus dem ID-Token, und A verknüpfte ein
+ * bestehendes Konto. Ohne Aussage gilt dann die Domainregel.
+ */
+function zusammenfuehren(
+  idToken: Record<string, unknown>,
+  userinfo: Record<string, unknown>,
+): Record<string, unknown> {
+  const quelle = { ...userinfo, ...idToken };
+  const imToken = adresseAus(idToken.email);
+  if (imToken !== null && adresseAus(userinfo.email) !== imToken) {
+    for (const claim of ["email_verified", "xms_edov"]) {
+      if (!(claim in idToken)) delete quelle[claim];
+    }
+  }
+  return quelle;
+}
+
+/**
  * Liest die Angaben, auf die sich diese App stützt.
  *
- * Mit `userinfo` gelten die Regeln für ID-Token und Userinfo zusammen:
- * das ID-Token gewinnt bei jedem Claim, den es trägt; was ihm fehlt
- * (Adresse, Bestätigung, Name), kommt aus Userinfo. Die Kennung kommt
- * immer aus dem ID-Token. Ohne `regeln` gelten die Vorgaben.
+ * Mit `userinfo` gelten die Regeln für ID-Token und Userinfo zusammen
+ * (zusammenfuehren): das ID-Token gewinnt bei jedem Claim, den es
+ * trägt; was ihm fehlt (Adresse, Bestätigung derselben Adresse, Name),
+ * kommt aus Userinfo. Die Kennung kommt immer aus dem ID-Token. Ohne
+ * `regeln` gelten die Vorgaben.
  */
 export function readClaims(
   idToken: Record<string, unknown>,
   o: { userinfo?: Record<string, unknown> | null; regeln?: ClaimRegeln } = {},
 ): OidcClaims {
   const regeln = o.regeln ?? VORGABE_REGELN;
-  const quelle = o.userinfo ? { ...o.userinfo, ...idToken } : idToken;
+  const quelle = o.userinfo ? zusammenfuehren(idToken, o.userinfo) : idToken;
   return {
     ...bestimmeSubject(idToken, regeln.subjectClaim),
     ...bestimmeAdresse(quelle, regeln),

@@ -65,7 +65,10 @@ For the address from the `email` claim, the first matching row decides:
   the provider's userinfo endpoint. Its answer is used only if its `sub`
   equals the `sub` of the ID token. The ID token wins for every claim it
   carries; missing claims (address, `email_verified`, name) come from
-  userinfo. Signed userinfo responses (`application/jwt`) are not supported.
+  userinfo. When the ID token has an address in `email`, `email_verified`
+  and `xms_edov` from userinfo count only if userinfo names the same
+  address; otherwise the domain rule decides. Signed userinfo responses
+  (`application/jwt`) are not supported.
   If the endpoint fails, dokunc logs "OIDC-Userinfo abgelehnt",
   "OIDC-Userinfo nicht als JSON", "OIDC-Userinfo gehört zu einem anderen
   Subject — verworfen" or "OIDC-Userinfo nicht erreichbar" and continues with

@@ -174,12 +174,12 @@ describe("Bestätigung der Adresse", () => {
 
   it("das ID-Token gewinnt vor Userinfo", () => {
     const claims = readClaims(
-      { sub: "x", email: "id@b.test", name: "Aus dem Token" },
+      { sub: "x", email: "id@b.test", email_verified: true, name: "Aus dem Token" },
       {
         userinfo: {
           sub: "x",
           email: "info@b.test",
-          email_verified: true,
+          email_verified: false,
           name: "Aus Userinfo",
         },
       },
@@ -190,6 +190,47 @@ describe("Bestätigung der Adresse", () => {
       verifiedBy: "email_verified",
       name: "Aus dem Token",
     });
+  });
+
+  it("eine Aussage aus Userinfo gilt nur für dieselbe Adresse", () => {
+    const idToken = { sub: "s1", email: "chefin@firma.test" };
+    const unbestaetigt = { email: "chefin@firma.test", emailVerified: false, verifiedBy: null };
+    // Userinfo bestätigt eine andere Adresse: das sagt nichts über die
+    // aus dem ID-Token.
+    for (const aussage of [{ email_verified: true }, { xms_edov: true }]) {
+      expect(
+        readClaims(idToken, {
+          userinfo: { sub: "s1", email: "privat@andere.test", ...aussage },
+        }),
+      ).toMatchObject(unbestaetigt);
+    }
+    // Ebenso eine Aussage ohne Adresse.
+    expect(
+      readClaims(idToken, { userinfo: { sub: "s1", email_verified: true } }),
+    ).toMatchObject(unbestaetigt);
+    // Dann gilt die Domainregel, auch ein Nein über die andere Adresse
+    // ist keines über diese.
+    const firma = regeln({ trustedEmailDomains: ["firma.test"] });
+    for (const email_verified of [true, false]) {
+      expect(
+        readClaims(idToken, {
+          userinfo: { sub: "s1", email: "privat@andere.test", email_verified },
+          regeln: firma,
+        }),
+      ).toMatchObject({ emailVerified: true, verifiedBy: "domain" });
+    }
+    // Dieselbe Adresse, anders geschrieben: die Aussage gilt, auch ein Nein.
+    expect(
+      readClaims(idToken, {
+        userinfo: { sub: "s1", email: " Chefin@Firma.test ", email_verified: true },
+      }),
+    ).toMatchObject({ emailVerified: true, verifiedBy: "email_verified" });
+    expect(
+      readClaims(idToken, {
+        userinfo: { sub: "s1", email: "chefin@firma.test", email_verified: false },
+        regeln: firma,
+      }),
+    ).toMatchObject(unbestaetigt);
   });
 });
 
