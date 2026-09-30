@@ -160,6 +160,11 @@ export async function searchPages(opts: PageSearchOptions): Promise<PageHit[]> {
       FROM "Page" p ${joinQ}
       WHERE p."spaceId" IN (${Prisma.join(opts.spaceIds)})
         AND p."deletedAt" IS NULL
+        -- Keine Vorlagen: die stehen im Vorlagen-Picker und auf der
+        -- Vorlagenseite. In der Suche erreichten sie jede Rolle, auch
+        -- eine, die Vorlagen nicht nutzen darf, samt Vorlagen, die aus
+        -- einer geschuetzten Seite freigegeben wurden.
+        AND NOT p."isTemplate"
         -- Geschuetzte Seiten nur dort, wo sie freigegeben sind.
         AND ${visiblePageSql(opts.userId, opts.openSpaceIds)}
         AND ${pageMatchSql(plan)}

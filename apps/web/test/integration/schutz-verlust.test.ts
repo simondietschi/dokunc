@@ -6,7 +6,8 @@ import { PAGE_ACCESS_CHANNEL } from "@dokunc/editor";
 /**
  * Seitenschutz auf den Wegen, die eine Seite neu entstehen lassen oder
  * umhängen: Kopie, Seite aus Vorlage, Vorlage aus geschützter Seite,
- * Verschieben, Wiederherstellen und endgültiges Löschen.
+ * Verschieben, Wiederherstellen und endgültiges Löschen; dazu Vorlagen
+ * in Suche und "Zuletzt geändert".
  *
  * Geprüft wird die echte Action gegen die echte Datenbank, als Person
  * der Welt aus der Rechtematrix (rechtematrix-welt.ts). Ersetzt sind nur
@@ -55,6 +56,8 @@ const { readablePageRole, refreshAccessRoots, setPageRestricted } = await import
   "@/lib/page-access"
 );
 const { trashPageTree } = await import("@/lib/page-guards");
+const { GET: sucheGet } = await import("@/app/api/search/route");
+const { searchPages } = await import("@/lib/page-search");
 
 type Welt = Awaited<ReturnType<typeof baueWelt>>;
 type Person = Welt["personen"]["OWNER"];
@@ -809,5 +812,46 @@ describe("Papierkorb", () => {
       accessRootId: null,
     });
     expect(await carried(kind)).toEqual([]);
+  });
+});
+
+describe("Vorlagen in Suche und „Zuletzt geändert“", () => {
+  type Antwort = { pages: { id: string }[] };
+  async function suche(p: Person, q?: string): Promise<string[]> {
+    const url = `http://localhost/api/search${q ? `?q=${encodeURIComponent(q)}` : ""}`;
+    const res = await w.alsPerson(p, () => sucheGet(new Request(url)));
+    expect(res.status).toBe(200);
+    return ((await res.json()) as Antwort).pages.map((x) => x.id);
+  }
+
+  it("Vorlagen erscheinen für keine Rolle, offene Seiten schon", async () => {
+    const wort = `Stellenprofil${Date.now().toString(36)}`;
+    const offen = await seite(`${wort} Entwurf`, { text: `${wort} Text` });
+    // Zuletzt angelegt: stünde in "Zuletzt geändert" ganz oben.
+    const vorlage = await seite(`${wort} Vorlage`, {
+      isTemplate: true,
+      text: `${wort} Vorlagentext`,
+    });
+
+    for (const akteur of ["VIEWER", "MEMBER", "OWNER"] as const) {
+      const p = w.personen[akteur];
+      const treffer = await suche(p, wort);
+      expect(treffer, `Suche als ${akteur}`).toContain(offen);
+      expect(treffer, `Suche als ${akteur}`).not.toContain(vorlage);
+      const zuletzt = await suche(p);
+      expect(zuletzt, `Zuletzt geändert als ${akteur}`).toContain(offen);
+      expect(zuletzt, `Zuletzt geändert als ${akteur}`).not.toContain(vorlage);
+    }
+
+    // Die Space-Suche nutzt dieselbe Abfrage.
+    const imSpace = await searchPages({
+      userId: w.personen.OWNER.id,
+      spaceIds: [w.space.id],
+      openSpaceIds: [w.space.id],
+      q: wort,
+      limit: 20,
+      snippet: "long",
+    });
+    expect(imSpace.map((h) => h.id)).toEqual([offen]);
   });
 });

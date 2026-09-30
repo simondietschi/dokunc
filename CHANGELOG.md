@@ -85,6 +85,11 @@ differently on an existing installation, and what to do about it.
   there, only a note. Members who emptied the trash by hand ask a space
   admin now, or set `TRASH_RETENTION_DAYS` so the trash empties itself.
 
+- **Templates:** templates no longer appear in search (search palette and
+  space search) or in the list of recently changed pages, for any role.
+  Open them from the templates page or the template picker. Nothing else
+  to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -131,6 +136,7 @@ differently on an existing installation, and what to do about it.
 
 - The web app, the collaboration server and the Prisma CLI no longer print
   a `dotenv` line ("injected env …") when they load the environment.
+- Search and the list of recently changed pages no longer show templates.
 
 ### Removed
 

@@ -96,6 +96,8 @@ export async function GET(req: Request) {
     const recent = await prisma.page.findMany({
       where: {
         deletedAt: null,
+        // Wie die Suche (lib/page-search.ts): Vorlagen nicht.
+        isTemplate: false,
         ...visiblePagesAcrossSpaces(user.id, spaces),
       },
       orderBy: { updatedAt: "desc" },

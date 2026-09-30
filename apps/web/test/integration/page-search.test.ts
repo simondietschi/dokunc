@@ -331,9 +331,16 @@ describe("Schnipsel und Vorlagen", () => {
     expect(hit!.snippet).toBe("");
   });
 
-  it("findet Vorlagen und kennzeichnet sie", async () => {
-    const hit = (await asManager("Protokoll")).find((h) => h.id === ids.vorlage);
-    expect(hit?.isTemplate).toBe(true);
+  it("findet keine Vorlagen, auch nicht für die Verwaltung", async () => {
+    // Vorlagen gehören in den Vorlagen-Picker und die Vorlagenseite. In
+    // der Suche erreichten sie jede Rolle, auch die, die Vorlagen gar
+    // nicht nutzen darf.
+    expect((await asManager("Protokoll")).map((h) => h.id)).not.toContain(
+      ids.vorlage,
+    );
+    expect((await run(member, "Protokoll")).map((h) => h.id)).not.toContain(
+      ids.vorlage,
+    );
   });
 });
 
