@@ -10,7 +10,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
  * und Antwortcode entscheiden in isTransientMailError (Reset) und im
  * Dispatcher des Collab-Prozesses (nur 5xx ist dauerhaft), ob ein
  * Versand wiederholt wird. Dazu der Absender mit Anzeigename, den
- * fromAddress() baut: den zerlegt der Adressparser von nodemailer.
+ * fromAddress() baut: den zerlegt der Adressparser von nodemailer. Und
+ * die Anmeldung mit SMTP_USERNAME an einem Server, der nur XOAUTH2
+ * anbietet: bis nodemailer 10.0.10 warf sie einen TypeError, den kein
+ * Aufrufer fangen konnte und der den Collab-Prozess beendete.
  */
 
 /** Verhalten des Fängers, je Test gesetzt. */
@@ -19,9 +22,11 @@ type Verhalten = {
   rcpt: string;
   /** Verbindung annehmen und ohne Begrüssung wieder schliessen. */
   ohneGruss: boolean;
+  /** Angebotene Anmeldeverfahren im EHLO, null: kein AUTH. */
+  auth: string | null;
 };
 
-const verhalten: Verhalten = { rcpt: "", ohneGruss: false };
+const verhalten: Verhalten = { rcpt: "", ohneGruss: false, auth: null };
 /** Befehlszeilen des Clients, ohne den Inhalt nach DATA. */
 const befehle: string[] = [];
 /** Angenommene Nachrichten, Zeilen ohne CRLF. */
@@ -29,9 +34,10 @@ const nachrichten: string[][] = [];
 const offen = new Set<Socket>();
 
 /**
- * Kleinster SMTP-Server, der für einen Versand reicht. EHLO nennt weder
- * STARTTLS noch AUTH: nodemailer bleibt damit im Klartext und meldet
- * sich nicht an, wie ohne SMTP_USERNAME.
+ * Kleinster SMTP-Server, der für einen Versand reicht. EHLO nennt kein
+ * STARTTLS, nodemailer bleibt damit im Klartext. AUTH nennt es nur, wenn
+ * ein Test verhalten.auth setzt; jede Anmeldung lehnt der Fänger dann ab
+ * wie ein Server, der das gewählte Verfahren nicht kennt.
  */
 const faenger = createServer((socket) => {
   offen.add(socket);
@@ -62,8 +68,14 @@ const faenger = createServer((socket) => {
       }
       befehle.push(zeile);
       const verb = zeile.slice(0, 4).toUpperCase();
-      if (verb === "EHLO") antworte("250 faenger.test");
-      else if (verb === "MAIL") antworte("250 2.1.0 ok");
+      if (verb === "EHLO") {
+        if (verhalten.auth) {
+          antworte("250-faenger.test");
+          antworte(`250 AUTH ${verhalten.auth}`);
+        } else antworte("250 faenger.test");
+      } else if (verb === "AUTH") {
+        antworte("504 5.7.4 Unrecognized authentication type");
+      } else if (verb === "MAIL") antworte("250 2.1.0 ok");
       else if (verb === "RCPT") antworte(verhalten.rcpt);
       else if (verb === "DATA") {
         inhalt = [];
@@ -107,6 +119,7 @@ afterAll(async () => {
 beforeEach(() => {
   verhalten.rcpt = "250 2.1.5 ok";
   verhalten.ohneGruss = false;
+  verhalten.auth = null;
   befehle.length = 0;
   nachrichten.length = 0;
 });
@@ -119,11 +132,11 @@ const MAIL = {
 };
 
 /** Der Fehler, mit dem sendMail scheitert. */
-async function versandFehler(): Promise<{
+async function versandFehler(modul = mail): Promise<{
   code?: unknown;
   responseCode?: unknown;
 }> {
-  const fehler = await mail.sendMail(MAIL).then(
+  const fehler = await modul.sendMail(MAIL).then(
     () => null,
     (e: unknown) => e,
   );
@@ -168,5 +181,35 @@ describe("Versand über SMTP", () => {
     expect(fehler).toMatchObject({ code: "ECONNECTION" });
     expect(fehler.responseCode).toBeUndefined();
     expect(isTransientMailError(fehler)).toBe(true);
+  });
+});
+
+describe("Anmeldung an einem Server, der nur XOAUTH2 anbietet", () => {
+  let mitAnmeldung: typeof import("@dokunc/mail");
+
+  beforeAll(async () => {
+    // Der Transport der Tests oben ist ohne Zugangsdaten angelegt und
+    // bleibt im Modul. resetModules lädt @dokunc/mail neu, der nächste
+    // Versand legt einen Transport mit Anmeldung an.
+    vi.stubEnv("SMTP_USERNAME", "wiki@example.org");
+    vi.stubEnv("SMTP_PASSWORD", "geheim");
+    vi.resetModules();
+    mitAnmeldung = await import("@dokunc/mail");
+  });
+
+  it("scheitert sofort an der Anmeldung statt abzustürzen", async () => {
+    // Bis nodemailer 10.0.10 wählte der Transport XOAUTH2 ohne
+    // Token-Geber und warf "Cannot read properties of undefined (reading
+    // 'getToken')" aus dem Socket-Handler: im Collab-Prozess ein
+    // Absturz, in der Web-App hing der Versand bis zum Socket-Timeout
+    // (30 s, länger als die Frist dieses Tests).
+    verhalten.auth = "XOAUTH2";
+    const fehler = await versandFehler(mitAnmeldung);
+    expect(fehler).toMatchObject({ code: "EAUTH", responseCode: 504 });
+    expect(befehle.some((b) => b.startsWith("AUTH PLAIN "))).toBe(true);
+    expect(befehle.some((b) => b.startsWith("MAIL "))).toBe(false);
+    // Dauerhaft: der Reset behält den Platz, der Dispatcher (5xx) gibt
+    // die Zustellung auf, statt sie jeden Lauf zu wiederholen.
+    expect(isTransientMailError(fehler)).toBe(false);
   });
 });
