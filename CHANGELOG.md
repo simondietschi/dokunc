@@ -448,6 +448,21 @@ differently on an existing installation, and what to do about it.
   set it in `docker-compose.override.yml` instead (see
   `docs/admin/logging.md`). Otherwise nothing to do.
 
+- **Compose project name:** `docker-compose.yml` now sets the project
+  name `dokunc`, so the volumes are always `dokunc_db_data`,
+  `dokunc_app_data` and so on. Before, the project was named after the
+  checkout directory. If your checkout directory is not named `dokunc`,
+  run `./scripts/projektname.sh --festschreiben` after `git pull` and
+  before `docker compose up`: it writes the previous name to `.env`.
+  Without it, Docker Compose starts a new, empty instance next to your
+  data (the data stays in the old volumes). `./scripts/projektname.sh`
+  without options checks this; if the update was already started, go
+  back with `docker compose -p dokunc down` (without `-v`), then
+  `./scripts/projektname.sh --festschreiben` and `docker compose up -d`
+  (see `docs/admin/compose-project.md`). While the check fails,
+  `scripts/backup.sh` warns on stderr and deletes no old backups. If your
+  checkout directory is named `dokunc`, nothing to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -627,6 +642,8 @@ differently on an existing installation, and what to do about it.
   containers.
 - `docs/admin/logging.md`: log format, reading the logs, rotation,
   central collection and the startup configuration check.
+- `scripts/projektname.sh` to show, check and pin the Compose project
+  name, and `docs/admin/compose-project.md`.
 
 ### Changed
 
@@ -688,6 +705,9 @@ differently on an existing installation, and what to do about it.
   deleted because another account signed in in the same browser says
   that its unconfirmed changes now exist only in that tab, as after an
   ended session.
+- `scripts/backup.sh` and `scripts/restore.sh` name the Compose project
+  they work on; `backup.sh` checks it and deletes no old backups when the
+  check fails.
 
 ### Removed
 

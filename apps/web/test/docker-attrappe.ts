@@ -29,6 +29,15 @@ import { fileURLToPath } from "node:url";
  * - FAKE_LOESCHEN_BEIM_EINSPIELEN  Dateien, die waehrend pg_restore in die
  *                     Zwischenablage verschwinden (Aufbewahrung eines
  *                     gleichzeitigen cron-Laufs)
+ * - FAKE_PROJEKT      Projektname aus docker-compose.yml (Vorgabe dokunc);
+ *                     `compose config` nimmt wie Compose zuerst
+ *                     COMPOSE_PROJECT_NAME aus der Umgebung, dann aus der
+ *                     .env im Arbeitsverzeichnis
+ * - FAKE_CONFIG_EXIT  Exit von `compose config` (vorher eine Fehlermeldung)
+ * - FAKE_VOLUMES      vorhandene Volumes mit Anlagedatum, durch Leerzeichen
+ *                     getrennt: "wiki_db_data=2026-05-19T08:00:00Z …". Ein
+ *                     Volume <projekt>_<name> traegt die Labels von Compose
+ *                     (Projekt und Volume), wie Compose es anlegt.
  *
  * Das Ersetzen der Uploads (`tar xzf - -C /app/uploads`) schreibt den
  * Inhalt des Archivs auf stdin als Zeile "UPLOADS <Eintraege>" mit.
@@ -44,7 +53,42 @@ if [[ "$args" == "compose run "* ]]; then
   echo " Container fake-app-run-1 Creating" >&2
   echo " Container fake-app-run-1 Created" >&2
 fi
+# Volumes aus FAKE_VOLUMES: Name -> Anlagedatum
+declare -A VOLUME
+for v in \${FAKE_VOLUMES:-}; do VOLUME["\${v%%=*}"]="\${v#*=}"; done
 case "$args" in
+  "compose config"*)
+    if [ "\${FAKE_CONFIG_EXIT:-0}" != 0 ]; then
+      echo "env file .env: unexpected character in variable name" >&2
+      exit "$FAKE_CONFIG_EXIT"
+    fi
+    name="\${COMPOSE_PROJECT_NAME:-}"
+    if [ -z "$name" ] && [ -f .env ]; then
+      name=$(sed -n 's/^COMPOSE_PROJECT_NAME=//p' .env | tail -n 1 | tr -d "\\"'")
+    fi
+    printf 'name: %s\nservices:\n  app: {}\n' "\${name:-\${FAKE_PROJEKT:-dokunc}}"
+    exit 0 ;;
+  "volume inspect -f {{.CreatedAt}} "*)
+    v="\${args##* }"
+    if [ -n "\${VOLUME[$v]+x}" ]; then printf '%s\n' "\${VOLUME[$v]}"; exit 0; fi
+    echo "Error response from daemon: get $v: no such volume" >&2
+    exit 1 ;;
+  "volume inspect "*)
+    for v in \${args#volume inspect }; do
+      if [ -z "\${VOLUME[$v]+x}" ]; then
+        echo "Error response from daemon: get $v: no such volume" >&2
+        exit 1
+      fi
+    done
+    echo "[]"
+    exit 0 ;;
+  "volume ls --filter label=com.docker.compose.volume="*)
+    art="\${args#volume ls --filter label=com.docker.compose.volume=}"
+    art="\${art%% *}"
+    for v in "\${!VOLUME[@]}"; do
+      case "$v" in *_"$art") printf '%s\n' "\${v%_"$art"}" ;; esac
+    done
+    exit 0 ;;
   *"pg_restore -f /dev/null"*) cat >/dev/null; exit "\${FAKE_DUMP_EXIT:-0}" ;;
   *"pg_restore --list"*)
     cat >/dev/null
@@ -87,7 +131,8 @@ const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
 /**
  * Baut unter `dir` den Teil des Repositorys nach, den die Skripte
- * brauchen: scripts/ (Kopien von backup.sh und restore.sh), backups/,
+ * brauchen: scripts/ (Kopien von backup.sh, restore.sh und
+ * projektname.sh), backups/,
  * bin/docker (Attrappe), uploads-quelle/ (Inhalt des Upload-Volumes) und
  * packages/db/prisma/migrations mit einer bekannten Migration.
  */
@@ -103,7 +148,7 @@ export function legeSkriptbaumAn(dir: string): void {
     join(dir, "packages/db/prisma/migrations/migration_lock.toml"),
     'provider = "postgresql"\n',
   );
-  for (const name of ["restore.sh", "backup.sh"]) {
+  for (const name of ["restore.sh", "backup.sh", "projektname.sh"]) {
     copyFileSync(join(ROOT, "scripts", name), join(dir, "scripts", name));
     chmodSync(join(dir, "scripts", name), 0o755);
   }

@@ -338,3 +338,29 @@ describe("Log-Rotation", () => {
     expect(zeilen).toEqual(["# LOG_MAX_SIZE=10m", "# LOG_MAX_FILE=5"]);
   });
 });
+
+describe("Compose-Projektname", () => {
+  // Ohne festen Namen hiess das Projekt wie das Verzeichnis: ein Umzug
+  // oder ein anderer Klonname startete eine leere Instanz neben den
+  // Volumes. Die Zusatzdateien duerfen ihn nicht aendern.
+  it("docker-compose.yml setzt name: dokunc", () => {
+    const compose = parseYaml(lesen("docker-compose.yml")) as { name?: unknown };
+    expect(compose.name).toBe("dokunc");
+  });
+
+  it("die Zusatzdateien setzen keinen eigenen Namen", () => {
+    for (const datei of DATEIEN.filter((d) => d !== "docker-compose.yml")) {
+      const compose = parseYaml(lesen(datei)) as { name?: unknown };
+      expect(compose.name, datei).toBeUndefined();
+    }
+  });
+
+  it(".env.example dokumentiert COMPOSE_PROJECT_NAME nur auskommentiert", () => {
+    // Aktiv gesetzt aenderte eine aus der Vorlage kopierte .env den
+    // Namen einer bestehenden Installation.
+    const zeilen = lesen(".env.example")
+      .split("\n")
+      .filter((z) => /^#?\s*COMPOSE_PROJECT_NAME=/.test(z));
+    expect(zeilen).toEqual(["# COMPOSE_PROJECT_NAME=dokunc"]);
+  });
+});

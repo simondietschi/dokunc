@@ -8,6 +8,8 @@
 #                          schreiben, ausserhalb des Repositorys; sichert sonst
 #                          nichts (README "Sicherung und Rueckweg")
 # Umgebung oder .env: BACKUP_KEEP_DAYS (Vorgabe 0: nie loeschen)
+# Nennt das Compose-Projekt und prueft es (scripts/projektname.sh); schlaegt
+# die Pruefung an, loescht der Lauf keine alten Saetze.
 # Ausgabe: Fortschritt auf stdout, Fehler und Warnungen auf stderr (cron:
 # >/dev/null, gemailt wird nur, was Aufmerksamkeit braucht). Meldungen,
 # nach denen Tests oder die CI suchen, stehen auf einer Zeile.
@@ -169,6 +171,22 @@ fi
 find backups -maxdepth 1 \( -name '.*.teil' -o -name '.fehler.*' -o -name '.liste.*' \) \
   -mmin +1440 -exec rm -f {} + 2>/dev/null || true
 
+# ---- Compose-Projekt ----
+# Lief ein Update ohne ./scripts/projektname.sh --festschreiben, saehe
+# dieses Skript eine neue, leere Instanz und sicherte sie; die
+# Aufbewahrung loeschte nach und nach die guten Saetze. Meldet die
+# Pruefung eine Abweichung, steht sie auf stderr (cron verschickt sie),
+# und dieser Lauf loescht nichts.
+PROJEKT_OK=1
+PROJEKT_AUSGABE=$(./scripts/projektname.sh 2>"$FEHLER") || PROJEKT_OK=0
+PROJEKT=$(printf '%s\n' "$PROJEKT_AUSGABE" | sed -n 's/^Compose-Projekt: \([^ ]*\).*/\1/p')
+PROJEKT=${PROJEKT:-unbekannt}
+echo "Compose-Projekt: $PROJEKT"
+if [ "$PROJEKT_OK" -eq 0 ]; then
+  sed -n '1,20p' "$FEHLER" >&2
+  echo "Warnung: Die Prüfung des Compose-Projekts schlägt an (./scripts/projektname.sh). Diese Sicherung löscht keine älteren Sätze." >&2
+fi
+
 TS="$(date +%Y%m%d-%H%M%S)"
 DUMP="backups/db-${TS}.dump"
 UPLOADS="backups/uploads-${TS}.tar.gz"
@@ -177,9 +195,19 @@ TEIL_UPLOADS="backups/.uploads-${TS}.tar.gz.$$.teil"
 LISTE="backups/.liste.$$"
 TEILE+=("$TEIL_DUMP" "$TEIL_UPLOADS" "$LISTE")
 
+# Laeuft der Dienst db nicht, ist oft das Projekt ein anderes als gedacht.
+dump_gescheitert() {
+  echo "✗ Datenbank-Dump gescheitert (pg_dump), keine Sicherung angelegt." >&2
+  fehlerauszug
+  if grep -q 'is not running' "$FEHLER" 2>/dev/null; then
+    echo "  Compose-Projekt $PROJEKT: stimmt der Projektname? ./scripts/projektname.sh" >&2
+  fi
+  exit 1
+}
+
 echo "→ Datenbank-Dump…"
 docker compose exec -T db pg_dump -U dokunc -Fc dokunc </dev/null >"$TEIL_DUMP" 2>"$FEHLER" \
-  || scheitern "Datenbank-Dump gescheitert (pg_dump), keine Sicherung angelegt." log
+  || dump_gescheitert
 
 echo "→ Uploads…"
 docker compose run --rm --no-deps -T --entrypoint tar app czf - -C /app/uploads . \
@@ -210,7 +238,7 @@ fi
 mv "$TEIL_UPLOADS" "$UPLOADS"
 mv "$TEIL_DUMP" "$DUMP"   # zuletzt: der Dump kennzeichnet den Satz
 
-echo "✓ Fertig:"
+echo "✓ Fertig (Compose-Projekt $PROJEKT):"
 echo "  backups/db-${TS}.dump"
 echo "  backups/uploads-${TS}.tar.gz"
 echo
@@ -222,7 +250,7 @@ echo "  ./scripts/restore.sh ${TS}"
 # Kopieren). Die drei juengsten Saetze bleiben immer, auch wenn sie aelter
 # als die Frist sind: nach einer vorgestellten Uhr oder einer langen Pause
 # bliebe sonst nur der eben geschriebene.
-if [ "$TAGE" -gt 0 ]; then
+if [ "$TAGE" -gt 0 ] && [ "$PROJEKT_OK" -eq 1 ]; then
   GRENZE_S=$(( $(date +%s) - TAGE * 86400 ))
   GRENZE=$(date -d "@$GRENZE_S" +%Y%m%d%H%M%S 2>/dev/null || date -r "$GRENZE_S" +%Y%m%d%H%M%S)
   ALLE=""

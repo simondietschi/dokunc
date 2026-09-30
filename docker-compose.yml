@@ -1,3 +1,10 @@
+# Fester Projektname: die Volumes heissen dokunc_db_data usw., egal wie
+# das Verzeichnis heisst. Installationen, deren Projekt bisher wie ihr
+# Verzeichnis hiess: ./scripts/projektname.sh --festschreiben
+# (docs/admin/compose-project.md). COMPOSE_PROJECT_NAME in der .env hat
+# Vorrang.
+name: dokunc
+
 # Log-Rotation fuer alle Dienste: Docker behaelt je Container hoechstens
 # LOG_MAX_FILE Dateien zu LOG_MAX_SIZE (Vorgabe 5 x 10 MB). Ohne diese
 # Angabe rotiert json-file nie, und die Platte laeuft ueber Monate voll.

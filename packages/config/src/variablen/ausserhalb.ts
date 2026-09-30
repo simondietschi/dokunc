@@ -11,6 +11,14 @@ const unveraendert = (roh: string | undefined) => ({ ok: true as const, wert: ro
  */
 export const AUSSERHALB_VARIABLEN: readonly Variable[] = [
   defineVariable({
+    name: "COMPOSE_PROJECT_NAME",
+    dienste: ["compose"],
+    beschreibung:
+      "Docker Compose project name; volumes are named <project>_<volume>. docker-compose.yml sets dokunc. Set it only to keep the name of an installation from before the fixed name (scripts/projektname.sh --festschreiben); another name starts a new, empty instance.",
+    vorgabe: "dokunc (name: in docker-compose.yml)",
+    parse: unveraendert,
+  }),
+  defineVariable({
     name: "LOG_MAX_FILE",
     dienste: ["compose"],
     beschreibung:

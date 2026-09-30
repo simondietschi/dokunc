@@ -127,6 +127,36 @@ describe("scripts/restore.sh", () => {
     expect(r.protokoll).not.toContain("psql");
   });
 
+  it("nennt das Compose-Projekt als erste Zeile", () => {
+    sicherung();
+    const r = run(["--ja", "--ohne-vorsicherung", TS], { env: { FAKE_PROJEKT: "wikialt" } });
+    expect(r.status, r.out).toBe(0);
+    expect(r.out.split("\n")[0]).toBe("Compose-Projekt: wikialt");
+  });
+
+  it("nennt das Compose-Projekt in der Rueckfrage", () => {
+    sicherung();
+    // Ein Terminal fuer die Rueckfrage: script(1) startet das Skript in
+    // einem Pseudo-Terminal und reicht "nein" als Eingabe durch.
+    const res = spawnSync(
+      "script",
+      ["-qec", `bash '${join(dir, "scripts/restore.sh")}' ${TS}`, "/dev/null"],
+      {
+        cwd: dir,
+        input: "nein\n",
+        encoding: "utf8",
+        env: skriptUmgebung(dir, log, { FAKE_MIGRATIONS: BEKANNTE_MIGRATION }),
+        timeout: 20_000,
+      },
+    );
+    const out = `${res.stdout}${res.stderr}`.replace(/\r/g, "");
+    expect(out).toContain(
+      `Das ersetzt Datenbank und Uploads des Compose-Projekts dokunc durch den Stand vom ${TS}.`,
+    );
+    expect(out).toContain("Abgebrochen, nichts verändert.");
+    expect(readFileSync(log, "utf8")).not.toContain("stop app");
+  });
+
   it("fragt ohne Terminal nicht, sondern bricht vor dem Anhalten ab", () => {
     sicherung();
     const r = run([TS]);

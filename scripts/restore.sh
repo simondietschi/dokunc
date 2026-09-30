@@ -142,6 +142,11 @@ if [ -n "$SECRET_DATEI" ]; then
   fi
 fi
 
+# Welches Projekt ersetzt wird: nach einem Umzug ohne festgeschriebenen
+# Namen waere es eine neue, leere Instanz (./scripts/projektname.sh).
+PROJEKT=$(./scripts/projektname.sh --name)
+echo "Compose-Projekt: $PROJEKT"
+
 echo "→ Datenbank starten…"
 docker compose up -d --wait db redis
 echo "→ Dump prüfen…"
@@ -163,7 +168,7 @@ if [ "$JA" -ne 1 ]; then
   else
     ZUSATZ=" (ohne Vorsicherung: die bisherige Datenbank bleibt als Kopie liegen, die bisherigen Uploads nicht)"
   fi
-  echo "Das ersetzt Datenbank und Uploads durch den Stand vom ${TS}. Was seither geändert wurde, geht verloren${ZUSATZ}. Alle werden abgemeldet."
+  echo "Das ersetzt Datenbank und Uploads des Compose-Projekts ${PROJEKT} durch den Stand vom ${TS}. Was seither geändert wurde, geht verloren${ZUSATZ}. Alle werden abgemeldet."
   read -r -p "Zum Fortfahren ja eingeben: " ANTWORT
   if [ "$ANTWORT" != "ja" ]; then
     echo "Abgebrochen, nichts verändert." >&2

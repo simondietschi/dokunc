@@ -367,6 +367,57 @@ jobs:
             echo "ATTRAPPE=nicht-im-image" > "$f"
           done < "$RUNNER_TEMP/attrappen"
 
+      # Fester Projektname (name: dokunc) und der Weg einer Installation,
+      # deren Projekt bisher wie ihr Verzeichnis hiess, mit
+      # scripts/projektname.sh. Nachgestellt vor dem ersten Start des
+      # Stacks, solange es keine dokunc_*-Volumes gibt: Volumes mit den
+      # Labels, die Compose setzt, sind genau das, was das Skript liest
+      # (ein echter alter Stack braeuchte einen zweiten Image-Build).
+      # a) vor dem ersten Start: Exit 1; b) nach einem Start ohne
+      # Festschreiben (juengere dokunc-Volumes): Exit 2; c) Festschreiben
+      # an eine .env ohne Zeilenende, danach heisst das Projekt dort
+      # wikialt. Die nachgestellten Volumes werden wieder entfernt.
+      - name: Compose-Projektname
+        run: |
+          set -euo pipefail
+          test "$(docker compose config | sed -n '1p')" = 'name: dokunc'
+          ./scripts/projektname.sh
+          ALT="$RUNNER_TEMP/Wiki Alt"
+          mkdir -p "$ALT"
+          git archive HEAD | tar -x -C "$ALT"
+          volume() {
+            docker volume create --label "com.docker.compose.project=$1" \
+              --label "com.docker.compose.volume=$2" "$1_$2" >/dev/null
+          }
+          aufraeumen() {
+            docker volume rm wikialt_db_data wikialt_app_data dokunc_db_data dokunc_app_data >/dev/null 2>&1 || true
+          }
+          trap aufraeumen EXIT
+          pruefe() {
+            local code=0
+            (cd "$ALT" && ./scripts/projektname.sh) 2>"$RUNNER_TEMP/projektname.err" || code=$?
+            cat "$RUNNER_TEMP/projektname.err"
+            test "$code" = "$1" || { echo "Exit $code statt $1"; exit 1; }
+            grep -qF "$2" "$RUNNER_TEMP/projektname.err"
+          }
+          volume wikialt db_data
+          volume wikialt app_data
+          pruefe 1 'Vermutlich hiess das Projekt bisher wikialt'
+          sleep 2
+          volume dokunc db_data
+          volume dokunc app_data
+          pruefe 2 'Rückweg: docker compose -p dokunc down (ohne -v)'
+          printf 'APP_URL=http://localhost:7891' > "$ALT/.env"
+          (cd "$ALT" && ./scripts/projektname.sh --festschreiben)
+          grep -qx 'APP_URL=http://localhost:7891' "$ALT/.env"
+          grep -qx 'COMPOSE_PROJECT_NAME=wikialt' "$ALT/.env"
+          test "$(cd "$ALT" && docker compose config | sed -n '1p')" = 'name: wikialt'
+          (cd "$ALT" && ./scripts/projektname.sh)
+          aufraeumen
+          trap - EXIT
+          test -z "$(docker volume ls -q --filter label=com.docker.compose.project=dokunc)"
+          test ! -f .env
+
       - name: Stack bauen und starten
         id: start
         run: docker compose up -d --build --wait --wait-timeout 600

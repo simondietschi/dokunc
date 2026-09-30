@@ -236,6 +236,48 @@ describe("scripts/backup.sh: Sicherung", () => {
   });
 });
 
+describe("scripts/backup.sh: Compose-Projekt", () => {
+  // Nach einem Update ohne ./scripts/projektname.sh --festschreiben
+  // saehe das Skript die neue, leere Instanz. cron verwirft stdout; eine
+  // Abweichung muss auf stderr stehen, und die Aufbewahrung darf die
+  // guten alten Saetze nicht loeschen.
+  const ALT = "2026-05-19T08:00:00Z";
+  const NEU = "2026-09-30T10:00:00Z";
+  const vol = (p: string, d: string) => `${p}_db_data=${d} ${p}_app_data=${d}`;
+
+  it("nennt das Projekt als erste Zeile und im Abschluss", () => {
+    const r = run([], { env: { FAKE_VOLUMES: vol("dokunc", ALT) } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.split("\n")[0]).toBe("Compose-Projekt: dokunc");
+    expect(r.stdout).toContain("✓ Fertig (Compose-Projekt dokunc):");
+    expect(r.stderr).toBe("");
+  });
+
+  it.each([
+    ["ohne eigene Daten", vol("wiki", ALT), "✗ Für das Compose-Projekt dokunc gibt es keine Daten"],
+    ["neben aelteren Daten", `${vol("wiki", ALT)} ${vol("dokunc", NEU)}`, "✗ Das Compose-Projekt dokunc hat Daten"],
+  ])("meldet eine Abweichung %s auf stderr und loescht nichts", (_fall, volumes, meldung) => {
+    // Drei junge Saetze dazu: sonst behielte die Aufbewahrung die alten
+    // ohnehin (die drei juengsten bleiben immer).
+    for (const ts of [...ALTE, vorTagen(1), vorTagen(2), vorTagen(3)]) satz(ts);
+    const r = run([], { env: { FAKE_VOLUMES: volumes, BACKUP_KEEP_DAYS: "7" } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain(meldung);
+    expect(r.stderr).toContain(
+      "Warnung: Die Prüfung des Compose-Projekts schlägt an (./scripts/projektname.sh). Diese Sicherung löscht keine älteren Sätze.",
+    );
+    expect(r.stdout).not.toContain("Gelöscht");
+    for (const ts of ALTE) expect(hatSatz(ts)).toBe(true);
+    expect(dumpZeilen(r.stdout)).toHaveLength(1);
+  });
+
+  it("fragt bei einem nicht laufenden Datenbankdienst nach dem Projektnamen", () => {
+    const r = run([], { env: { FAKE_PGDUMP_EXIT: "1" } });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("Compose-Projekt dokunc: stimmt der Projektname? ./scripts/projektname.sh");
+  });
+});
+
 describe("scripts/backup.sh: Aufbewahrung", () => {
   it("loescht nur alte Saetze und nur nach Namensmuster", () => {
     const jung = [vorTagen(1), vorTagen(2)];
