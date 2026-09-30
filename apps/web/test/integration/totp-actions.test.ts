@@ -19,7 +19,7 @@ import type { TotpState } from "@/app/account/totp-actions";
  * echte Datenbank; ersetzt sind nur Anmeldung, Anfrage-Header und Cache.
  */
 
-type Actor = { id: string; email: string; name: string; isAdmin: boolean };
+type Actor = { id: string; email: string; name: string; isAdmin: boolean; sessionId: string };
 
 /** Was der Schritt in der Transaktion vom Transaktions-Client braucht. */
 type TxRaw = {
@@ -157,7 +157,9 @@ async function anmelden(name: string): Promise<Actor> {
     select: { id: true, email: true, name: true },
   });
   created.push(user.id);
-  mocks.actor = { ...user, isAdmin: false };
+  // Die Passwortbestaetigung zaehlt Fehlversuche je Sitzung
+  // (lib/reauth); eine Kennung genuegt, eine Zeile braucht es nicht.
+  mocks.actor = { ...user, isAdmin: false, sessionId: `${TAG}-${name}-sitzung` };
   return mocks.actor;
 }
 

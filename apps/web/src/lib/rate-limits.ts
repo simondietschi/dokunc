@@ -86,8 +86,14 @@ export const RATE_LIMIT_VORGABEN = {
   loginIp: { versuche: 30, fenster: 300 },
   /** Registrierung pro IP. */
   register: { versuche: 10, fenster: 600 },
-  /** Zweiter Faktor: Bestaetigen, Abschalten, Codes neu ausgeben. */
+  /** Zweiter Faktor: Code beim Einrichten bestaetigen. */
   totpConfirm: { versuche: 10, fenster: 600 },
+  /**
+   * Passwort bestaetigen (Passwort aendern, Konto loeschen, Zwei-Faktor
+   * abschalten, neue Codes): EIN Zaehler je Konto ueber alle vier Stellen
+   * und alle Sitzungen (lib/reauth).
+   */
+  reauth: { versuche: 10, fenster: 600 },
 } as const satisfies Record<string, Bremse>;
 
 export type BremsName = keyof typeof RATE_LIMIT_VORGABEN;

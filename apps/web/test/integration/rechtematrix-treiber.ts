@@ -1,6 +1,12 @@
 import { randomBytes } from "node:crypto";
 import { expect } from "vitest";
 import { prisma } from "@dokunc/db";
+import bcrypt from "bcryptjs";
+import { changePasswordAction, deleteAccountAction } from "@/app/account/actions";
+import {
+  disableTotpAction,
+  regenerateRecoveryCodesAction,
+} from "@/app/account/totp-actions";
 import { deleteGroupAction } from "@/app/admin/groups/actions";
 import {
   createPageAction,
@@ -16,8 +22,14 @@ import {
 import { BestaetigungNoetig, schutzwechselToken } from "@/lib/confirmation";
 import { readablePageRole, refreshAccessRoots } from "@/lib/page-access";
 import { trashPageTree } from "@/lib/page-guards";
+import { resetLimit } from "@/lib/rate-limit";
 import type { Akteur, InvariantenName } from "../rechtematrix/erwartung";
-import { Umleitung, type Person, type Welt } from "./rechtematrix-welt";
+import {
+  MATRIX_PASSWORT,
+  Umleitung,
+  type Person,
+  type Welt,
+} from "./rechtematrix-welt";
 
 /**
  * Treiber der Rechtematrix: je geprüftem Schlüssel und Szenario, wie ein
@@ -74,8 +86,17 @@ export async function rufe(
   a: Akteur,
   lauf: () => Promise<unknown>,
 ): Promise<Ergebnis> {
+  return rufeAls(w, person(w, a), lauf);
+}
+
+/** Wie `rufe`, aber als eine bestimmte Person (null = abgemeldet). */
+export async function rufeAls(
+  w: Welt,
+  p: Person | null,
+  lauf: () => Promise<unknown>,
+): Promise<Ergebnis> {
   try {
-    const wert = await w.alsPerson(person(w, a), lauf);
+    const wert = await w.alsPerson(p, lauf);
     if (istRueckfrage(wert)) return { art: "bestaetigung", token: wert.confirm };
     return { art: "fertig", wert };
   } catch (e) {
@@ -421,7 +442,131 @@ async function geschuetzterAst(w: Welt): Promise<{ r: string; c: string }> {
   return { r: r.id, c: c.id };
 }
 
+// ---------------------------------------------------------------------------
+// Passwortbestätigung am eigenen Konto (lib/reauth)
+
+const NEUES_PASSWORT = "Matrix-Neu-2!";
+
+type ReauthFx = { p1: Person; p2: Person };
+type ReauthAufruf = (passwort: string) => Promise<unknown>;
+
+function mitPasswort(felder: Record<string, string>): FormData {
+  const f = new FormData();
+  for (const [k, v] of Object.entries(felder)) f.set(k, v);
+  return f;
+}
+
+/** Die vier Stellen, die das aktuelle Passwort verlangen. */
+const REAUTH_STELLEN = {
+  changePasswordAction: (pw: string) =>
+    changePasswordAction(undefined, mitPasswort({ current: pw, next: NEUES_PASSWORT })),
+  deleteAccountAction: (pw: string) =>
+    deleteAccountAction(undefined, mitPasswort({ password: pw })),
+  disableTotpAction: (pw: string) =>
+    disableTotpAction(undefined, mitPasswort({ password: pw })),
+  regenerateRecoveryCodesAction: (pw: string) =>
+    regenerateRecoveryCodesAction(undefined, mitPasswort({ password: pw })),
+} satisfies Record<string, ReauthAufruf>;
+type ReauthStelle = keyof typeof REAUTH_STELLEN;
+
+/**
+ * Treiber für eine der vier Stellen. MEMBER handelt als Person 1,
+ * MEMBER_FREIGABE als Person 2 (erwartung.ts, PASSWORT_BESTAETIGEN);
+ * beide mit aktivem zweitem Faktor. `gebremst`: Person 1 hat vorher an
+ * den drei anderen Stellen zehnmal ein falsches Passwort eingegeben, aus
+ * einer zweiten Sitzung. Die endet dabei; die Bremse je Konto trifft
+ * dann die erste.
+ */
+function reauthTreiber(
+  stelle: ReauthStelle,
+  wirkt: (userId: string) => Promise<boolean>,
+  gebremst: boolean,
+): SzenarioTreiber<ReauthFx> {
+  return {
+    async vorbereiten(w) {
+      const p1 = await w.neuePerson({ totp: true });
+      const p2 = await w.neuePerson({ totp: true });
+      const zweite = await prisma.session.create({
+        data: { userId: p1.id, expiresAt: new Date(Date.now() + 3_600_000) },
+        select: { id: true },
+      });
+      w.spaeter(async () => {
+        for (const k of [
+          `reauth:${p1.id}`,
+          `reauth:${p2.id}`,
+          `reauth-sitzung:${p1.sessionId}`,
+          `reauth-sitzung:${p2.sessionId}`,
+          `reauth-sitzung:${zweite.id}`,
+        ]) {
+          await resetLimit(k);
+        }
+      });
+      if (gebremst) {
+        const andere = (Object.keys(REAUTH_STELLEN) as ReauthStelle[]).filter(
+          (s) => s !== stelle,
+        );
+        for (let i = 0; i < 10; i++) {
+          const r = await rufeAls(w, { ...p1, sessionId: zweite.id }, () =>
+            REAUTH_STELLEN[andere[i % andere.length]]("falsch-falsch"),
+          );
+          expect(r.art, `Fehlversuch ${i + 1}`).toBe("fertig");
+        }
+      }
+      return { p1, p2 };
+    },
+    aufrufen(w, fx, a) {
+      const p =
+        a === "MEMBER" ? fx.p1 : a === "MEMBER_FREIGABE" ? fx.p2 : person(w, a);
+      return rufeAls(w, p, () => REAUTH_STELLEN[stelle](MATRIX_PASSWORT));
+    },
+    async wirkung(_w, fx) {
+      return (await wirkt(fx.p1.id)) || (await wirkt(fx.p2.id));
+    },
+  };
+}
+
+function reauthSzenarien(
+  stelle: ReauthStelle,
+  wirkt: (userId: string) => Promise<boolean>,
+): Record<string, SzenarioTreiber<unknown>> {
+  return {
+    "richtiges Passwort": reauthTreiber(stelle, wirkt, false) as SzenarioTreiber<unknown>,
+    "richtiges Passwort nach 10 Fehlversuchen an den anderen Stellen": reauthTreiber(
+      stelle,
+      wirkt,
+      true,
+    ) as SzenarioTreiber<unknown>,
+  };
+}
+
 export const TREIBER: Record<string, Record<string, SzenarioTreiber<unknown>>> = {
+  "action:app/account/actions.ts#changePasswordAction": reauthSzenarien(
+    "changePasswordAction",
+    async (id) => {
+      const u = await prisma.user.findUnique({
+        where: { id },
+        select: { passwordHash: true },
+      });
+      return !!u && (await bcrypt.compare(NEUES_PASSWORT, u.passwordHash));
+    },
+  ),
+  "action:app/account/actions.ts#deleteAccountAction": reauthSzenarien(
+    "deleteAccountAction",
+    async (id) => (await prisma.user.count({ where: { id } })) === 0,
+  ),
+  "action:app/account/totp-actions.ts#disableTotpAction": reauthSzenarien(
+    "disableTotpAction",
+    async (id) =>
+      (await prisma.user.count({ where: { id, totpEnabledAt: null } })) === 1,
+  ),
+  "action:app/account/totp-actions.ts#regenerateRecoveryCodesAction": reauthSzenarien(
+    "regenerateRecoveryCodesAction",
+    async (id) =>
+      (await prisma.totpRecoveryCode.count({
+        where: { userId: id, pendingUntil: { not: null } },
+      })) > 0,
+  ),
+
   "action:app/admin/groups/actions.ts#deleteGroupAction": {
     "Gruppe mit Space-Rolle und Seitenfreigabe": {
       async vorbereiten(w) {

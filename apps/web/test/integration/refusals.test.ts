@@ -297,12 +297,12 @@ describe("Loeschen mit Pruefung in der Transaktion", () => {
   });
 
   it("deleteAccountAction: alleinige Eigentuemerin bleibt, mit Meldung", async () => {
-    mocks.actor = {
+    mocks.actor = sitzung({
       id: soleOwner.id,
       email: `${TAG}-owner@example.test`,
       name: "Owner",
       isAdmin: false,
-    };
+    });
     const antwort = await deleteAccountAction(
       undefined,
       formular({ password: PASSWORT }),
@@ -332,7 +332,7 @@ describe("Loeschen mit Pruefung in der Transaktion", () => {
       },
       select: { id: true, email: true, name: true, isAdmin: true },
     });
-    mocks.actor = weg;
+    mocks.actor = sitzung(weg);
     const ziel = await umleitung(
       deleteAccountAction(undefined, formular({ password: PASSWORT })),
     );

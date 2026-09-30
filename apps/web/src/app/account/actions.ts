@@ -20,6 +20,7 @@ import {
   orphanedSpacesFor,
 } from "@/lib/account-deletion";
 import { isSerializationConflict } from "@/lib/concurrent-change";
+import { verifyCurrentPassword } from "@/lib/reauth";
 import { userNameSchema } from "@/lib/user-name";
 
 export type AccountState = { error?: string; success?: string } | undefined;
@@ -65,15 +66,14 @@ export async function changePasswordAction(
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const dbUser = await prisma.user.findUnique({
-    where: { id: sessionUser.id },
-  });
-  if (
-    !dbUser ||
-    !(await bcrypt.compare(parsed.data.current, dbUser.passwordHash))
-  ) {
-    return { error: "Aktuelles Passwort ist falsch." };
-  }
+  // Gebremst je Konto, Fehlversuche im Audit (lib/reauth).
+  const bestaetigt = await verifyCurrentPassword(
+    sessionUser,
+    parsed.data.current,
+    "password_change",
+    { falsch: "Aktuelles Passwort ist falsch." },
+  );
+  if (!bestaetigt.ok) return { error: bestaetigt.meldung };
 
   // Vor dem Entwerten lesen: die neue Sitzung soll dieselbe Form haben
   // wie die alte. Ohne das wird aus einer Anmeldung, die mit dem
@@ -83,7 +83,7 @@ export async function changePasswordAction(
 
   // Passwort setzen + alle bestehenden Sessions entwerten.
   const updated = await prisma.user.update({
-    where: { id: dbUser.id },
+    where: { id: sessionUser.id },
     data: {
       // Kostenfaktor aus lib/password-policy, nicht nackt: die Anmeldung
       // hasht auch gegen einen Blindwert mit demselben Faktor, damit
@@ -97,7 +97,7 @@ export async function changePasswordAction(
   // Alte Anmeldungen auch in der Übersicht als beendet markieren; die
   // erhöhte Token-Version hat sie ohnehin schon entwertet.
   await prisma.session.updateMany({
-    where: { userId: dbUser.id, revokedAt: null },
+    where: { userId: sessionUser.id, revokedAt: null },
     data: { revokedAt: new Date() },
   });
   // Aktuelles Gerät frisch einloggen (neue Token-Version).
@@ -203,13 +203,14 @@ export async function deleteAccountAction(
   const password = str(form, "password");
   if (!password) return { error: "Passwort fehlt." };
 
+  // Gebremst je Konto, Fehlversuche im Audit (lib/reauth).
+  const bestaetigt = await verifyCurrentPassword(sessionUser, password, "account_delete");
+  if (!bestaetigt.ok) return { error: bestaetigt.meldung };
   const dbUser = await prisma.user.findUnique({
     where: { id: sessionUser.id },
-    select: { id: true, email: true, passwordHash: true, isAdmin: true },
+    select: { id: true, email: true, isAdmin: true },
   });
-  if (!dbUser || !(await bcrypt.compare(password, dbUser.passwordHash))) {
-    return { error: "Passwort ist falsch." };
-  }
+  if (!dbUser) return { error: "Passwort ist falsch." };
 
   try {
     await prisma.$transaction(

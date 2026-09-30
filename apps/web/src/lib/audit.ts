@@ -20,6 +20,7 @@ export type AuditAction =
   | "auth.totp_disabled"
   | "auth.recovery_codes_renewed"
   | "auth.first_admin_created"
+  | "auth.reauth_failed"
   | "account.exported"
   | "account.deleted"
   | "auth.session_revoked"
@@ -125,6 +126,7 @@ export const AUDIT_LABELS: Record<AuditAction, string> = {
   "auth.totp_disabled": "Zwei-Faktor deaktiviert",
   "auth.recovery_codes_renewed": "Wiederherstellungscodes erneuert",
   "auth.first_admin_created": "Erstes Admin-Konto angelegt",
+  "auth.reauth_failed": "Passwortbestätigung fehlgeschlagen",
   "account.exported": "Daten exportiert",
   "account.deleted": "Konto gelöscht",
   "auth.session_revoked": "Gerät abgemeldet",

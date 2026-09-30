@@ -329,6 +329,17 @@ differently on an existing installation, and what to do about it.
   address. Use the same value on every web app and collaboration server.
   Nothing to do otherwise; see `docs/admin/network.md`.
 
+- **Password confirmation limit:** changing the password, deleting the
+  account, turning off two-factor authentication and issuing new recovery
+  codes now share one limit of 10 attempts per 10 minutes per account,
+  across all sessions. Before, the first two had no limit and the other two
+  allowed 10 each. A session in which the current password is entered
+  wrongly 10 times is signed out ("Zu viele falsche Passwörter …"); this
+  also happens to accounts linked to single sign-on that guess a password
+  they never set. Each failure is recorded as `auth.reauth_failed` in the
+  audit log, with `operation`, `reason` and, when the session ended,
+  `sessionEnded`. Nothing to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -383,6 +394,12 @@ differently on an existing installation, and what to do about it.
   number of proxies, a client could choose its own rate-limit counter with
   every request and write any text, up to the header size limit, into the
   audit log, the session list and Redis keys.
+- The current password asked for when changing the password or deleting the
+  account could be guessed without limit, and the two-factor forms had a
+  limit of their own each: from a briefly unattended session, the password
+  and with it the account could be taken over. All four forms now share
+  one limit of 10 attempts per 10 minutes per account, the session ends
+  after 10 wrong passwords, and every failure is in the audit log.
 
 ### Added
 
@@ -442,6 +459,7 @@ differently on an existing installation, and what to do about it.
   server: client networks (corporate NAT, VPN) that do not count for the
   per-address limits; see "Corporate NAT and VPN" in
   `docs/admin/network.md`.
+- Audit event `auth.reauth_failed` ("Passwortbestätigung fehlgeschlagen").
 
 ### Changed
 

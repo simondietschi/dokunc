@@ -1,13 +1,13 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import bcrypt from "bcryptjs";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
 import { log } from "@/lib/log";
 import { rateLimit, resetLimit } from "@/lib/rate-limit";
+import { verifyCurrentPassword } from "@/lib/reauth";
 import { seal, unseal } from "@/lib/secret-box";
 import { qrSvg } from "@/lib/qr";
 import {
@@ -366,26 +366,11 @@ export async function disableTotpAction(
   const password = str(form, "password");
   if (!password) return { error: "Passwort fehlt." };
 
-  const brakeKey = `totp:disable:${user.id}`;
-  if (
-    !(await rateLimit(
-      brakeKey,
-      RATE_LIMITS.totpConfirm.versuche,
-      RATE_LIMITS.totpConfirm.fenster,
-    ))
-  ) {
-    return { error: "Zu viele Versuche. Bitte in 10 Minuten erneut." };
-  }
+  // Ein Zaehler je Konto fuer alle Stellen, die das Passwort verlangen
+  // (lib/reauth), statt eines eigenen je Aktion.
+  const bestaetigt = await verifyCurrentPassword(user, password, "totp_disable");
+  if (!bestaetigt.ok) return { error: bestaetigt.meldung };
 
-  const row = await prisma.user.findUnique({
-    where: { id: user.id },
-    select: { passwordHash: true },
-  });
-  if (!row || !(await bcrypt.compare(password, row.passwordHash))) {
-    return { error: "Passwort ist falsch." };
-  }
-
-  await resetLimit(brakeKey);
   await prisma.user.update({
     where: { id: user.id },
     data: { totpSecret: null, totpEnabledAt: null, totpLastStep: null },
@@ -410,27 +395,16 @@ export async function regenerateRecoveryCodesAction(
   const password = str(form, "password");
   if (!password) return { error: "Passwort fehlt." };
 
-  const brakeKey = `totp:recovery:${user.id}`;
-  if (
-    !(await rateLimit(
-      brakeKey,
-      RATE_LIMITS.totpConfirm.versuche,
-      RATE_LIMITS.totpConfirm.fenster,
-    ))
-  ) {
-    return { error: "Zu viele Versuche. Bitte in 10 Minuten erneut." };
-  }
-
+  // Vor der Bestaetigung und ohne zu zaehlen: ohne aktiven zweiten Faktor
+  // gibt es nichts zu erneuern.
   const row = await prisma.user.findUnique({
     where: { id: user.id },
-    select: { passwordHash: true, totpEnabledAt: true },
+    select: { totpEnabledAt: true },
   });
   if (!row?.totpEnabledAt) return { error: "Zwei-Faktor ist nicht aktiv." };
-  if (!(await bcrypt.compare(password, row.passwordHash))) {
-    return { error: "Passwort ist falsch." };
-  }
+  const bestaetigt = await verifyCurrentPassword(user, password, "recovery_codes");
+  if (!bestaetigt.ok) return { error: bestaetigt.meldung };
 
-  await resetLimit(brakeKey);
   // Ausstehend: bis zur Bestätigung gelten die alten Codes weiter. Das
   // Audit folgt deshalb erst dort, wo der Wechsel wirklich geschieht.
   const codes = await issueRecoveryCodes(user.id);

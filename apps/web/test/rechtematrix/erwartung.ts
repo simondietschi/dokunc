@@ -92,6 +92,28 @@ export type Eintrag =
 
 const OFFEN = { stand: "offen", grund: "noch ohne Fälle" } as const;
 
+/**
+ * Passwortbestätigung am eigenen Konto (Passwort ändern, Konto löschen,
+ * Zwei-Faktor aus, neue Codes). Keine Space-Rolle entscheidet hier:
+ * MEMBER steht für Person 1, MEMBER_FREIGABE für eine zweite, jeweils
+ * frisch angelegt, damit die Bremse je Konto sichtbar wird. Im zweiten
+ * Szenario hat Person 1 an den drei anderen Stellen zehnmal ein falsches
+ * Passwort eingegeben (aus einer zweiten Sitzung, die dabei endet); ihre
+ * Bestätigung mit dem richtigen Passwort ist gebremst, die der zweiten
+ * Person nicht.
+ */
+const PASSWORT_BESTAETIGEN: Eintrag = {
+  stand: "geprueft",
+  szenarien: {
+    "richtiges Passwort": {
+      akteure: { abgemeldet: "abgelehnt", MEMBER: "erlaubt", MEMBER_FREIGABE: "erlaubt" },
+    },
+    "richtiges Passwort nach 10 Fehlversuchen an den anderen Stellen": {
+      akteure: { abgemeldet: "abgelehnt", MEMBER: "abgelehnt", MEMBER_FREIGABE: "erlaubt" },
+    },
+  },
+};
+
 /** Von aussen: abgemeldet, fremd und Instanz-Admin ohne Mitgliedschaft. */
 const AUSSEN_ABGELEHNT = {
   abgemeldet: "abgelehnt",
@@ -134,8 +156,8 @@ export const ERWARTUNG: Record<string, Eintrag> = {
     grund:
       "Anmeldung ohne Space-Rolle: kein Reset-Link für Konten mit SSO-Bindung und deaktivierte Konten, gleiche Antwort für alle",
   },
-  "action:app/account/actions.ts#changePasswordAction": OFFEN,
-  "action:app/account/actions.ts#deleteAccountAction": OFFEN,
+  "action:app/account/actions.ts#changePasswordAction": PASSWORT_BESTAETIGEN,
+  "action:app/account/actions.ts#deleteAccountAction": PASSWORT_BESTAETIGEN,
   "action:app/account/actions.ts#logoutEverywhereAction": OFFEN,
   "action:app/account/actions.ts#revokeSessionAction": OFFEN,
   "action:app/account/actions.ts#updateNotificationPrefsAction": OFFEN,
@@ -143,9 +165,9 @@ export const ERWARTUNG: Record<string, Eintrag> = {
   "action:app/account/totp-actions.ts#cancelTotpSetupAction": OFFEN,
   "action:app/account/totp-actions.ts#confirmRecoveryCodesAction": OFFEN,
   "action:app/account/totp-actions.ts#confirmTotpAction": OFFEN,
-  "action:app/account/totp-actions.ts#disableTotpAction": OFFEN,
+  "action:app/account/totp-actions.ts#disableTotpAction": PASSWORT_BESTAETIGEN,
   "action:app/account/totp-actions.ts#discardRecoveryCodesAction": OFFEN,
-  "action:app/account/totp-actions.ts#regenerateRecoveryCodesAction": OFFEN,
+  "action:app/account/totp-actions.ts#regenerateRecoveryCodesAction": PASSWORT_BESTAETIGEN,
   "action:app/account/totp-actions.ts#startTotpSetupAction": OFFEN,
   "action:app/admin/actions.ts#deleteSpaceAction": OFFEN,
   "action:app/admin/actions.ts#deleteUserAction": OFFEN,
@@ -509,8 +531,6 @@ export const ERWARTUNG: Record<string, Eintrag> = {
  */
 export const OFFEN_BESTAND: readonly string[] = [
   "action:app/(auth)/actions.ts#logoutAction",
-  "action:app/account/actions.ts#changePasswordAction",
-  "action:app/account/actions.ts#deleteAccountAction",
   "action:app/account/actions.ts#logoutEverywhereAction",
   "action:app/account/actions.ts#revokeSessionAction",
   "action:app/account/actions.ts#updateNotificationPrefsAction",
@@ -518,9 +538,7 @@ export const OFFEN_BESTAND: readonly string[] = [
   "action:app/account/totp-actions.ts#cancelTotpSetupAction",
   "action:app/account/totp-actions.ts#confirmRecoveryCodesAction",
   "action:app/account/totp-actions.ts#confirmTotpAction",
-  "action:app/account/totp-actions.ts#disableTotpAction",
   "action:app/account/totp-actions.ts#discardRecoveryCodesAction",
-  "action:app/account/totp-actions.ts#regenerateRecoveryCodesAction",
   "action:app/account/totp-actions.ts#startTotpSetupAction",
   "action:app/admin/actions.ts#deleteSpaceAction",
   "action:app/admin/actions.ts#deleteUserAction",

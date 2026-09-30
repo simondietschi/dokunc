@@ -216,7 +216,9 @@ turning SSO off; set it back afterwards.
   delete account, turn off two-factor authentication, new recovery codes)
   are not available to linked accounts that never set a password. Admins
   can delete such accounts and reset their two-factor authentication in
-  the admin area.
+  the admin area. Guessing counts like any wrong password: 10 attempts per
+  10 minutes per account, and after 10 wrong passwords the session is
+  signed out.
 - A person you block at the provider keeps the sessions they already have
   until those expire.
 
