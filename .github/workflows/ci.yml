@@ -24,6 +24,16 @@ permissions:
 # Minuten aufgerundet: audit 1, build-test 3, e2e 13 (rot mit
 # Wiederholungen 20), docker 7. Die Grenzen lassen mindestens die Haelfte
 # mehr, meist ein Mehrfaches.
+# Laeuft die Grenze eines Jobs ab, bricht GitHub ihn ab (cancelled):
+# Schritte mit failure() oder !cancelled() entfallen, nur always() laeuft
+# noch. Im Job e2e ginge so der Upload der Traces verloren; dort enden
+# Playwright und sein Schritt deshalb vorher (siehe dort). Im Job docker
+# fehlten "Zustand und Logs bei Fehlschlag" und der Trivy-Scan des Images.
+# Er hat trotzdem keine Schrittgrenzen: wo seine Schritte auf den Stack
+# warten, zaehlen sie Versuche oder warten mit up --wait auf die
+# Healthchecks (meist mit --wait-timeout 600). Was dann noch haengen
+# kann, ist vor allem Build oder Pull am Netz, und dafuer zeigt das Log
+# des Schritts mehr als die Logs der Container.
 jobs:
   # Eigener Job: eine neue Advisory soll Lint, Tests und Build nicht
   # verdecken. Ausnahmen mit Begruendung: pnpm-workspace.yaml
