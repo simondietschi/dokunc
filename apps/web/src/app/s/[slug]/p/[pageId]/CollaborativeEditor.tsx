@@ -262,6 +262,11 @@ export function CollaborativeEditor({
   // endgueltigen Ablehnung oder wenn ein anderer Tab sie geloescht hat.
   // Dann liegt Ungesendetes nur im Speicher des Tabs (Tooltip "Offline").
   const [ohneKopie, setOhneKopie] = useState(false);
+  // Die Sitzung endete, waehrend dieser Editor Ungesendetes hatte.
+  const [sitzungsEndeUngesendet, setSitzungsEndeUngesendet] = useState(false);
+  // Hat dieser Editor Eingaben, die der Server nicht bestaetigt hat?
+  // (Effekt unten, watchUnsentChanges.)
+  const ungesendetRef = useRef<() => boolean>(() => false);
   // Symbol und Titelbild liegen nicht im Yjs-Dokument. Nach einem Restore
   // sperrt sie der Tab trotzdem: er zeigt einen Stand von vorher. Ebenso
   // mit altem Editor nach einem Update: die Aktionen dieses Bundles
@@ -440,6 +445,7 @@ export function CollaborativeEditor({
     const ydoc = new Y.Doc();
     setStatus("connecting");
     setSizeNotice(null);
+    setSitzungsEndeUngesendet(false);
     /**
      * Lokale Kopie der Seite (IndexedDB). Sie zeigt die Seite schneller
      * an und haelt, was beim Abbruch der Verbindung noch nicht beim Server
@@ -540,6 +546,12 @@ export function CollaborativeEditor({
           );
           const folge = ticketFolge(result, userId);
           if (folge.status) setStatus(folge.status);
+          // Endete die Sitzung (Untaetigkeit, "Gerät abmelden" auf einem
+          // anderen Geraet), waehrend dieser Editor Aenderungen hat, die
+          // der Server nicht bestaetigt hat, sagt er es: gleich ist auch
+          // die lokale Kopie weg, und nur der Tab haelt sie noch.
+          if (folge.alleLoeschen) setSitzungsEndeUngesendet(ungesendetRef.current());
+          else if (result.kind === "ticket") setSitzungsEndeUngesendet(false);
           if (folge.kopieLoeschen) verwirfKopie();
           if (folge.alleLoeschen) void removeAllLocalDocs();
           if (folge.endgueltig) queueMicrotask(() => provider?.disconnect());
@@ -581,10 +593,10 @@ export function CollaborativeEditor({
   }, [collabUrl, pageId, restoreEpoch, userId]);
 
   // Ungesendete Eingaben dieses Editors fuer die Rueckfrage beim
-  // Abmelden (components/space/LogoutForm): dort werden alle lokalen
-  // Kopien geloescht. Nur mit Schreibrecht; eine lesende Verbindung
-  // bestaetigt nichts. Updates vom Server und aus den lokalen Kopien
-  // zaehlen nicht.
+  // Abmelden, auch aus anderen Tabs (components/space/
+  // UnsentChangesConfirmation): dort werden alle lokalen Kopien
+  // geloescht. Nur mit Schreibrecht; eine lesende Verbindung bestaetigt
+  // nichts. Updates vom Server und aus den lokalen Kopien zaehlen nicht.
   useEffect(() => {
     if (!conn || !editable) return;
     const { ydoc, provider } = conn;
@@ -594,7 +606,9 @@ export function CollaborativeEditor({
       (origin) => origin === provider || origin instanceof IndexeddbPersistence,
     );
     const abmelden = reportUnsentChanges(beobachter.pending);
+    ungesendetRef.current = beobachter.pending;
     return () => {
+      ungesendetRef.current = () => false;
       abmelden();
       beobachter.stop();
     };
@@ -1085,6 +1099,21 @@ export function CollaborativeEditor({
           >
             Neu laden
           </button>
+        </div>
+      )}
+      {status === "unauthorized" && sitzungsEndeUngesendet && (
+        <div
+          role="alert"
+          className="mx-auto mt-4 max-w-[760px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink"
+        >
+          <p>
+            Die Sitzung ist beendet. In diesem Tab gibt es Änderungen, die
+            der Server noch nicht bestätigt hat.
+          </p>
+          <p className="mt-1.5">
+            Sie stehen nur noch in diesem Tab und gehen beim Schließen oder
+            Neuladen verloren. Kopiere sie, falls du sie noch brauchst.
+          </p>
         </div>
       )}
       {status === "too-large" && (

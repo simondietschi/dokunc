@@ -406,10 +406,13 @@ differently on an existing installation, and what to do about it.
   `localhost`, then loads `/session-ended` once if the browser still sent
   the old session cookie or still held page copies. Over plain HTTP
   browsers ignore the header: only the page copies are deleted, and files
-  of opened pages can stay in the browser cache. The sign-out button asks
-  first if the editor in that tab has changes the server has not
-  confirmed; other tabs lose such changes without asking. After a
-  rollback to an earlier version, signing out deletes no page copies.
+  of opened pages can stay in the browser cache. Signing out, "Überall
+  abmelden" and "Gerät abmelden" for the own device ask first if an
+  editor in any tab of the browser has changes the server has not
+  confirmed. An idle timeout or a sign-out from another device cannot
+  ask; an editor tab with such changes says so when it notices the ended
+  session. After a rollback to an earlier version, signing out deletes no
+  page copies.
 
 ### Security
 
@@ -625,8 +628,10 @@ differently on an existing installation, and what to do about it.
   names the account in a successful answer (`userId`).
 - The "Offline" status tooltip no longer promises that changes made
   without a connection are sent later; editing needs a connection.
-- The sign-out button asks for confirmation when the editor in the same
-  tab has changes the server has not confirmed yet.
+- Signing out, "Überall abmelden" and "Gerät abmelden" for the own device
+  ask for confirmation when an editor in any tab of the browser has
+  changes the server has not confirmed yet. An editor whose session ended
+  while it had such changes says that they now exist only in that tab.
 - "Gerät abmelden" for the own device, "Überall abmelden" and deleting
   the account reach the sign-in page through `/session-ended`.
 - The "Live" status tooltip says when the tab no longer has a local copy

@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
 import * as Y from "yjs";
 import {
+  UNSENT_CHANNEL,
   hasUnsentChanges,
+  hasUnsentChangesAnywhere,
   reportUnsentChanges,
+  unsentChangesInOtherTabs,
   watchUnsentChanges,
 } from "./unsent-changes";
 
@@ -31,6 +34,65 @@ describe("reportUnsentChanges() und hasUnsentChanges()", () => {
       }),
     );
     expect(hasUnsentChanges()).toBe(false);
+  });
+});
+
+/**
+ * Ein anderer Tab desselben Browsers: ein eigener BroadcastChannel, der
+ * auf Rueckfragen antwortet wie ein Tab mit ungesendeten Aenderungen.
+ */
+function andererTab(antwort: (frage: { art: string; id: string }) => unknown) {
+  const kanal = new BroadcastChannel(UNSENT_CHANNEL);
+  kanal.onmessage = (e: MessageEvent) => {
+    if (e.data?.art === "frage") kanal.postMessage(antwort(e.data));
+  };
+  abmelden.push(() => kanal.close());
+}
+
+describe("Rueckfrage an andere Tabs (BroadcastChannel)", () => {
+  // Die Antwort kaeme sofort; die kurze Frist haelt den Test schnell.
+  const FRIST = 50;
+
+  it("ein Tab mit einem Editor mit Ungesendetem antwortet ja", async () => {
+    abmelden.push(reportUnsentChanges(() => true));
+    await expect(unsentChangesInOtherTabs(FRIST)).resolves.toBe(true);
+  });
+
+  it("ohne Ungesendetes schweigt er: nach der Frist nein", async () => {
+    abmelden.push(reportUnsentChanges(() => false));
+    const start = Date.now();
+    await expect(unsentChangesInOtherTabs(FRIST)).resolves.toBe(false);
+    expect(Date.now() - start).toBeGreaterThanOrEqual(FRIST - 5);
+  });
+
+  it("nach dem Abmelden des letzten Editors antwortet der Tab nicht mehr", async () => {
+    const weg = reportUnsentChanges(() => true);
+    await expect(unsentChangesInOtherTabs(FRIST)).resolves.toBe(true);
+    weg();
+    await expect(unsentChangesInOtherTabs(FRIST)).resolves.toBe(false);
+  });
+
+  it("zaehlt nur die Antwort auf die eigene Frage", async () => {
+    andererTab(() => ({ art: "antwort", id: "eine-andere-frage" }));
+    andererTab((f) => ({ art: "frage", id: f.id }));
+    await expect(unsentChangesInOtherTabs(FRIST)).resolves.toBe(false);
+  });
+
+  it("hasUnsentChangesAnywhere: dieser Tab oder ein anderer", async () => {
+    await expect(hasUnsentChangesAnywhere(FRIST)).resolves.toBe(false);
+    andererTab((f) => ({ art: "antwort", id: f.id }));
+    await expect(hasUnsentChangesAnywhere(FRIST)).resolves.toBe(true);
+  });
+
+  it("ohne BroadcastChannel nein, ohne zu warten", async () => {
+    const original = globalThis.BroadcastChannel;
+    // @ts-expect-error: Browser ohne BroadcastChannel
+    delete globalThis.BroadcastChannel;
+    try {
+      await expect(unsentChangesInOtherTabs(10_000)).resolves.toBe(false);
+    } finally {
+      globalThis.BroadcastChannel = original;
+    }
   });
 });
 

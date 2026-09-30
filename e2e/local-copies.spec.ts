@@ -265,6 +265,111 @@ test("Ohne Sitzung verwirft ein offener Editor alle Kopien im Browser", async ({
     .toEqual([]);
   // Ohne Navigation: der Tab steht noch auf der Seite.
   expect(new URL(page.url()).pathname).toBe(`/s/${space.slug}/p/${p1}`);
+  // Nichts war ungesendet: kein Hinweis auf verlorene Aenderungen.
+  await expect(page.getByRole("alert").filter({ hasText: "Sitzung ist beendet" })).toHaveCount(0);
+});
+
+/**
+ * Die Verbindung des Tabs laeuft durch Playwright: so lassen sich seine
+ * Nachrichten an den Collab-Server zurueckhalten, und was danach getippt
+ * wird, ist ungesendet (wie bei einem Abbruch). Gibt den Schalter zurueck.
+ */
+async function zurueckhaltbar(page: Page): Promise<{ an(): void; aus(): void }> {
+  let zurueckhalten = false;
+  await page.routeWebSocket(
+    (url) => url.host === COLLAB_HOST,
+    (ws) => {
+      const server = ws.connectToServer();
+      ws.onMessage((m) => {
+        if (!zurueckhalten) server.send(m);
+      });
+      server.onMessage((m) => ws.send(m));
+    },
+  );
+  return {
+    an: () => {
+      zurueckhalten = true;
+    },
+    aus: () => {
+      zurueckhalten = false;
+    },
+  };
+}
+
+// Untaetigkeit oder "Gerät abmelden" auf einem anderen Geraet kann nicht
+// vorher fragen. Der Tab, der dabei Ungesendetes hat, sagt es, sobald er
+// das Ende bemerkt: seine lokale Kopie ist dann schon weg.
+test("Endet die Sitzung, warnt ein Tab mit ungesendeten Aenderungen", async ({ page }) => {
+  const a = await neuesMitglied("Ungesendet beim Sitzungsende");
+  const p = await seite(`Ungesendet beim Ende ${ZEIT}`, "Anfang");
+  const netz = await zurueckhaltbar(page);
+  await login(page, a);
+  await oeffne(page, p);
+  netz.an();
+  await tippeAmEnde(page, " UNGESENDET");
+
+  await widerrufeSitzungen(a.id);
+  netz.aus();
+  await trenne(a.id);
+  await expect(page.getByRole("alert").filter({ hasText: "Sitzung ist beendet" })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect(page.getByText("Kein Zugriff", { exact: true })).toBeVisible();
+  await expect.poll(() => alleKopien(page), { timeout: 15_000 }).toEqual([]);
+  // Das Getippte steht noch im Tab.
+  await expect(page.locator(".ProseMirror")).toContainText("UNGESENDET");
+});
+
+// Abmelden, "Überall abmelden" und "Gerät abmelden" fuer dieses Geraet
+// loeschen alle lokalen Kopien im Browser. Hat ein anderer Tab noch
+// Ungesendetes, fragen sie vorher (BroadcastChannel).
+test("Abmelden fragt nach, wenn ein anderer Tab ungesendete Aenderungen hat", async ({
+  page,
+}) => {
+  test.setTimeout(120_000);
+  const a = await neuesMitglied("Ungesendet im anderen Tab");
+  const p = await seite(`Anderer Tab ungesendet ${ZEIT}`, "Anfang");
+  const netz = await zurueckhaltbar(page);
+  await login(page, a);
+  await oeffne(page, p);
+  netz.an();
+  await tippeAmEnde(page, " NOCH NICHT GESENDET");
+
+  const tab2 = await page.context().newPage();
+  const abmeldungen: string[] = [];
+  tab2.on("request", (r) => {
+    const pfad = new URL(r.url()).pathname;
+    if (pfad === "/logout" || r.headers()["next-action"]) abmeldungen.push(pfad);
+  });
+  await tab2.goto("/spaces");
+  await tab2.getByRole("button", { name: "Abmelden" }).click();
+  const frage = tab2.getByRole("dialog");
+  await expect(frage).toContainText("Abmelden?");
+  await expect(frage).toContainText("gehen verloren");
+  await frage.getByRole("button", { name: "Abbrechen" }).click();
+
+  await tab2.goto("/account");
+  await tab2.getByRole("button", { name: "Überall abmelden" }).click();
+  await expect(tab2.getByRole("dialog")).toContainText("Überall abmelden?");
+  await tab2.getByRole("dialog").getByRole("button", { name: "Abbrechen" }).click();
+
+  await tab2.locator("li").filter({ hasText: "dieses Gerät" }).getByTitle("Gerät abmelden").click();
+  await tab2.getByRole("dialog").getByRole("button", { name: "Abmelden", exact: true }).click();
+  await expect(tab2.getByRole("dialog")).toContainText("Dieses Gerät abmelden?");
+  await expect(tab2.getByRole("dialog")).toContainText("gehen verloren");
+  await tab2.getByRole("dialog").getByRole("button", { name: "Abbrechen" }).click();
+  expect(abmeldungen).toEqual([]);
+
+  // Kommt das Getippte an, meldet es ohne Rueckfrage ab.
+  netz.aus();
+  await trenne(a.id);
+  await expect
+    .poll(() => textContent(p), { timeout: 30_000 })
+    .toContain("NOCH NICHT GESENDET");
+  await tab2.goto("/spaces");
+  await tab2.getByRole("button", { name: "Abmelden" }).click();
+  await tab2.waitForURL("**/login");
+  expect(abmeldungen).toEqual(["/logout"]);
 });
 
 /** Registereintrag einer Kopie so setzen, als waere sie ewig ungenutzt. */

@@ -106,9 +106,14 @@ sign-in page loads `/session-ended`, the page to open after signing in
 single sign-on error hint (`sso`) come back with it; `next` is kept only as
 a path on this site.
 
-The sign-out button asks for confirmation when the editor in the same tab
-has changes the server has not confirmed. Other tabs of the same browser
-lose such changes without a question, and an idle timeout cannot ask.
+Signing out, "Überall abmelden" and "Gerät abmelden" for this device ask
+for confirmation when an editor in any tab of the browser has changes the
+server has not confirmed. The question reaches the other tabs through a
+`BroadcastChannel` and waits at most 300 ms for an answer; a tab the browser
+has frozen does not answer. An idle timeout or a sign-out from another
+device cannot ask first. An editor tab with such changes says so when it
+notices the ended session: its local copy is deleted, and the changes exist
+only in the open tab until it is closed or reloaded.
 
 ## Open tabs
 
