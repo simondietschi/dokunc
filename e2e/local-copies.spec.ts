@@ -98,20 +98,26 @@ async function oeffne(page: Page, pageId: string) {
 }
 
 /**
- * Namen der IndexedDB-Datenbanken dieses Browserkontexts. Laedt die
- * Anmeldeseite gerade /session-ended nach, wird erneut gefragt.
+ * Fragt die Seite im Tab. Laedt die Anmeldeseite gerade /session-ended
+ * nach, geht das Dokument waehrend der Frage weg: dann nach dem Laden
+ * erneut fragen.
  */
-async function idbNames(page: Page): Promise<string[]> {
+async function imTab<T>(page: Page, frage: () => Promise<T>): Promise<T> {
   for (let versuch = 0; ; versuch++) {
     try {
-      return await page.evaluate(async () =>
-        (await indexedDB.databases()).map((d) => d.name ?? ""),
-      );
+      return await frage();
     } catch (e) {
       if (versuch >= 5 || !/Execution context was destroyed/.test(String(e))) throw e;
       await page.waitForLoadState();
     }
   }
+}
+
+/** Namen der IndexedDB-Datenbanken dieses Browserkontexts. */
+async function idbNames(page: Page): Promise<string[]> {
+  return imTab(page, () =>
+    page.evaluate(async () => (await indexedDB.databases()).map((d) => d.name ?? "")),
+  );
 }
 
 /** Die Kopien eines Kontos fuer eine Seite (jede Epoche, jede Schemaversion). */
@@ -315,7 +321,27 @@ async function setzeMarke(page: Page) {
 }
 
 async function marke(page: Page): Promise<string | null> {
-  return page.evaluate((m) => localStorage.getItem(m), MARKE);
+  return imTab(page, () => page.evaluate((m) => localStorage.getItem(m), MARKE));
+}
+
+/**
+ * Zaehlt die Dokumente der Anmeldeseite, die das Hauptfenster ab jetzt
+ * laedt. Ein Init-Skript meldet jedes neue Dokument, auch eines, das
+ * sich gleich wieder ersetzt; eine Adressaenderung ohne neues Dokument
+ * (Next beim Start, framenavigated) zaehlt nicht. Nach dem Weg ueber
+ * /session-ended sind es zwei: die erste laedt /session-ended nach, die
+ * zweite bleibt. Erst danach wird die Seite nicht mehr ersetzt.
+ */
+async function anmeldeseiten(page: Page): Promise<() => number> {
+  let n = 0;
+  await page.exposeFunction("e2eNeuesDokument", (pfad: string) => {
+    if (pfad === "/login") n += 1;
+  });
+  await page.addInitScript(() => {
+    const w = window as unknown as { e2eNeuesDokument(pfad: string): void };
+    if (window.top === window) w.e2eNeuesDokument(location.pathname);
+  });
+  return () => n;
 }
 
 /** Alle lokalen Kopien von dokunc in diesem Browserkontext. */
@@ -486,9 +512,11 @@ test("Nach dem Sitzungsende leert auch ein Link von einer fremden Seite den Spei
     if (new URL(r.url()).pathname !== "/session-ended") return;
     void r.allHeaders().then((h) => koepfe.push(h["clear-site-data"] ?? null));
   });
+  const angezeigt = await anmeldeseiten(page);
   await page.getByRole("link", { name: "Link aus der Mail" }).click();
   await expect.poll(() => koepfe, { timeout: 15_000 }).toEqual([null, '"cache", "storage"']);
-  await page.waitForURL("**/login");
+  // Die erste Anmeldeseite ersetzt sich selbst; gefragt wird die zweite.
+  await expect.poll(angezeigt, { timeout: 15_000 }).toBe(2);
   await page.waitForLoadState();
   expect(await marke(page)).toBeNull();
   const cookies = await page.context().cookies();
