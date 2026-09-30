@@ -248,6 +248,14 @@ differently on an existing installation, and what to do about it.
   still does not apply to it. Creating the first account with a password
   remains the recommended way.
 
+- **No npm in the app image:** the app image no longer contains `npm`
+  and `npx`. The container starts, migrates and answers its healthcheck
+  without them, and `scripts/backup.sh` and `scripts/restore.sh` do not
+  use them. If you run npm or npx in the app container yourself, use pnpm
+  instead, for example
+  `docker compose exec app pnpm --filter @dokunc/db exec prisma migrate status`.
+  Otherwise nothing to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -291,6 +299,12 @@ differently on an existing installation, and what to do about it.
   address and without `OIDC_ALLOW_SIGNUP`. The first account now needs a
   setup token unless the instance runs on `localhost`, and two
   simultaneous first registrations can no longer both become admins.
+- The app image no longer contains npm and npx, which nothing in the
+  container uses. The npm bundled with the Node base image brought its
+  own dependencies with high-severity vulnerabilities (brace-expansion
+  5.0.9: CVE-2026-102276, CVE-2026-102278; undici 6.28.0:
+  CVE-2026-19534), which the image scan reported although dokunc never
+  loads them.
 
 ### Added
 

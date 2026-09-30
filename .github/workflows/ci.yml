@@ -401,6 +401,23 @@ jobs:
           done < <(cat "$RUNNER_TEMP/attrappen"; printf '%s\n' .claude .github)
           exit "$fehler"
 
+      # Die Stufe runner entfernt npm, npx und corepack (Dockerfile): nichts
+      # im Container ruft sie auf, und das npm des Basis-Images brachte
+      # eigene Abhaengigkeiten mit Luecken mit (Trivy unten). Geprueft am
+      # gebauten Image: kein solcher Befehl im PATH, und im globalen
+      # Paketordner liegt nur pnpm. Brachte ein neues Basis-Image npm an
+      # anderer Stelle zurueck, faellt es hier auf, nicht erst als Luecke.
+      - name: Kein npm im Image
+        run: |
+          docker compose exec -T app sh -c '
+            fehler=0
+            for b in npm npx corepack; do
+              if command -v "$b"; then fehler=1; fi
+            done
+            global=$(ls /usr/local/lib/node_modules)
+            if [ "$global" != pnpm ]; then echo "/usr/local/lib/node_modules: $global"; fehler=1; fi
+            exit "$fehler"'
+
       - name: Anmeldeseite wird ausgeliefert
         run: curl -fsSk "https://localhost:${APP_PORT:-7891}/login" -o /dev/null
 

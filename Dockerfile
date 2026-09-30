@@ -108,6 +108,19 @@ COPY --from=build --chown=node:node /app/packages/db/src/generated /app/packages
 # die benannten Volumes erben diese Eigentümerschaft bei Erst-Erstellung.
 # /app/data hält u. a. das automatisch erzeugte APP_SECRET.
 RUN mkdir -p /app/uploads /app/data && chown node:node /app/uploads /app/data
+# npm und npx aus dem Laufzeit-Image nehmen: nichts im Container ruft sie
+# auf. pnpm liegt als eigenes Paket unter /usr/local/lib/node_modules/pnpm
+# und laeuft ohne npm; Start (CMD), Einstieg, Healthcheck und die Befehle,
+# die backup.sh und restore.sh im Container ausfuehren, brauchen nur node,
+# pnpm und die Shell. Das npm des Basis-Images bringt eigene
+# Abhaengigkeiten mit (u. a. brace-expansion und undici), deren Luecken
+# der Image-Scan meldet, ohne dass dokunc sie je laedt. Corepack bringt
+# node:26 nicht mehr mit; die Zeile nimmt es trotzdem mit, falls ein
+# kuenftiges Basis-Image es wieder enthaelt. Nur hier entfernt: base
+# installiert pnpm mit npm. Prueft apps/web/src/image-inhalt.test.ts und
+# am gebauten Image der CI-Job docker ("Kein npm im Image").
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx \
+  /usr/local/lib/node_modules/corepack /usr/local/bin/corepack
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod 0755 /usr/local/bin/docker-entrypoint.sh
 USER node

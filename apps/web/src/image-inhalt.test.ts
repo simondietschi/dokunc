@@ -16,6 +16,12 @@ import { describe, expect, it } from "vitest";
  * Dazu: jedes Workspace-Paket wird in den Abhaengigkeitsstufen kopiert.
  * Fehlt eines, installiert pnpm dessen Abhaengigkeiten nicht, und der
  * Container startet ohne sie.
+ *
+ * Und: die Stufe runner entfernt npm, npx und corepack, und nichts, was im
+ * Container laeuft, ruft sie auf. Das npm des Basis-Images brachte eigene
+ * Abhaengigkeiten mit, deren Luecken der Image-Scan meldete, obwohl dokunc
+ * sie nie laedt. Am gebauten Image prueft dasselbe der CI-Job docker
+ * ("Kein npm im Image").
  */
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -77,7 +83,46 @@ export function ausgeschlossen(liste: readonly string[], pfad: string): boolean 
   return aus;
 }
 
+/**
+ * Anweisungen je Stufe des Dockerfile, Fortsetzungszeilen (\) zu einer
+ * Anweisung zusammengefuegt, ohne Kommentare und Leerzeilen.
+ */
+export function stufenAnweisungen(text: string): Map<string, string[]> {
+  const stufen = new Map<string, string[]>();
+  let aktuell = "";
+  let offen: string | null = null;
+  for (const roh of text.split("\n")) {
+    const z = roh.trim();
+    if (z.startsWith("#") || (offen === null && z === "")) continue;
+    const weiter = z.endsWith("\\");
+    const teil = weiter ? z.slice(0, -1).trim() : z;
+    offen = offen === null ? teil : `${offen} ${teil}`;
+    if (weiter) continue;
+    const from = /^FROM\s+\S+\s+AS\s+(\S+)/i.exec(offen);
+    if (from) {
+      aktuell = from[1];
+      stufen.set(aktuell, []);
+    } else if (aktuell) {
+      stufen.get(aktuell)?.push(offen);
+    }
+    offen = null;
+  }
+  return stufen;
+}
+
+/** Text ohne Zeilen, die mit # beginnen (Shell, YAML, Dockerfile). */
+function ohneKommentare(text: string): string {
+  return text
+    .split("\n")
+    .filter((z) => !z.trim().startsWith("#"))
+    .join("\n");
+}
+
+/** Aufruf von npm, npx oder corepack; pnpm und npmjs.org zaehlen nicht. */
+const NPM = /\b(npm|npx|corepack)\b/;
+
 const dockerignore = muster(lesen(".dockerignore"));
+const stufen = stufenAnweisungen(lesen("Dockerfile"));
 
 describe(".dockerignore haelt Geheimnisse aus dem Image", () => {
   const block = geheimnisBlock(lesen(".gitignore"));
@@ -139,18 +184,6 @@ describe(".dockerignore haelt Geheimnisse aus dem Image", () => {
 });
 
 describe("Abhaengigkeitsstufen des Dockerfile", () => {
-  const stufen = new Map<string, string[]>();
-  let aktuell = "";
-  for (const z of lesen("Dockerfile").split("\n")) {
-    const from = /^FROM\s+\S+\s+AS\s+(\S+)/i.exec(z);
-    if (from) {
-      aktuell = from[1];
-      stufen.set(aktuell, []);
-    } else if (aktuell && /^COPY\s/i.test(z)) {
-      stufen.get(aktuell)?.push(z);
-    }
-  }
-
   const pakete = ["apps", "packages"].flatMap((ordner) =>
     readdirSync(join(ROOT, ordner))
       .map((name) => `${ordner}/${name}/package.json`)
@@ -158,10 +191,78 @@ describe("Abhaengigkeitsstufen des Dockerfile", () => {
   );
 
   it.each(["deps", "deps-prod"])("kopiert in %s jedes Workspace-Paket", (stufe) => {
-    const kopien = stufen.get(stufe) ?? [];
+    const kopien = (stufen.get(stufe) ?? []).filter((a) => /^COPY\s/i.test(a));
     expect(kopien.length, `Stufe ${stufe} fehlt`).toBeGreaterThan(0);
     const fehlt = pakete.filter((p) => !kopien.some((z) => z.split(/\s+/).includes(p)));
     expect(fehlt).toEqual([]);
+  });
+});
+
+describe("Laufzeit-Image ohne npm", () => {
+  const runner = stufen.get("runner") ?? [];
+  const pfade = [
+    "/usr/local/lib/node_modules/npm",
+    "/usr/local/bin/npm",
+    "/usr/local/bin/npx",
+    "/usr/local/lib/node_modules/corepack",
+    "/usr/local/bin/corepack",
+  ];
+  const rm = runner.findIndex(
+    (a) => /^RUN\s+rm\s+-rf\s/.test(a) && pfade.every((p) => a.split(/\s+/).includes(p)),
+  );
+
+  it("entfernt npm, npx und corepack in der Stufe runner", () => {
+    expect(runner.length, "Stufe runner fehlt").toBeGreaterThan(0);
+    expect(rm, `RUN rm -rf ${pfade.join(" ")} fehlt in runner`).toBeGreaterThanOrEqual(0);
+  });
+
+  it("holt sie danach weder per Befehl noch per Kopie zurueck", () => {
+    const danach = runner.slice(rm + 1);
+    expect(danach.filter((a) => NPM.test(a))).toEqual([]);
+    expect(danach.filter((a) => /--from=\S+(\s+--\S+)*\s+\/usr\/local\b/.test(a))).toEqual([]);
+  });
+
+  // Was im Container laeuft: Start, Einstieg, Healthcheck (Compose) und
+  // die Befehle, die backup.sh und restore.sh dort ausfuehren.
+  const skripte = (datei: string): Record<string, string> =>
+    (JSON.parse(lesen(datei)) as { scripts: Record<string, string> }).scripts;
+  const compose = readdirSync(ROOT).filter((f) => /^docker-compose.*\.ya?ml$/.test(f));
+  const laufzeit: [string, string][] = [
+    [
+      "CMD und ENTRYPOINT der Stufe runner",
+      runner.filter((a) => /^(CMD|ENTRYPOINT)\s/i.test(a)).join("\n"),
+    ],
+    ...["scripts/docker-entrypoint.sh", "scripts/backup.sh", "scripts/restore.sh", ...compose].map(
+      (f): [string, string] => [f, ohneKommentare(lesen(f))],
+    ),
+    [
+      "pnpm start und migrate:deploy",
+      [
+        skripte("package.json").start,
+        skripte("apps/web/package.json").start,
+        skripte("apps/collab/package.json").start,
+        skripte("packages/db/package.json")["migrate:deploy"],
+      ].join("\n"),
+    ],
+  ];
+
+  it.each(laufzeit)("%s ruft weder npm noch npx auf", (_, text) => {
+    expect(text.trim()).not.toBe("");
+    expect(text.split("\n").filter((z) => NPM.test(z))).toEqual([]);
+  });
+
+  it("die Anleitungen fuehren npm und npx nicht im Container der App aus", () => {
+    const docs = readdirSync(join(ROOT, "docs"), { recursive: true })
+      .map(String)
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => `docs/${f}`);
+    const treffer = ["README.md", ...docs].flatMap((f) =>
+      lesen(f)
+        .split("\n")
+        .filter((z) => /docker compose (exec|run)\b.*\bapp\b/.test(z) && NPM.test(z))
+        .map((z) => `${f}: ${z.trim()}`),
+    );
+    expect(treffer).toEqual([]);
   });
 });
 
@@ -173,6 +274,33 @@ describe("Hilfen", () => {
     expect(ausgeschlossen([".claude"], ".claude/x/y")).toBe(true);
     expect(ausgeschlossen([".env.*", "!.env.example"], ".env.example")).toBe(false);
     expect(ausgeschlossen(["!.env.example", ".env.*"], ".env.example")).toBe(true);
+  });
+
+  it("liest die Anweisungen je Stufe", () => {
+    const text = [
+      "# syntax=docker/dockerfile:1",
+      "FROM node AS base",
+      "RUN a \\",
+      "  # Kommentar in der Fortsetzung",
+      "  && b",
+      "",
+      "FROM base AS runner",
+      "COPY . .",
+      "CMD [\"sh\"]",
+    ].join("\n");
+    expect([...stufenAnweisungen(text)]).toEqual([
+      ["base", ["RUN a && b"]],
+      ["runner", ["COPY . .", 'CMD ["sh"]']],
+    ]);
+  });
+
+  it("erkennt npm, npx und corepack, nicht pnpm", () => {
+    expect(NPM.test("npm install -g pnpm@11")).toBe(true);
+    expect(NPM.test("docker compose exec app npx prisma studio")).toBe(true);
+    expect(NPM.test("corepack enable")).toBe(true);
+    expect(NPM.test("pnpm --filter @dokunc/db migrate:deploy && exec pnpm start")).toBe(false);
+    expect(NPM.test("pnpx prisma")).toBe(false);
+    expect(NPM.test("fetch('https://registry.npmjs.org/')")).toBe(false);
   });
 
   it("liest den markierten Block", () => {
