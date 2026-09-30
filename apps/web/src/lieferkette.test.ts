@@ -369,12 +369,20 @@ describe("Lieferkette", () => {
       // Laeuft ein Workflow auch auf Pushes, nach Zeitplan oder von Hand,
       // behaelt jeder dieser Laeufe seine eigene Gruppe (run_id): jeder
       // Commit auf main bekommt seinen vollstaendigen Lauf.
-      const nurPr = ereignisse(wf).every(
-        (e) => e === "pull_request" || e === "pull_request_target",
-      );
-      expect(nurPr ? [GRUPPE_JE_PR, GRUPPE_PR_NUMMER] : [GRUPPE_JE_PR], datei).toContain(
-        c?.group,
-      );
+      const ev = ereignisse(wf);
+      const nurPr = ev.every((e) => e === "pull_request" || e === "pull_request_target");
+      // Bei pull_request_target ist event_name "pull_request_target": die
+      // allgemeine Gruppe ergaebe dort die run_id, und kein Lauf wuerde
+      // abgebrochen. Solche Workflows brauchen die Gruppe je PR-Nummer, und
+      // die taugt nur, wenn sie ausschliesslich auf Pull-Requests laufen.
+      const erlaubt = ev.includes("pull_request_target")
+        ? nurPr
+          ? [GRUPPE_PR_NUMMER]
+          : []
+        : nurPr
+          ? [GRUPPE_JE_PR, GRUPPE_PR_NUMMER]
+          : [GRUPPE_JE_PR];
+      expect(erlaubt, `${datei}: concurrency-Gruppe fuer ${ev.join(", ")}`).toContain(c?.group);
     }
   });
 
