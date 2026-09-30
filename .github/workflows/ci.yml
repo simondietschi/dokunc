@@ -404,8 +404,8 @@ jobs:
           aufraeumen() {
             container_weg || true
             docker rmi dokunc-leer:ci >/dev/null 2>&1 || true
-            docker volume rm wikialt_db_data wikialt_app_data wikialt_uploads \
-              dokunc_db_data dokunc_app_data dokunc_uploads >/dev/null 2>&1 || true
+            docker volume rm wikialt_db_data wikialt_redis_data wikialt_uploads wikialt_app_data \
+              dokunc_db_data dokunc_redis_data dokunc_uploads dokunc_app_data >/dev/null 2>&1 || true
           }
           trap aufraeumen EXIT
           pruefe() {
@@ -416,13 +416,19 @@ jobs:
             grep -qF "$2" "$RUNNER_TEMP/projektname.err"
           }
           volume wikialt db_data
-          volume wikialt app_data
+          volume wikialt redis_data
           volume wikialt uploads
+          volume wikialt app_data
+          pruefe 1 'Vermutlich hiess das Projekt bisher wikialt'
+          # Ab hier eine Installation aus der Zeit vor dem Volume app_data:
+          # das entsteht erst beim ersten Start mit dieser Fassung.
+          docker volume rm wikialt_app_data >/dev/null
           pruefe 1 'Vermutlich hiess das Projekt bisher wikialt'
           sleep 2
           volume dokunc db_data
-          volume dokunc app_data
+          volume dokunc redis_data
           volume dokunc uploads
+          volume dokunc app_data
           pruefe 2 'Rückweg: ./scripts/projektname.sh --festschreiben, docker compose up -d.'
           tar -cf - --files-from /dev/null | docker import - dokunc-leer:ci >/dev/null
           mkdir -p "$RUNNER_TEMP/dokunc"

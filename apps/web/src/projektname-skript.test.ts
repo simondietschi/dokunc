@@ -23,7 +23,7 @@ import { legeSkriptbaumAn, skriptUmgebung } from "../test/docker-attrappe";
  *
  * docker-compose.yml setzt "name: dokunc"; vorher hiess das Projekt wie
  * das Verzeichnis. Eine Installation in "Wiki Alt" hat ihre Daten in den
- * Volumes wikialt_db_data und wikialt_app_data. Ohne Festschreiben
+ * Volumes wikialt_db_data, wikialt_uploads usw. Ohne Festschreiben
  * startete sie nach dem Update als Projekt dokunc: leer, mit neuem
  * Secret, neben ihren Daten. Das Skript erkennt das vor dem ersten Start
  * (Exit 1) und danach (Exit 2) und schreibt den bisherigen Namen in die
@@ -45,10 +45,23 @@ function repoIn(name: string): string {
   return dir;
 }
 
+/** Volumes, wie Compose sie fuer die Fassungen mit app_data anlegt. */
 function volumes(...paare: [string, string][]): string {
   return paare
     .flatMap(([projekt, datum]) =>
-      ["db_data", "app_data", "uploads"].map((art) => `${projekt}_${art}=${datum}`),
+      ["db_data", "redis_data", "uploads", "app_data"].map((art) => `${projekt}_${art}=${datum}`),
+    )
+    .join(" ");
+}
+
+/**
+ * Volumes einer Installation aus der Zeit vor dem Volume app_data: das
+ * entsteht erst beim ersten Start mit einer neueren Fassung.
+ */
+function volumesVorAppData(...paare: [string, string][]): string {
+  return paare
+    .flatMap(([projekt, datum]) =>
+      ["db_data", "redis_data", "uploads"].map((art) => `${projekt}_${art}=${datum}`),
     )
     .join(" ");
 }
@@ -151,7 +164,7 @@ describe("scripts/projektname.sh: Pruefen", () => {
       FAKE_CONTAINER: `wikialt=${dir};dokunc=${dir}`,
     });
     expect(r.status).toBe(2);
-    expect(r.stdout).toContain("Daten: vorhanden (dokunc_db_data, dokunc_app_data, angelegt 2026-09-30)");
+    expect(r.stdout).toContain("Daten: vorhanden (dokunc_db_data, angelegt 2026-09-30)");
     expect(r.stdout).toContain("Weitere dokunc-Projekte auf diesem Host: wikialt (angelegt 2026-05-19)\n");
     expect(r.stderr).toBe(
       "✗ Das Compose-Projekt dokunc hat Daten (angelegt 2026-09-30), das dokunc-Projekt wikialt (angelegt 2026-05-19) hat aber ältere. " +
@@ -253,7 +266,7 @@ describe("scripts/projektname.sh: Pruefen", () => {
     expect(existsSync(join(dir, ".env"))).toBe(false);
     const eigen = run(dir, ["--festschreiben"], env);
     expect(eigen.stdout).toBe(
-      "✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (Volumes dokunc_db_data, dokunc_app_data).\n",
+      "✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (Daten im Volume dokunc_db_data).\n",
     );
   });
 
@@ -332,7 +345,7 @@ describe("scripts/projektname.sh: Pruefen", () => {
   it("zaehlt den bisherigen Namen mit Daten auch ohne die Labels von Compose", () => {
     // Von Hand angelegte und zurueckgespielte Volumes tragen keine Labels.
     const dir = repoIn("Wiki Alt");
-    const ohneLabel = "wikialt_db_data wikialt_app_data wikialt_uploads";
+    const ohneLabel = "wikialt_db_data wikialt_redis_data wikialt_uploads wikialt_app_data";
     const vorher = run(dir, [], { FAKE_VOLUMES: volumes(["wikialt", ALT]), FAKE_OHNE_LABEL: ohneLabel });
     expect(vorher.status).toBe(1);
     expect(vorher.stderr).toContain("Vermutlich hiess das Projekt bisher wikialt (Name des Verzeichnisses).");
@@ -396,7 +409,7 @@ describe("scripts/projektname.sh: Pruefen", () => {
 
     const bestand = run(repoIn("dokunc"), [], { FAKE_VOLUMES: volumes(["dokunc", ALT]) });
     expect(bestand.status).toBe(0);
-    expect(bestand.stdout).toContain("Daten: vorhanden (dokunc_db_data, dokunc_app_data, angelegt 2026-05-19)");
+    expect(bestand.stdout).toContain("Daten: vorhanden (dokunc_db_data, angelegt 2026-05-19)");
     expect(bestand.stderr).toBe("");
   });
 
@@ -407,10 +420,14 @@ describe("scripts/projektname.sh: Pruefen", () => {
     expect(r.stdout).not.toContain("Weitere");
   });
 
-  it("zaehlt fremde Compose-Apps mit app_data und db_data, aber ohne uploads, nicht mit", () => {
-    // app_data und db_data sind uebliche Namen; erst uploads dazu macht
-    // ein Projekt zu einer dokunc-Installation.
-    const fremd = `nextcloud_app_data=${ALT} nextcloud_db_data=${ALT}`;
+  it.each([
+    ["app_data und db_data", "nextcloud", ["app_data", "db_data"]],
+    ["db_data, redis_data und app_data, ohne uploads", "gitea", ["db_data", "redis_data", "app_data"]],
+    ["db_data, uploads und app_data, ohne redis_data", "cms", ["db_data", "uploads", "app_data"]],
+  ])("zaehlt fremde Compose-Apps mit %s nicht mit", (_fall, projekt, arten) => {
+    // Das sind uebliche Namen; erst db_data, redis_data und uploads
+    // zusammen machen ein Projekt zu einer dokunc-Installation.
+    const fremd = arten.map((art) => `${projekt}_${art}=${ALT}`).join(" ");
     const neu = run(repoIn("dokunc"), [], { FAKE_VOLUMES: fremd });
     expect(neu.status).toBe(0);
     expect(neu.stderr).toBe("");
@@ -469,6 +486,73 @@ describe("scripts/projektname.sh: Pruefen", () => {
   });
 });
 
+describe("scripts/projektname.sh: Installationen aus der Zeit vor dem Volume app_data", () => {
+  // Bis zur Fassung mit app_data legte Compose nur db_data, redis_data,
+  // uploads und die Volumes von Caddy an. app_data entsteht erst beim
+  // ersten Start mit einer neueren Fassung, also genau nach dem Schritt,
+  // den das Skript vorher erkennen muss.
+  const VOR = "2026-06-01T08:00:00Z";
+
+  it("erkennt den bisherigen Namen vor dem ersten Start und schreibt ihn fest", () => {
+    const dir = repoIn("wiki");
+    const env = { FAKE_VOLUMES: volumesVorAppData(["wiki", VOR]), FAKE_CONTAINER: `wiki=${dir}` };
+    const r = run(dir, [], env);
+    expect(r.status).toBe(1);
+    expect(r.stdout).toContain("Noch keine Daten (neue Installation).");
+    expect(r.stderr).toBe(
+      "✗ Für das Compose-Projekt dokunc gibt es keine Daten, wohl aber für: wiki (angelegt 2026-06-01). " +
+        "Vermutlich hiess das Projekt bisher wiki (Name des Verzeichnisses). Festschreiben mit: " +
+        "./scripts/projektname.sh --festschreiben (docs/admin/compose-project.md)\n",
+    );
+
+    const fest = run(dir, ["--festschreiben"], env);
+    expect(fest.status, fest.stderr).toBe(0);
+    expect(fest.stdout).toBe("✓ COMPOSE_PROJECT_NAME=wiki in .env eingetragen (Daten im Volume wiki_db_data).\n");
+    expect(lesen(join(dir, ".env"))).toContain("COMPOSE_PROJECT_NAME=wiki\n");
+    const danach = run(dir, [], env);
+    expect(danach.status, danach.stderr).toBe(0);
+    expect(danach.stdout).toContain("Daten: vorhanden (wiki_db_data, angelegt 2026-06-01)");
+  });
+
+  it("nimmt den Namen auch von Hand", () => {
+    const dir = repoIn("wiki");
+    const r = run(dir, ["--festschreiben", "wiki"], {
+      FAKE_VOLUMES: volumesVorAppData(["wiki", VOR]),
+      FAKE_CONTAINER: `wiki=${dir}`,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(lesen(join(dir, ".env"))).toContain("COMPOSE_PROJECT_NAME=wiki\n");
+  });
+
+  it("erkennt nach einem Start ohne Festschreiben die neue, leere Instanz", () => {
+    // Nur die neue Instanz hat app_data. Exit 2: backup.sh loescht nichts.
+    const dir = repoIn("wiki");
+    const r = run(dir, [], {
+      FAKE_VOLUMES: `${volumesVorAppData(["wiki", VOR])} ${volumes(["dokunc", NEU])}`,
+      FAKE_CONTAINER: `wiki=${dir};dokunc=${dir}`,
+    });
+    expect(r.status).toBe(2);
+    expect(r.stdout).toContain("Weitere dokunc-Projekte auf diesem Host: wiki (angelegt 2026-06-01)\n");
+    expect(r.stderr).toContain("das dokunc-Projekt wiki (angelegt 2026-06-01) hat aber ältere.");
+    expect(r.stderr).toContain("Rückweg: docker compose -p dokunc down (ohne -v), ./scripts/projektname.sh --festschreiben,");
+  });
+
+  it("erkennt sie auch unter einem Namen, der nicht der des Verzeichnisses ist", () => {
+    // Nach einem Umzug nach /srv/dokunc: nur die Volumes zeigen das Projekt.
+    const dir = repoIn("dokunc");
+    const vorher = run(dir, [], { FAKE_VOLUMES: volumesVorAppData(["altwiki", VOR]) });
+    expect(vorher.status).toBe(1);
+    expect(vorher.stderr).toContain("wohl aber für: altwiki (angelegt 2026-06-01).");
+    expect(vorher.stderr).toContain("./scripts/projektname.sh --festschreiben NAME");
+    const nachher = run(dir, [], {
+      FAKE_VOLUMES: `${volumesVorAppData(["altwiki", VOR])} ${volumes(["dokunc", NEU])}`,
+      FAKE_CONTAINER: `dokunc=${dir}`,
+    });
+    expect(nachher.status).toBe(2);
+    expect(nachher.stderr).toContain("das dokunc-Projekt altwiki (angelegt 2026-06-01) hat aber ältere.");
+  });
+});
+
 describe("scripts/projektname.sh: Festschreiben", () => {
   it("schreibt den bisherigen Namen in eine neue .env, nur fuer den Eigentuemer, und aendert beim zweiten Lauf nichts", () => {
     const dir = repoIn("Wiki Alt");
@@ -476,7 +560,7 @@ describe("scripts/projektname.sh: Festschreiben", () => {
     const r = run(dir, ["--festschreiben"], env);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toBe(
-      "✓ COMPOSE_PROJECT_NAME=wikialt in .env eingetragen (Volumes wikialt_db_data, wikialt_app_data).\n",
+      "✓ COMPOSE_PROJECT_NAME=wikialt in .env eingetragen (Daten im Volume wikialt_db_data).\n",
     );
     const datei = join(dir, ".env");
     expect(lesen(datei)).toBe(
@@ -601,7 +685,7 @@ describe("scripts/projektname.sh: Festschreiben", () => {
   it("schreibt den aktuellen Namen, wenn es keinen bisherigen mit Daten gibt", () => {
     const bestand = repoIn("dokunc");
     const r = run(bestand, ["--festschreiben"], { FAKE_VOLUMES: volumes(["dokunc", ALT]) });
-    expect(r.stdout).toContain("✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (Volumes dokunc_db_data, dokunc_app_data).");
+    expect(r.stdout).toContain("✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (Daten im Volume dokunc_db_data).");
     const neu = repoIn("Wiki Neu");
     const n = run(neu, ["--festschreiben"]);
     expect(n.stdout).toBe("✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (noch keine Daten).\n");

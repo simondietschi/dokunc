@@ -21,9 +21,11 @@ An empty value counts as not set. Show the name and check the data with:
 
     ./scripts/projektname.sh
 
-It prints the project, whether its data volumes exist and which other
-dokunc projects (projects with `db_data`, `app_data` and `uploads`
-volumes) exist on this host.
+It prints the project, whether it has data (its database volume
+`<project>_db_data`) and which other dokunc projects (projects with
+`db_data`, `redis_data` and `uploads` volumes) exist on this host. The
+check does not rely on `app_data`: installations from before that volume
+only get it at their first start with a newer version.
 
 ## Installations from before the fixed name
 
@@ -39,12 +41,13 @@ Otherwise, run this once after `git pull` and before `docker compose up`:
     ./scripts/projektname.sh --festschreiben
 
 It writes the previous name to `.env` (`COMPOSE_PROJECT_NAME=...`, with a
-comment line), if the volumes of that name exist; otherwise it writes the
-current name. It adds a line break first if the last line of `.env` has
-none, keeps the file's permissions, and changes nothing if the name is
-already set in `.env` or in the environment. If the previous name is not
-the directory name (for example because you moved the checkout), give it
-explicitly; the script accepts only a name whose volumes exist:
+comment line), if that project has data (`<name>_db_data`); otherwise it
+writes the current name. It adds a line break first if the last line of
+`.env` has none, keeps the file's permissions, and changes nothing if the
+name is already set in `.env` or in the environment. If the previous name
+is not the directory name (for example because you moved the checkout),
+give it explicitly; the script accepts only a name whose `db_data` volume
+exists:
 
     ./scripts/projektname.sh --festschreiben wiki
 
@@ -62,12 +65,12 @@ containers is judged by the age of its volumes only.
 
 `./scripts/projektname.sh` without options detects a missed step:
 
-- **Exit code 1:** the project has no data volumes, but another dokunc
-  project on this host has, and none of its containers come from another
-  directory. This is the state after `git pull` and before the first
-  start. Run `--festschreiben`.
-- **Exit code 2:** the project has data volumes, but it probably does not
-  belong to this checkout. There are three cases:
+- **Exit code 1:** the project has no data (no `db_data` volume), but
+  another dokunc project on this host has, and none of its containers
+  come from another directory. This is the state after `git pull` and
+  before the first start. Run `--festschreiben`.
+- **Exit code 2:** the project has data, but it probably does not belong
+  to this checkout. There are three cases:
   - The containers of the `dokunc` project come from another directory
     that still exists. The `dokunc` project belongs to another
     installation on this host, however old its volumes are.

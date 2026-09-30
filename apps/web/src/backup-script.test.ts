@@ -243,7 +243,10 @@ describe("scripts/backup.sh: Compose-Projekt", () => {
   // guten alten Saetze nicht loeschen.
   const ALT = "2026-05-19T08:00:00Z";
   const NEU = "2026-09-30T10:00:00Z";
-  const vol = (p: string, d: string) => `${p}_db_data=${d} ${p}_app_data=${d} ${p}_uploads=${d}`;
+  const vol = (p: string, d: string) =>
+    `${p}_db_data=${d} ${p}_redis_data=${d} ${p}_uploads=${d} ${p}_app_data=${d}`;
+  // Eine Installation aus der Zeit vor dem Volume app_data.
+  const volVorAppData = (p: string, d: string) => `${p}_db_data=${d} ${p}_redis_data=${d} ${p}_uploads=${d}`;
 
   it("nennt das Projekt als erste Zeile und im Abschluss", () => {
     const r = run([], { env: { FAKE_VOLUMES: vol("dokunc", ALT) } });
@@ -256,6 +259,11 @@ describe("scripts/backup.sh: Compose-Projekt", () => {
   it.each([
     ["ohne eigene Daten", vol("wiki", ALT), "✗ Für das Compose-Projekt dokunc gibt es keine Daten"],
     ["neben aelteren Daten", `${vol("wiki", ALT)} ${vol("dokunc", NEU)}`, "✗ Das Compose-Projekt dokunc hat Daten"],
+    [
+      "neben aelteren Daten ohne app_data",
+      `${volVorAppData("wiki", ALT)} ${vol("dokunc", NEU)}`,
+      "✗ Das Compose-Projekt dokunc hat Daten",
+    ],
   ])("meldet eine Abweichung %s auf stderr und loescht nichts", (_fall, volumes, meldung) => {
     // Drei junge Saetze dazu: sonst behielte die Aufbewahrung die alten
     // ohnehin (die drei juengsten bleiben immer).

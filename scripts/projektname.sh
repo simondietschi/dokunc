@@ -3,9 +3,8 @@
 # auf Wunsch den bisherigen Namen in die .env (docs/admin/compose-project.md).
 #
 # Nutzung: ./scripts/projektname.sh [--festschreiben [NAME] | --name]
-#   ohne Option     nennt das Compose-Projekt und prueft, ob seine
-#                   Daten-Volumes (<projekt>_db_data, <projekt>_app_data)
-#                   existieren.
+#   ohne Option     nennt das Compose-Projekt und prueft, ob es Daten hat
+#                   (das Volume der Datenbank, <projekt>_db_data).
 #                   Ein Projekt, dessen Container aus einem anderen, noch
 #                   vorhandenen Verzeichnis stammen, gehoert einer anderen
 #                   Installation und zaehlt nie als bisherige Daten.
@@ -23,9 +22,9 @@
 #                   COMPOSE_PROJECT_NAME den Namen ausdruecklich festlegt.
 #   --festschreiben schreibt COMPOSE_PROJECT_NAME in die .env: NAME, sonst
 #                   den bisherigen, aus dem Verzeichnisnamen abgeleiteten
-#                   Namen, wenn es dessen Volumes gibt, sonst den
-#                   aktuellen. Aendert nichts, wenn der Name schon in der
-#                   .env oder in der Umgebung steht. Exit 1, wenn NAME
+#                   Namen, wenn er Daten hat, sonst den aktuellen.
+#                   Aendert nichts, wenn der Name schon in der .env
+#                   oder in der Umgebung steht. Exit 1, wenn NAME
 #                   keine Daten hat oder der Name einer anderen
 #                   Installation gehoert.
 #   --name          gibt nur den Namen aus (wie restore.sh ihn bestimmt).
@@ -100,18 +99,16 @@ docker_gescheitert() {
   exit 3
 }
 
-# Daten eines Projekts: die Volumes <projekt>_db_data und _app_data. Nur
-# "no such volume" heisst "fehlt"; jeder andere Fehler bricht ab. Nicht
-# in einer Subshell aufrufen, sonst beendet der Abbruch nur diese.
+# Daten eines Projekts: das Volume <projekt>_db_data, die Datenbank.
+# Nicht app_data: Installationen aus der Zeit vor diesem Volume bekommen
+# es erst beim ersten Start mit dieser Fassung, und gerade vor diesem
+# Start muss ihr Name erkannt werden. Nur "no such volume" heisst
+# "fehlt"; jeder andere Fehler bricht ab. Nicht in einer Subshell
+# aufrufen, sonst beendet der Abbruch nur diese.
 hat_daten() {
-  local v
-  for v in "$1_db_data" "$1_app_data"; do
-    if ! docker volume inspect "$v" >/dev/null 2>"$FEHLER"; then
-      if grep -qi 'no such volume' "$FEHLER"; then return 1; fi
-      docker_gescheitert "docker volume inspect $v"
-    fi
-  done
-  return 0
+  if docker volume inspect "$1_db_data" >/dev/null 2>"$FEHLER"; then return 0; fi
+  if grep -qi 'no such volume' "$FEHLER"; then return 1; fi
+  docker_gescheitert "docker volume inspect $1_db_data"
 }
 
 # Anlagedatum der Datenbank eines Projekts, wie Docker es meldet (RFC 3339).
@@ -139,7 +136,7 @@ unlesbar() {
     "$1" "${2:-unbekannt}" >&2
 }
 
-# Compose-Projekte mit einem Volume der Art $1 (app_data, db_data,
+# Compose-Projekte mit einem Volume der Art $1 (db_data, redis_data,
 # uploads), sortiert, eines je Zeile.
 projekte_mit() {
   docker volume ls --filter "label=com.docker.compose.volume=$1" \
@@ -213,7 +210,7 @@ if [ "$MODUS" = festschreiben ]; then
   fi
   if [ -n "$WUNSCH" ]; then
     if ! hat_daten "$WUNSCH"; then
-      echo "✗ Für das Compose-Projekt $WUNSCH gibt es keine Daten (${WUNSCH}_db_data, ${WUNSCH}_app_data). Nichts geändert." >&2
+      echo "✗ Für das Compose-Projekt $WUNSCH gibt es keine Daten (kein Volume ${WUNSCH}_db_data). Nichts geändert." >&2
       exit 1
     fi
     NAME=$WUNSCH
@@ -281,7 +278,7 @@ if [ "$MODUS" = festschreiben ]; then
   } 2>"$FEHLER" >>"$TEIL" || nicht_schreibbar
   mv "$TEIL" "$ZIEL" 2>"$FEHLER" || nicht_schreibbar
   if [ "$NAME_HAT_DATEN" -eq 1 ]; then
-    echo "✓ COMPOSE_PROJECT_NAME=$NAME in .env eingetragen (Volumes ${NAME}_db_data, ${NAME}_app_data)."
+    echo "✓ COMPOSE_PROJECT_NAME=$NAME in .env eingetragen (Daten im Volume ${NAME}_db_data)."
   else
     echo "✓ COMPOSE_PROJECT_NAME=$NAME in .env eingetragen (noch keine Daten)."
   fi
@@ -291,17 +288,20 @@ fi
 # ---- Pruefen ----
 
 echo "Compose-Projekt: $AKTUELL ($QUELLE)"
-# dokunc-Projekte des Hosts: Projekte mit den Compose-Volumes app_data,
-# db_data UND uploads. db_data allein oder mit app_data haben auch fremde
-# Anwendungen; sie hier mitzuzaehlen, liesse die Pruefung auf solchen
-# Hosts dauernd anschlagen und die Aufbewahrung in backup.sh ruhen.
-MIT_APP=$(projekte_mit app_data) || docker_gescheitert "docker volume ls"
+# dokunc-Projekte des Hosts: Projekte mit den Compose-Volumes db_data,
+# redis_data UND uploads, die jede Installation seit dem ersten Tag hat.
+# Nicht app_data: das fehlt aelteren Installationen bis zum ersten Start
+# mit dieser Fassung (hat_daten). db_data allein oder mit nur einem der
+# anderen haben auch fremde Anwendungen; sie hier mitzuzaehlen, liesse
+# die Pruefung auf solchen Hosts dauernd anschlagen und die Aufbewahrung
+# in backup.sh ruhen.
 MIT_DB=$(projekte_mit db_data) || docker_gescheitert "docker volume ls"
+MIT_REDIS=$(projekte_mit redis_data) || docker_gescheitert "docker volume ls"
 MIT_UPLOADS=$(projekte_mit uploads) || docker_gescheitert "docker volume ls"
 ANDERE=()
 while IFS= read -r p; do
   [ -n "$p" ] && [ "$p" != "$AKTUELL" ] && ANDERE+=("$p")
-done < <(LC_ALL=C comm -12 <(printf '%s\n' "$MIT_APP") <(printf '%s\n' "$MIT_DB") \
+done < <(LC_ALL=C comm -12 <(printf '%s\n' "$MIT_DB") <(printf '%s\n' "$MIT_REDIS") \
   | LC_ALL=C comm -12 - <(printf '%s\n' "$MIT_UPLOADS"))
 
 # Der Name, den dieses Verzeichnis vor "name: dokunc" hatte, und ob er
@@ -344,7 +344,7 @@ aufzaehlen() {
 
 if hat_daten "$AKTUELL"; then
   EIGENES=$(angelegt "$AKTUELL")
-  echo "Daten: vorhanden (${AKTUELL}_db_data, ${AKTUELL}_app_data, angelegt $(tag "$EIGENES"))"
+  echo "Daten: vorhanden (${AKTUELL}_db_data, angelegt $(tag "$EIGENES"))"
 else
   EIGENES=""
   echo "Noch keine Daten (neue Installation)."
