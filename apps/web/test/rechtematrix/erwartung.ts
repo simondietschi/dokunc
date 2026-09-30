@@ -104,7 +104,7 @@ export const ERWARTUNG: Record<string, Eintrag> = {
     stand: "extern",
     tests: ["apps/web/test/integration/passwortweg.test.ts"],
     grund:
-      "Anmeldung ohne Space-Rolle: kein zweiter Schritt für Konten mit SSO-Bindung",
+      "Anmeldung ohne Space-Rolle: kein zweiter Schritt nach dem Passwort für Konten mit SSO-Bindung, auch wenn sie erst nach dem ersten Schritt gebunden wurden",
   },
   "action:app/(auth)/actions.ts#loginAction": {
     stand: "extern",
@@ -472,9 +472,13 @@ export const ERWARTUNG: Record<string, Eintrag> = {
   "route:app/api/ai/assist/route.ts#POST": OFFEN,
   "route:app/api/auth/oidc/callback/route.ts#GET": {
     stand: "extern",
-    tests: ["e2e/sso.spec.ts"],
+    tests: [
+      "e2e/sso.spec.ts",
+      "apps/web/test/integration/ersteinrichtung.test.ts",
+      "apps/web/test/integration/passwortweg.test.ts",
+    ],
     grund:
-      "Anmeldung ohne Space-Rolle: Rücksprung des Anbieters mit Anmeldung, Verknüpfung, Kontoanlage und falschem state gegen den Test-IdP",
+      "Anmeldung ohne Space-Rolle: Rücksprung des Anbieters mit Anmeldung, Verknüpfung, Kontoanlage und falschem state gegen den Test-IdP; erstes Konto nur mit Einrichtungs-Token; zweiter Faktor nach SSO",
   },
   "route:app/api/auth/oidc/start/route.ts#GET": {
     stand: "extern",
