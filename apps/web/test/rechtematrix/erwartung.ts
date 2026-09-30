@@ -510,7 +510,12 @@ export const ERWARTUNG: Record<string, Eintrag> = {
     grund:
       "Schliesst eine beendete Sitzung im Browser ab; mit gültiger Sitzung nur eine Weiterleitung, ohne Sitzung löscht sie nur Daten dieses Browsers",
   },
-  "route:app/api/account/export/route.ts#GET": OFFEN,
+  "route:app/api/account/export/route.ts#GET": {
+    stand: "extern",
+    tests: ["apps/web/test/integration/account-export.test.ts"],
+    grund:
+      "Datenauskunft der angemeldeten Person: nur eigene Daten, Titel nur von Seiten, die sie heute öffnen darf",
+  },
   "route:app/api/ai/assist/route.ts#POST": OFFEN,
   "route:app/api/auth/oidc/callback/route.ts#GET": {
     stand: "extern",
@@ -639,7 +644,6 @@ export const OFFEN_BESTAND: readonly string[] = [
   "action:app/s/[slug]/template-actions.ts#importBuiltinTemplateAction",
   "action:app/spaces/actions.ts#createSpaceAction",
   "action:app/spaces/actions.ts#joinSpaceAction",
-  "route:app/api/account/export/route.ts#GET",
   "route:app/api/ai/assist/route.ts#POST",
   "route:app/api/favorites/route.ts#GET",
   "route:app/api/files/[name]/route.ts#GET",

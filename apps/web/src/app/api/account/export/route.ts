@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { requireUser } from "@/lib/current-user";
 import { audit } from "@/lib/audit";
+import { LABEL_OHNE_ZUGRIFF } from "@/lib/link-labels";
+import { titlesForUser } from "@/lib/link-titles";
 
 export const runtime = "nodejs";
 
@@ -11,6 +13,13 @@ export const runtime = "nodejs";
  *
  * Bewusst nur die eigenen Daten und ohne Passworthash. Auf ein
  * Auskunftsbegehren liess sich vorher nur mit SQL antworten.
+ *
+ * Titel von Seiten nur, wenn die Person die Seite heute oeffnen darf
+ * (dieselbe Regel wie fuer Wiki-Links, lib/link-titles). Favoriten, Abos,
+ * Kommentare und Versionen koennen auf Seiten zeigen, die inzwischen
+ * geschuetzt, geloescht oder in einem verlassenen Space sind; ihr
+ * aktueller Titel, auch nach einer Umbenennung durch andere, gehoert
+ * nicht zu den eigenen Daten. Dort stehen nur die ID und der Hinweis.
  */
 export async function GET() {
   const user = await requireUser();
@@ -116,6 +125,16 @@ export async function GET() {
     }),
   ]);
 
+  const sichtbar = await titlesForUser(user.id, [
+    ...comments.map((c) => c.page.id),
+    ...versions.map((v) => v.page.id),
+    ...favorites.map((f) => f.page.id),
+    ...subscriptions.map((s) => s.page.id),
+  ]);
+  const offen = (id: string) => sichtbar.get(id) != null;
+  const seite = <T extends { id: string }>(p: T) =>
+    offen(p.id) ? p : { id: p.id, title: null, note: LABEL_OHNE_ZUGRIFF };
+
   await audit({ action: "account.exported", actorId: user.id });
 
   const body = JSON.stringify(
@@ -123,12 +142,16 @@ export async function GET() {
       exportedAt: new Date().toISOString(),
       profile,
       memberships,
-      comments,
-      pageVersions: versions,
+      comments: comments.map((c) => ({ ...c, page: seite(c.page) })),
+      pageVersions: versions.map((v) => ({
+        ...v,
+        title: offen(v.page.id) ? v.title : null,
+        page: seite(v.page),
+      })),
       notifications,
       sessions,
-      favorites,
-      subscriptions,
+      favorites: favorites.map((f) => ({ ...f, page: seite(f.page) })),
+      subscriptions: subscriptions.map((s) => ({ ...s, page: seite(s.page) })),
       attachments,
       auditEvents,
     },

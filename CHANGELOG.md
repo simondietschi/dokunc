@@ -499,6 +499,12 @@ differently on an existing installation, and what to do about it.
   page copies, including protected pages, and the site's cached files in
   the browser. Signing out and ended sessions now delete the page copies
   and, over HTTPS, the site's storage and cache (`Clear-Site-Data`).
+- The data export (`/api/account/export`) listed the current titles of
+  pages the person had favorited, subscribed to, commented on or saved a
+  version of, also after losing access to them (page protected, deleted,
+  space left) and after others renamed them. For such pages it now
+  contains only the page ID with `"title": null` and
+  `"note": "Seite ohne Zugriff"`.
 
 ### Added
 
