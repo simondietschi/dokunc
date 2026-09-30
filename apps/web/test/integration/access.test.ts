@@ -19,6 +19,7 @@ import {
   type PageScope,
 } from "@/lib/page-guards";
 import { loadAncestors } from "@/lib/page-ancestors";
+import { schutzwechselToken } from "@/lib/confirmation";
 
 /**
  * Gruppen und geschützte Seiten.
@@ -376,8 +377,25 @@ describe("Umhängen im Baum", () => {
       );
       expect(await canSeePage(page.id, viaGroup, "VIEWER")).toBe(false);
 
-      // Wieder heraus: der Schutz endet mit dem Umhängen.
-      expect((await movePageInSpace(scope, page.id, null, 0)).ok).toBe(true);
+      // Wieder heraus: das hebt den Schutz auf und will bestätigt sein.
+      const rueckfrage = await movePageInSpace(scope, page.id, null, 0);
+      expect(rueckfrage).toMatchObject({
+        ok: false,
+        confirm: schutzwechselToken(secretPageId, null),
+      });
+      expect(await canSeePage(page.id, viaGroup, "VIEWER")).toBe(false);
+      // Bestätigt: der Schutz endet mit dem Umhängen.
+      expect(
+        (
+          await movePageInSpace(
+            scope,
+            page.id,
+            null,
+            0,
+            schutzwechselToken(secretPageId, null),
+          )
+        ).ok,
+      ).toBe(true);
       expect(await canSeePage(page.id, viaGroup, "VIEWER")).toBe(true);
     } finally {
       await prisma.page.delete({ where: { id: page.id } });

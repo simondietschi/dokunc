@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -25,6 +26,7 @@ import { createPageAction } from "@/app/s/[slug]/actions";
 import { movePageAction } from "@/app/s/[slug]/move-actions";
 import { pageTitle } from "@/lib/page-title";
 import { EVENT_PAGE_RENAMED, onBrowserEvent } from "@/lib/browser-events";
+import { ProtectionConfirmDialog } from "@/components/space/ProtectionConfirmDialog";
 
 /**
  * Seitenbaum der Sidebar. Mit "managePages"-Recht lassen sich Seiten per
@@ -32,6 +34,11 @@ import { EVENT_PAGE_RENAMED, onBrowserEvent } from "@/lib/browser-events";
  * einer Zeile = davor, unteres Viertel = danach, Mitte = hinein.
  * Die Anzeige wird optimistisch aktualisiert; der Server bestaetigt per
  * movePageAction, danach laedt router.refresh() den echten Baum.
+ *
+ * Aendert ein Zug den Schutz der Seite, fragt der Server zurueck: der
+ * Baum nimmt den optimistischen Stand zurueck und zeigt die Rueckfrage;
+ * bestaetigt die Verwaltung, geht derselbe Zug mit dem Token noch einmal
+ * hinaus.
  */
 
 type DropTarget = { parentId: string | null; index?: number };
@@ -68,6 +75,14 @@ export function PageTree({
   const [blocked, setBlocked] = useState<Set<string>>(new Set());
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Offene Rueckfrage eines Zugs, der den Schutz aendert.
+  const [rueckfrage, setRueckfrage] = useState<{
+    text: string;
+    token: string;
+    id: string;
+    next: FlatPage[];
+    fd: FormData;
+  } | null>(null);
 
   // Umbenennungen aus dem Editor sofort anzeigen (Ereignis
   // EVENT_PAGE_RENAMED), bis der Server den neuen Titel liefert.
@@ -116,6 +131,44 @@ export function PageTree({
     return apply(base);
   }, [optimistic, nodes, renamed]);
 
+  // Schickt einen Zug ab, mit optimistischer Anzeige. Beim ersten Versuch
+  // und nach einer bestaetigten Rueckfrage derselbe Weg.
+  const verschiebe = useCallback(
+    (fd: FormData, id: string, next: FlatPage[]) => {
+      setOptimistic(next);
+      setPendingId(id);
+      startTransition(async () => {
+        try {
+          const res = await movePageAction(fd);
+          if (!res.ok) {
+            setOptimistic(null);
+            if (res.confirm) {
+              setRueckfrage({ text: res.error, token: res.confirm, id, next, fd });
+              return;
+            }
+            setError(res.error);
+            return;
+          }
+          // Eigene Transition fuer den Refresh: React fuehrt eine
+          // async-Transition nur bis zum ersten await; alles danach
+          // gehoert nicht mehr dazu und faellt mit ihrem Ende weg.
+          // Der Baum merkt davon nichts, weil er bis zum naechsten
+          // Server-Baum seine optimistische Liste zeigt — die Seite
+          // daneben (Brotkrumen, Titel) bliebe aber stehen.
+          startTransition(() => {
+            router.refresh();
+          });
+        } catch {
+          setError("Verschieben fehlgeschlagen");
+          setOptimistic(null);
+        } finally {
+          setPendingId(null);
+        }
+      });
+    },
+    [router],
+  );
+
   const dnd = useMemo<DndApi | null>(() => {
     if (!canManage) return null;
     return {
@@ -143,42 +196,16 @@ export function PageTree({
         setDraggingId(null);
         setBlocked(new Set());
         if (next === flat) return; // ungueltig oder unveraendert
-        setOptimistic(next);
-        setPendingId(id);
 
         const fd = new FormData();
         fd.set("slug", slug);
         fd.set("pageId", id);
         fd.set("parentId", target.parentId ?? "");
         if (target.index !== undefined) fd.set("index", String(target.index));
-
-        startTransition(async () => {
-          try {
-            const res = await movePageAction(fd);
-            if (!res.ok) {
-              setError(res.error);
-              setOptimistic(null);
-              return;
-            }
-            // Eigene Transition fuer den Refresh: React fuehrt eine
-            // async-Transition nur bis zum ersten await; alles danach
-            // gehoert nicht mehr dazu und faellt mit ihrem Ende weg.
-            // Der Baum merkt davon nichts, weil er bis zum naechsten
-            // Server-Baum seine optimistische Liste zeigt — die Seite
-            // daneben (Brotkrumen, Titel) bliebe aber stehen.
-            startTransition(() => {
-              router.refresh();
-            });
-          } catch {
-            setError("Verschieben fehlgeschlagen");
-            setOptimistic(null);
-          } finally {
-            setPendingId(null);
-          }
-        });
+        verschiebe(fd, id, next);
       },
     };
-  }, [canManage, draggingId, blocked, pendingId, shown, slug, router]);
+  }, [canManage, draggingId, blocked, pendingId, shown, slug, verschiebe]);
 
   return (
     <DndContext.Provider value={dnd}>
@@ -192,6 +219,18 @@ export function PageTree({
           {error}
         </p>
       )}
+      <ProtectionConfirmDialog
+        text={rueckfrage?.text ?? null}
+        pending={pendingId !== null}
+        onCancel={() => setRueckfrage(null)}
+        onConfirm={() => {
+          if (!rueckfrage) return;
+          const { fd, token, id, next } = rueckfrage;
+          fd.set("confirmProtection", token);
+          setRueckfrage(null);
+          verschiebe(fd, id, next);
+        }}
+      />
     </DndContext.Provider>
   );
 }

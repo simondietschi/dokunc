@@ -170,3 +170,34 @@ export function applyMove(
       : { ...p, position };
   });
 }
+
+/**
+ * Was ein Zug mit dem Schutz einer Seite macht.
+ *
+ * - "keiner": die wirksame Schutzwurzel bleibt dieselbe;
+ * - "gewinn": eine offene Seite kommt unter eine Schutzwurzel und ist
+ *   danach nur noch für deren Freigaben sichtbar;
+ * - "wechsel": eine Seite verlässt ihre Schutzwurzel, an die oberste
+ *   Ebene oder unter eine offene Seite (`nach` null) oder unter eine
+ *   andere Wurzel.
+ *
+ * Jede andere Wurzel zählt als Wechsel, auch wenn ihre Freigaben
+ * zufällig dieselben sind: die können sich morgen unterscheiden.
+ */
+export type Schutzwechsel =
+  | { art: "keiner" }
+  | { art: "gewinn"; nach: string }
+  | { art: "wechsel"; von: string; nach: string | null };
+
+export function schutzwechselBeimZug(
+  page: { id: string; isRestricted: boolean; accessRootId: string | null },
+  /** accessRootId der neuen Elternseite, null auf oberster Ebene. */
+  zielWurzel: string | null,
+): Schutzwechsel {
+  // Eine selbst geschützte Seite bleibt ihre eigene Wurzel.
+  const nach = page.isRestricted ? page.id : zielWurzel;
+  const von = page.accessRootId;
+  if (nach === von) return { art: "keiner" };
+  if (von === null) return { art: "gewinn", nach: nach! };
+  return { art: "wechsel", von, nach };
+}

@@ -1,9 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { Redis } from "ioredis";
 import { prisma } from "@dokunc/db";
+import { PAGE_ACCESS_CHANNEL } from "@dokunc/editor";
 
 /**
  * Seitenschutz auf den Wegen, die eine Seite neu entstehen lassen oder
- * umhängen: Kopie, Seite aus Vorlage, Vorlage aus geschützter Seite.
+ * umhängen: Kopie, Seite aus Vorlage, Vorlage aus geschützter Seite,
+ * Verschieben.
  *
  * Geprüft wird die echte Action gegen die echte Datenbank, als Person
  * der Welt aus der Rechtematrix (rechtematrix-welt.ts). Ersetzt sind nur
@@ -40,12 +43,15 @@ vi.mock("next/headers", async () =>
 
 const { baueWelt, raeumeWelt, Umleitung } = await import("./rechtematrix-welt");
 const { createPageAction } = await import("@/app/s/[slug]/actions");
+const { movePageAction } = await import("@/app/s/[slug]/move-actions");
 const { createFromTemplateAction, duplicatePageAction, saveAsTemplateAction } =
   await import("@/app/s/[slug]/template-actions");
 const { BestaetigungNoetig, schutzwechselToken } = await import(
   "@/lib/confirmation"
 );
-const { readablePageRole, setPageRestricted } = await import("@/lib/page-access");
+const { readablePageRole, refreshAccessRoots, setPageRestricted } = await import(
+  "@/lib/page-access"
+);
 
 type Welt = Awaited<ReturnType<typeof baueWelt>>;
 type Person = Welt["personen"]["OWNER"];
@@ -100,6 +106,8 @@ async function seite(
     },
     select: { id: true },
   });
+  // Wie jede Anlage in der App: unter einer geschützten Seite geschützt.
+  if (o.parentId) await refreshAccessRoots(p.id);
   return p.id;
 }
 
@@ -429,5 +437,234 @@ describe("Vorlage aus geschützter Seite", () => {
     );
     expect(await vorlagen("checkliste-inhalt")).toHaveLength(1);
     expect(await changed(vorlage)).toEqual([]);
+  });
+});
+
+describe("Zug", () => {
+  /**
+   * Nachrichten an den Collab-Server mitlesen. Pub/Sub gilt über alle
+   * Redis-Datenbanken und alle Tests hinweg: gezählt wird nur, was eine
+   * Seite dieses Falls nennt.
+   */
+  let abo: Redis;
+  const nachrichten: string[] = [];
+  beforeAll(async () => {
+    abo = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
+      maxRetriesPerRequest: 1,
+    });
+    await abo.subscribe(PAGE_ACCESS_CHANNEL);
+    abo.on("message", (_kanal, text: string) => {
+      nachrichten.push((JSON.parse(text) as { pageId: string }).pageId);
+    });
+  });
+  afterAll(async () => {
+    await abo.quit();
+  });
+  /** Wartet, bis eine Nachricht zu `pageId` ankam (höchstens 3 s). */
+  async function nachrichtZu(pageId: string): Promise<boolean> {
+    for (let i = 0; i < 60; i++) {
+      if (nachrichten.includes(pageId)) return true;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return false;
+  }
+
+  function zug(
+    p: Person,
+    felder: { pageId: string; parentId: string | null; token?: string },
+  ) {
+    return w.alsPerson(p, () =>
+      movePageAction(
+        formular({
+          pageId: felder.pageId,
+          parentId: felder.parentId ?? "",
+          ...(felder.token ? { confirmProtection: felder.token } : {}),
+        }),
+      ),
+    );
+  }
+  async function changed(targetId: string) {
+    return prisma.auditLog.findMany({
+      where: { action: "page.protection_changed", targetId },
+      select: { actorId: true, metadata: true },
+    });
+  }
+  async function geschuetzterAst() {
+    const r = await seite("Personal");
+    const c = await seite("Beurteilung", { parentId: r });
+    await w.schuetze(r);
+    return { r, c };
+  }
+
+  it("die Verwaltung bekommt eine Rückfrage; ein veraltetes Token schaltet nichts frei", async () => {
+    const { r, c } = await geschuetzterAst();
+    const r2 = await seite("Andere Wurzel");
+    await w.schuetze(r2);
+
+    const erst = await zug(w.personen.ADMIN, { pageId: c, parentId: null });
+    expect(erst).toEqual({
+      ok: false,
+      error:
+        "„Beurteilung“ ist über „Personal“ geschützt. An der neuen Stelle " +
+        "ist sie samt Unterseiten für alle im Space sichtbar.",
+      confirm: schutzwechselToken(r, null),
+    });
+    // Das Token für den Zug an die oberste Ebene bestätigt keinen anderen.
+    const anders = await zug(w.personen.ADMIN, {
+      pageId: c,
+      parentId: r2,
+      token: schutzwechselToken(r, null),
+    });
+    expect(anders).toMatchObject({
+      ok: false,
+      confirm: schutzwechselToken(r, r2),
+      error:
+        "„Beurteilung“ ist über „Personal“ geschützt. An der neuen Stelle " +
+        "gelten stattdessen die Freigaben von „Andere Wurzel“.",
+    });
+    expect(await zeile(c)).toMatchObject({ parentId: r, accessRootId: r });
+    expect(await changed(c)).toEqual([]);
+  });
+
+  it("MEMBER mit Freigabe darf nicht aus dem Schutz ziehen, auch nicht mit richtigem Token", async () => {
+    const { r, c } = await geschuetzterAst();
+    const ergebnis = await zug(w.personen.MEMBER_FREIGABE, {
+      pageId: c,
+      parentId: null,
+      token: schutzwechselToken(r, null),
+    });
+    expect(ergebnis).toEqual({
+      ok: false,
+      error:
+        "Diese Seite ist geschützt. Verschieben würde ändern, wer sie sehen " +
+        "darf – das kann nur die Space-Verwaltung.",
+    });
+    expect(await zeile(c)).toMatchObject({ parentId: r, accessRootId: r });
+  });
+
+  it("bestätigt aus dem Schutz an die oberste Ebene: offen und im Audit", async () => {
+    const { r, c } = await geschuetzterAst();
+    expect(
+      await zug(w.personen.OWNER, {
+        pageId: c,
+        parentId: null,
+        token: schutzwechselToken(r, null),
+      }),
+    ).toEqual({ ok: true });
+    expect(await zeile(c)).toMatchObject({ parentId: null, accessRootId: null });
+    expect(await changed(c)).toEqual([
+      {
+        actorId: w.personen.OWNER.id,
+        metadata: {
+          via: "move",
+          fromRootId: r,
+          toRootId: null,
+          confirmed: true,
+          title: "Beurteilung",
+          sharesRevoked: 0,
+        },
+      },
+    ]);
+  });
+
+  it("bestätigt von einer Wurzel unter eine andere: neue Wurzel, Audit, Nachricht an den Collab-Server", async () => {
+    const { r, c } = await geschuetzterAst();
+    const r2 = await seite("Verträge");
+    await w.schuetze(r2);
+    expect(
+      await zug(w.personen.ADMIN, {
+        pageId: c,
+        parentId: r2,
+        token: schutzwechselToken(r, r2),
+      }),
+    ).toEqual({ ok: true });
+    expect(await zeile(c)).toMatchObject({ parentId: r2, accessRootId: r2 });
+    expect((await changed(c))[0]?.metadata).toMatchObject({
+      fromRootId: r,
+      toRootId: r2,
+      confirmed: true,
+    });
+    expect(await nachrichtZu(r2)).toBe(true);
+  });
+
+  it("offen in einen geschützten Ast darf auch MEMBER mit Freigabe, ohne Rückfrage; ME sieht die Seite danach nicht", async () => {
+    const { MEMBER, MEMBER_FREIGABE } = w.personen;
+    const x = await seite("Notizen");
+    const kind = await seite("Notizen Teil 2", { parentId: x });
+    const r = await seite("Geheim");
+    await w.schuetze(r);
+
+    expect(await zug(MEMBER_FREIGABE, { pageId: x, parentId: r })).toEqual({
+      ok: true,
+    });
+    expect(await zeile(x)).toMatchObject({ parentId: r, accessRootId: r });
+    expect(await zeile(kind)).toMatchObject({ accessRootId: r });
+    expect(await sieht(MEMBER, x)).toBe(false);
+    expect(await sieht(MEMBER, kind)).toBe(false);
+    expect(await changed(x)).toEqual([
+      {
+        actorId: MEMBER_FREIGABE.id,
+        metadata: {
+          via: "move",
+          fromRootId: null,
+          toRootId: r,
+          confirmed: false,
+          title: "Notizen",
+          sharesRevoked: 0,
+        },
+      },
+    ]);
+    // Offene Editoren des Astes sofort prüfen lassen, nicht erst in der
+    // wiederkehrenden Runde des Collab-Servers.
+    expect(await nachrichtZu(r)).toBe(true);
+  });
+
+  it("ein Zug ohne Wechsel der Wurzel schreibt kein Audit und schickt keine Nachricht", async () => {
+    const { r, c } = await geschuetzterAst();
+    const nachbar = await seite("Nachbar", { parentId: r });
+    const anfang = nachrichten.length;
+
+    expect(
+      await zug(w.personen.MEMBER_FREIGABE, { pageId: c, parentId: nachbar }),
+    ).toEqual({ ok: true });
+    // Kontrollzug mit Wechsel: dessen Nachricht muss ankommen; kommt sie,
+    // wäre eine Nachricht zum ersten Zug schon vorher da gewesen.
+    const x = await seite("Kontrolle");
+    const r2 = await seite("Kontrollwurzel");
+    await w.schuetze(r2);
+    await zug(w.personen.MEMBER_FREIGABE, { pageId: x, parentId: r2 });
+    expect(await nachrichtZu(r2)).toBe(true);
+
+    expect(await zeile(c)).toMatchObject({ parentId: nachbar, accessRootId: r });
+    expect(await changed(c)).toEqual([]);
+    expect(nachrichten.slice(anfang)).not.toContain(r);
+  });
+
+  it("Freigabelinks im verschobenen Ast werden beim Wechsel der Wurzel zurückgezogen", async () => {
+    const { r, c } = await geschuetzterAst();
+    const unter = await seite("Anhang", { parentId: c });
+    const link = await prisma.pageShare.create({
+      data: { pageId: unter, tokenHash: `hash-${unter}` },
+      select: { id: true },
+    });
+    const offen = await seite("Offen");
+    const offenerLink = await prisma.pageShare.create({
+      data: { pageId: offen, tokenHash: `hash-${offen}` },
+      select: { id: true },
+    });
+
+    await zug(w.personen.ADMIN, {
+      pageId: c,
+      parentId: null,
+      token: schutzwechselToken(r, null),
+    });
+    const [zurueck, bleibt] = await Promise.all([
+      prisma.pageShare.findUniqueOrThrow({ where: { id: link.id } }),
+      prisma.pageShare.findUniqueOrThrow({ where: { id: offenerLink.id } }),
+    ]);
+    // Sonst läge der Ast mit dem Zug wieder öffentlich im Netz.
+    expect(zurueck.revokedAt).not.toBeNull();
+    expect(bleibt.revokedAt).toBeNull();
+    expect((await changed(c))[0]?.metadata).toMatchObject({ sharesRevoked: 1 });
   });
 });

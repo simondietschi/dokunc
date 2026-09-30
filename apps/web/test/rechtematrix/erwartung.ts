@@ -289,21 +289,9 @@ export const ERWARTUNG: Record<string, Eintrag> = {
           ...AUSSEN_ABGELEHNT,
           VIEWER: "abgelehnt",
           MEMBER: "abgelehnt",
-          MEMBER_FREIGABE: {
-            erwartet: "abgelehnt",
-            heute: "erlaubt",
-            luecke: "schutz-zug",
-          },
-          ADMIN: {
-            erwartet: "bestaetigung",
-            heute: "erlaubt",
-            luecke: "schutz-zug",
-          },
-          OWNER: {
-            erwartet: "bestaetigung",
-            heute: "erlaubt",
-            luecke: "schutz-zug",
-          },
+          MEMBER_FREIGABE: "abgelehnt",
+          ADMIN: "bestaetigung",
+          OWNER: "bestaetigung",
         },
       },
       "aus geschütztem Ast an die oberste Ebene, bestätigt": {
@@ -312,13 +300,9 @@ export const ERWARTUNG: Record<string, Eintrag> = {
           ...AUSSEN_ABGELEHNT,
           VIEWER: "abgelehnt",
           MEMBER: "abgelehnt",
-          MEMBER_FREIGABE: {
-            erwartet: "abgelehnt",
-            heute: "erlaubt",
-            luecke: "schutz-zug",
-          },
-          ADMIN: { erwartet: "erlaubt", heute: "erlaubt", luecke: "schutz-zug" },
-          OWNER: { erwartet: "erlaubt", heute: "erlaubt", luecke: "schutz-zug" },
+          MEMBER_FREIGABE: "abgelehnt",
+          ADMIN: "erlaubt",
+          OWNER: "erlaubt",
         },
       },
       "von einer Schutzwurzel unter eine andere": {
@@ -326,21 +310,9 @@ export const ERWARTUNG: Record<string, Eintrag> = {
           ...AUSSEN_ABGELEHNT,
           VIEWER: "abgelehnt",
           MEMBER: "abgelehnt",
-          MEMBER_FREIGABE: {
-            erwartet: "abgelehnt",
-            heute: "erlaubt",
-            luecke: "schutz-zug",
-          },
-          ADMIN: {
-            erwartet: "bestaetigung",
-            heute: "erlaubt",
-            luecke: "schutz-zug",
-          },
-          OWNER: {
-            erwartet: "bestaetigung",
-            heute: "erlaubt",
-            luecke: "schutz-zug",
-          },
+          MEMBER_FREIGABE: "abgelehnt",
+          ADMIN: "bestaetigung",
+          OWNER: "bestaetigung",
         },
       },
       "offene Seite in geschützten Ast": {
@@ -349,13 +321,9 @@ export const ERWARTUNG: Record<string, Eintrag> = {
           ...AUSSEN_ABGELEHNT,
           VIEWER: "abgelehnt",
           MEMBER: "abgelehnt",
-          MEMBER_FREIGABE: {
-            erwartet: "erlaubt",
-            heute: "erlaubt",
-            luecke: "schutz-zug",
-          },
-          ADMIN: { erwartet: "erlaubt", heute: "erlaubt", luecke: "schutz-zug" },
-          OWNER: { erwartet: "erlaubt", heute: "erlaubt", luecke: "schutz-zug" },
+          MEMBER_FREIGABE: "erlaubt",
+          ADMIN: "erlaubt",
+          OWNER: "erlaubt",
         },
       },
       "geschützte Wurzel an die oberste Ebene": {

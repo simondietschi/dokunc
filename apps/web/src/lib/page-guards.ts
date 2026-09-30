@@ -6,9 +6,12 @@ import {
   visiblePageSql,
   visiblePageWhere,
 } from "./page-access";
-import { insertAt, positionUpdates } from "./page-move";
+import { insertAt, positionUpdates, schutzwechselBeimZug } from "./page-move";
 import { lockSiblingOrder, nextSiblingPosition } from "./page-position";
-import { DEFAULT_PAGE_TITLE } from "@/lib/page-title";
+import { audit } from "@/lib/audit";
+import { revokePageAccess } from "@/lib/collab-sync";
+import { schutzwechselToken } from "@/lib/confirmation";
+import { DEFAULT_PAGE_TITLE, pageTitle } from "@/lib/page-title";
 import { truncateText } from "@/lib/text-length";
 
 /**
@@ -456,7 +459,14 @@ export async function isDescendantOf(
   return rows.length > 0;
 }
 
-export type MoveResult = { ok: true } | { ok: false; error: string };
+/**
+ * Ergebnis eines Zugs. `confirm` trägt das Token einer Rückfrage: der
+ * Zug ändert den Schutz, und die Space-Verwaltung muss ihn mit genau
+ * diesem Token bestätigen (`error` ist dann der Text der Rückfrage).
+ */
+export type MoveResult =
+  | { ok: true }
+  | { ok: false; error: string; confirm?: string };
 
 /**
  * Hängt eine Seite an einen neuen Platz im Baum und schreibt die
@@ -468,45 +478,103 @@ export type MoveResult = { ok: true } | { ok: false; error: string };
  *
  * `index` ist die Zielposition in der Geschwisterliste ohne die
  * verschobene Seite; ohne Angabe kommt sie ans Ende.
+ *
+ * Schutz (schutzwechselBeimZug): Eine offene Seite unter eine
+ * Schutzwurzel zu ziehen, darf jede Person, die verschieben darf und das
+ * Ziel sieht; das schränkt die Sicht nur ein. Einen Zug, der den Schutz
+ * aufhebt oder zu einer anderen Wurzel wechselt, darf nur die
+ * Space-Verwaltung, und nur bestätigt (`confirmProtection`, siehe
+ * lib/confirmation). Jeder Zug, der die Wurzel ändert, zieht die
+ * Freigabelinks im verschobenen Ast zurück, steht im Audit und lässt den
+ * Collab-Server die offenen Editoren unter der neuen Wurzel sofort
+ * prüfen. Audit und Nachricht stehen hier und nicht in der Action, damit
+ * jeder Aufrufer sie mitbekommt.
  */
 export async function movePageInSpace(
   scope: PageScope,
   pageId: string,
   parentId: string | null,
   index?: number,
+  confirmProtection?: string,
 ): Promise<MoveResult> {
   if (index !== undefined && !Number.isInteger(index)) {
     return { ok: false, error: "Ungültige Zielposition" };
   }
   const where = scopeWhere(scope);
 
-  const result = await prisma.$transaction(async (tx): Promise<MoveResult> => {
+  type Ausgang =
+    | { result: MoveResult; wechsel?: undefined }
+    | {
+        result: { ok: true };
+        wechsel: {
+          von: string | null;
+          nach: string | null;
+          bestaetigt: boolean;
+          title: string;
+          sharesRevoked: number;
+        };
+      };
+
+  const ausgang = await prisma.$transaction(async (tx): Promise<Ausgang> => {
+    const nein = (error: string): Ausgang => ({ result: { ok: false, error } });
     // Nur sichtbare Seiten dieses Space, nicht im Papierkorb, keine Vorlage.
     const page = await tx.page.findFirst({
       where: { id: pageId, ...where, deletedAt: null, isTemplate: false },
-      select: { id: true, parentId: true },
+      select: {
+        id: true,
+        title: true,
+        parentId: true,
+        isRestricted: true,
+        accessRootId: true,
+      },
     });
-    if (!page) return { ok: false, error: "Seite nicht gefunden" };
+    if (!page) return nein("Seite nicht gefunden");
 
+    let zielWurzel: string | null = null;
     if (parentId !== null) {
       if (parentId === page.id) {
-        return {
-          ok: false,
-          error: "Eine Seite kann nicht unter sich selbst verschoben werden",
-        };
+        return nein("Eine Seite kann nicht unter sich selbst verschoben werden");
       }
       const parent = await tx.page.findFirst({
         where: { id: parentId, ...where, deletedAt: null, isTemplate: false },
-        select: { id: true },
+        select: { id: true, accessRootId: true },
       });
-      if (!parent) return { ok: false, error: "Zielseite nicht gefunden" };
+      if (!parent) return nein("Zielseite nicht gefunden");
 
       // Zyklus-Check: die Zielseite darf kein Nachfahre der Seite sein.
       if (await isDescendantOf(scope.spaceId, page.id, parentId, tx)) {
+        return nein(
+          "Eine Seite kann nicht unter eine ihrer eigenen Unterseiten verschoben werden",
+        );
+      }
+      zielWurzel = parent.accessRootId;
+    }
+
+    const wechsel = schutzwechselBeimZug(page, zielWurzel);
+    if (wechsel.art === "wechsel") {
+      if (!seesEverything(scope.role)) {
+        return nein(
+          "Diese Seite ist geschützt. Verschieben würde ändern, wer sie " +
+            "sehen darf – das kann nur die Space-Verwaltung.",
+        );
+      }
+      const token = schutzwechselToken(wechsel.von, wechsel.nach);
+      if (confirmProtection !== token) {
+        const titel = async (id: string) =>
+          pageTitle(
+            (await tx.page.findUnique({ where: { id }, select: { title: true } }))
+              ?.title,
+          );
+        const kopf = `„${pageTitle(page.title)}“ ist über „${await titel(wechsel.von)}“ geschützt.`;
         return {
-          ok: false,
-          error:
-            "Eine Seite kann nicht unter eine ihrer eigenen Unterseiten verschoben werden",
+          result: {
+            ok: false,
+            confirm: token,
+            error:
+              wechsel.nach === null
+                ? `${kopf} An der neuen Stelle ist sie samt Unterseiten für alle im Space sichtbar.`
+                : `${kopf} An der neuen Stelle gelten stattdessen die Freigaben von „${await titel(wechsel.nach)}“.`,
+          },
         };
       }
     }
@@ -583,8 +651,56 @@ export async function movePageInSpace(
     // fuer die handelnde Person eine Fehlermeldung.
     await refreshAccessRoots(page.id, tx);
 
-    return { ok: true };
+    if (wechsel.art === "keiner") return { result: { ok: true } };
+
+    // Freigabelinks im verschobenen Ast zurückziehen, wie beim Schützen.
+    // Unter einer Schutzwurzel ruhen sie nur (resolveShare verlangt eine
+    // offene Seite); ein späterer Zug ins Offene weckte sie wieder, und
+    // ein Zug aus dem Schutz legte den Ast sofort wieder öffentlich.
+    const sharesRevoked = await tx.$executeRaw`
+      WITH RECURSIVE sub AS (
+        SELECT id FROM "Page" WHERE id = ${page.id} AND "spaceId" = ${scope.spaceId}
+        UNION ALL
+        SELECT p.id FROM "Page" p JOIN sub ON p."parentId" = sub.id
+        WHERE p."spaceId" = ${scope.spaceId}
+      )
+      UPDATE "PageShare" SET "revokedAt" = now()
+      WHERE "pageId" IN (SELECT id FROM sub) AND "revokedAt" IS NULL
+    `;
+    return {
+      result: { ok: true },
+      wechsel: {
+        von: wechsel.art === "wechsel" ? wechsel.von : null,
+        nach: wechsel.nach,
+        bestaetigt: wechsel.art === "wechsel",
+        title: page.title,
+        sharesRevoked,
+      },
+    };
   });
 
-  return result;
+  if (ausgang.wechsel) {
+    const w = ausgang.wechsel;
+    await audit({
+      action: "page.protection_changed",
+      actorId: scope.userId,
+      spaceId: scope.spaceId,
+      targetId: pageId,
+      metadata: {
+        via: "move",
+        fromRootId: w.von,
+        toRootId: w.nach,
+        confirmed: w.bestaetigt,
+        title: w.title,
+        sharesRevoked: w.sharesRevoked,
+      },
+    });
+    // Unter der neuen Wurzel sieht der Ast nur noch, wer dort freigegeben
+    // ist: der Collab-Server prüft die offenen Dokumente der Wurzel samt
+    // Unterbaum sofort, nicht erst in seiner wiederkehrenden Runde. Ohne
+    // neue Wurzel verliert niemand etwas.
+    if (w.nach !== null) await revokePageAccess(w.nach);
+  }
+
+  return ausgang.result;
 }

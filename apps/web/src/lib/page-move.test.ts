@@ -8,6 +8,7 @@ import {
   insertAt,
   isValidMoveTarget,
   positionUpdates,
+  schutzwechselBeimZug,
   zoneFromOffset,
 } from "./page-move";
 
@@ -176,5 +177,41 @@ describe("applyMove()", () => {
     const b = buildTree(next).find((n) => n.id === "b")!;
     expect(b.children.map((c) => c.id)).toEqual(["a1"]);
     expect(b.children[0].children.map((c) => c.id)).toEqual(["a1x"]);
+  });
+});
+
+describe("schutzwechselBeimZug", () => {
+  const offen = { id: "s", isRestricted: false, accessRootId: null };
+  const imAst = { id: "s", isRestricted: false, accessRootId: "r1" };
+
+  it("eine geschützte Seite behält ihre Wurzel, wohin sie auch geht", () => {
+    const wurzel = { id: "s", isRestricted: true, accessRootId: "s" };
+    expect(schutzwechselBeimZug(wurzel, null)).toEqual({ art: "keiner" });
+    expect(schutzwechselBeimZug(wurzel, "r2")).toEqual({ art: "keiner" });
+  });
+
+  it("dieselbe Wurzel vor und nach dem Zug ist kein Wechsel", () => {
+    expect(schutzwechselBeimZug(offen, null)).toEqual({ art: "keiner" });
+    expect(schutzwechselBeimZug(imAst, "r1")).toEqual({ art: "keiner" });
+  });
+
+  it("offen in einen geschützten Ast: Schutz kommt hinzu", () => {
+    expect(schutzwechselBeimZug(offen, "r1")).toEqual({
+      art: "gewinn",
+      nach: "r1",
+    });
+  });
+
+  it("aus dem Schutz heraus oder in eine andere Wurzel: Wechsel", () => {
+    expect(schutzwechselBeimZug(imAst, null)).toEqual({
+      art: "wechsel",
+      von: "r1",
+      nach: null,
+    });
+    expect(schutzwechselBeimZug(imAst, "r2")).toEqual({
+      art: "wechsel",
+      von: "r1",
+      nach: "r2",
+    });
   });
 });

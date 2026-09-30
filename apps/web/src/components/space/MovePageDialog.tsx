@@ -16,6 +16,7 @@ import { buildTree, type FlatPage, type TreeNode } from "@/lib/page-tree";
 import { descendantIds } from "@/lib/page-move";
 import { Button } from "@/components/ui/Button";
 import { MenuItem, useCloseMenu } from "@/components/space/PageActions";
+import { ProtectionConfirmDialog } from "@/components/space/ProtectionConfirmDialog";
 import { movePageAction } from "@/app/s/[slug]/move-actions";
 import type { SpacePagesResponse } from "@/app/api/spaces/[id]/pages/route";
 import { pageTitle } from "@/lib/page-title";
@@ -96,6 +97,11 @@ export function MovePageDialog({
     undefined,
   );
   const [error, setError] = useState<string | null>(null);
+  // Rueckfrage des Servers, wenn der Zug den Schutz der Seite aendert.
+  const [rueckfrage, setRueckfrage] = useState<{
+    text: string;
+    token: string;
+  } | null>(null);
   const [pending, startTransition] = useTransition();
   const panelRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -195,18 +201,35 @@ export function MovePageDialog({
 
   function confirm() {
     if (!canConfirm) return;
+    senden();
+  }
+
+  /**
+   * Schickt den Zug ab; mit `token` als Bestaetigung einer Rueckfrage.
+   * Kommt dabei wieder eine Rueckfrage (die Lage hat sich inzwischen
+   * geaendert), erscheint ihr neuer Text.
+   */
+  function senden(token?: string) {
+    if (selected === undefined) return;
     setError(null);
     const fd = new FormData();
     fd.set("slug", slug);
     fd.set("pageId", pageId);
     fd.set("parentId", selected ?? "");
+    if (token) fd.set("confirmProtection", token);
     startTransition(async () => {
       try {
         const res = await movePageAction(fd);
         if (!res.ok) {
+          if (res.confirm) {
+            setRueckfrage({ text: res.error, token: res.confirm });
+            return;
+          }
+          setRueckfrage(null);
           setError(res.error);
           return;
         }
+        setRueckfrage(null);
         // Wie im Seitenbaum: nach dem await braucht der Refresh eine
         // eigene Transition, sonst endet er mit der laufenden.
         startTransition(() => {
@@ -214,6 +237,7 @@ export function MovePageDialog({
         });
         onClose();
       } catch {
+        setRueckfrage(null);
         setError("Verschieben fehlgeschlagen.");
       }
     });
@@ -229,163 +253,176 @@ export function MovePageDialog({
     }
   }
 
-  return createPortal(
-    <div
-      className="fixed inset-0 z-modal flex items-start justify-center overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
-      onMouseDown={onBackdrop}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="move-page-title"
-    >
-      <div
-        ref={panelRef}
-        className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-pop animate-[rise_0.25s_cubic-bezier(0.22,1,0.36,1)]"
-      >
-        <div className="border-b border-line px-4 pb-3 pt-4">
-          <h2
-            id="move-page-title"
-            className="flex items-center gap-2 text-[15px] font-semibold text-ink"
-          >
-            <FolderInput className="h-4 w-4 text-muted" />
-            Verschieben nach…
-          </h2>
-          {currentTitle !== undefined && (
-            <p className="mt-0.5 truncate text-[12.5px] text-muted">
-              Seite „{pageTitle(currentTitle)}“ unter eine andere Seite
-              einordnen.
-            </p>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2.5 border-b border-line px-4">
-          <Search className="h-4 w-4 shrink-0 text-faint" />
-          <input
-            ref={inputRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={onInputKey}
-            placeholder="Zielseite suchen…"
-            aria-label="Zielseite suchen"
-            className="h-11 w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-faint"
-          />
-        </div>
-
+  // Die Rueckfrage steht neben dem Portal, nicht darin: sonst liefe jeder
+  // Mausklick in ihr (React-Ereignisse wandern auch durch Portale) zum
+  // Hintergrund dieses Dialogs hoch und schloesse ihn.
+  return (
+    <>
+      <ProtectionConfirmDialog
+        text={rueckfrage?.text ?? null}
+        pending={pending}
+        onCancel={() => setRueckfrage(null)}
+        onConfirm={() => rueckfrage && senden(rueckfrage.token)}
+      />
+      {createPortal(
         <div
-          ref={listRef}
-          role="radiogroup"
-          aria-label="Zielseite"
-          className="max-h-[40vh] overflow-y-auto p-2"
+          className="fixed inset-0 z-modal flex items-start justify-center overflow-y-auto bg-black/35 px-4 pb-8 pt-[12vh] backdrop-blur-[2px]"
+          onMouseDown={onBackdrop}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="move-page-title"
         >
-          {!pages && !loadError && (
-            <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-muted">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Seitenbaum wird geladen…
-            </div>
-          )}
-          {loadError && (
-            <p className="px-3 py-8 text-center text-[13px] text-danger">
-              {loadError}
-            </p>
-          )}
-          {pages &&
-            visible.map((o) => {
-              const checked = selected !== undefined && selected === o.id;
-              const isCurrent = o.id === currentParent;
-              return (
-                <button
-                  key={o.id ?? "root"}
-                  type="button"
-                  role="radio"
-                  aria-checked={checked}
-                  aria-disabled={o.disabled || undefined}
-                  data-option={o.id ?? "root"}
-                  disabled={o.disabled}
-                  title={
-                    o.disabled
-                      ? "Eine Seite kann nicht unter sich selbst oder eine ihrer Unterseiten verschoben werden"
-                      : undefined
-                  }
-                  onClick={() => !o.disabled && setSelected(o.id)}
-                  onDoubleClick={() => {
-                    if (o.disabled) return;
-                    setSelected(o.id);
-                    if (o.id !== currentParent) confirm();
-                  }}
-                  className={cn(
-                    "flex w-full items-center gap-2 rounded-lg py-1.5 pr-2.5 text-left text-[13px] transition-colors",
-                    checked
-                      ? "bg-accent-soft text-accent"
-                      : "text-muted hover:bg-subtle hover:text-ink",
-                    o.disabled && "opacity-40 hover:bg-transparent",
-                  )}
-                  style={{ paddingLeft: `${(q ? 0 : o.depth) * 14 + 10}px` }}
-                >
-                  <span
-                    aria-hidden
-                    className={cn(
-                      "grid h-4 w-4 shrink-0 place-items-center rounded-full border",
-                      checked ? "border-accent" : "border-line-strong",
-                    )}
-                  >
-                    {checked && (
-                      <span className="h-2 w-2 rounded-full bg-accent" />
-                    )}
-                  </span>
-                  {o.id === null ? (
-                    <Home className="h-3.5 w-3.5 shrink-0 text-faint" />
-                  ) : o.depth > 0 && !q ? (
-                    <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-faint" />
-                  ) : (
-                    <FileText className="h-3.5 w-3.5 shrink-0 text-faint" />
-                  )}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">{o.title}</span>
-                    {q && o.path && (
-                      <span className="block truncate text-[11.5px] text-faint">
-                        {o.path}
-                      </span>
-                    )}
-                  </span>
-                  {isCurrent && (
-                    <span className="shrink-0 text-[11px] text-faint">
-                      aktuell
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          {pages && visible.length === 0 && (
-            <p className="px-3 py-8 text-center text-[13px] text-muted">
-              Keine Seite gefunden für{" "}
-              <span className="font-medium text-ink">„{query}“</span>
-            </p>
-          )}
-        </div>
-
-        <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
-          <p className="min-w-0 truncate text-[12px] text-danger" role="alert">
-            {error}
-          </p>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button variant="ghost" size="sm" type="button" onClick={onClose}>
-              Abbrechen
-            </Button>
-            <Button
-              size="sm"
-              type="button"
-              onClick={confirm}
-              disabled={!canConfirm}
-            >
-              {pending ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                "Verschieben"
+          <div
+            ref={panelRef}
+            className="flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-pop animate-[rise_0.25s_cubic-bezier(0.22,1,0.36,1)]"
+          >
+            <div className="border-b border-line px-4 pb-3 pt-4">
+              <h2
+                id="move-page-title"
+                className="flex items-center gap-2 text-[15px] font-semibold text-ink"
+              >
+                <FolderInput className="h-4 w-4 text-muted" />
+                Verschieben nach…
+              </h2>
+              {currentTitle !== undefined && (
+                <p className="mt-0.5 truncate text-[12.5px] text-muted">
+                  Seite „{pageTitle(currentTitle)}“ unter eine andere Seite
+                  einordnen.
+                </p>
               )}
-            </Button>
+            </div>
+
+            <div className="flex items-center gap-2.5 border-b border-line px-4">
+              <Search className="h-4 w-4 shrink-0 text-faint" />
+              <input
+                ref={inputRef}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={onInputKey}
+                placeholder="Zielseite suchen…"
+                aria-label="Zielseite suchen"
+                className="h-11 w-full bg-transparent text-[14px] text-ink outline-none placeholder:text-faint"
+              />
+            </div>
+
+            <div
+              ref={listRef}
+              role="radiogroup"
+              aria-label="Zielseite"
+              className="max-h-[40vh] overflow-y-auto p-2"
+            >
+              {!pages && !loadError && (
+                <div className="flex items-center justify-center gap-2 py-8 text-[13px] text-muted">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Seitenbaum wird geladen…
+                </div>
+              )}
+              {loadError && (
+                <p className="px-3 py-8 text-center text-[13px] text-danger">
+                  {loadError}
+                </p>
+              )}
+              {pages &&
+                visible.map((o) => {
+                  const checked = selected !== undefined && selected === o.id;
+                  const isCurrent = o.id === currentParent;
+                  return (
+                    <button
+                      key={o.id ?? "root"}
+                      type="button"
+                      role="radio"
+                      aria-checked={checked}
+                      aria-disabled={o.disabled || undefined}
+                      data-option={o.id ?? "root"}
+                      disabled={o.disabled}
+                      title={
+                        o.disabled
+                          ? "Eine Seite kann nicht unter sich selbst oder eine ihrer Unterseiten verschoben werden"
+                          : undefined
+                      }
+                      onClick={() => !o.disabled && setSelected(o.id)}
+                      onDoubleClick={() => {
+                        if (o.disabled) return;
+                        setSelected(o.id);
+                        if (o.id !== currentParent) confirm();
+                      }}
+                      className={cn(
+                        "flex w-full items-center gap-2 rounded-lg py-1.5 pr-2.5 text-left text-[13px] transition-colors",
+                        checked
+                          ? "bg-accent-soft text-accent"
+                          : "text-muted hover:bg-subtle hover:text-ink",
+                        o.disabled && "opacity-40 hover:bg-transparent",
+                      )}
+                      style={{ paddingLeft: `${(q ? 0 : o.depth) * 14 + 10}px` }}
+                    >
+                      <span
+                        aria-hidden
+                        className={cn(
+                          "grid h-4 w-4 shrink-0 place-items-center rounded-full border",
+                          checked ? "border-accent" : "border-line-strong",
+                        )}
+                      >
+                        {checked && (
+                          <span className="h-2 w-2 rounded-full bg-accent" />
+                        )}
+                      </span>
+                      {o.id === null ? (
+                        <Home className="h-3.5 w-3.5 shrink-0 text-faint" />
+                      ) : o.depth > 0 && !q ? (
+                        <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-faint" />
+                      ) : (
+                        <FileText className="h-3.5 w-3.5 shrink-0 text-faint" />
+                      )}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{o.title}</span>
+                        {q && o.path && (
+                          <span className="block truncate text-[11.5px] text-faint">
+                            {o.path}
+                          </span>
+                        )}
+                      </span>
+                      {isCurrent && (
+                        <span className="shrink-0 text-[11px] text-faint">
+                          aktuell
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              {pages && visible.length === 0 && (
+                <p className="px-3 py-8 text-center text-[13px] text-muted">
+                  Keine Seite gefunden für{" "}
+                  <span className="font-medium text-ink">„{query}“</span>
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t border-line px-4 py-3">
+              <p className="min-w-0 truncate text-[12px] text-danger" role="alert">
+                {error}
+              </p>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button variant="ghost" size="sm" type="button" onClick={onClose}>
+                  Abbrechen
+                </Button>
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={confirm}
+                  disabled={!canConfirm}
+                >
+                  {pending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Verschieben"
+                  )}
+                </Button>
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-    </div>,
-    document.body,
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }

@@ -61,6 +61,14 @@ differently on an existing installation, and what to do about it.
   the audit log; SIEM or log filters that list audit events explicitly
   should add it. Nothing else to do.
 
+- **Moving protected pages:** moving a page out of a protected area, or
+  from one protected area into another, now requires a space admin or
+  owner, who confirms it in a dialog; other roles get an error message.
+  Moving an open page into a protected area stays allowed for everyone who
+  can move pages and open the target. Every move that changes who can see
+  a page is recorded as `page.protection_changed` in the audit log and
+  revokes the share links of the moved pages. Nothing else to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -77,6 +85,13 @@ differently on an existing installation, and what to do about it.
 - Members with access to a protected page could publish its content to
   the whole space by saving it as a template; this now requires a
   confirmed action by a space admin or owner.
+- Members could remove a page's protection by moving it out of the
+  protected area. Moves that lift the protection or switch to another
+  protected area now require a confirmed action by a space admin or
+  owner. Editors who lose access through a move are disconnected
+  immediately instead of after up to 60 seconds, and share links in the
+  moved subtree no longer come back to life when it leaves the protected
+  area.
 
 ### Added
 

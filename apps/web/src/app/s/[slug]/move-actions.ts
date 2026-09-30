@@ -11,7 +11,8 @@ import { movePageInSpace, type MoveResult } from "@/lib/page-guards";
  *
  * Felder: slug, pageId, parentId ("" = oberste Ebene), index (optional,
  * Zielposition in der Geschwisterliste ohne die verschobene Seite; ohne
- * Angabe ans Ende).
+ * Angabe ans Ende), confirmProtection (optional, das Token einer
+ * Rückfrage, wenn der Zug den Schutz ändert).
  *
  * Hier stehen nur Rolle und Formular: die Regeln des Zugs selbst liegen
  * in movePageInSpace, wo sie ohne Anfragekontext geprueft werden.
@@ -26,6 +27,7 @@ export async function movePageAction(form: FormData): Promise<MoveResult> {
     str(form, "pageId"),
     strOrNull(form, "parentId"),
     indexRaw === "" ? undefined : Number(indexRaw),
+    strOrNull(form, "confirmProtection") ?? undefined,
   );
   if (result.ok) revalidatePath(`/s/${space.slug}`, "layout");
   return result;
