@@ -21,6 +21,7 @@ Invalid values stop the start with an error that names the variable.
 | `OIDC_EMAIL_CLAIM` | `email` | Claims that carry the email address, in order. |
 | `OIDC_NAME_CLAIM` | `name` | Claim for the display name; then `name`, then `preferred_username`. |
 | `OIDC_SUBJECT_CLAIM` | `sub` | Claim that identifies a person permanently: `sub` or `oid`. |
+| `SSO_ENFORCEMENT` | `linked_accounts` | See "Password sign-in for accounts linked to SSO". |
 
 Register this redirect URI at the provider:
 
@@ -172,6 +173,48 @@ The trailing slash is removed before the issuer is compared. Check what your
 report every address as verified without checking it. Then any address a
 person enters in authentik can link an existing account; set
 `OIDC_AUTO_LINK_BY_EMAIL=false` or map `email_verified` to the real state.
+
+## Password sign-in for accounts linked to SSO
+
+An account is linked to single sign-on as soon as it has a subject from a
+provider: created through SSO, or linked on its first SSO sign-in. With
+`SSO_ENFORCEMENT=linked_accounts` (the default, also on existing
+installations), such an account:
+
+- cannot sign in with a password. The sign-in form answers "Falsche
+  Zugangsdaten", as for a wrong password, even when the password is right;
+  the audit log records `auth.login_failed` with the reason `sso_required`
+  (only for a right password; a wrong one is `bad_credentials`). When a
+  provider is configured, the form adds a line that accounts linked to it
+  sign in with "Weiter mit …". That line appears for every failed sign-in,
+  so it does not tell whether an account is linked.
+- gets no reset link from "Passwort vergessen". The confirmation is the same
+  for every address and, when a provider is configured, names it. The audit
+  log records `auth.login_failed` with `sso_required` and
+  `via: "reset_request"`.
+- cannot use a reset link issued before it was linked. The link is voided,
+  and the page names the provider.
+
+This holds for every linked account, whatever issuer it is linked to and
+whether SSO is configured at all: a broken or removed SSO configuration
+must not open the password path again. Deactivated accounts get no reset
+link either, and links issued before the deactivation no longer work
+(`inactive`).
+
+**The way back is `SSO_ENFORCEMENT=off`** (restart required): linked
+accounts then sign in and reset their password like all others. Use it
+while your provider is down, after switching to another provider, or after
+turning SSO off; set it back afterwards.
+
+- Keep one local admin account with a password. Admin accounts are never
+  linked automatically, so create the first account with a password.
+- Self-service actions that ask for the current password (change password,
+  delete account, turn off two-factor authentication, new recovery codes)
+  are not available to linked accounts that never set a password. Admins
+  can delete such accounts and reset their two-factor authentication in
+  the admin area.
+- A person you block at the provider keeps the sessions they already have
+  until those expire.
 
 ## Changing `OIDC_SUBJECT_CLAIM`
 

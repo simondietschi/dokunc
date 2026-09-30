@@ -26,6 +26,7 @@ import { unseal } from "@/lib/secret-box";
 import { verifyTotpStep } from "@/lib/totp";
 import { claimTotpStep, consumeRecoveryCode } from "@/lib/totp-store";
 import { RATE_LIMITS } from "@/lib/rate-limits";
+import { passwordBlockedBySso } from "@/lib/sso-policy";
 import { userNameSchema } from "@/lib/user-name";
 
 const registerSchema = z.object({
@@ -45,7 +46,28 @@ const loginSchema = z.object({
   password: z.string().min(1, "Passwort fehlt"),
 });
 
-export type ActionState = { error?: string } | undefined;
+export type ActionState =
+  | {
+      error?: string;
+      /**
+       * Die Anmeldeseite nennt unter der Meldung den SSO-Weg, falls die
+       * Instanz einen Anbieter hat. Steht bei jeder Antwort "Falsche
+       * Zugangsdaten", für jedes Konto gleich: sie verrät nicht, welches
+       * Konto an SSO hängt.
+       */
+      ssoHinweis?: boolean;
+    }
+  | undefined;
+
+/**
+ * Antwort auf falsche Zugangsdaten, und genauso auf ein richtiges
+ * Passwort für ein Konto mit SSO-Bindung (lib/sso-policy): wer das
+ * Passwort kennt, soll daraus nicht ablesen, welche Konten an SSO hängen.
+ */
+const FALSCHE_ZUGANGSDATEN = {
+  error: "Falsche Zugangsdaten",
+  ssoHinweis: true,
+} as const;
 
 /**
  * Vergleichswert für Anmeldungen ohne Konto — ein bcrypt-Hash mit
@@ -240,7 +262,21 @@ export async function loginAction(
       actorId: user?.id ?? null,
       metadata: { email, reason: "bad_credentials" },
     });
-    return { error: "Falsche Zugangsdaten" };
+    return FALSCHE_ZUGANGSDATEN;
+  }
+  /**
+   * Konto mit SSO-Bindung: kein Passwortweg, auch mit richtigem Passwort
+   * und vor dem zweiten Faktor. Die Antwort ist dieselbe wie bei einem
+   * falschen Passwort, nur das Audit hält den Grund fest. Keine Rückgabe
+   * des Platzes der Kontobremse: nach aussen war es ein Fehlversuch.
+   */
+  if (passwordBlockedBySso(user)) {
+    await audit({
+      action: "auth.login_failed",
+      actorId: user.id,
+      metadata: { email, reason: "sso_required" },
+    });
+    return FALSCHE_ZUGANGSDATEN;
   }
   if (!user.isActive) {
     await audit({

@@ -23,8 +23,10 @@ export { readClaims, type OidcClaims };
  * Angriffsfläche.
  *
  * Ohne `OIDC_ISSUER` und `OIDC_CLIENT_ID` ist die Funktion schlicht
- * abgeschaltet; die Anmeldung mit Passwort bleibt immer bestehen, damit
- * ein Ausfall des Anbieters niemanden aussperrt.
+ * abgeschaltet. Konten ohne SSO-Bindung melden sich immer auch mit
+ * Passwort an; Konten mit Bindung nur über den Anbieter, solange
+ * SSO_ENFORCEMENT nicht `off` ist (lib/sso-policy). Fällt der Anbieter
+ * aus, ist `off` der Weg zurück.
  */
 
 export type OidcConfig = ClaimRegeln & {
@@ -86,8 +88,9 @@ export function oidcConfig(): OidcConfig | null {
   const problem = issuerProblem(issuer);
   if (problem) {
     // Lieber gar kein SSO als eines, dessen Schlüssel jemand unterwegs
-    // austauschen kann: die Anmeldung mit Passwort bleibt bestehen, und
-    // die Ursache steht im Log statt nur als „sso=error" im Browser.
+    // austauschen kann. Die Ursache steht im Log statt nur als
+    // „sso=error" im Browser. Konten mit SSO-Bindung bekommen dadurch
+    // keinen Passwortweg (lib/sso-policy).
     meldeEinmal({ issuer, problem }, "OIDC_ISSUER unbrauchbar — SSO bleibt aus");
     return null;
   }

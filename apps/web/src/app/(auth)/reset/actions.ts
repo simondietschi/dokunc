@@ -19,8 +19,21 @@ import { log } from "@/lib/log";
 import { audit } from "@/lib/audit";
 import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
 import { RATE_LIMITS } from "@/lib/rate-limits";
+import { oidcConfig } from "@/lib/oidc";
+import { passwordBlockedBySso, ssoEnforcement } from "@/lib/sso-policy";
 
-export type ResetState = { error?: string; sent?: boolean } | undefined;
+export type ResetState =
+  | {
+      error?: string;
+      sent?: boolean;
+      /**
+       * Beschriftung des SSO-Anbieters, wenn die Instanz einen hat und
+       * Konten mit SSO-Bindung keinen Reset bekommen. Eine Eigenschaft
+       * der Instanz: für jede Adresse gleich.
+       */
+      ssoLabel?: string;
+    }
+  | undefined;
 
 const RESET_TTL_MS = 60 * 60 * 1000;
 
@@ -74,7 +87,40 @@ export async function requestResetAction(
     return { error: "Zu viele Anfragen. Bitte später erneut." };
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await prisma.user.findUnique({
+    where: { email },
+    select: { id: true, isActive: true, oidcSubject: true },
+  });
+  // Bewusst auch nach einem gescheiterten Versand { sent: true }: eine
+  // eigene Antwort gäbe es nur für Konten, die es gibt, und machte das
+  // Formular zur Abfrage, welche Adressen hier ein Konto haben. Der
+  // Fehler steht stattdessen im Log (`resetMailFailed`). Der Hinweis auf
+  // SSO hängt nur an der Instanz.
+  const label =
+    ssoEnforcement() === "linked_accounts" ? oidcConfig()?.label : undefined;
+  const antwort: ResetState = label
+    ? { sent: true, ssoLabel: label }
+    : { sent: true };
+
+  /**
+   * Kein Link für deaktivierte Konten und Konten mit SSO-Bindung: kein
+   * Eintrag, keine Mail, kein Platz der Kontobremse, nur das Audit. Die
+   * Antwort bleibt dieselbe. Messbar bleibt ein kleiner Unterschied
+   * (der Audit-Eintrag), klein gegen den Mailversand eines aktiven
+   * Kontos, den es schon vorher gab.
+   */
+  if (user && (!user.isActive || passwordBlockedBySso(user))) {
+    await audit({
+      action: "auth.login_failed",
+      actorId: user.id,
+      metadata: {
+        reason: user.isActive ? "sso_required" : "inactive",
+        via: "reset_request",
+      },
+    });
+    return antwort;
+  }
+
   // Existenz nie preisgeben — immer generische Bestätigung. Die Bremse
   // pro Konto läuft deshalb innerhalb dieses Zweigs.
   const accountKey = `reset:account:${email}`;
@@ -88,11 +134,7 @@ export async function requestResetAction(
   ) {
     await sendResetLink(user.id, email, accountKey);
   }
-  // Bewusst auch nach einem gescheiterten Versand { sent: true }: eine
-  // eigene Antwort gäbe es nur für Konten, die es gibt, und machte das
-  // Formular zur Abfrage, welche Adressen hier ein Konto haben. Der
-  // Fehler steht stattdessen im Log (`resetMailFailed`).
-  return { sent: true };
+  return antwort;
 }
 
 /** Neuen Link anlegen, verschicken und danach die älteren entwerten. */
@@ -257,6 +299,41 @@ export async function performResetAction(
       actorId: reset?.userId ?? null,
       metadata: { reason: "bad_reset_token" },
     });
+    return { error: "Link ungültig oder abgelaufen." };
+  }
+
+  /**
+   * Der Link allein genügt nicht: ein Link, der vor der Deaktivierung
+   * oder vor der SSO-Verknüpfung ausgestellt wurde, setzte sonst ein
+   * Passwort, das nach einer Reaktivierung wieder gälte bzw. den
+   * Anbieter umginge. Alle offenen Links des Kontos werden entwertet;
+   * Passwort und Sitzungen bleiben unberührt. Wer einen SSO-Link einlöst,
+   * hat das Postfach und erfährt den Weg; das verrät niemandem sonst
+   * etwas.
+   */
+  const konto = await prisma.user.findUnique({
+    where: { id: reset.userId },
+    select: { isActive: true, oidcSubject: true },
+  });
+  if (!konto || !konto.isActive || passwordBlockedBySso(konto)) {
+    const reason = konto?.isActive ? "sso_required" : "inactive";
+    await prisma.passwordResetToken.updateMany({
+      where: { userId: reset.userId, usedAt: null },
+      data: { usedAt: new Date() },
+    });
+    await audit({
+      action: "auth.login_failed",
+      actorId: reset.userId,
+      metadata: { reason, via: "reset" },
+    });
+    if (reason === "sso_required") {
+      const label = oidcConfig()?.label ?? "Single Sign-on";
+      return {
+        error:
+          "Dieses Konto meldet sich über Single Sign-on an, ein Passwort " +
+          `lässt sich hier nicht setzen. Nutze auf der Anmeldeseite „Weiter mit ${label}".`,
+      };
+    }
     return { error: "Link ungültig oder abgelaufen." };
   }
 

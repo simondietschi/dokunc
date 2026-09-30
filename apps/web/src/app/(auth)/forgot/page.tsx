@@ -37,6 +37,16 @@ export default function ForgotPage() {
           einen Link zum Zurücksetzen geschickt. Der Link ist eine Stunde
           gültig — prüfe auch den Spam-Ordner.
         </p>
+        {state.ssoLabel && (
+          <p
+            className="mt-2 text-sm leading-relaxed text-muted"
+            style={stagger(2)}
+          >
+            Meldest du dich über {state.ssoLabel} an, gibt es hier kein
+            Passwort zum Zurücksetzen: Nutze auf der Anmeldeseite „Weiter
+            mit {state.ssoLabel}".
+          </p>
+        )}
         <p className="mt-8 text-sm text-muted" style={stagger(3)}>
           <Link
             href="/login"

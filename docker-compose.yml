@@ -135,6 +135,8 @@ services:
       OIDC_EMAIL_CLAIM: ${OIDC_EMAIL_CLAIM:-}
       OIDC_NAME_CLAIM: ${OIDC_NAME_CLAIM:-}
       OIDC_SUBJECT_CLAIM: ${OIDC_SUBJECT_CLAIM:-}
+      # Passwortweg fuer Konten mit SSO-Verknuepfung (leer = linked_accounts)
+      SSO_ENFORCEMENT: ${SSO_ENFORCEMENT:-}
       # E-Mail (Einladungen, Passwort-Reset) — optional. Ohne SMTP_HOST
       # kommen die Links hier nicht an: unter NODE_ENV production stehen
       # sie auch nicht im Log.

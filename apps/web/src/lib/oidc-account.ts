@@ -157,8 +157,9 @@ export async function resolveOidcUser(
       // der Claim kommt ohne Grenze, und ein Name ausserhalb der Regel
       // sperrte spaeter das Profilformular.
       name: ssoUserName(claims.name, claims.email),
-      // Kein nutzbares Passwort: die Anmeldung läuft über den Anbieter.
-      // Wer eines will, setzt es über „Passwort vergessen".
+      // Kein nutzbares Passwort: die Anmeldung läuft über den Anbieter,
+      // und für Konten mit SSO-Bindung gibt es weder Passwortanmeldung
+      // noch Reset (lib/sso-policy).
       // Kostenfaktor trotzdem aus lib/password-policy und nicht nackt:
       // sonst trüge ausgerechnet dieser Hash dauerhaft die alte Zahl in
       // sich, falls BCRYPT_COST einmal angehoben wird.

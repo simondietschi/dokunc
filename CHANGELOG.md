@@ -202,6 +202,29 @@ differently on an existing installation, and what to do about it.
   `xms_edov`, so Entra ID accounts sign in there with their password, as
   they did before.
 
+- **Password sign-in for accounts linked to single sign-on:** the new
+  setting `SSO_ENFORCEMENT` defaults to `linked_accounts`, also on existing
+  installations. Accounts linked to an OIDC provider then sign in only
+  through the provider: the password sign-in answers "Falsche
+  Zugangsdaten" even for the right password, "Passwort vergessen" sends
+  them no link, and reset links issued before the update no longer work
+  for them. This holds for every linked account, whatever issuer it is
+  linked to and also while SSO is not configured. Self-service actions
+  that ask for the current password (change password, delete account,
+  turn off two-factor authentication, new recovery codes) are not
+  available to linked accounts that never set a password; admins can
+  delete such accounts and reset their two-factor authentication in the
+  admin area. If your own admin account was created through SSO or linked
+  to it, it loses the password sign-in: make sure another admin account
+  with a password exists before you update (admin accounts are never
+  linked automatically). If your provider is down, or after you switched
+  providers or turned SSO off, set `SSO_ENFORCEMENT=off` and restart; set
+  it back afterwards. See `docs/admin/sso.md`.
+
+- **Password reset only for active accounts:** deactivated accounts get
+  no reset link any more, and links issued before the deactivation no
+  longer work. There is nothing to configure for this.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -232,6 +255,13 @@ differently on an existing installation, and what to do about it.
 - Any member could permanently delete every page they could see from the
   trash, with its versions and comments; permanent deletion is now
   limited to space admins and owners.
+- Single sign-on could be bypassed with a password reset: a person
+  disabled at the identity provider who could still read their mailbox
+  (external address, forwarding, guest) could set a local password
+  through "Passwort vergessen" and keep signing in. Accounts linked to
+  single sign-on now have neither password sign-in nor password reset.
+- Reset links of deactivated accounts stayed valid and set a password
+  that applied again after a reactivation.
 
 ### Added
 
@@ -268,6 +298,10 @@ differently on an existing installation, and what to do about it.
   address is verified, a warning about account takeover through email
   claims, and the setup for Microsoft Entra ID, Google, Keycloak and
   authentik.
+- `SSO_ENFORCEMENT` (`linked_accounts`, `off`) for the password sign-in of
+  accounts linked to single sign-on. Refused password sign-ins, reset
+  requests and reset links record the reasons `sso_required` and
+  `inactive` in the audit log (`auth.login_failed`).
 
 ### Changed
 
@@ -296,6 +330,11 @@ differently on an existing installation, and what to do about it.
   does not confirm it and that it can neither take over nor create an
   account ("Der Anbieter bestätigt diese E-Mail-Adresse nicht."). Which
   rule applied is recorded in the audit log.
+- With single sign-on configured, the sign-in form adds under "Falsche
+  Zugangsdaten" that linked accounts sign in with "Weiter mit …", and the
+  confirmation of "Passwort vergessen" says the same, for every address.
+  The account page tells a linked account that its password only confirms
+  actions on that page.
 
 ### Removed
 

@@ -76,3 +76,15 @@ describe("Claims der SSO-Anmeldung", () => {
     }
   });
 });
+
+describe("SSO_ENFORCEMENT", () => {
+  it("nimmt linked_accounts als Vorgabe und bricht bei unbekannten Werten ab", () => {
+    expect(pruefe({}).werte.SSO_ENFORCEMENT).toBe("linked_accounts");
+    expect(pruefe({ SSO_ENFORCEMENT: "OFF" }).werte.SSO_ENFORCEMENT).toBe("off");
+    const r = pruefe({ SSO_ENFORCEMENT: "all" });
+    expect(r.ok).toBe(false);
+    expect(meldungen(r.fehler, "SSO_ENFORCEMENT")).toEqual([
+      expect.stringMatching(/^SSO_ENFORCEMENT kennt nur linked_accounts oder off/),
+    ]);
+  });
+});

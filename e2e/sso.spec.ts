@@ -157,3 +157,44 @@ test("Rücksprung mit falschem state wird abgewiesen", async ({ page }) => {
     page.getByText("Der Anmeldevorgang passt nicht zusammen. Bitte neu beginnen."),
   ).toBeVisible();
 });
+
+test("Konto mit SSO-Bindung: kein Passwortweg und kein Reset-Link", async ({
+  page,
+}) => {
+  // Fester bcrypt-Hash (Kosten 4) zu PASSWORT: das Konto kennt sein
+  // Passwort wie ein früher verknüpftes Altkonto.
+  const PASSWORT = "Sso-Konto-Passwort-1";
+  const HASH = "$2b$04$Q64wskmVbHBPfSuqHT9JtOWxKUQCW/U9C9eY4U.3CD/JkZ2FJagv2";
+  const EMAIL = "gebunden@sso.test";
+  await sql(
+    `INSERT INTO "User" (id, email, name, "passwordHash", "oidcIssuer", "oidcSubject", "updatedAt")
+     VALUES ('e2e-sso-gebunden', $1, 'SSO Gebunden', $2, $3, 'e2e-sso-gebunden-sub', now())
+     ON CONFLICT (email) DO NOTHING`,
+    [EMAIL, HASH, IDP],
+  );
+  const hinweis = page.getByText(
+    `Konten, die mit ${LABEL} verbunden sind, melden sich über „Weiter mit ${LABEL}" an.`,
+  );
+
+  for (const passwort of [PASSWORT, "Falsches-Passwort-1"]) {
+    await page.goto("/login");
+    await page.fill('input[name="email"]', EMAIL);
+    await page.fill('input[name="password"]', passwort);
+    await page.click('button[type="submit"]');
+    await expect(page.getByText("Falsche Zugangsdaten")).toBeVisible();
+    await expect(hinweis).toBeVisible();
+    await expect(page).toHaveURL(/\/login/);
+  }
+
+  await page.goto("/forgot");
+  await page.fill('input[name="email"]', EMAIL);
+  await page.click('button[type="submit"]');
+  await expect(page.getByText("E-Mail unterwegs")).toBeVisible();
+  await expect(
+    page.getByText(`Meldest du dich über ${LABEL} an, gibt es hier kein`),
+  ).toBeVisible();
+  const links = await sql<{ n: string }>(
+    `SELECT count(*) AS n FROM "PasswordResetToken" WHERE "userId" = 'e2e-sso-gebunden'`,
+  );
+  expect(Number(links[0].n)).toBe(0);
+});

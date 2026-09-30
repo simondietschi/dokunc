@@ -9,7 +9,7 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
 
 - Auth & Benutzer (Invite-only-Registrierung, erste Person = Admin)
 - **Single Sign-on** über OIDC (Authorization Code mit PKCE), optional
-  zuschaltbar; die Anmeldung mit Passwort bleibt immer bestehen
+  zuschaltbar (→ `docs/admin/sso.md`)
 - Spaces mit Rollen/Berechtigungen (OWNER/ADMIN/MEMBER/VIEWER)
 - **Gruppen**: Personengruppen im Admin-Bereich, pro Space mit eigener
   Rolle; es gilt immer die stärkste Rolle

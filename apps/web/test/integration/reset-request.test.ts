@@ -105,10 +105,13 @@ function neueIp(): string {
   return mocks.ip;
 }
 
-async function konto(name: string): Promise<{ id: string; email: string }> {
+async function konto(
+  name: string,
+  over: Record<string, unknown> = {},
+): Promise<{ id: string; email: string }> {
   const email = `${TAG}-${name}@example.test`;
   const user = await prisma.user.create({
-    data: { email, name, passwordHash: "x" },
+    data: { email, name, passwordHash: "x", ...over },
     select: { id: true, email: true },
   });
   users.push(user.id);
@@ -392,5 +395,88 @@ describe("releaseLimit mit Redis", () => {
 
     await releaseLimit(`${key}:leer`);
     expect(await redis.exists(`dokunc:rl:${key}:leer`)).toBe(0);
+  });
+});
+
+describe("kein Reset-Link für Konten mit SSO-Bindung und deaktivierte Konten", () => {
+  beforeEach(() => {
+    mocks.send.mockResolvedValue(true);
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+  });
+
+  async function gruende(userId: string): Promise<unknown[]> {
+    const rows = await prisma.auditLog.findMany({
+      where: { actorId: userId, action: "auth.login_failed" },
+      select: { metadata: true },
+    });
+    return rows.map((r) => r.metadata);
+  }
+
+  it("verschickt für ein Konto mit SSO-Bindung nichts und legt keinen Link an", async () => {
+    const user = await konto("sso", {
+      oidcIssuer: "https://idp.reset.test",
+      oidcSubject: `${TAG}-sso`,
+    });
+    expect(await requestResetAction(undefined, formular(user.email))).toEqual({
+      sent: true,
+    });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(await links(user.id)).toEqual([]);
+    expect(await gruende(user.id)).toEqual([
+      { reason: "sso_required", via: "reset_request" },
+    ]);
+    // Die Bremse pro Konto bleibt unberührt: es ging nichts hinaus.
+    expect(await redis.get(`dokunc:rl:reset:account:${user.email}`)).toBeNull();
+  });
+
+  it("verschickt für ein deaktiviertes Konto nichts und legt keinen Link an", async () => {
+    const user = await konto("inaktiv", { isActive: false });
+    expect(await requestResetAction(undefined, formular(user.email))).toEqual({
+      sent: true,
+    });
+    expect(mocks.send).not.toHaveBeenCalled();
+    expect(await links(user.id)).toEqual([]);
+    expect(await gruende(user.id)).toEqual([
+      { reason: "inactive", via: "reset_request" },
+    ]);
+  });
+
+  it("verschickt wieder mit SSO_ENFORCEMENT=off", async () => {
+    vi.stubEnv("SSO_ENFORCEMENT", "off");
+    const user = await konto("sso-aus", {
+      oidcIssuer: "https://idp.reset.test",
+      oidcSubject: `${TAG}-sso-aus`,
+    });
+    await requestResetAction(undefined, formular(user.email));
+    expect(mocks.send).toHaveBeenCalledTimes(1);
+    expect(await links(user.id)).toHaveLength(1);
+  });
+
+  it("antwortet für ein Konto mit SSO-Bindung wie für eine unbekannte Adresse", async () => {
+    // Mit eingerichtetem SSO nennt die Antwort den Anbieter, für jede
+    // Adresse gleich: eine Eigenschaft der Instanz, nicht des Kontos.
+    vi.stubEnv("OIDC_ISSUER", "https://idp.reset.test");
+    vi.stubEnv("OIDC_CLIENT_ID", "dokunc");
+    vi.stubEnv("OIDC_BUTTON_LABEL", "Firmenkonto");
+    const user = await konto("sso-gleich", {
+      oidcIssuer: "https://idp.reset.test",
+      oidcSubject: `${TAG}-sso-gleich`,
+    });
+    const gebunden = await requestResetAction(undefined, formular(user.email));
+    const unbekannt = await requestResetAction(
+      undefined,
+      formular(`${TAG}-niemand-sso@example.test`),
+    );
+    const ohneBindung = await requestResetAction(
+      undefined,
+      formular((await konto("ohne-bindung")).email),
+    );
+    expect(gebunden).toEqual({ sent: true, ssoLabel: "Firmenkonto" });
+    expect(unbekannt).toEqual(gebunden);
+    expect(ohneBindung).toEqual(gebunden);
+    expect(mocks.send).toHaveBeenCalledTimes(1);
   });
 });

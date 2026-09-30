@@ -10,6 +10,7 @@ import {
   parseTrustedDomains,
   type SubjectClaim,
 } from "@/lib/oidc-claims";
+import { parseSsoEnforcement, type SsoEnforcement } from "@/lib/sso-policy";
 
 /**
  * Variablen, die nur die Web-App liest. Nach `name` sortiert
@@ -84,6 +85,14 @@ export const NUR_WEB_VARIABLEN: readonly Variable[] = [
     beschreibung:
       "Email domains whose addresses count as verified when the identity provider sends neither `email_verified` nor `xms_edov`, separated by commas or spaces (at most 100). List only domains your organisation controls, never public mail domains.",
     parse: (roh) => parseTrustedDomains(roh),
+  }),
+  defineVariable<SsoEnforcement>({
+    name: "SSO_ENFORCEMENT",
+    dienste: ["web"],
+    beschreibung:
+      "`linked_accounts`: accounts linked to a single sign-on provider (any issuer) cannot sign in with a password or reset it. `off`: they can, for example while the provider is down. Case-insensitive.",
+    vorgabe: "linked_accounts",
+    parse: (roh) => parseSsoEnforcement(roh),
   }),
 ];
 

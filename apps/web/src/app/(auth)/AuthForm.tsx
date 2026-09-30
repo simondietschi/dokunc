@@ -213,6 +213,15 @@ export function AuthForm({
             {state.error}
           </p>
         )}
+        {/* Hängt nur an der Instanz (Anbieter eingerichtet), nicht am
+            Konto: dieselbe Zeile unter jeder Antwort "Falsche
+            Zugangsdaten". */}
+        {isLogin && sso && state?.ssoHinweis && (
+          <p className="text-[13px] text-muted">
+            Konten, die mit {sso} verbunden sind, melden sich über
+            „Weiter mit {sso}" an.
+          </p>
+        )}
 
         <div style={stagger(4)}>
           <Button

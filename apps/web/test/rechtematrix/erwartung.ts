@@ -100,12 +100,32 @@ const AUSSEN_ABGELEHNT = {
 } as const;
 
 export const ERWARTUNG: Record<string, Eintrag> = {
-  "action:app/(auth)/actions.ts#completeTotpLoginAction": OFFEN,
-  "action:app/(auth)/actions.ts#loginAction": OFFEN,
+  "action:app/(auth)/actions.ts#completeTotpLoginAction": {
+    stand: "extern",
+    tests: ["apps/web/test/integration/passwortweg.test.ts"],
+    grund:
+      "Anmeldung ohne Space-Rolle: kein zweiter Schritt für Konten mit SSO-Bindung",
+  },
+  "action:app/(auth)/actions.ts#loginAction": {
+    stand: "extern",
+    tests: ["apps/web/test/integration/passwortweg.test.ts"],
+    grund:
+      "Anmeldung ohne Space-Rolle: Passwortweg für Konten mit SSO-Bindung und den Schalter SSO_ENFORCEMENT",
+  },
   "action:app/(auth)/actions.ts#logoutAction": OFFEN,
   "action:app/(auth)/actions.ts#registerAction": OFFEN,
-  "action:app/(auth)/reset/actions.ts#performResetAction": OFFEN,
-  "action:app/(auth)/reset/actions.ts#requestResetAction": OFFEN,
+  "action:app/(auth)/reset/actions.ts#performResetAction": {
+    stand: "extern",
+    tests: ["apps/web/test/integration/passwortweg.test.ts"],
+    grund:
+      "Anmeldung ohne Space-Rolle: Einlösen nur für aktive Konten ohne SSO-Bindung",
+  },
+  "action:app/(auth)/reset/actions.ts#requestResetAction": {
+    stand: "extern",
+    tests: ["apps/web/test/integration/reset-request.test.ts"],
+    grund:
+      "Anmeldung ohne Space-Rolle: kein Reset-Link für Konten mit SSO-Bindung und deaktivierte Konten, gleiche Antwort für alle",
+  },
   "action:app/account/actions.ts#changePasswordAction": OFFEN,
   "action:app/account/actions.ts#deleteAccountAction": OFFEN,
   "action:app/account/actions.ts#logoutEverywhereAction": OFFEN,
@@ -476,12 +496,8 @@ export const ERWARTUNG: Record<string, Eintrag> = {
  * "extern"/"oeffentlich"); wer einen Eintrag prüft, streicht ihn hier.
  */
 export const OFFEN_BESTAND: readonly string[] = [
-  "action:app/(auth)/actions.ts#completeTotpLoginAction",
-  "action:app/(auth)/actions.ts#loginAction",
   "action:app/(auth)/actions.ts#logoutAction",
   "action:app/(auth)/actions.ts#registerAction",
-  "action:app/(auth)/reset/actions.ts#performResetAction",
-  "action:app/(auth)/reset/actions.ts#requestResetAction",
   "action:app/account/actions.ts#changePasswordAction",
   "action:app/account/actions.ts#deleteAccountAction",
   "action:app/account/actions.ts#logoutEverywhereAction",
