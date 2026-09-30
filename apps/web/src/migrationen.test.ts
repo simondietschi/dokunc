@@ -248,12 +248,23 @@ describe("prisma.config.ts: Schattendatenbank", () => {
   it("nimmt eine eigene Datenbank", async () => {
     const url = "postgresql://dokunc:dokunc@localhost:5432/dokunc_schatten";
     expect((await laden(url)).datasource?.shadowDatabaseUrl).toBe(url);
+    // Gleicher Name auf einem anderen Server oder Port ist eine andere Datenbank.
+    for (const andere of [
+      "postgresql://dokunc:dokunc@db.intern:5432/dokunc",
+      "postgresql://dokunc:dokunc@127.0.0.1:5433/dokunc",
+    ]) {
+      expect((await laden(andere)).datasource?.shadowDatabaseUrl).toBe(andere);
+    }
   });
 
   it.each([
     ["dieselbe URL", APP],
     ["andere Anmeldung, andere Parameter", "postgresql://root:x@LOCALHOST:5432/dokunc"],
     ["Port nicht angegeben", "postgresql://dokunc:dokunc@localhost/dokunc"],
+    // Derselbe Server unter einem anderen Namen fuer den eigenen Rechner.
+    ["127.0.0.1 statt localhost", "postgresql://dokunc:dokunc@127.0.0.1:5432/dokunc"],
+    ["[::1] statt localhost", "postgresql://dokunc:dokunc@[::1]/dokunc"],
+    ["127.0.1.1 statt localhost", "postgres://dokunc:dokunc@127.0.1.1:5432/dokunc"],
   ])("weist die Datenbank der App ab: %s", async (_fall, url) => {
     await expect(laden(url)).rejects.toThrow(
       "SHADOW_DATABASE_URL zeigt auf dieselbe Datenbank wie DATABASE_URL",

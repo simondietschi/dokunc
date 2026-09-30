@@ -13,10 +13,21 @@ loadEnv({
   quiet: true,
 });
 
+/**
+ * Der eigene Rechner hat mehrere Namen: localhost, 127.0.0.0/8 und ::1
+ * erreichen denselben Server. Sonst ginge DATABASE_URL auf 127.0.0.1 und
+ * SHADOW_DATABASE_URL auf localhost als zwei Datenbanken durch.
+ */
+function hostVon(hostname: string): string {
+  const host = hostname.toLowerCase().replace(/\.$/, "");
+  if (host === "localhost" || host === "[::1]" || /^127(\.\d{1,3}){3}$/.test(host)) return "loopback";
+  return host;
+}
+
 /** Host, Port und Datenbankname einer Postgres-URL, zum Vergleich. */
 function datenbankVon(url: string): string {
   const u = new URL(url);
-  return `${u.hostname.toLowerCase()}:${u.port || "5432"}/${decodeURIComponent(u.pathname.slice(1))}`;
+  return `${hostVon(u.hostname)}:${u.port || "5432"}/${decodeURIComponent(u.pathname.slice(1))}`;
 }
 
 /**

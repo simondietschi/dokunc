@@ -102,7 +102,7 @@ You need this in two cases:
 
 ## Migrations
 
-Change `packages/db/prisma/schema.prisma` only together with a migration (`pnpm --filter @dokunc/db migrate --name <name>` runs `prisma migrate dev`). The e2e job compares the schema with the state after all migrations (step "Schema gegen Migrationen (prisma migrate diff)", `pnpm --filter @dokunc/db migrate:check`) and fails with exit code 2 and a summary of the difference when a migration is missing. To run the check locally, create an empty database and point `SHADOW_DATABASE_URL` at it. Prisma wipes and rebuilds that database, so it must never be the application's; `packages/db/prisma.config.ts` refuses the database of `DATABASE_URL`:
+Change `packages/db/prisma/schema.prisma` only together with a migration (`pnpm --filter @dokunc/db migrate --name <name>` runs `prisma migrate dev`). The e2e job compares the schema with the state after all migrations (step "Schema gegen Migrationen (prisma migrate diff)", `pnpm --filter @dokunc/db migrate:check`) and fails with exit code 2 and a summary of the difference when a migration is missing. To run the check locally, create an empty database and point `SHADOW_DATABASE_URL` at it. Prisma wipes and rebuilds that database, so it must never be the application's; `packages/db/prisma.config.ts` refuses the database of `DATABASE_URL`, also under another name for the same machine (`localhost`, `127.0.0.1`, `::1`):
 
     psql -h localhost -U dokunc -d dokunc -c 'CREATE DATABASE dokunc_schatten'
     SHADOW_DATABASE_URL=postgresql://dokunc:dokunc@localhost:5432/dokunc_schatten pnpm --filter @dokunc/db migrate:check
