@@ -92,6 +92,60 @@ export async function sendMail(msg: MailMessage): Promise<boolean> {
   return true;
 }
 
+/** Tiefe, bis zu der mailErrorForLog Ursachen (cause) mitnimmt. */
+const MAX_URSACHEN = 3;
+
+/**
+ * Fehler des Mailversands für das Log, ohne Empfängeradresse.
+ *
+ * nodemailer trägt die Adresse in `message` und `stack` (SMTP-Server
+ * wiederholen den Empfänger in ihrer Antwort, oft gross geschrieben:
+ * "550 5.1.1 <KIM@EXAMPLE.ORG>: Recipient address rejected"), in
+ * `response`, `rejected` und `rejectedErrors`. Ins Log gehören der Grund,
+ * der SMTP-Code und der Stack, nicht die Person, die eine Einladung, einen
+ * Reset-Link oder eine Benachrichtigung bekommen sollte.
+ *
+ * Liefert ein neues Error mit `name`, `message` und `stack`, in denen jede
+ * der Adressen (ohne Beachtung der Grossschreibung) durch `[adresse]`
+ * ersetzt ist, dazu `code`, `responseCode`, `command` und `response`
+ * (ebenso ersetzt) und die Ursache (`cause`) auf dieselbe Weise. Alle
+ * übrigen Felder (`rejected`, `rejectedErrors`, `accepted`, `envelope`)
+ * fallen weg.
+ */
+export function mailErrorForLog(e: unknown, adresse: string | readonly string[]): Error {
+  const adressen = (typeof adresse === "string" ? [adresse] : [...adresse])
+    .map((a) => a.trim())
+    .filter((a) => a !== "")
+    .sort((a, b) => b.length - a.length);
+  const muster =
+    adressen.length > 0
+      ? new RegExp(adressen.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi")
+      : null;
+  const ohne = (text: string) => (muster ? text.replace(muster, "[adresse]") : text);
+  return ohneAdresse(e, ohne, MAX_URSACHEN);
+}
+
+function ohneAdresse(e: unknown, ohne: (text: string) => string, tiefe: number): Error {
+  if (!(e instanceof Error)) {
+    const ergebnis = new Error(ohne(String(e)));
+    // Kein Stack: der hier entstandene zeigte nur auf diese Funktion.
+    ergebnis.stack = undefined;
+    return ergebnis;
+  }
+  const ergebnis = new Error(ohne(e.message));
+  ergebnis.name = e.name;
+  ergebnis.stack = e.stack === undefined ? undefined : ohne(e.stack);
+  const felder = e as Error & Record<string, unknown>;
+  const ziel = ergebnis as Error & Record<string, unknown>;
+  for (const feld of ["code", "responseCode", "command"] as const) {
+    const wert = felder[feld];
+    if (typeof wert === "string" || typeof wert === "number") ziel[feld] = wert;
+  }
+  if (typeof felder.response === "string") ziel.response = ohne(felder.response);
+  if (e.cause !== undefined && tiefe > 0) ergebnis.cause = ohneAdresse(e.cause, ohne, tiefe - 1);
+  return ergebnis;
+}
+
 /** Einheitlicher HTML-Rahmen für alle Mails (Inline-CSS, mailclient-sicher). */
 export function mailLayout(opts: { title: string; bodyHtml: string }): string {
   return `

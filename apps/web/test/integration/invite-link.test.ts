@@ -10,6 +10,7 @@ import {
   vi,
   type MockInstance,
 } from "vitest";
+import pino from "pino";
 import { prisma, type SpaceRole } from "@dokunc/db";
 import { appUrl } from "@dokunc/mail";
 
@@ -31,7 +32,7 @@ type Actor = { id: string; email: string; name: string; isAdmin: boolean };
 const mocks = vi.hoisted(() => ({
   actor: null as Actor | null,
   /** Was der SMTP-Transport tut. */
-  smtp: "fehlt" as "fehlt" | "ok" | "wirft",
+  smtp: "fehlt" as "fehlt" | "ok" | "wirft" | "abgelehnt",
 }));
 
 vi.mock("@/lib/current-user", () => ({
@@ -42,7 +43,22 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("next/headers", () => ({ headers: vi.fn(async () => new Headers()) }));
 vi.mock("@dokunc/mail", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@dokunc/mail")>()),
-  sendMail: vi.fn(async () => {
+  sendMail: vi.fn(async (msg: { to: string }) => {
+    if (mocks.smtp === "abgelehnt") {
+      // Wie nodemailer einen abgewiesenen Empfaenger meldet (Form aus
+      // einem Gespraech mit einem SMTP-Server, mail-smtp.test.ts): die
+      // Adresse steht in message, response, rejected und rejectedErrors,
+      // vom Server gern gross geschrieben.
+      const response = `550 5.1.1 <${msg.to.toUpperCase()}>: Recipient address rejected`;
+      throw Object.assign(new Error(`Can't send mail - all recipients were rejected: ${response}`), {
+        code: "EENVELOPE",
+        response,
+        responseCode: 550,
+        command: "RCPT TO",
+        rejected: [msg.to],
+        rejectedErrors: [{ code: "EENVELOPE", response, responseCode: 550, recipient: msg.to }],
+      });
+    }
     if (mocks.smtp === "wirft") {
       throw Object.assign(new Error("Verbindung abgelehnt"), {
         code: "ECONNECTION",
@@ -283,6 +299,27 @@ describe("inviteMemberAction ohne Mailserver", () => {
     expect((await einladungsAudit(id)).map((e) => e.metadata)).toEqual([
       { email, role: "MEMBER", delivery: "link" },
     ]);
+  });
+
+  it("loggt einen abgewiesenen Empfaenger mit Code und Stack, aber ohne seine Adresse", async () => {
+    const space = await spaceMit("OWNER", { isAdmin: true });
+    const email = adresse();
+    mocks.smtp = "abgelehnt";
+    const state = await inviteMemberAction(undefined, formular(space.slug, email));
+    expect(state?.error).toBe(TRANSPORT_FEHLER);
+
+    const aufruf = spione.error.mock.calls.find(
+      (c) => c[1] === "Einladungsmail konnte nicht gesendet werden",
+    );
+    expect(aufruf).toBeDefined();
+    const felder = aufruf?.[0] as unknown as { err: unknown; invitationId: string };
+    // So, wie pino das Feld schreibt: Typ, Stack und SMTP-Code bleiben.
+    expect(felder.err).toBeInstanceOf(Error);
+    const err = pino.stdSerializers.err(felder.err as Error);
+    expect(err).toMatchObject({ type: "Error", code: "EENVELOPE", responseCode: 550 });
+    expect(err.message).toContain("Recipient address rejected");
+    expect(err.stack).toContain("[adresse]");
+    expect(JSON.stringify(err).toLowerCase()).not.toContain(email.toLowerCase());
   });
 
   it("laesst bei einem Transportfehler eine gueltige fruehere Einladung stehen", async () => {

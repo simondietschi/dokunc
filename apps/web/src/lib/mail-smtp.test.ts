@@ -1,4 +1,5 @@
 import { createServer, type Socket } from "node:net";
+import pino from "pino";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -225,6 +226,58 @@ describe("Versand über SMTP", () => {
     expect(fehler).toMatchObject({ code: "ECONNECTION" });
     expect(fehler.responseCode).toBeUndefined();
     expect(isTransientMailError(fehler)).toBe(true);
+  });
+});
+
+describe("Fehler fuer das Log ohne Empfaengeradresse (mailErrorForLog)", () => {
+  // nodemailer traegt die Adresse in message, stack, response, rejected
+  // und rejectedErrors; der Server gibt sie oft gross geschrieben zurueck.
+  const ADRESSE = "kim@example.org";
+
+  async function abgewiesen(): Promise<Error> {
+    verhalten.rcpt = "550 5.1.1 <KIM@EXAMPLE.ORG>: Recipient address rejected";
+    return (await versandFehler()) as Error;
+  }
+
+  /** So, wie pino das Feld err schreibt. */
+  const imLog = (e: Error) => JSON.stringify(pino.stdSerializers.err(e));
+
+  it("der echte Fehler traegt die Adresse mehrfach", async () => {
+    const roh = imLog(await abgewiesen()).toLowerCase();
+    expect(roh.split(ADRESSE).length - 1).toBeGreaterThanOrEqual(5);
+  });
+
+  it("behaelt Typ, Stack, Code und Antwort, ohne die Adresse", async () => {
+    const fehler = mail.mailErrorForLog(await abgewiesen(), ADRESSE);
+    const text = imLog(fehler);
+    expect(text.toLowerCase()).not.toContain(ADRESSE);
+    expect(pino.stdSerializers.err(fehler)).toMatchObject({
+      type: "Error",
+      message: "Can't send mail - all recipients were rejected: 550 5.1.1 <[adresse]>: Recipient address rejected",
+      code: "EENVELOPE",
+      responseCode: 550,
+      command: "RCPT TO",
+      response: "550 5.1.1 <[adresse]>: Recipient address rejected",
+    });
+    expect(fehler.stack).toMatch(/^Error: Can't send mail .*<\[adresse\]>/);
+    expect(fehler.stack).toContain("smtp-connection");
+    expect(text).not.toContain("rejected\":");
+    expect(isTransientMailError(fehler)).toBe(false);
+  });
+
+  it("nimmt mehrere Adressen und Fehler ohne Error-Objekt", () => {
+    const fehler = mail.mailErrorForLog("Abgelehnt: a@b.ch, C@D.CH", ["a@b.ch", "c@d.ch", ""]);
+    expect(fehler.message).toBe("Abgelehnt: [adresse], [adresse]");
+    expect(imLog(fehler).toLowerCase()).not.toMatch(/a@b\.ch|c@d\.ch/);
+  });
+
+  it("schwaerzt auch die Ursache", () => {
+    const ursache = Object.assign(new Error("Mailbox kim@example.org voll"), { code: "EMESSAGE" });
+    const fehler = mail.mailErrorForLog(new Error("Versand gescheitert", { cause: ursache }), ADRESSE);
+    expect(imLog(fehler)).not.toContain(ADRESSE);
+    expect(pino.stdSerializers.err(fehler)).toMatchObject({
+      message: "Versand gescheitert: Mailbox [adresse] voll",
+    });
   });
 });
 

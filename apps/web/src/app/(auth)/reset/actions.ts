@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { prisma } from "@dokunc/db";
+import { mailErrorForLog } from "@dokunc/mail";
 import {
   generateInviteToken,
   verifyToken,
@@ -46,28 +47,6 @@ const RESET_TTL_MS = 60 * 60 * 1000;
  */
 const RESET_ACCOUNT_ATTEMPTS = 3;
 const RESET_ACCOUNT_WINDOW_SEC = 3600;
-
-/**
- * Fehlermeldung des Mailversands ohne die Adresse.
- *
- * SMTP-Server wiederholen den Empfaenger gern in ihrer Antwort
- * ("550 5.1.1 <name@example.org>: Recipient address rejected"), und
- * nodemailer reicht die Antwort in die Meldung durch. Ins Log gehoert
- * der Grund, nicht die Adresse: diese Zeile entsteht nur fuer Konten,
- * die es gibt, und machte das Log sonst zur Liste der Adressen, die
- * jemand ausprobiert hat. Nur die Meldung und nicht das Fehlerobjekt:
- * dessen Zusatzfelder (response, rejected) tragen die Adresse erneut.
- */
-function mailErrorWithoutAddress(e: unknown, email: string): string {
-  const text = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-  // Ohne Beachtung der Grossschreibung: manche Server geben den
-  // Empfaenger so zurueck, wie sie ihn intern fuehren.
-  const pattern = new RegExp(
-    email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-    "gi",
-  );
-  return text.replace(pattern, "[adresse]");
-}
 
 export async function requestResetAction(
   _prev: ResetState,
@@ -153,7 +132,11 @@ async function sendResetLink(
     });
   } catch (e) {
     await resetMailFailed({
-      reason: mailErrorWithoutAddress(e, email),
+      // Ohne die Adresse: SMTP-Server wiederholen den Empfaenger in ihrer
+      // Antwort, und diese Zeile entsteht nur fuer Konten, die es gibt.
+      // Mit Adresse machte sie das Log zur Liste der Adressen, die jemand
+      // am Formular ausprobiert hat.
+      err: mailErrorForLog(e, email),
       userId,
       resetId: reset.id,
       releaseKey: isTransientMailError(e) ? accountKey : null,
@@ -169,7 +152,7 @@ async function sendResetLink(
     // selbst, und jede weitere Anfrage legte nur noch einen toten
     // Eintrag an.
     await resetMailFailed({
-      reason: "SMTP nicht eingerichtet",
+      err: "SMTP nicht eingerichtet",
       userId,
       resetId: reset.id,
       releaseKey: null,
@@ -223,14 +206,15 @@ async function sendResetLink(
  * von dem niemand weiss, ob er ankam.
  */
 async function resetMailFailed(opts: {
-  reason: string;
+  /** Fehler des Versands ohne Adresse (mailErrorForLog) oder der Grund. */
+  err: Error | string;
   userId: string;
   resetId: string;
   releaseKey: string | null;
 }): Promise<void> {
-  const { reason, userId, resetId, releaseKey } = opts;
+  const { err, userId, resetId, releaseKey } = opts;
   log.error(
-    { err: reason, userId, resetId, released: releaseKey !== null },
+    { err, userId, resetId, released: releaseKey !== null },
     "reset mail failed",
   );
   if (releaseKey) await releaseLimit(releaseKey);

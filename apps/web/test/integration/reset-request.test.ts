@@ -10,6 +10,7 @@ import {
   vi,
   type MockInstance,
 } from "vitest";
+import pino from "pino";
 import { prisma } from "@dokunc/db";
 import { log } from "@/lib/log";
 import { rateLimit, releaseLimit } from "@/lib/rate-limit";
@@ -141,6 +142,7 @@ function abgelehnt(email: string): Error {
       responseCode: 550,
       command: "RCPT TO",
       rejected: [email],
+      rejectedErrors: [{ code: "EENVELOPE", response, responseCode: 550, recipient: email }],
     },
   );
 }
@@ -320,14 +322,19 @@ describe("Passwort-Reset bei gescheitertem Mailversand", () => {
     expect(call).toBeDefined();
     const fields = call?.[0] as unknown as Record<string, unknown>;
     expect(fields.userId).toBe(user.id);
-    // Der Grund bleibt lesbar, nur die Adresse ist ersetzt.
-    expect(String(fields.err)).toMatch(/Recipient address rejected/);
-    expect(String(fields.err)).toContain("[adresse]");
+    // Das Fehlerobjekt, wie pino es schreibt: Typ, Stack und SMTP-Code
+    // bleiben, der Grund bleibt lesbar, nur die Adresse ist ersetzt.
+    expect(fields.err).toBeInstanceOf(Error);
+    const err = pino.stdSerializers.err(fields.err as Error);
+    expect(err).toMatchObject({ type: "Error", code: "EENVELOPE", responseCode: 550 });
+    expect(err.message).toMatch(/Recipient address rejected/);
+    expect(err.message).toContain("[adresse]");
+    expect(err.stack).toContain("[adresse]");
 
     const token = new URL(
       mocks.send.mock.calls[0][0].resetUrl,
     ).searchParams.get("token");
-    const text = JSON.stringify(logSpy.mock.calls);
+    const text = JSON.stringify([logSpy.mock.calls, err]);
     expect(text.toLowerCase()).not.toContain(user.email.toLowerCase());
     expect(token).toBeTruthy();
     expect(text).not.toContain(token);

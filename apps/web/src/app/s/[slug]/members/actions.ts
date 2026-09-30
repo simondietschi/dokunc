@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma, type SpaceRole } from "@dokunc/db";
+import { mailErrorForLog } from "@dokunc/mail";
 import { authorizeAction } from "@/lib/space-context";
 import { revokeCollabAccess } from "@/lib/collab-sync";
 import { requireUser } from "@/lib/current-user";
@@ -136,9 +137,11 @@ export async function inviteMemberAction(
   } catch (e) {
     // Ohne diesen Eintrag bliebe der Grund (Verbindung abgelehnt, Auth,
     // Empfaenger zurueckgewiesen) nirgends stehen — die Meldung unten
-    // sagt "SMTP pruefen", ohne zu sagen, was zu pruefen waere.
+    // sagt "SMTP pruefen", ohne zu sagen, was zu pruefen waere. Der
+    // Fehler traegt die Adresse der eingeladenen Person (Meldung, Antwort
+    // des Servers, rejected); ins Log kommt er ohne sie.
     log.error(
-      { err: String(e), spaceId: space.id, invitationId: invitation.id },
+      { err: mailErrorForLog(e, email), spaceId: space.id, invitationId: invitation.id },
       "Einladungsmail konnte nicht gesendet werden",
     );
     if (previousValid) {

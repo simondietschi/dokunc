@@ -532,6 +532,12 @@ differently on an existing installation, and what to do about it.
   show `"title": null` for such pages. Comments on such pages keep their
   text, but the quoted passage they were attached to (`anchorText`) is
   `null`.
+- Failed invitation mails and failed notification mails no longer write
+  the recipient's email address into the log. A failed invitation logged
+  it in the error message, and the collaboration server logged it several
+  times per failed notification (message, server reply, `rejected`,
+  `rejectedErrors`). The logged error keeps its type, stack, SMTP code
+  and server reply, with the address replaced by `[adresse]`.
 
 ### Added
 
@@ -733,3 +739,5 @@ differently on an existing installation, and what to do about it.
   sender, and an `APP_URL` that is not a valid URL no longer makes every
   mail fail: the sender then uses `localhost`, and the startup check
   warns about it.
+- Failed invitation and password reset mails are logged with the error's
+  type, stack and SMTP code instead of only its message.

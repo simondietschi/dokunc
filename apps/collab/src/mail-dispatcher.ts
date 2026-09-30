@@ -18,6 +18,7 @@ import {
   type DispatchBatch,
   type DispatchCandidate,
 } from "@dokunc/mail";
+import { zustellen, type Delivery } from "./mail-zustellung";
 
 /**
  * Mail-Dispatcher für Benachrichtigungen (Erwähnungen, Kommentare und
@@ -72,22 +73,6 @@ const RENEW_SCRIPT =
 const LOCK_RENEW_MS = Math.floor(LOCK_TTL_MS / 3);
 /** Marker-Lebensdauer: deutlich länger als ein Tag, aber endlich. */
 const DIGEST_MARKER_TTL_MS = 3 * 24 * 60 * 60 * 1000;
-
-/**
- * Dauerhafte Ablehnung? Ein SMTP-Antwortcode 5xx (unbekannter Empfänger,
- * abgelehnte Adresse) fällt beim nächsten Versuch genauso aus. Ohne diese
- * Unterscheidung wiederholt jeder Lauf dieselbe aussichtslose Zustellung,
- * bei 30 s Intervall bis GIVE_UP_AFTER_MS tausende Male. 4xx und
- * Verbindungsfehler bleiben vorübergehend und werden weiter versucht.
- */
-function isPermanentSmtpError(e: unknown): boolean {
-  const code = (e as { responseCode?: unknown } | null | undefined)
-    ?.responseCode;
-  return typeof code === "number" && code >= 500 && code < 600;
-}
-
-/** Ergebnis eines Zustellversuchs für einen Empfänger-Batch. */
-type Delivery = "sent" | "retry" | "permanent";
 
 function intervalMs(): number {
   const s = Number(process.env.MAIL_DISPATCH_INTERVAL_S ?? 30);
@@ -408,39 +393,14 @@ export function startMailDispatcher(opts: {
           })
         : notificationMail({ recipientName: batch.name, items: batch.items });
 
-    let lastError: unknown;
-    for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
-      try {
-        await sendMail({ to: batch.email, ...mail });
-        return "sent";
-      } catch (e) {
-        lastError = e;
-        const permanent = isPermanentSmtpError(e);
-        log.warn(
-          { userId: batch.userId, attempt, permanent, err: e },
-          "Mail-Versand fehlgeschlagen",
-        );
-        // Eine dauerhafte Ablehnung wiederholt sich unverändert; weitere
-        // Versuche kosten nur Laufzeit unter dem Lock.
-        if (permanent) break;
-      }
-    }
-    if (isPermanentSmtpError(lastError)) {
-      log.error(
-        {
-          userId: batch.userId,
-          count: batch.notificationIds.length,
-          err: lastError,
-        },
-        "Mail dauerhaft abgelehnt, kein weiterer Versuch (Einträge bleiben in der App)",
-      );
-      return "permanent";
-    }
-    log.error(
-      { userId: batch.userId, count: batch.notificationIds.length, err: lastError },
-      "Mail nach mehreren Versuchen nicht zugestellt, Einträge bleiben offen",
-    );
-    return "retry";
+    return zustellen({
+      senden: () => sendMail({ to: batch.email, ...mail }),
+      adresse: batch.email,
+      userId: batch.userId,
+      anzahl: batch.notificationIds.length,
+      versuche: SEND_ATTEMPTS,
+      log,
+    });
   }
 
   /**
