@@ -59,11 +59,24 @@ updates:
       # mehr; typescript-eslint braucht sie und nimmt bis 8.71.0 nur
       # ">=4.8.4 <6.1.0" (ESLint liefe still ueber ein zweites TS 6). Und
       # typescript landet ueber den optionalen Peer von prisma,
-      # @prisma/client und valibot im Laufzeit-Image: das Go-Binary von
-      # 7.0.2 (Go 1.26.4, x/text 0.38.0) bringt 10 HIGH, Trivy im Job
-      # docker wird rot (PR #11). next build kann 7 schon (tsc-CLI).
-      # Wieder pruefen, wenn typescript-eslint 7 in den peerDependencies
-      # fuehrt UND ein 7er-Release den Trivy-Scan des Images besteht.
+      # @prisma/client und valibot im Laufzeit-Image (pnpm install --prod
+      # behaelt ihn, obwohl typescript ueberall devDependency ist): das
+      # Go-Binary von 7.0.2 (Go 1.26.4, x/text 0.38.0) bringt 10 HIGH,
+      # Trivy im Job docker wird rot (PR #11). next build kann 7 schon
+      # (tsc-CLI).
+      # Eine Trivy-Ausnahme hilft nicht: lieferkette.test.ts laesst in
+      # .trivyignore.yaml nur purls von npm- und Debian-Paketen zu, und Go
+      # behebt laufend stdlib-Luecken (seit 7.0.2 in 1.26.5 und 1.26.6);
+      # jede neue macht ein nicht neu gebautes Binary wieder rot.
+      # Wieder pruefen, wenn beides gilt:
+      # - typescript-eslint nennt TypeScript 7 in seinen peerDependencies;
+      # - typescript kommt nicht mehr ins Laufzeit-Image, oder die
+      #   7er-Releases erscheinen regelmaessig mit aktuellem Go neu.
+      # Ein einzelner gruener Trivy-Scan genuegt nicht: die CI prueft das
+      # Image jeden Montag, und ein 7er-Release erscheint seltener als eine
+      # Go-Korrektur. Die JS-API von TS 6 gibt es neben 7 als Paket
+      # @typescript/typescript6 (Befehl tsc6); typescript-eslint laedt aber
+      # das Modul "typescript" und braeuchte einen Alias darauf.
       - dependency-name: "typescript"
         update-types: ["version-update:semver-major"]
 
