@@ -52,6 +52,11 @@ import {
  * und nimmt keine neuen an. Die Faelle dazu stehen am Ende, starten je
  * einen frischen Server (dessen Minutenrunde laeuft dann sicher nicht
  * dazwischen) und setzen die Marke danach zurueck.
+ *
+ * Jeder Fall beendet seine Provider (afterEach). Ein Provider, der den
+ * Fall ueberlebt, verbindet sich nach dem Ende seines Servers immer
+ * wieder neu, auch zu einem spaeteren Server auf demselben Port; seine
+ * Verbindungen und Abweisungen landeten dann in den Faellen danach.
  */
 
 const REDIS_DB = 7;
@@ -105,7 +110,12 @@ const INHALT = {
 };
 
 let collab: Pruefserver | null = null;
+/** Provider des laufenden Falls; afterEach beendet sie. */
 const providers: HocuspocusProvider[] = [];
+
+function beendeProvider(): void {
+  for (const p of providers.splice(0)) p.destroy();
+}
 let userId: string;
 let sessionId: string;
 let spaceId: string;
@@ -184,12 +194,13 @@ beforeAll(async () => {
 }, 60_000);
 
 afterEach(async () => {
+  beendeProvider();
   hooks.user = null;
   await setzeEpoche(epocheVorher);
 });
 
 afterAll(async () => {
-  for (const p of providers) p.destroy();
+  beendeProvider();
   await collab?.stop();
   vi.unstubAllEnvs();
   if (spaceId) await prisma.space.deleteMany({ where: { id: spaceId } });
@@ -643,6 +654,9 @@ describe("Veraltete Instanz", () => {
   }
 
   beforeAll(async () => {
+    // Die frischen Server dieser Faelle sollen nur die eigenen Editoren
+    // sehen (siehe Kopf der Datei).
+    expect(providers, "Provider frueherer Faelle noch offen").toHaveLength(0);
     const z = await readInstanceState(prisma);
     markeVorher = { version: z.editorSchemaVersion, hash: z.editorSchemaHash };
     // Der gemeinsame Server laeuft schon eine Weile; seine Minutenrunde
@@ -652,6 +666,9 @@ describe("Veraltete Instanz", () => {
   }, 30_000);
 
   afterEach(async () => {
+    // Vor dem Server: sonst versuchen es seine Provider bis zum
+    // aeusseren afterEach weiter.
+    beendeProvider();
     await server?.stop();
     server = null;
     await setzeMarke(markeVorher);
@@ -687,13 +704,22 @@ describe("Veraltete Instanz", () => {
       timeoutMs: 5_000,
       log: s.log,
     });
-    expect(s.log()).toContain("Neuere Editor-Fassung in der Datenbank");
+    // Getrennt hat sie genau diesen einen Editor; mehr hiesse, dass
+    // Provider eines frueheren Falls hier verbunden waren.
+    const wechsel = s
+      .log()
+      .split("\n")
+      .filter((z) => z.includes("Neuere Editor-Fassung in der Datenbank"));
+    expect(wechsel).toHaveLength(1);
+    expect(wechsel[0]).toContain('"closed":1');
     a.provider.destroy();
 
+    // Das Ticket nennt das Schema dieses Servers: abgewiesen wird es nur,
+    // weil die Instanz veraltet ist. (Die Logzeile dazu ist gedrosselt und
+    // deshalb kein Beleg.)
     const b = await versuche(s, pageId);
     expect(b.synced).toBe(false);
     expect(b.gruende[0]).toBe(COLLAB_REJECT_REASON.schemaMismatch);
-    expect(s.log()).toContain('"instanceOutdated":true');
     b.provider.destroy();
   }, 60_000);
 
