@@ -63,12 +63,7 @@ function projektName(roh: string | undefined): Ergebnis<string | null> {
 function schattenDatenbank(roh: string | undefined): Ergebnis<string | null> {
   const text = (roh ?? "").trim();
   if (text === "") return { ok: true, wert: null };
-  let url: URL | null = null;
-  try {
-    url = new URL(text);
-  } catch {
-    url = null;
-  }
+  const url = URL.canParse(text) ? new URL(text) : null;
   if (!url || !["postgres:", "postgresql:"].includes(url.protocol) || url.pathname.length < 2) {
     return {
       ok: false,
