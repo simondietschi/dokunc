@@ -1,5 +1,5 @@
 import { createServer, type Socket } from "node:net";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Versand über den echten nodemailer-Transport aus @dokunc/mail gegen
@@ -155,6 +155,50 @@ describe("Versand über SMTP", () => {
     const kopf = nachrichten[0].slice(0, nachrichten[0].indexOf(""));
     expect(kopf).toContain("From: dokunc <no-reply@wiki.example.org>");
     expect(kopf).toContain("To: kim@example.org");
+  });
+
+  describe("Absender aus der Umgebung", () => {
+    // Compose setzt MAIL_FROM_ADDRESS immer, mit leerer Vorgabe. Leer muss
+    // deshalb wie "nicht gesetzt" wirken: Absender aus APP_URL.
+    afterEach(() => {
+      vi.stubEnv("MAIL_FROM_ADDRESS", undefined);
+      vi.stubEnv("APP_NAME", undefined);
+    });
+
+    /** Absender im Umschlag und im Kopf der einen angenommenen Mail. */
+    async function absender(): Promise<{ umschlag: string | undefined; kopf: string | undefined }> {
+      expect(await mail.sendMail(MAIL)).toBe(true);
+      expect(nachrichten).toHaveLength(1);
+      const kopf = nachrichten[0].slice(0, nachrichten[0].indexOf(""));
+      return {
+        umschlag: befehle.find((b) => b.startsWith("MAIL FROM:")),
+        kopf: kopf.find((z) => z.startsWith("From:")),
+      };
+    }
+
+    it.each(["", "  "])("leitet ihn bei MAIL_FROM_ADDRESS=%j aus APP_URL ab", async (wert) => {
+      vi.stubEnv("MAIL_FROM_ADDRESS", wert);
+      expect(await absender()).toEqual({
+        umschlag: "MAIL FROM:<no-reply@wiki.example.org>",
+        kopf: "From: dokunc <no-reply@wiki.example.org>",
+      });
+    });
+
+    it("nimmt den Anzeigenamen aus APP_NAME und setzt ihn wo noetig in Anfuehrungszeichen", async () => {
+      vi.stubEnv("APP_NAME", "Wiki der Firma, Bern");
+      expect(await absender()).toEqual({
+        umschlag: "MAIL FROM:<no-reply@wiki.example.org>",
+        kopf: 'From: "Wiki der Firma, Bern" <no-reply@wiki.example.org>',
+      });
+    });
+
+    it("nimmt einen eigenen Wert, wie er gesetzt ist", async () => {
+      vi.stubEnv("MAIL_FROM_ADDRESS", " Handbuch <handbuch@firma.example> ");
+      expect(await absender()).toEqual({
+        umschlag: "MAIL FROM:<handbuch@firma.example>",
+        kopf: "From: Handbuch <handbuch@firma.example>",
+      });
+    });
   });
 
   it("meldet einen abgewiesenen Empfänger als dauerhaft", async () => {

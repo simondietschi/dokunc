@@ -1,3 +1,4 @@
+import { effectiveSender } from "@dokunc/config";
 import nodemailer, { type Transporter } from "nodemailer";
 
 /**
@@ -55,12 +56,6 @@ export function appUrl(): string {
   return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
 }
 
-function fromAddress(): string {
-  return (
-    process.env.MAIL_FROM_ADDRESS ??
-    `dokunc <no-reply@${new URL(appUrl()).hostname}>`
-  );
-}
 
 export function escapeHtml(s: string): string {
   return s.replace(
@@ -90,7 +85,10 @@ type MailMessage = {
 export async function sendMail(msg: MailMessage): Promise<boolean> {
   const t = mailTransport();
   if (!t) return false;
-  await t.sendMail({ from: fromAddress(), ...msg });
+  // Absender je Versand aus der Umgebung: MAIL_FROM_ADDRESS, leer oder
+  // nicht gesetzt "<APP_NAME> <no-reply@HOST>" mit dem Host aus APP_URL
+  // (packages/config, dieselbe Regel wie im Startlog und seiner Warnung).
+  await t.sendMail({ from: effectiveSender(process.env), ...msg });
   return true;
 }
 

@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@dokunc/config": "workspace:*",
     "nodemailer": "10.0.12"
   },
   "devDependencies": {

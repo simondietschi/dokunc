@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ANZEIGE_FEHLGESCHLAGEN, maskedConfig } from "../maskieren";
+import { maskedConfig } from "../maskieren";
 import { checkEnvironment } from "../pruefen";
 import type { Umgebung } from "../variable";
 import { GEMEINSAME_VARIABLEN } from "./gemeinsam";
@@ -14,23 +14,82 @@ function absenderImLog(env: Umgebung): unknown {
 }
 
 describe("MAIL_FROM_ADDRESS im Startlog", () => {
-  // Wie fromAddress() in packages/mail: ohne Wert "dokunc <no-reply@HOST>"
-  // mit dem Host aus APP_URL, sonst der Wert, wie er gesetzt ist.
+  // Der Absender, den die Mails tragen (effectiveSender): ohne Wert, auch
+  // leer oder nur Leerraum, "<APP_NAME> <no-reply@HOST>" mit dem Host aus
+  // APP_URL, sonst der Wert, getrimmt.
   it.each([
     [{ APP_URL: "https://wiki.firma.ch/" }, "dokunc <no-reply@wiki.firma.ch>"],
     [{ APP_URL: "http://10.0.0.5:3000" }, "dokunc <no-reply@10.0.0.5>"],
     [{}, "dokunc <no-reply@localhost>"],
-    [{ MAIL_FROM_ADDRESS: "Wiki <wiki@firma.ch>", APP_URL: "https://wiki.firma.ch" }, "Wiki <wiki@firma.ch>"],
+    [{ MAIL_FROM_ADDRESS: "", APP_URL: "https://wiki.firma.ch" }, "dokunc <no-reply@wiki.firma.ch>"],
+    [{ MAIL_FROM_ADDRESS: "  ", APP_URL: "https://wiki.firma.ch" }, "dokunc <no-reply@wiki.firma.ch>"],
+    [{ APP_NAME: "Firmenwiki", APP_URL: "https://wiki.firma.ch" }, "Firmenwiki <no-reply@wiki.firma.ch>"],
+    [{ MAIL_FROM_ADDRESS: " Wiki <wiki@firma.ch> ", APP_URL: "https://wiki.firma.ch" }, "Wiki <wiki@firma.ch>"],
   ])("zeigt fuer %j den wirksamen Absender %j", (env, erwartet) => {
     expect(absenderImLog(env)).toBe(erwartet);
   });
 
-  it("zeigt einen leeren Wert als leer, wie ihn nodemailer bekommt", () => {
-    expect(absenderImLog({ MAIL_FROM_ADDRESS: "", APP_URL: "https://wiki.firma.ch" })).toBeNull();
+  it("nimmt bei unbrauchbarer APP_URL localhost, wie die Mails", () => {
+    expect(absenderImLog({ APP_URL: "wiki.firma.ch" })).toBe("dokunc <no-reply@localhost>");
+  });
+});
+
+describe("MAIL_FROM_ADDRESS in der Pruefung beim Start", () => {
+  const pruefe = (env: Umgebung, dienst: "web" | "collab" = "web") =>
+    checkEnvironment(GEMEINSAME_VARIABLEN, env, dienst);
+  const von = (befunde: { variable: string; meldung: string }[]) =>
+    befunde.filter((b) => b.variable === "MAIL_FROM_ADDRESS").map((b) => b.meldung);
+
+  it("warnt beide Server, wenn Mails mit einer Domain ohne Zustellung hinausgehen", () => {
+    for (const dienst of ["web", "collab"] as const) {
+      const r = pruefe(
+        { SMTP_HOST: "smtp.firma.ch", MAIL_FROM_ADDRESS: "dokunc <no-reply@example.com>" },
+        dienst,
+      );
+      expect(r.ok, dienst).toBe(true);
+      expect(von(r.hinweise), dienst).toEqual([
+        'MAIL_FROM_ADDRESS: Mails gehen mit dem Absender "dokunc <no-reply@example.com>" hinaus. Die Domain example.com nimmt ' +
+          "kein Mailserver als Absender an: Einladungen und Passwort-Links landen im Spam oder werden " +
+          'abgewiesen. MAIL_FROM_ADDRESS auf eine Adresse der eigenen Domain setzen, z. B. "Wiki <wiki@ihre-firma.ch>".',
+      ]);
+    }
   });
 
-  it("zeigt bei unbrauchbarer APP_URL, dass der Absender nicht zu bestimmen ist", () => {
-    expect(absenderImLog({ APP_URL: "wiki.firma.ch" })).toBe(ANZEIGE_FEHLGESCHLAGEN);
+  it("warnt auch beim abgeleiteten Absender einer lokalen APP_URL", () => {
+    const r = pruefe({ SMTP_HOST: "smtp.firma.ch", APP_URL: "http://localhost:3000" });
+    expect(von(r.hinweise)).toEqual([expect.stringContaining('"dokunc <no-reply@localhost>"')]);
+  });
+
+  it("schweigt ohne SMTP_HOST und bei einer zustellbaren Domain", () => {
+    expect(von(pruefe({ MAIL_FROM_ADDRESS: "no-reply@example.com" }).hinweise)).toEqual([]);
+    expect(von(pruefe({ APP_URL: "http://localhost:3000" }).hinweise)).toEqual([]);
+    const gut = pruefe({ SMTP_HOST: "smtp.firma.ch", APP_URL: "https://wiki.firma.ch" });
+    expect(gut.ok).toBe(true);
+    expect(von(gut.hinweise)).toEqual([]);
+  });
+
+  it("bricht mit SMTP_HOST ab, wenn der Wert keine Adresse enthaelt", () => {
+    const r = pruefe({ SMTP_HOST: "smtp.firma.ch", MAIL_FROM_ADDRESS: "dokunc" });
+    expect(r.ok).toBe(false);
+    expect(von(r.fehler)).toEqual([
+      'MAIL_FROM_ADDRESS enthaelt keine Adresse (erwartet "Name <adresse@domain>" oder "adresse@domain"): "dokunc"',
+    ]);
+    // Ohne SMTP_HOST verschickt niemand Mails: nur ein Hinweis.
+    const ohne = pruefe({ MAIL_FROM_ADDRESS: "dokunc" });
+    expect(ohne.ok).toBe(true);
+    expect(von(ohne.hinweise)).toEqual([
+      expect.stringMatching(/^MAIL_FROM_ADDRESS enthaelt keine Adresse .*"dokunc"\. Ohne SMTP_HOST/),
+    ]);
+  });
+
+  it("bricht bei einem Zeilenumbruch ab, auch ohne SMTP_HOST", () => {
+    for (const wert of ["Wiki <wiki@firma.ch>\nBcc: x@y.ch", "wiki@firma.ch\r"]) {
+      const r = pruefe({ MAIL_FROM_ADDRESS: wert });
+      expect(r.ok, wert).toBe(false);
+      expect(von(r.fehler), wert).toEqual([
+        expect.stringMatching(/^MAIL_FROM_ADDRESS darf keinen Zeilenumbruch enthalten/),
+      ]);
+    }
   });
 });
 

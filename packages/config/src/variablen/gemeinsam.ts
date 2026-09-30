@@ -1,15 +1,17 @@
 import { parseNetworkList, parseProxyHops, type NetzListe } from "../client-address";
+import type { Ergebnis } from "../ergebnis";
 import { parseLogLevel } from "../log";
-import { defineVariable, type Umgebung, type Variable } from "../variable";
+import { effectiveSender, senderDomain, senderText, undeliverableDomain } from "../mail-absender";
+import { defineVariable, type Variable } from "../variable";
 
-/**
- * Der Absender ohne MAIL_FROM_ADDRESS, wie ihn fromAddress() in
- * packages/mail/src/index.ts bildet: Host aus APP_URL. Wirft bei
- * unbrauchbarer APP_URL wie dort.
- */
-function abgeleiteterAbsender(env: Umgebung): string {
-  const appUrl = (env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
-  return `dokunc <no-reply@${new URL(appUrl).hostname}>`;
+/** Leer oder nur Leerraum: nicht gesetzt (null), sonst getrimmt. */
+function parseMailAbsender(roh: string | undefined): Ergebnis<string | null> {
+  if (roh === undefined || roh.trim() === "") return { ok: true, wert: null };
+  // Ein Zeilenumbruch im Absender waere ein zusaetzlicher Kopf der Mail.
+  if (/[\r\n]/.test(roh)) {
+    return { ok: false, fehler: `MAIL_FROM_ADDRESS darf keinen Zeilenumbruch enthalten: ${JSON.stringify(roh)}` };
+  }
+  return { ok: true, wert: roh.trim() };
 }
 
 /**
@@ -29,15 +31,38 @@ export const GEMEINSAME_VARIABLEN: readonly Variable[] = [
     name: "MAIL_FROM_ADDRESS",
     dienste: ["web", "collab"],
     beschreibung:
-      'Sender of invitation, password reset and notification mails, for example "Wiki <wiki@example.org>".',
-    vorgabe: "dokunc <no-reply@HOST>, HOST from APP_URL",
-    // Noch ohne eigene Regel: der Wert geht unveraendert an nodemailer
-    // (packages/mail, fromAddress). Hier steht er, damit das Startlog
-    // den wirksamen Absender zeigt.
-    parse: (roh) => ({ ok: true, wert: roh ?? null }),
-    // Das Startlog zeigt den Absender, den die Mails tragen, auch ohne
-    // Wert; bei unbrauchbarer APP_URL "(Anzeige fehlgeschlagen)".
-    anzeige: (wert, env) => wert ?? abgeleiteterAbsender(env),
+      'Sender of invitation, password reset and notification mails, for example "Wiki <wiki@example.org>". Empty: APP_NAME and no-reply@ with the host name from APP_URL. The mail server must accept this domain as sender (SPF, DKIM).',
+    vorgabe: "APP_NAME <no-reply@HOST>, HOST from APP_URL",
+    parse: parseMailAbsender,
+    querpruefung: {
+      liest: ["SMTP_HOST", "APP_URL", "APP_NAME"],
+      pruefe(wert, _werte, env) {
+        // Ohne SMTP_HOST geht keine Mail hinaus (isMailConfigured() in
+        // packages/mail), der Absender spielt dann keine Rolle. Nur
+        // Leerraum zaehlt hier ebenso: damit kommt keine Verbindung zustande.
+        const smtp = (env.SMTP_HOST ?? "").trim() !== "";
+        if (wert !== null && !wert.includes("@")) {
+          const meldung =
+            'MAIL_FROM_ADDRESS enthaelt keine Adresse (erwartet "Name <adresse@domain>" oder "adresse@domain"): ' +
+            JSON.stringify(wert);
+          return smtp
+            ? { fehler: [meldung] }
+            : { hinweise: [`${meldung}. Ohne SMTP_HOST ungenutzt; mit SMTP_HOST bricht der Start ab.`] };
+        }
+        const absender = effectiveSender(env);
+        const domain = senderDomain(absender);
+        if (!smtp || domain === null || !undeliverableDomain(domain)) return {};
+        return {
+          hinweise: [
+            `Mails gehen mit dem Absender "${senderText(absender)}" hinaus. Die Domain ${domain} nimmt kein ` +
+              "Mailserver als Absender an: Einladungen und Passwort-Links landen im Spam oder werden abgewiesen. " +
+              'MAIL_FROM_ADDRESS auf eine Adresse der eigenen Domain setzen, z. B. "Wiki <wiki@ihre-firma.ch>".',
+          ],
+        };
+      },
+    },
+    // Das Startlog zeigt den Absender, den die Mails tragen, auch ohne Wert.
+    anzeige: (_wert, env) => senderText(effectiveSender(env)),
   }),
   defineVariable<NetzListe>({
     name: "RATE_LIMIT_EXEMPT_NETWORKS",

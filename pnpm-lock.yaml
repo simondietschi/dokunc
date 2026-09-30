@@ -346,6 +346,9 @@ importers:
 
   packages/mail:
     dependencies:
+      '@dokunc/config':
+        specifier: workspace:*
+        version: link:../config
       nodemailer:
         specifier: 10.0.12
         version: 10.0.12

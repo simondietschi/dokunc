@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 /**
  * Die Bindeadressen der Compose-Dateien.
@@ -265,5 +266,26 @@ describe("Caddy: TLS ueber CADDY_TLS", () => {
       .map((z) => z.trim())
       .filter((z) => z.startsWith("CADDY_TLS:"));
     expect(zeilen).toEqual(["CADDY_TLS: ${CADDY_TLS:-internal}"]);
+  });
+});
+
+describe("Mail-Absender: leere Vorgabe", () => {
+  // Mit einer festen Vorgabe (bisher no-reply@example.com) griff die
+  // Ableitung aus APP_URL nie, und Mailserver wiesen die Mails ab. Leer
+  // heisst jetzt "<APP_NAME> <no-reply@HOST>" (effectiveSender in
+  // packages/config), und wer .env.example ungeprueft kopiert, bekommt
+  // keine erfundene Domain.
+  it("docker-compose.yml reicht MAIL_FROM_ADDRESS mit leerer Vorgabe durch", () => {
+    const compose = parseYaml(lesen("docker-compose.yml")) as {
+      services: { app: { environment: Record<string, unknown> } };
+    };
+    expect(compose.services.app.environment.MAIL_FROM_ADDRESS).toBe("${MAIL_FROM_ADDRESS:-}");
+  });
+
+  it(".env.example setzt MAIL_FROM_ADDRESS leer", () => {
+    const zeilen = lesen(".env.example")
+      .split("\n")
+      .filter((z) => /^#?\s*MAIL_FROM_ADDRESS=/.test(z));
+    expect(zeilen).toEqual(['MAIL_FROM_ADDRESS=""']);
   });
 });

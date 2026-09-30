@@ -163,7 +163,8 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-false}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-dokunc <no-reply@example.com>}
+      # Absender der Mails; leer = "<APP_NAME> <no-reply@Host aus APP_URL>"
+      MAIL_FROM_ADDRESS: ${MAIL_FROM_ADDRESS:-}
       # Ohne Mailserver: wer den Einladungslink zur Weitergabe von Hand
       # sieht (admins oder managers, Einzelheiten in .env.example). Leer =
       # Vorgabe admins.

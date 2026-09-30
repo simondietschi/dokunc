@@ -415,6 +415,21 @@ differently on an existing installation, and what to do about it.
   session. After a rollback to an earlier version, signing out deletes no
   page copies.
 
+- **Mail sender:** the default of `MAIL_FROM_ADDRESS` in
+  `docker-compose.yml` is now empty (before: `dokunc
+  <no-reply@example.com>`), and an empty value means
+  `<APP_NAME> <no-reply@HOST>` with the host name from `APP_URL`
+  (`APP_NAME` defaults to `dokunc`). If your `.env` still contains
+  `no-reply@example.com` from the old `.env.example`, empty the value or
+  set an address of your own domain that your mail server may send as
+  (SPF, DKIM). With `SMTP_HOST` set, the app now warns at startup when
+  the sender domain cannot receive mail (`example.com`, `localhost`,
+  `.local`, `.test`, IP addresses, names without a dot). It stops at
+  startup (exit code 78) when `MAIL_FROM_ADDRESS` contains a line break,
+  or no email address while `SMTP_HOST` is set: set a value such as
+  `Wiki <wiki@your-company.example>` in that case. Otherwise nothing to
+  do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -714,3 +729,7 @@ differently on an existing installation, and what to do about it.
 - Copying a wiki link in the editor and pasting it turned it into an
   ordinary link whose text was the title stored in the link; it now stays
   a wiki link.
+- An empty `MAIL_FROM_ADDRESS` no longer sends mails with an empty
+  sender, and an `APP_URL` that is not a valid URL no longer makes every
+  mail fail: the sender then uses `localhost`, and the startup check
+  warns about it.

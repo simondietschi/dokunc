@@ -14,6 +14,13 @@ export { EXIT_KONFIGURATION, checkConfigAtStartup, type StartLog } from "./start
 export { LOG_LEVELS, LOG_REDACT, logLevelFrom, parseLogLevel, type LogLevel } from "./log";
 export { NOCH_OHNE_SCHEMA } from "./altbestand";
 export {
+  effectiveSender,
+  senderDomain,
+  senderText,
+  undeliverableDomain,
+  type MailAbsender,
+} from "./mail-absender";
+export {
   ADRESS_HINWEIS,
   AdressMelder,
   MAX_NETWORK_ENTRIES,
