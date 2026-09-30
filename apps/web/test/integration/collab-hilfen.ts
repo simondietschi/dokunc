@@ -3,6 +3,7 @@ import { getSchema, type AnyExtension } from "@tiptap/core";
 import { Transform } from "@tiptap/pm/transform";
 import { initProseMirrorDoc, updateYFragment } from "@tiptap/y-tiptap";
 import * as Y from "yjs";
+import { prisma } from "@dokunc/db";
 import { COLLAB_FIELD, richExtensions, schemaHash } from "@dokunc/editor";
 
 /**
@@ -27,6 +28,34 @@ export function tippe(doc: Y.Doc, text: string): void {
 /** Das Dokument als Text, wie es im Yjs-Feld des Editors steht. */
 export function inhalt(doc: Y.Doc): string {
   return doc.getXmlFragment(COLLAB_FIELD).toString();
+}
+
+/**
+ * Der gespeicherte Yjs-Stand einer Seite (CollabDocument) als Text wie
+ * `inhalt`; "" ohne Zeile oder bei unlesbarem Stand.
+ */
+export async function textImCollabDocument(pageId: string): Promise<string> {
+  const row = await prisma.collabDocument.findUnique({
+    where: { pageId },
+    select: { state: true },
+  });
+  if (!row) return "";
+  const doc = new Y.Doc();
+  try {
+    Y.applyUpdate(doc, new Uint8Array(row.state));
+  } catch {
+    return "";
+  }
+  return inhalt(doc);
+}
+
+/** Page.content einer Seite als JSON-Text. */
+export async function textInPageContent(pageId: string): Promise<string> {
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { content: true },
+  });
+  return JSON.stringify(page?.content ?? null);
 }
 
 /**

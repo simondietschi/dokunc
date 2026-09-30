@@ -75,6 +75,11 @@ A newer push to a pull request cancels the CI run that is still going for its pr
 
 **gitleaks finding.** The log of the step "Historie pruefen" names file, line, commit and fingerprint; the value itself is redacted. Treat the value as leaked: the repository is public, and the value was visible from the moment it was pushed. Revoke it first. Rewriting history does not undo the leak and is not done here. If the finding is a false positive, add its fingerprint to `.gitleaksignore`, with a comment line above it that says why. The printed fingerprint contains the commit (`<commit>:<file>:<rule>:<line>`); in a pull request that is not merged yet, use the form without the commit (`<file>:<rule>:<line>`), because a squash or rebase merge creates new commits and the fingerprint would no longer match on `main`. A `gitleaks:allow` comment on the line helps only before you push: gitleaks checks every commit in the history, so the comment has to be in the commit that adds the line. Added in a later commit, it does not clear a finding that CI has already reported.
 
+## Local test prerequisites
+
+- `pnpm test:integration` needs the database and Redis from `.env`. `apps/web/test/integration/collab-chaos.test.ts` also starts its own `redis-server` processes (version 7 or newer on `PATH`, for example your distribution's `redis-server` package), which it stops, fills up and restarts; it takes about three minutes. Without `redis-server` the file is skipped with a note, in CI (`CI` set) it fails.
+- `pnpm test:e2e` runs against a production build: run `pnpm build` before it after every change, otherwise Playwright tests the previous build. Outside CI it reuses servers that already run on ports 3000 and 3001.
+
 ## End-to-end tests
 
 `pnpm test:e2e` empties the database that `DATABASE_URL` points to; only local hosts are accepted. `e2e/first-account.setup.ts` registers the first account and creates the first space with its page "Willkommen". It runs as the Playwright project `erstes-konto` before every other file, also when you run a single file; the other files log in with that account. Name a new file after the behaviour it covers, such as `trash-and-version-restore.spec.ts`.

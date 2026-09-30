@@ -46,7 +46,7 @@ import { DOC_RESET_CHANNEL } from "@dokunc/editor";
  * | 13     | restore-version-collab.test.ts                             |
  * | 14     | restore-epoch.test.ts                                      |
  * | 15     | collab-redis-start.test.ts                                 |
- * | –      | Ausfalltests mit eigenem redis-server                      |
+ * | –      | collab-chaos.test.ts: eigene redis-server (./redis-privat)  |
  *
  * Pub/Sub gilt ueber alle Datenbanken: wer in einem Test mitliest,
  * filtert auf die IDs seines eigenen Falls.
@@ -62,6 +62,10 @@ export type Pruefserver = {
   redisUrl: string;
   /** Verbindung zu dieser Redis-Datenbank. */
   redis: Redis;
+  /** Prozess-ID des gestarteten Prozesses (tsx; der Server ist sein Kind). */
+  pid: number;
+  /** Laeuft der Prozess noch? Endet der Server, endet tsx mit ihm. */
+  laeuft(): boolean;
   /** Bisherige Ausgabe des Servers, fuer Fehlermeldungen. */
   log(): string;
   stop(): Promise<void>;
@@ -104,7 +108,13 @@ async function resetZuhoerer(redis: Redis): Promise<number> {
 }
 
 export async function startePruefserver(opts: {
-  redisDb: number;
+  /** Redis-Datenbank (Tabelle oben) am Redis aus REDIS_URL. */
+  redisDb?: number;
+  /**
+   * Stattdessen ein ganzes eigenes Redis (./redis-privat), etwa fuer
+   * Ausfalltests. Server und Pruefstand nutzen dann diese Adresse.
+   */
+  redisUrl?: string;
   /** Secret, mit dem der Test die Tickets signiert. */
   appSecret: string;
   env?: Record<string, string>;
@@ -123,8 +133,14 @@ export async function startePruefserver(opts: {
    */
   port?: number;
 }): Promise<Pruefserver> {
-  const redisUrl = redisUrlMitDb(opts.redisDb);
+  if (opts.redisUrl === undefined && opts.redisDb === undefined) {
+    throw new Error("startePruefserver braucht redisDb oder redisUrl");
+  }
+  const redisUrl = opts.redisUrl ?? redisUrlMitDb(opts.redisDb!);
   const redis = new Redis(redisUrl, { maxRetriesPerRequest: 1 });
+  // Ausfalltests halten das Redis an; ohne Handler schriebe ioredis jeden
+  // Verbindungsfehler als "Unhandled error event" auf stderr.
+  redis.on("error", () => undefined);
   // Ein eben beendeter Server kann noch einen Moment als Abonnent zaehlen,
   // bis Redis das Ende seiner Verbindung verarbeitet hat.
   const exklusivBis = Date.now() + 3_000;
@@ -144,7 +160,8 @@ export async function startePruefserver(opts: {
     );
   }
   if (opts.exklusiv) await redis.flushdb();
-  await redis.set("dokunc:mail-dispatch:lock", "pruefstand", "PX", 300_000);
+  // Laenger als jede Testdatei: der Ausfalltest laeuft einige Minuten.
+  await redis.set("dokunc:mail-dispatch:lock", "pruefstand", "PX", 1_800_000);
 
   let ausgabe = "";
   const child: ChildProcess = spawn(
@@ -228,6 +245,8 @@ export async function startePruefserver(opts: {
     port,
     redisUrl,
     redis,
+    pid: child.pid!,
+    laeuft: () => child.exitCode === null && child.signalCode === null,
     log: () => ausgabe,
     stop,
   };

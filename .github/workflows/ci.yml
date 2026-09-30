@@ -265,12 +265,29 @@ jobs:
       - name: Run migrations
         run: pnpm --filter @dokunc/db migrate:deploy
 
+      # Der Ausfalltest (apps/web/test/integration/collab-chaos.test.ts)
+      # startet eigene redis-server-Prozesse, die er anhaelt, voll macht
+      # und neu startet; den Dienst-Container oben kann er dafuer nicht
+      # nehmen. policy-rc.d haelt das Paket davon ab, einen System-Redis
+      # auf 6379 zu starten, wo der Dienst-Container lauscht. Ubuntu 24.04
+      # liefert Redis 7.0, die kleinste Version, die der Collab-Server
+      # braucht. Ohne redis-server scheitert der Test hier (CI gesetzt).
+      - name: redis-server fuer den Chaos-Test
+        run: |
+          printf '#!/bin/sh\nexit 101\n' | sudo tee /usr/sbin/policy-rc.d >/dev/null
+          sudo chmod +x /usr/sbin/policy-rc.d
+          sudo apt-get update -q
+          sudo apt-get install -y --no-install-recommends redis-server
+          sudo rm /usr/sbin/policy-rc.d
+          redis-server --version
+
       # Autorisierungstests gegen die echte Datenbank: die Regeln
       # stecken in den Abfragen, ein Mock würde sie nur nachbauen.
-      # Gemessen bis 3:42 (Ende September 2026); die Tests des
-      # Collab-Servers mit eigenen Prozessen kommen noch dazu. Haengt ein
-      # Test, scheitert der Schritt nach 15 min, statt dass die Grenze des
-      # Jobs ablaeuft und den Upload unten mitnimmt.
+      # Gemessen bis 3:42 (Ende September 2026); mit den Tests des
+      # Collab-Servers mit eigenen Prozessen lokal 8:30, davon gut 3 min
+      # der Ausfalltest. Haengt ein Test, scheitert der Schritt nach
+      # 15 min, statt dass die Grenze des Jobs ablaeuft und den Upload
+      # unten mitnimmt.
       - name: Authorization integration tests
         timeout-minutes: 15
         run: pnpm test:integration
