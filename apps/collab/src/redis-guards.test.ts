@@ -206,3 +206,38 @@ describe("createTicketLedger", () => {
     expect(await consume("jti-1", 120)).toBe(true);
   });
 });
+
+describe("createTicketLedger waehrend eines bekannten Ausfalls", () => {
+  // Waehrend eines Ausfalls wartete der Verbrauch bis zur naechsten
+  // Ablehnung der Warteschlange von ioredis (bis etwa 6 s), und so lange
+  // hing jeder Verbindungsaufbau. `gestoert` meldet erst eine Stoerung von
+  // mehr als einer Sekunde (server.ts): ein kurzer Neuaufbau wartet
+  // weiter und verbraucht das Ticket in Redis.
+  it("merkt den Verbrauch im Prozess, ohne auf Redis zu warten, solange die Verbindung gestoert ist", async () => {
+    const { redis, strings } = fakeRedis();
+    const echtesSet = redis.set.bind(redis);
+    // Wie ein Befehl in der Warteschlange eines getrennten Clients.
+    const set = vi.fn<GuardRedis["set"]>(() => new Promise(() => {}));
+    redis.set = set;
+    const onError = vi.fn();
+    let gestoert = true;
+    const consume = createTicketLedger(
+      redis,
+      onError,
+      Date.now,
+      () => gestoert,
+    );
+    expect(await consume("jti-1", 120)).toBe(true);
+    expect(await consume("jti-1", 120)).toBe(false);
+    expect(set).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(1);
+    expect(String(onError.mock.calls[0][0])).toContain("Redis nicht verbunden");
+
+    gestoert = false;
+    redis.set = echtesSet;
+    expect(await consume("jti-2", 120)).toBe(true);
+    expect(strings.has("dokunc:collab-ticket:jti-2")).toBe(true);
+    // Was im Ausfall im Prozess verbraucht wurde, bleibt verbraucht.
+    expect(await consume("jti-1", 120)).toBe(false);
+  });
+});

@@ -155,9 +155,10 @@ const redis = createRedisClient(
 redis.on("error", (e: Error) => log.warn({ err: e }, "redis"));
 /**
  * Seit mehr als SCHNELLWEG_NACH_MS weg? Dann warten Bremse,
- * Snapshot-Drossel und Mitwirkende nicht mehr auf Redis, sondern nehmen
- * sofort ihren Ersatz (./redis-status). Der Ticketverbrauch wartet
- * weiter (./redis-guards).
+ * Ticketverbrauch, Snapshot-Drossel und Mitwirkende nicht mehr auf Redis,
+ * sondern nehmen sofort ihren Ersatz (./redis-status). Waehrend eines
+ * kuerzeren Neuaufbaus warten sie, der Ticketverbrauch also in Redis
+ * (./redis-guards).
  */
 const redisZustand = new RedisZustand(redis);
 const redisGestoert = () => redisZustand.gestoert(SCHNELLWEG_NACH_MS);
@@ -218,11 +219,15 @@ const attemptConnection = createAttemptLimiter(
   Date.now,
   redisGestoert,
 );
-const consumeTicket = createTicketLedger(redis, (err) =>
-  log.warn(
-    { err },
-    "Ticketverbrauch: Redis nicht erreichbar, merke im Prozess",
-  ),
+const consumeTicket = createTicketLedger(
+  redis,
+  (err) =>
+    log.warn(
+      { err },
+      "Ticketverbrauch: Redis nicht erreichbar, merke im Prozess",
+    ),
+  Date.now,
+  redisGestoert,
 );
 
 /**

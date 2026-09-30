@@ -101,13 +101,13 @@ import {
 const TAKT_MS = 200;
 const ABGLEICH_MS = 30_000;
 /**
- * Kriterium 6. Anmelden und Laden gehen waehrend eines bekannten
- * Ausfalls ohne Warten an Redis vorbei, nur der Ticketverbrauch wartet
- * weiter auf Redis (bis zur naechsten Ablehnung der Warteschlange, 0 bis
- * 3 s; ein kurzer Wackler soll kein Ticket zweimal gueltig machen).
- * Ohne den Schnellweg warteten drei Befehle nacheinander, 6 bis 9 s.
+ * Kriterium 6. Bremse, Ticketverbrauch und Laden gehen waehrend eines
+ * Ausfalls, der schon laenger als eine Sekunde dauert, ohne Warten an
+ * Redis vorbei (gemessen unter 1 s). Ohne diesen Schnellweg warteten drei
+ * Befehle nacheinander je bis zur naechsten Ablehnung der Warteschlange,
+ * 6 bis 9 s.
  */
-const GRENZE_NEUE_VERBINDUNG_MS = 5_000;
+const GRENZE_NEUE_VERBINDUNG_MS = 3_000;
 const VERBOTEN = [
   "Unbehandelte Ablehnung",
   "Unbehandelter Fehler",

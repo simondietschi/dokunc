@@ -105,11 +105,15 @@ export function createAttemptLimiter(
 /**
  * Collab-Tickets genau einmal einloesen.
  *
- * Bewusst ohne Schnellweg bei gestoerter Verbindung: waehrend eines
- * kurzen Neuaufbaus wartet der Befehl und gelingt danach, das Ticket ist
- * dann in Redis verbraucht. Ginge jeder Verbrauch in dieser Zeit in den
- * Speicher dieses Prozesses, galte dasselbe Ticket auf einer anderen
- * Instanz noch einmal.
+ * `gestoert` (./redis-status) meldet eine Stoerung erst, wenn sie laenger
+ * als eine Sekunde dauert (server.ts). Waehrend eines kurzen Neuaufbaus
+ * wartet der Befehl also und gelingt danach, das Ticket ist dann in Redis
+ * verbraucht. Ginge jeder Verbrauch in dieser Zeit in den Speicher dieses
+ * Prozesses, galte dasselbe Ticket bei jedem Wackler auf einer anderen
+ * Instanz noch einmal. Dauert der Ausfall laenger, merkt sich der
+ * Verbrauch das Ticket sofort im Prozess. Das tat er auch vorher, aber
+ * erst nach der naechsten Ablehnung der Warteschlange von ioredis (bis
+ * etwa 6 s), und so lange hing jeder Verbindungsaufbau.
  *
  * Das Ticket gilt zwei Minuten und wurde bisher bei jedem Verbinden nur
  * geprueft: wer es abfing (Proxy-Log, Erweiterung, geteilter Rechner),
@@ -125,6 +129,7 @@ export function createTicketLedger(
   redis: GuardRedis,
   onRedisError: (err: unknown) => void,
   now: () => number = Date.now,
+  gestoert: () => boolean = () => false,
 ) {
   const mem = new Map<string, number>();
 
@@ -139,6 +144,7 @@ export function createTicketLedger(
     if (known !== undefined && known > t) return false;
     const ttl = Math.max(1, Math.ceil(ttlSec));
     try {
+      if (gestoert()) throw new Error("Redis nicht verbunden");
       const res = await redis.set(
         `dokunc:collab-ticket:${jti}`,
         "1",
