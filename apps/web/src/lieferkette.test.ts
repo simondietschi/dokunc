@@ -14,9 +14,9 @@ import { parse } from "yaml";
  * gegen die Ausnahmen von Dependabot; die pnpm-Version an jeder Stelle;
  * die Ausnahmen fuer pnpm audit und Trivy (eng und befristet); die
  * Zeitgrenzen und die concurrency-Gruppen aller Workflows; die
- * Service-Images des e2e-Jobs gegen docker-compose.yml. Das Geruest des Workflows steht in einem Test. Ob
- * die Befehle wirklich laufen, prueft der CI-Job docker, ob die Gates
- * greifen, die Jobs audit und docker.
+ * Service-Images des e2e-Jobs gegen docker-compose.yml. Das Geruest des
+ * Workflows steht in einem Test. Ob die Befehle wirklich laufen, prueft
+ * der CI-Job docker, ob die Gates greifen, die Jobs audit und docker.
  */
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -310,9 +310,17 @@ describe("Lieferkette", () => {
       }
     }
 
+    // Kurze Jobs ohne Install und Build: audit liest nur das Lockfile
+    // (laengster Lauf 0.6 min), geheimnisse nur die Historie (unter 2 s).
+    // 5 min lassen ein Vielfaches; mehr liesse einen Haenger nur laenger
+    // laufen.
+    const wf = ci();
+    for (const name of ["audit", "geheimnisse"]) {
+      expect(wf.jobs[name]?.["timeout-minutes"], `ci.yml:${name}`).toBeLessThanOrEqual(5);
+    }
+
     // Die Integrationstests laufen im Job e2e vor Playwright. Haengen sie,
     // soll ihr Schritt scheitern und nicht die Grenze des Jobs ablaufen.
-    const wf = ci();
     const e2e = wf.jobs.e2e;
     const integration = e2e?.steps?.find((s) =>
       runZeilen(s).includes("pnpm test:integration"),

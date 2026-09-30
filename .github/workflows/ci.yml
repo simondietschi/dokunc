@@ -52,7 +52,7 @@ jobs:
   audit:
     name: Bekannte Luecken (pnpm audit, Trivy)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - name: pnpm installieren
