@@ -180,6 +180,10 @@ differently on an existing installation, and what to do about it.
   started, servers with an older one disconnect their editors and accept
   no new ones, also when an older version is started again later on the
   same data.
+- `docs/admin/upgrading.md`: what an update does to open editor tabs, the
+  deploy order for separate services and several collaboration servers,
+  rolling back across an update that changed the editor, and the log
+  lines to watch.
 
 ### Changed
 
@@ -201,6 +205,9 @@ differently on an existing installation, and what to do about it.
   deviations are stored as before, with the warning "Seiteninhalt weicht
   vom Editor-Schema ab, trotzdem uebernommen" at most once per hour and
   page.
+- Several collaboration servers or separate web and collaboration
+  services: update all of them to the same release, collaboration servers
+  first (see `docs/admin/upgrading.md`).
 
 ### Removed
 
