@@ -113,8 +113,24 @@ angelegt() { docker volume inspect -f '{{.CreatedAt}}' "$1_db_data" 2>/dev/null 
 # Tag eines Anlagedatums fuer Meldungen.
 tag() { if [ -n "$1" ]; then printf '%s' "${1:0:10}"; else printf 'unbekannt'; fi; }
 
-# Sekunden seit 1970 oder leer, wenn das Datum nicht lesbar ist.
-sekunden() { date -d "$1" +%s 2>/dev/null || true; }
+# Sekunden seit 1970 oder leer, wenn das Datum nicht lesbar ist. Docker
+# meldet RFC 3339 in der Zeitzone des Dienstes ("2026-05-19T08:00:00Z",
+# "…+02:00", auch mit Bruchteilen). GNU date liest das mit -d; BSD date
+# (macOS) kennt -d nicht und braucht -j -f mit festem Format, ohne
+# Bruchteile und ohne Doppelpunkt im Versatz.
+sekunden() {
+  local t
+  [ -n "$1" ] || return 0
+  if date -d "$1" +%s 2>/dev/null; then return 0; fi
+  t=$(printf '%s' "$1" | sed -E 's/\.[0-9]+//; s/Z$/+0000/; s/([+-][0-9]{2}):([0-9]{2})$/\1\2/')
+  date -j -f '%Y-%m-%dT%H:%M:%S%z' "$t" +%s 2>/dev/null || true
+}
+
+# Hinweis, wenn ein Anlagedatum ($2 von Projekt $1) nicht lesbar ist.
+unlesbar() {
+  printf 'Hinweis: Das Anlagedatum von %s (%s) lässt sich nicht lesen; ob ein anderes dokunc-Projekt ältere Daten hat, bleibt ungeprüft. Den Namen festschreiben, wenn hier mehrere Installationen laufen (docs/admin/compose-project.md).\n' \
+    "$1" "${2:-unbekannt}" >&2
+}
 
 # Compose-Projekte mit einem Volume der Art $1 (app_data, db_data,
 # uploads), sortiert, eines je Zeile.
@@ -278,11 +294,13 @@ fi
 # laufen hier absichtlich mehrere Installationen.
 if [ -n "$EIGENES" ] && [ "$QUELLE" = "aus docker-compose.yml" ]; then
   EIGEN_S=$(sekunden "$EIGENES")
+  if [ -z "$EIGEN_S" ] && [ ${#ANDERE[@]} -gt 0 ]; then unlesbar "$AKTUELL" "$EIGENES"; fi
   # Anlagedatum $1 liegt vor dem der eigenen Daten.
   aelter() { local s; s=$(sekunden "$1"); [ -n "$EIGEN_S" ] && [ -n "$s" ] && [ "$s" -lt "$EIGEN_S" ]; }
   AELTER=()
   for p in "${ANDERE[@]}"; do
     a=$(angelegt "$p")
+    if [ -n "$EIGEN_S" ] && [ -z "$(sekunden "$a")" ]; then unlesbar "$p" "$a"; fi
     if aelter "$a"; then AELTER+=("$p (angelegt $(tag "$a"))"); fi
   done
 

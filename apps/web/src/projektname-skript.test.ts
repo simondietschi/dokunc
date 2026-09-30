@@ -70,6 +70,33 @@ function run(dir: string, args: string[] = [], env: Record<string, string> = {})
   };
 }
 
+/**
+ * bin/date wie BSD date (macOS): kein -d, dafuer
+ * `date -j -f '%Y-%m-%dT%H:%M:%S%z' 2026-05-19T08:00:00+0000 +%s`.
+ * Mit FAKE_DATUM_KAPUTT liest es gar kein Datum.
+ */
+function bsdDatum(dir: string): void {
+  const datei = join(dir, "bin/date");
+  writeFileSync(
+    datei,
+    `#!/usr/bin/env bash
+echt=$(PATH="\${PATH#*:}" command -v date)
+case "\${1:-}" in
+  -d|--date*) echo "date: illegal option -- d" >&2; exit 1 ;;
+  -j)
+    if [ -z "\${FAKE_DATUM_KAPUTT:-}" ] && [ "\${2:-}" = -f ] && [ "\${3:-}" = '%Y-%m-%dT%H:%M:%S%z' ] \\
+      && [[ "\${4:-}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}$ ]]; then
+      exec "$echt" -d "$4" "\${5:-+%s}"
+    fi
+    echo "Failed conversion of \\\`\${4:-}' using format \\\`\${3:-}'" >&2
+    exit 1 ;;
+esac
+exec "$echt" "$@"
+`,
+  );
+  chmodSync(datei, 0o755);
+}
+
 const lesen = (pfad: string) => readFileSync(pfad, "utf8");
 const modus = (pfad: string) => statSync(pfad).mode & 0o777;
 
@@ -155,6 +182,32 @@ describe("scripts/projektname.sh: Pruefen", () => {
     });
     expect(nachher.status).toBe(2);
     expect(nachher.stderr).toContain("das dokunc-Projekt wikialt (angelegt 2026-05-19) hat aber ältere.");
+  });
+
+  it("vergleicht die Anlagedaten auch mit BSD date (macOS)", () => {
+    // Umzug nach /srv/dokunc: der Verzeichnisname hilft nicht, nur das
+    // Alter zeigt die neue, leere Instanz. Docker meldet die Zeit in der
+    // Zone des Dienstes, auch mit Versatz.
+    const dir = repoIn("dokunc");
+    bsdDatum(dir);
+    const r = run(dir, [], { FAKE_VOLUMES: volumes(["altwiki", "2026-05-19T10:00:00+02:00"], ["dokunc", NEU]) });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("das dokunc-Projekt altwiki (angelegt 2026-05-19) hat aber ältere.");
+  });
+
+  it("nennt ein Anlagedatum, das sich nicht lesen laesst", () => {
+    const dir = repoIn("dokunc");
+    bsdDatum(dir);
+    const r = run(dir, [], {
+      FAKE_VOLUMES: volumes(["altwiki", ALT], ["dokunc", NEU]),
+      FAKE_DATUM_KAPUTT: "1",
+    });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toBe(
+      "Hinweis: Das Anlagedatum von dokunc (2026-09-30T10:00:00Z) lässt sich nicht lesen; ob ein anderes " +
+        "dokunc-Projekt ältere Daten hat, bleibt ungeprüft. Den Namen festschreiben, wenn hier mehrere " +
+        "Installationen laufen (docs/admin/compose-project.md).\n",
+    );
   });
 
   it("meldet nichts, wenn die eigenen Daten die aelteren sind", () => {
