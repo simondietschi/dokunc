@@ -16,9 +16,9 @@
  *
  * `fenster` ist immer in Sekunden.
  *
- * Die Bremsen je Adresse lassen sich per Umgebung einstellen
- * (BREMSEN_AUS_DER_UMGEBUNG): hinter einer Firmen-NAT teilen sich viele
- * Menschen eine Adresse. Alle anderen stehen fest.
+ * Die Bremsen je Adresse und die Upload-Bremse lassen sich per Umgebung
+ * einstellen (BREMSEN_AUS_DER_UMGEBUNG): hinter einer Firmen-NAT teilen
+ * sich viele Menschen eine Adresse. Alle anderen stehen fest.
  */
 
 import type { Ergebnis } from "@dokunc/config";
@@ -61,7 +61,7 @@ export const RATE_LIMIT_VORGABEN = {
   /** Vorschlaege in der Palette: feuert noch dichter als die Suche. */
   suggest: { versuche: 240, fenster: 60 },
 
-  /** Upload, pro IP: begrenzt, wie schnell die Platte vollaeuft. */
+  /** Upload je Konto: begrenzt, wie schnell die Platte vollaeuft. */
   upload: { versuche: 30, fenster: 60 },
   /** Import: jeder Lauf kann bis zu 2000 Seiten anlegen. */
   import: { versuche: 5, fenster: 600 },
@@ -95,7 +95,8 @@ export type BremsName = keyof typeof RATE_LIMIT_VORGABEN;
 /**
  * Per Umgebung einstellbar: Schluessel -> Variable. Nur Bremsen, bei denen
  * Betreiber einen Grund zum Anpassen haben (viele Menschen hinter einer
- * Adresse); die Sicherheitsbremsen je Konto bleiben fest. Deklariert in
+ * Adresse, Menge der Uploads); die Sicherheitsbremsen je Konto bleiben
+ * fest. Deklariert in
  * lib/config/variablen.ts.
  */
 export const BREMSEN_AUS_DER_UMGEBUNG = {
@@ -104,6 +105,7 @@ export const BREMSEN_AUS_DER_UMGEBUNG = {
   register: "RATE_LIMIT_REGISTER_PER_IP",
   resetRequest: "RATE_LIMIT_RESET_REQUEST_PER_IP",
   resetSubmit: "RATE_LIMIT_RESET_SUBMIT_PER_IP",
+  upload: "RATE_LIMIT_UPLOAD_PER_USER",
 } as const satisfies Partial<Record<BremsName, string>>;
 
 const HOECHSTENS_VERSUCHE = 100_000;

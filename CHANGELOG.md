@@ -309,6 +309,12 @@ differently on an existing installation, and what to do about it.
   invalid value stops the start. Use the same values on every instance.
   Nothing to do if the defaults fit; see `docs/admin/network.md`.
 
+- **Upload limit per account:** file uploads are now limited to 30 per
+  minute per account instead of per client address, so that people behind
+  one address no longer slow each other down. The new setting
+  `RATE_LIMIT_UPLOAD_PER_USER` (format `30/1m`) changes the limit.
+  Nothing to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -417,6 +423,7 @@ differently on an existing installation, and what to do about it.
   (`RATE_LIMIT_LOGIN_PER_IP`, `RATE_LIMIT_REGISTER_PER_IP`,
   `RATE_LIMIT_RESET_REQUEST_PER_IP`, `RATE_LIMIT_RESET_SUBMIT_PER_IP`,
   `RATE_LIMIT_SSO_START_PER_IP`), checked at startup.
+- `RATE_LIMIT_UPLOAD_PER_USER` for the upload limit per account.
 
 ### Changed
 
@@ -458,6 +465,7 @@ differently on an existing installation, and what to do about it.
   like the collaboration server.
 - The default limit for single sign-on starts per client address is 600
   per hour (was 20 per 5 minutes).
+- The upload rate limit counts per account instead of per client address.
 
 ### Removed
 

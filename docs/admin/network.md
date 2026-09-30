@@ -199,7 +199,8 @@ above.
 ## Rate limit settings
 
 The web app limits sign-in, registration, password reset and single
-sign-on per client address. These limits can be set in `.env`; all others
+sign-on per client address, and file uploads per account. These limits
+can be set in `.env`; all others
 (per account, per email address, two-factor codes, password confirmation)
 are fixed on purpose, because many people behind one address do not
 affect them.
@@ -211,6 +212,7 @@ affect them.
 | `RATE_LIMIT_RESET_REQUEST_PER_IP` | `5/15m` | password reset requests per address (the limit of 3 per hour per email address stays) |
 | `RATE_LIMIT_RESET_SUBMIT_PER_IP` | `10/15m` | new passwords set through a reset link, per address |
 | `RATE_LIMIT_SSO_START_PER_IP` | `600/1h` | single sign-on starts per address |
+| `RATE_LIMIT_UPLOAD_PER_USER` | `30/1m` | file uploads per **account** (not per address: uploads need a signed-in account, and what fills the disk is the account) |
 
 - **Format:** `<attempts>/<window>`, for example `30/5m`. The window is in
   seconds, or with the unit `s`, `m` or `h`; at most `24h`. Attempts from 1

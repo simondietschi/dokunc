@@ -29,6 +29,7 @@ describe("Vorgaben der Bremsen", () => {
     expect(RATE_LIMIT_VORGABEN.resetRequest).toEqual({ versuche: 5, fenster: 900 });
     expect(RATE_LIMIT_VORGABEN.resetSubmit).toEqual({ versuche: 10, fenster: 900 });
     expect(RATE_LIMIT_VORGABEN.login).toEqual({ versuche: 8, fenster: 900 });
+    expect(RATE_LIMIT_VORGABEN.upload).toEqual({ versuche: 30, fenster: 60 });
   });
 });
 
@@ -41,6 +42,10 @@ describe("wirksameBremse", () => {
     expect(wirksameBremse("oidcStart", { RATE_LIMIT_SSO_START_PER_IP: "1000/2h" })).toEqual({
       versuche: 1000,
       fenster: 7200,
+    });
+    expect(wirksameBremse("upload", { RATE_LIMIT_UPLOAD_PER_USER: "100/1m" })).toEqual({
+      versuche: 100,
+      fenster: 60,
     });
   });
 

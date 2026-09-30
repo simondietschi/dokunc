@@ -127,6 +127,7 @@ export const NUR_WEB_VARIABLEN: readonly Variable[] = [
   ),
   bremse("resetSubmit", "Password reset submissions (new password with the link) per client address."),
   bremse("oidcStart", "Single sign-on starts per client address."),
+  bremse("upload", "File uploads per account."),
   defineVariable<string>({
     name: "SETUP_TOKEN_FILE",
     dienste: ["web"],

@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@dokunc/db";
 import { getCurrentUser } from "@/lib/current-user";
 import { isSameOrigin, originRejectionHint } from "@/lib/origin";
-import { rateLimit, clientKey } from "@/lib/rate-limit";
+import { rateLimit } from "@/lib/rate-limit";
 import { can } from "@/lib/permissions";
 import { effectiveRole } from "@/lib/space-access";
 import { canSeePage } from "@/lib/page-access";
@@ -68,8 +68,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   }
 
+  // Je Konto, nicht je Adresse: hinter einer Firmen-NAT teilen sich viele
+  // Menschen eine Adresse, und die Route ist ohnehin nur angemeldet
+  // erreichbar. Was die Platte fuellt, ist das Konto, nicht der Anschluss.
   if (!(await rateLimit(
-      await clientKey("upload"),
+      `upload:${user.id}`,
       RATE_LIMITS.upload.versuche,
       RATE_LIMITS.upload.fenster,
     ))) {
