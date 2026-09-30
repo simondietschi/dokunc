@@ -88,6 +88,6 @@ Published Git history and applied database migrations stay as they are. Prisma s
 These rules rely on repository settings that are not stored in the repository:
 
 - **Merging:** "Allow merge commits" with the default commit message "Pull request title", so the subject on `main` is the checked title. Rebase merging is off. Squash merging is off, or its default commit message is "Pull request title"; otherwise a pull request with a single commit lands with that commit's subject.
-- **Required checks:** a ruleset for `main` requires the checks above once each of them has passed on `main`.
+- **Required checks:** a ruleset for `main` requires the checks above once each of them has passed with its workflow on `main`: CI and CodeQL on `main` itself, the PR title check on the first pull request after `pr-title.yml` is on `main`, since it runs only on pull requests.
 - **Secret scanning:** "Secret Protection" and its push protection are on for the repository (Settings → Advanced Security). Push protection blocks known token formats before they land; gitleaks in CI covers the history and generic secrets.
 - **Code scanning:** CodeQL "Default setup" stays off; while it is on, GitHub rejects the results of `codeql.yml`. The CodeQL checks become required only after the alerts of the first analysis of `main` have been triaged.
