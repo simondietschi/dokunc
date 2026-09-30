@@ -134,6 +134,31 @@ describe("scripts/restore.sh", () => {
     expect(r.out.split("\n")[0]).toBe("Compose-Projekt: wikialt");
   });
 
+  it("laeuft ohne scripts/projektname.sh im Baum", () => {
+    // Rueckweg im README ("Update und Rückweg") auf einen Stand von vor
+    // restore.sh: git checkout des alten Stands, nur restore.sh kommt aus
+    // main. Die uebrigen Skripte sind die des alten Stands.
+    rmSync(join(dir, "scripts/projektname.sh"));
+    sicherung();
+    const r = run(["--ja", "--ohne-vorsicherung", TS], { env: { FAKE_PROJEKT: "wikialt" } });
+    expect(r.status, r.out).toBe(0);
+    expect(r.out.split("\n")[0]).toBe("Compose-Projekt: wikialt");
+    expect(r.out).toContain(`✓ Zurückgespielt: Stand vom ${TS}.`);
+    expect(r.protokoll).toContain("compose up -d --wait --wait-timeout 300");
+  });
+
+  it("bricht ab, bevor etwas angefasst wird, wenn der Projektname nicht bestimmbar ist", () => {
+    sicherung();
+    const r = run(["--ja", "--ohne-vorsicherung", TS], { env: { FAKE_CONFIG_EXIT: "15" } });
+    expect(r.status).toBe(1);
+    expect(r.out).toContain(
+      "✗ docker compose config gescheitert, der Projektname ist nicht bestimmbar:\n" +
+        "  env file .env: unexpected character in variable name\n" +
+        "Datenbank und App unverändert.\n",
+    );
+    expect(r.protokoll.trim().split("\n")).toEqual(["ARGS compose config"]);
+  });
+
   it("nennt das Compose-Projekt in der Rueckfrage", () => {
     sicherung();
     // Ein Terminal fuer die Rueckfrage: script(1) startet das Skript in

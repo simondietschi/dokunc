@@ -22,7 +22,7 @@
 #                   Namen, wenn es dessen Volumes gibt, sonst den
 #                   aktuellen. Aendert nichts, wenn der Name schon in der
 #                   .env oder in der Umgebung steht.
-#   --name          gibt nur den Namen aus (fuer backup.sh und restore.sh).
+#   --name          gibt nur den Namen aus (wie restore.sh ihn bestimmt).
 # Exit 3: falscher Aufruf, docker compose config gescheitert, Docker
 # nicht erreichbar (eine Abfrage der Volumes scheitert anders als mit "no
 # such volume") oder .env nicht schreibbar. Dann ist nichts geaendert.

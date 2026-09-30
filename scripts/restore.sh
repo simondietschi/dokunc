@@ -144,7 +144,19 @@ fi
 
 # Welches Projekt ersetzt wird: nach einem Umzug ohne festgeschriebenen
 # Namen waere es eine neue, leere Instanz (./scripts/projektname.sh).
-PROJEKT=$(./scripts/projektname.sh --name)
+# Direkt aus docker compose config wie projektname.sh --name, nicht ueber
+# das Skript: der Rueckweg im README holt nur restore.sh in einen alten
+# Stand, der projektname.sh nicht kennt.
+CONFIG_FEHLER=$(mktemp)
+PROJEKT=$(docker compose config 2>"$CONFIG_FEHLER" | sed -n '1s/^name: //p') || PROJEKT=""
+if [ -z "$PROJEKT" ]; then
+  echo "✗ docker compose config gescheitert, der Projektname ist nicht bestimmbar:" >&2
+  sed -n '1,10p' "$CONFIG_FEHLER" | sed 's/^/  /' >&2
+  rm -f "$CONFIG_FEHLER"
+  echo "Datenbank und App unverändert." >&2
+  exit 1
+fi
+rm -f "$CONFIG_FEHLER"
 echo "Compose-Projekt: $PROJEKT"
 
 echo "→ Datenbank starten…"
