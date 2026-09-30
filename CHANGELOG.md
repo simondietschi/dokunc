@@ -455,9 +455,12 @@ differently on an existing installation, and what to do about it.
   run `./scripts/projektname.sh --festschreiben` after `git pull` and
   before `docker compose up`: it writes the previous name to `.env`.
   Without it, Docker Compose starts a new, empty instance next to your
-  data (the data stays in the old volumes). `./scripts/projektname.sh`
-  without options checks this; if the update was already started, go
-  back with `docker compose -p dokunc down` (without `-v`), then
+  data (the data stays in the old volumes); on a host where another
+  installation already uses the project `dokunc`, it takes over that
+  installation's containers and database instead.
+  `./scripts/projektname.sh` without options checks this and names the
+  way back if the update was already started; for the new, empty
+  instance it is `docker compose -p dokunc down` (without `-v`), then
   `./scripts/projektname.sh --festschreiben` and `docker compose up -d`
   (see `docs/admin/compose-project.md`). While the check fails,
   `scripts/backup.sh` warns on stderr and deletes no old backups. If your

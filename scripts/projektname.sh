@@ -9,10 +9,14 @@
 #                   Exit 1: sie fehlen, ein anderes dokunc-Projekt auf
 #                   diesem Host hat aber Daten (Update ohne Festschreiben,
 #                   noch nicht gestartet).
-#                   Exit 2: sie existieren, ein anderes dokunc-Projekt hat
-#                   aber aeltere (Update ohne Festschreiben, schon
-#                   gestartet: eine neue, leere Instanz). Entfaellt, wenn
-#                   COMPOSE_PROJECT_NAME den Namen ausdruecklich festlegt.
+#                   Exit 2: sie existieren, aber ein anderes dokunc-Projekt
+#                   hat aeltere (Update ohne Festschreiben, schon
+#                   gestartet: eine neue, leere Instanz), oder der
+#                   bisherige Name des Verzeichnisses hat Daten und das
+#                   aktuelle Projekt keine juengeren (es gehoert wohl einer
+#                   anderen Installation, up uebernaehme sie). Entfaellt,
+#                   wenn COMPOSE_PROJECT_NAME den Namen ausdruecklich
+#                   festlegt.
 #   --festschreiben schreibt COMPOSE_PROJECT_NAME in die .env: NAME, sonst
 #                   den bisherigen, aus dem Verzeichnisnamen abgeleiteten
 #                   Namen, wenn es dessen Volumes gibt, sonst den
@@ -217,6 +221,18 @@ while IFS= read -r p; do
   [ -n "$p" ] && [ "$p" != "$AKTUELL" ] && ANDERE+=("$p")
 done < <(LC_ALL=C comm -12 <(printf '%s\n' "$MIT_APP") <(printf '%s\n' "$MIT_DB"))
 
+# Der Name, den dieses Verzeichnis vor "name: dokunc" hatte, und ob er
+# Daten hat. Zaehlt auch ohne die Labels von Compose (Volumes, die jemand
+# von Hand angelegt und zurueckgespielt hat). Steht der Name fest, spielt
+# der bisherige keine Rolle.
+BISHER=$(bisheriger_name)
+BISHER_HAT_DATEN=0
+if [ "$QUELLE" = "aus docker-compose.yml" ] && [ -n "$BISHER" ] && [ "$BISHER" != "$AKTUELL" ] \
+  && hat_daten "$BISHER"; then
+  BISHER_HAT_DATEN=1
+  if ! printf '%s\n' "${ANDERE[@]}" | grep -qxF -- "$BISHER"; then ANDERE+=("$BISHER"); fi
+fi
+
 # "wiki (angelegt 2026-05-19)" je anderem Projekt, durch Komma getrennt.
 liste_andere() {
   local p a teile=()
@@ -239,13 +255,12 @@ if [ ${#ANDERE[@]} -gt 0 ]; then
   echo "Weitere dokunc-Projekte auf diesem Host: $(liste_andere)"
 fi
 
-BISHER=$(bisheriger_name)
 if [ -z "$EIGENES" ] && [ ${#ANDERE[@]} -gt 0 ]; then
   {
     printf '✗ Für das Compose-Projekt %s gibt es keine Daten, wohl aber für: %s.' "$AKTUELL" "$(liste_andere)"
     if [ "$QUELLE" != "aus docker-compose.yml" ]; then
       printf ' COMPOSE_PROJECT_NAME (%s) nennt %s: stimmt der Name?' "${QUELLE#*, }" "$AKTUELL"
-    elif [ "$BISHER" != "$AKTUELL" ] && hat_daten "$BISHER"; then
+    elif [ "$BISHER_HAT_DATEN" -eq 1 ]; then
       printf ' Vermutlich hiess das Projekt bisher %s (Name des Verzeichnisses). Festschreiben mit: ./scripts/projektname.sh --festschreiben' "$BISHER"
     else
       printf ' Den bisherigen Namen festschreiben mit: ./scripts/projektname.sh --festschreiben NAME'
@@ -255,19 +270,37 @@ if [ -z "$EIGENES" ] && [ ${#ANDERE[@]} -gt 0 ]; then
   exit 1
 fi
 
-# Eigene Daten, aber ein anderes dokunc-Projekt ist aelter: das sieht nach
-# einem Start ohne Festschreiben aus. Steht der Name ausdruecklich fest,
+# Eigene Daten ohne festen Namen. Steht der Name ausdruecklich fest,
 # laufen hier absichtlich mehrere Installationen.
 if [ -n "$EIGENES" ] && [ "$QUELLE" = "aus docker-compose.yml" ]; then
   EIGEN_S=$(sekunden "$EIGENES")
+  # Anlagedatum $1 liegt vor dem der eigenen Daten.
+  aelter() { local s; s=$(sekunden "$1"); [ -n "$EIGEN_S" ] && [ -n "$s" ] && [ "$s" -lt "$EIGEN_S" ]; }
   AELTER=()
   for p in "${ANDERE[@]}"; do
     a=$(angelegt "$p")
-    s=$(sekunden "$a")
-    if [ -n "$EIGEN_S" ] && [ -n "$s" ] && [ "$s" -lt "$EIGEN_S" ]; then
-      AELTER+=("$p (angelegt $(tag "$a"))")
-    fi
+    if aelter "$a"; then AELTER+=("$p (angelegt $(tag "$a"))"); fi
   done
+
+  # Der bisherige Name hat Daten, das Projekt aus docker-compose.yml
+  # aber nicht juengere: es gehoert vermutlich einer anderen Installation
+  # (etwa einer aelteren im Verzeichnis dokunc). up uebernaehme deren
+  # Container und fuehrte die Migrationen gegen deren Datenbank aus; ein
+  # down dort hielte die andere Installation an.
+  if [ "$BISHER_HAT_DATEN" -eq 1 ] && ! aelter "$(angelegt "$BISHER")"; then
+    {
+      printf '✗ Dieses Verzeichnis gehörte bisher zum Compose-Projekt %s (angelegt %s),' "$BISHER" "$(tag "$(angelegt "$BISHER")")"
+      printf ' docker-compose.yml nennt jetzt %s, und dieses Projekt hat eigene Daten (angelegt %s):' "$AKTUELL" "$(tag "$EIGENES")"
+      printf ' vermutlich eine andere Installation auf diesem Host. docker compose up übernähme hier deren Container und Datenbank.'
+      printf ' Festschreiben mit: ./scripts/projektname.sh --festschreiben (schreibt %s).' "$BISHER"
+      printf ' Lief docker compose up hier schon, danach docker compose up -d hier und im Verzeichnis der anderen Installation.'
+      printf ' Ist %s doch richtig: ./scripts/projektname.sh --festschreiben %s (docs/admin/compose-project.md)\n' "$AKTUELL" "$AKTUELL"
+    } >&2
+    exit 2
+  fi
+
+  # Ein anderes dokunc-Projekt ist aelter: das sieht nach einem Start
+  # ohne Festschreiben aus, hier arbeitet eine neue, leere Instanz.
   if [ ${#AELTER[@]} -gt 0 ]; then
     {
       if [ ${#AELTER[@]} -eq 1 ]; then WER="das dokunc-Projekt"; HAT="hat"; else WER="die dokunc-Projekte"; HAT="haben"; fi
@@ -275,7 +308,7 @@ if [ -n "$EIGENES" ] && [ "$QUELLE" = "aus docker-compose.yml" ]; then
         "$AKTUELL" "$(tag "$EIGENES")" "$WER" "$(IFS=,; printf '%s' "${AELTER[*]}" | sed 's/,/, /g')" "$HAT"
       printf ' Lief das Update ohne ./scripts/projektname.sh --festschreiben, arbeitet hier eine neue, leere Instanz neben den bisherigen Daten.'
       printf ' Rückweg: docker compose -p %s down (ohne -v), ./scripts/projektname.sh --festschreiben' "$AKTUELL"
-      if [ "$BISHER" = "$AKTUELL" ] || ! hat_daten "$BISHER"; then printf ' NAME'; fi
+      if [ "$BISHER_HAT_DATEN" -eq 0 ]; then printf ' NAME'; fi
       printf ', docker compose up -d.'
       printf ' Laufen hier absichtlich mehrere Installationen, den Namen in jeder festschreiben (docs/admin/compose-project.md).\n'
     } >&2

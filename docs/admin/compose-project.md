@@ -52,18 +52,32 @@ explicitly; the script accepts only a name whose volumes exist:
 - **Exit code 1:** the project has no data volumes, but another dokunc
   project on this host has. This is the state after `git pull` and before
   the first start. Run `--festschreiben`.
-- **Exit code 2:** the project has data volumes, but another dokunc
-  project has older ones. This is the state after the update was started
-  without `--festschreiben`: Docker Compose created a new, empty instance
-  with a new secret next to your data. Your data is untouched in the old
-  volumes. The script does not report this when `COMPOSE_PROJECT_NAME`
-  sets the name explicitly.
+- **Exit code 2:** the project has data volumes, but the update was
+  probably started without `--festschreiben`. There are two cases:
+  - Another dokunc project has older volumes. Docker Compose created a
+    new, empty instance with a new secret next to your data. Your data
+    is untouched in the old volumes; see the way back below.
+  - The project named after the directory has data, and the `dokunc`
+    project has data that is not younger. The `dokunc` project probably
+    belongs to another installation on this host, for example one in a
+    directory named `dokunc`. `docker compose up` here takes over that
+    installation's containers and database: it re-creates them from this
+    checkout's code and `.env` and runs this version's migrations against
+    that database. Run `--festschreiben` here; it writes the directory's
+    name. If `docker compose up` already ran, run `docker compose up -d`
+    here and then in the other installation's directory. Do not run
+    `docker compose -p dokunc down`: it stops the other installation. If
+    `dokunc` is in fact the right project for this checkout, pin it with
+    `./scripts/projektname.sh --festschreiben dokunc`.
+
+  The script reports neither case when `COMPOSE_PROJECT_NAME` sets the
+  name explicitly.
 - **Exit code 3:** the script could not ask Docker about the volumes, for
   example because your user may not use the Docker socket. Run it the way
   you run `docker compose` (with `sudo` if you use that). `--festschreiben`
   also stops with exit code 3 and changes nothing.
 
-The way back after a missed step:
+The way back after a missed step that started a new, empty instance:
 
     docker compose -p dokunc down
     ./scripts/projektname.sh --festschreiben
@@ -104,7 +118,10 @@ more (or is pinned in `.env`).
 
 Give each installation its own name in its `.env`, for example with
 `./scripts/projektname.sh --festschreiben NAME` for an existing one, or
-`COMPOSE_PROJECT_NAME=wiki-test` for a new one. Each also needs its own
+`COMPOSE_PROJECT_NAME=wiki-test` for a new one. Do this in every checkout
+before you update the first one: after the update, a checkout without a
+pinned name uses the project `dokunc` and takes over the containers and
+database of the installation that already has that name. Each also needs its own
 `APP_PORT` (and `APP_BIND`), because the proxies cannot share a port.
 
 ## Renaming the project

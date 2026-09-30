@@ -108,6 +108,53 @@ describe("scripts/projektname.sh: Pruefen", () => {
     );
   });
 
+  it("erkennt einen Checkout, der die Installation im Projekt dokunc uebernaehme", () => {
+    // Zwei Installationen auf einem Host: die aeltere liegt in einem
+    // Verzeichnis dokunc, diese in wiki-test und hat ihren Namen nicht
+    // festgeschrieben. Nach git pull nennt docker-compose.yml auch hier
+    // dokunc; up erzeugte die Container der anderen Installation aus
+    // diesem Checkout neu, samt Migrationen gegen deren Datenbank.
+    const dir = repoIn("wiki-test");
+    const r = run(dir, [], { FAKE_VOLUMES: volumes(["dokunc", ALT], ["wiki-test", NEU]) });
+    expect(r.status).toBe(2);
+    expect(r.stdout).toContain("Weitere dokunc-Projekte auf diesem Host: wiki-test (angelegt 2026-09-30)");
+    expect(r.stderr).toBe(
+      "✗ Dieses Verzeichnis gehörte bisher zum Compose-Projekt wiki-test (angelegt 2026-09-30), " +
+        "docker-compose.yml nennt jetzt dokunc, und dieses Projekt hat eigene Daten (angelegt 2026-05-19): " +
+        "vermutlich eine andere Installation auf diesem Host. docker compose up übernähme hier deren Container " +
+        "und Datenbank. Festschreiben mit: ./scripts/projektname.sh --festschreiben (schreibt wiki-test). " +
+        "Lief docker compose up hier schon, danach docker compose up -d hier und im Verzeichnis der anderen " +
+        "Installation. Ist dokunc doch richtig: ./scripts/projektname.sh --festschreiben dokunc " +
+        "(docs/admin/compose-project.md)\n",
+    );
+
+    const fest = run(dir, ["--festschreiben"], { FAKE_VOLUMES: volumes(["dokunc", ALT], ["wiki-test", NEU]) });
+    expect(fest.status, fest.stderr).toBe(0);
+    expect(lesen(join(dir, ".env"))).toContain("COMPOSE_PROJECT_NAME=wiki-test\n");
+    expect(run(dir, [], { FAKE_VOLUMES: volumes(["dokunc", ALT], ["wiki-test", NEU]) }).status).toBe(0);
+  });
+
+  it("meldet den bisherigen Namen mit Daten auch bei gleichem Anlagedatum", () => {
+    const r = run(repoIn("wiki-test"), [], { FAKE_VOLUMES: volumes(["dokunc", NEU], ["wiki-test", NEU]) });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("übernähme hier deren Container und Datenbank");
+  });
+
+  it("zaehlt den bisherigen Namen mit Daten auch ohne die Labels von Compose", () => {
+    // Von Hand angelegte und zurueckgespielte Volumes tragen keine Labels.
+    const dir = repoIn("Wiki Alt");
+    const ohneLabel = "wikialt_db_data wikialt_app_data wikialt_uploads";
+    const vorher = run(dir, [], { FAKE_VOLUMES: volumes(["wikialt", ALT]), FAKE_OHNE_LABEL: ohneLabel });
+    expect(vorher.status).toBe(1);
+    expect(vorher.stderr).toContain("Vermutlich hiess das Projekt bisher wikialt (Name des Verzeichnisses).");
+    const nachher = run(dir, [], {
+      FAKE_VOLUMES: volumes(["wikialt", ALT], ["dokunc", NEU]),
+      FAKE_OHNE_LABEL: ohneLabel,
+    });
+    expect(nachher.status).toBe(2);
+    expect(nachher.stderr).toContain("das dokunc-Projekt wikialt (angelegt 2026-05-19) hat aber ältere.");
+  });
+
   it("meldet nichts, wenn die eigenen Daten die aelteren sind", () => {
     const dir = repoIn("dokunc");
     const r = run(dir, [], { FAKE_VOLUMES: volumes(["dokunc", ALT], ["wikitest", NEU]) });
