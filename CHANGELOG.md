@@ -464,7 +464,10 @@ differently on an existing installation, and what to do about it.
   `./scripts/projektname.sh --festschreiben` and `docker compose up -d`
   (see `docs/admin/compose-project.md`). While the check fails,
   `scripts/backup.sh` warns on stderr and deletes no old backups. If your
-  checkout directory is named `dokunc`, nothing to do.
+  checkout directory is named `dokunc` and no other installation runs on
+  the host, nothing to do. On a host with several installations, run
+  `./scripts/projektname.sh --festschreiben` in every checkout, including
+  one named `dokunc`, before you update the first one.
 
 ### Security
 

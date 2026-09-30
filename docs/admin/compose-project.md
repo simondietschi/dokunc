@@ -30,8 +30,9 @@ volumes) exist on this host.
 Before the fixed name, the project was named after the directory of the
 checkout: lower case, with every character other than `a-z`, `0-9`, `_`
 and `-` removed (`/srv/Wiki Alt` became `wikialt`). If your checkout is in
-a directory called `dokunc`, the name stays the same and there is nothing
-to do.
+a directory called `dokunc` and no other installation runs on the host,
+the name stays the same and there is nothing to do. With several
+installations on one host, see "Several installations on one host" below.
 
 Otherwise, run this once after `git pull` and before `docker compose up`:
 
@@ -47,31 +48,61 @@ explicitly; the script accepts only a name whose volumes exist:
 
     ./scripts/projektname.sh --festschreiben wiki
 
+It refuses a name whose containers were created from another directory
+that still exists, because that is another installation's project.
+
+The script tells installations apart by their containers: Docker Compose
+records the directory it created a container from (label
+`com.docker.compose.project.working_dir`), also for stopped containers. A
+project whose containers come from another directory that still exists
+belongs to another installation. A directory that no longer exists does
+not count, since containers of a checkout that was moved without
+`docker compose down` still point to its old place. A project without
+containers is judged by the age of its volumes only.
+
 `./scripts/projektname.sh` without options detects a missed step:
 
 - **Exit code 1:** the project has no data volumes, but another dokunc
-  project on this host has. This is the state after `git pull` and before
-  the first start. Run `--festschreiben`.
-- **Exit code 2:** the project has data volumes, but the update was
-  probably started without `--festschreiben`. There are two cases:
-  - Another dokunc project has older volumes. Docker Compose created a
-    new, empty instance with a new secret next to your data. Your data
-    is untouched in the old volumes; see the way back below.
+  project on this host has, and none of its containers come from another
+  directory. This is the state after `git pull` and before the first
+  start. Run `--festschreiben`.
+- **Exit code 2:** the project has data volumes, but it probably does not
+  belong to this checkout. There are three cases:
+  - The containers of the `dokunc` project come from another directory
+    that still exists. The `dokunc` project belongs to another
+    installation on this host, however old its volumes are.
+    `docker compose up` here would take over that installation's
+    containers and database: it re-creates them from this checkout's code
+    and `.env` and runs this version's migrations against that database.
+    Run `--festschreiben` here; it writes the directory's name if its
+    volumes exist. A new checkout without data of its own needs a name of
+    its own instead (`COMPOSE_PROJECT_NAME=...` in `.env`). Do not run
+    `docker compose -p dokunc down`: it stops the other installation. If
+    the other directory no longer holds an installation (for example an
+    old copy of this checkout), run `docker compose down` (without `-v`)
+    there and check again.
   - The project named after the directory has data, and the `dokunc`
-    project has data that is not younger. The `dokunc` project probably
-    belongs to another installation on this host, for example one in a
-    directory named `dokunc`. `docker compose up` here takes over that
-    installation's containers and database: it re-creates them from this
-    checkout's code and `.env` and runs this version's migrations against
-    that database. Run `--festschreiben` here; it writes the directory's
-    name. If `docker compose up` already ran, run `docker compose up -d`
-    here and then in the other installation's directory. Do not run
+    project has data that is not younger, but no containers from another
+    directory (none, or already re-created from this checkout). The
+    `dokunc` project probably belongs to another installation on this
+    host, for example one in a directory named `dokunc`, and
+    `docker compose up` here takes or took over its containers and
+    database. Run `--festschreiben` here; it writes the directory's name.
+    If `docker compose up` already ran, run `docker compose up -d` here
+    and then in the other installation's directory. Do not run
     `docker compose -p dokunc down`: it stops the other installation. If
     `dokunc` is in fact the right project for this checkout, pin it with
     `./scripts/projektname.sh --festschreiben dokunc`.
+  - Another dokunc project without containers from another directory has
+    older volumes. The update was probably started without
+    `--festschreiben`, and Docker Compose created a new, empty instance
+    with a new secret next to your data. Your data is untouched in the
+    old volumes; see the way back below. If the `dokunc` data does belong
+    to this checkout (several installations on one host), pin it with
+    `./scripts/projektname.sh --festschreiben dokunc`.
 
-  The script reports neither case when `COMPOSE_PROJECT_NAME` sets the
-  name explicitly.
+  The script reports none of these cases when `COMPOSE_PROJECT_NAME`
+  sets the name explicitly.
 - **Exit code 3:** the script could not ask Docker about the volumes, for
   example because your user may not use the Docker socket. Run it the way
   you run `docker compose` (with `sudo` if you use that). `--festschreiben`
@@ -83,12 +114,16 @@ The way back after a missed step that started a new, empty instance:
     ./scripts/projektname.sh --festschreiben
     docker compose up -d
 
-`down` without `-v` only removes the containers of the new project; no
-volume is deleted. If the containers of the old project were still
-running, the new stack could not start its proxy ("port is already
-allocated"), and the old instance kept serving; the last command updates
-it. Once you have checked that your data is back, you may remove the
-empty volumes of the new project
+The script names the first line only if containers of the `dokunc`
+project come from this checkout. `down` without `-v` only removes the
+containers of the new project; no volume is deleted. If the containers of
+the old project were still running, the new stack could not start its
+proxy ("port is already allocated"), and the old instance kept serving;
+the last command updates it. If the `dokunc` project belonged to another
+installation on this host before, run `docker compose up -d` in that
+installation's directory afterwards, and keep its volumes. Otherwise, once
+you have checked that your data is back, you may remove the empty volumes
+of the new project
 (`docker volume ls --filter label=com.docker.compose.project=dokunc`
 lists them).
 
@@ -118,10 +153,13 @@ more (or is pinned in `.env`).
 
 Give each installation its own name in its `.env`, for example with
 `./scripts/projektname.sh --festschreiben NAME` for an existing one, or
-`COMPOSE_PROJECT_NAME=wiki-test` for a new one. Do this in every checkout
-before you update the first one: after the update, a checkout without a
-pinned name uses the project `dokunc` and takes over the containers and
-database of the installation that already has that name. Each also needs its own
+`COMPOSE_PROJECT_NAME=wiki-test` for a new one. Do this in every checkout,
+including one in a directory named `dokunc`, before you update the first
+one: after the update, a checkout without a pinned name uses the project
+`dokunc` and takes over the containers and database of the installation
+that already has that name. Without pinned names, the check also judges by
+volume age where containers are missing, and can report an installation
+as a new, empty instance. Each also needs its own
 `APP_PORT` (and `APP_BIND`), because the proxies cannot share a port.
 
 ## Renaming the project

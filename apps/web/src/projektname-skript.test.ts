@@ -143,17 +143,158 @@ describe("scripts/projektname.sh: Pruefen", () => {
   });
 
   it("erkennt nach dem ersten Start eine neue, leere Instanz neben aelteren Daten", () => {
+    // Beide Projekte haben Container aus diesem Verzeichnis: die alten
+    // von vor dem Update, die neuen vom ersten up danach.
+    const dir = repoIn("Wiki Alt");
+    const r = run(dir, [], {
+      FAKE_VOLUMES: volumes(["wikialt", ALT], ["dokunc", NEU]),
+      FAKE_CONTAINER: `wikialt=${dir};dokunc=${dir}`,
+    });
+    expect(r.status).toBe(2);
+    expect(r.stdout).toContain("Daten: vorhanden (dokunc_db_data, dokunc_app_data, angelegt 2026-09-30)");
+    expect(r.stdout).toContain("Weitere dokunc-Projekte auf diesem Host: wikialt (angelegt 2026-05-19)\n");
+    expect(r.stderr).toBe(
+      "✗ Das Compose-Projekt dokunc hat Daten (angelegt 2026-09-30), das dokunc-Projekt wikialt (angelegt 2026-05-19) hat aber ältere. " +
+        "Lief das Update ohne ./scripts/projektname.sh --festschreiben, arbeitet hier eine neue, leere Instanz neben den bisherigen Daten. " +
+        "Rückweg: docker compose -p dokunc down (ohne -v), ./scripts/projektname.sh --festschreiben, docker compose up -d; " +
+        "lief dokunc vorher für eine andere Installation auf diesem Host, danach dort docker compose up -d. " +
+        "Gehören die Daten von dokunc doch zu diesem Verzeichnis (mehrere Installationen auf diesem Host): " +
+        "./scripts/projektname.sh --festschreiben dokunc (docs/admin/compose-project.md)\n",
+    );
+  });
+
+  it("raet ohne Container des Projekts dokunc nicht zu down", () => {
+    // Die Container der neuen, leeren Instanz sind schon entfernt: down
+    // haette nichts zu tun, ein anderes Verzeichnis aber schon.
     const dir = repoIn("Wiki Alt");
     const r = run(dir, [], { FAKE_VOLUMES: volumes(["wikialt", ALT], ["dokunc", NEU]) });
     expect(r.status).toBe(2);
-    expect(r.stdout).toContain("Daten: vorhanden (dokunc_db_data, dokunc_app_data, angelegt 2026-09-30)");
-    expect(r.stdout).toContain("Weitere dokunc-Projekte auf diesem Host: wikialt (angelegt 2026-05-19)");
     expect(r.stderr).toContain(
-      "✗ Das Compose-Projekt dokunc hat Daten (angelegt 2026-09-30), das dokunc-Projekt wikialt (angelegt 2026-05-19) hat aber ältere.",
+      "Rückweg: ./scripts/projektname.sh --festschreiben, docker compose up -d. Gehören die Daten von dokunc doch",
     );
+    expect(r.stderr).not.toContain("down");
+  });
+
+  it("meldet ein Projekt dokunc mit Containern aus einem anderen Verzeichnis als andere Installation, auch wenn es juenger ist", () => {
+    // Zwei Installationen: diese in wiki-test (aelter, Name nicht
+    // festgeschrieben, nach git pull noch nicht gestartet) und eine
+    // juengere im Verzeichnis dokunc. down hielte die andere an.
+    const dir = repoIn("wiki-test");
+    const andere = join(tmp, "dokunc");
+    mkdirSync(andere);
+    const env = {
+      FAKE_VOLUMES: volumes(["wiki-test", ALT], ["dokunc", NEU]),
+      FAKE_CONTAINER: `wiki-test=${dir};dokunc=${andere}`,
+    };
+    const r = run(dir, [], env);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toBe(
+      `✗ Die Container des Compose-Projekts dokunc stammen aus einem anderen Verzeichnis (${andere}): ` +
+        "vermutlich eine andere Installation auf diesem Host. docker compose up übernähme hier deren Container " +
+        "und Datenbank. Festschreiben mit: ./scripts/projektname.sh --festschreiben (schreibt wiki-test). " +
+        "Nicht docker compose -p dokunc down: das hielte die andere Installation an (docs/admin/compose-project.md)\n",
+    );
+
+    const fest = run(dir, ["--festschreiben"], env);
+    expect(fest.status, fest.stderr).toBe(0);
+    expect(lesen(join(dir, ".env"))).toContain("COMPOSE_PROJECT_NAME=wiki-test\n");
+    expect(run(dir, [], env).status).toBe(0);
+  });
+
+  it("meldet eine neue Installation neben einem Projekt dokunc aus einem anderen Verzeichnis", () => {
+    // Frischer Klon in wiki2 ohne eigene Daten; dokunc gehoert der
+    // Installation im Verzeichnis dokunc. --festschreiben ohne Namen
+    // schriebe dokunc und zeigte diesen Klon auf deren Daten.
+    const dir = repoIn("wiki2");
+    const andere = join(tmp, "dokunc");
+    mkdirSync(andere);
+    const env = { FAKE_VOLUMES: volumes(["dokunc", ALT]), FAKE_CONTAINER: `dokunc=${andere}` };
+    const r = run(dir, [], env);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain(`✗ Die Container des Compose-Projekts dokunc stammen aus einem anderen Verzeichnis (${andere})`);
     expect(r.stderr).toContain(
-      "Rückweg: docker compose -p dokunc down (ohne -v), ./scripts/projektname.sh --festschreiben, docker compose up -d.",
+      "Diesem Verzeichnis einen eigenen Namen geben: mit Daten unter einem anderen Namen " +
+        "./scripts/projektname.sh --festschreiben NAME, sonst COMPOSE_PROJECT_NAME=<neuer Name> in der .env.",
     );
+    expect(r.stderr).not.toContain("--festschreiben (schreibt");
+
+    const fest = run(dir, ["--festschreiben"], env);
+    expect(fest.status).toBe(1);
+    expect(fest.stdout).toBe("");
+    expect(fest.stderr).toBe(
+      `✗ Die Container des Compose-Projekts dokunc stammen aus einem anderen Verzeichnis (${andere}): ` +
+        "vermutlich eine andere Installation auf diesem Host. Nichts geändert. Diesem Verzeichnis einen eigenen " +
+        "Namen geben: mit Daten unter einem anderen Namen ./scripts/projektname.sh --festschreiben NAME, sonst " +
+        "COMPOSE_PROJECT_NAME=<neuer Name> in der .env (docs/admin/compose-project.md)\n",
+    );
+    expect(existsSync(join(dir, ".env"))).toBe(false);
+  });
+
+  it("zaehlt aeltere Daten einer anderen Installation nicht als die bisherigen dieses Verzeichnisses", () => {
+    // Dieses Verzeichnis heisst dokunc und ist die juengere von zwei
+    // Installationen; die aeltere laeuft als wiki in einem eigenen
+    // Verzeichnis. Keine Meldung, die Aufbewahrung in backup.sh laeuft.
+    const dir = repoIn("dokunc");
+    const andere = join(tmp, "wiki");
+    mkdirSync(andere);
+    const env = {
+      FAKE_VOLUMES: volumes(["wiki", ALT], ["dokunc", NEU]),
+      FAKE_CONTAINER: `wiki=${andere};dokunc=${dir}`,
+    };
+    const r = run(dir, [], env);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toBe("");
+    expect(r.stdout).toContain(`Weitere dokunc-Projekte auf diesem Host: wiki (angelegt 2026-05-19, Container in ${andere})\n`);
+
+    // Den Namen der anderen Installation schreibt --festschreiben nicht fest.
+    const fremd = run(dir, ["--festschreiben", "wiki"], env);
+    expect(fremd.status).toBe(1);
+    expect(fremd.stderr).toContain(`✗ Die Container des Compose-Projekts wiki stammen aus einem anderen Verzeichnis (${andere})`);
+    expect(existsSync(join(dir, ".env"))).toBe(false);
+    const eigen = run(dir, ["--festschreiben"], env);
+    expect(eigen.stdout).toBe(
+      "✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (Volumes dokunc_db_data, dokunc_app_data).\n",
+    );
+  });
+
+  it("meldet vor dem ersten Start keine bisherigen Daten, die einer anderen Installation gehoeren", () => {
+    const dir = repoIn("dokunc");
+    const andere = join(tmp, "wiki");
+    mkdirSync(andere);
+    const r = run(dir, [], { FAKE_VOLUMES: volumes(["wiki", ALT]), FAKE_CONTAINER: `wiki=${andere}` });
+    expect(r.status).toBe(0);
+    expect(r.stderr).toBe("");
+    expect(r.stdout).toContain("Noch keine Daten (neue Installation).");
+  });
+
+  it("zaehlt Container aus einem Verzeichnis, das es nicht mehr gibt, nicht als andere Installation", () => {
+    // Umzug nach /srv/dokunc ohne down: die alten Container zeigen noch
+    // auf das fruehere Verzeichnis.
+    const dir = repoIn("dokunc");
+    const weg = join(tmp, "altwiki-verschoben");
+    const vorher = run(dir, [], { FAKE_VOLUMES: volumes(["altwiki", ALT]), FAKE_CONTAINER: `altwiki=${weg}` });
+    expect(vorher.status).toBe(1);
+    expect(vorher.stderr).toContain("./scripts/projektname.sh --festschreiben NAME");
+    const nachher = run(dir, [], {
+      FAKE_VOLUMES: volumes(["altwiki", ALT], ["dokunc", NEU]),
+      FAKE_CONTAINER: `altwiki=${weg};dokunc=${dir}`,
+    });
+    expect(nachher.status).toBe(2);
+    expect(nachher.stderr).toContain("das dokunc-Projekt altwiki (angelegt 2026-05-19) hat aber ältere.");
+    expect(nachher.stderr).toContain("Rückweg: docker compose -p dokunc down (ohne -v), ./scripts/projektname.sh --festschreiben NAME,");
+  });
+
+  it("erkennt dieses Verzeichnis auch ueber einen Symlink", () => {
+    // Compose vermerkt das Verzeichnis, wie es beim Aufruf hiess.
+    const dir = repoIn("Wiki Alt");
+    const link = join(tmp, "wiki-link");
+    symlinkSync(dir, link);
+    const r = run(dir, [], {
+      FAKE_VOLUMES: volumes(["wikialt", ALT], ["dokunc", NEU]),
+      FAKE_CONTAINER: `wikialt=${link};dokunc=${link}`,
+    });
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain("Rückweg: docker compose -p dokunc down (ohne -v)");
   });
 
   it("erkennt einen Checkout, der die Installation im Projekt dokunc uebernaehme", () => {
@@ -457,11 +598,11 @@ describe("scripts/projektname.sh: ohne Zugriff auf Docker", () => {
   // eine neue aus, und --festschreiben schriebe den falschen Namen fest.
   const env = { FAKE_VOLUMES: volumes(["wikialt", ALT]) };
 
-  it.each(["alle", "ls", "inspect"])("bricht die Pruefung ab, statt eine neue Installation zu melden (%s)", (weg) => {
+  it.each(["alle", "ls", "inspect", "ps"])("bricht die Pruefung ab, statt eine neue Installation zu melden (%s)", (weg) => {
     const r = run(repoIn("Wiki Alt"), [], { ...env, FAKE_DOCKER_WEG: weg });
     expect(r.status).toBe(3);
     expect(r.stdout).toBe("Compose-Projekt: dokunc (aus docker-compose.yml)\n");
-    expect(r.stderr).toMatch(/^✗ docker volume (ls|inspect \S+) gescheitert: ohne Zugriff auf Docker/);
+    expect(r.stderr).toMatch(/^✗ docker (volume ls|volume inspect \S+|ps -a) gescheitert: ohne Zugriff auf Docker/);
     expect(r.stderr).toContain("  permission denied while trying to connect to the docker API");
   });
 
@@ -470,6 +611,8 @@ describe("scripts/projektname.sh: ohne Zugriff auf Docker", () => {
     ["inspect", "Wiki Alt", []],
     ["alle", "dokunc", []],
     ["inspect", "dokunc", ["wikialt"]],
+    ["ps", "Wiki Alt", []],
+    ["ps", "dokunc", ["wikialt"]],
   ])("schreibt nichts fest (%s, Verzeichnis %s, Name %j)", (weg, verzeichnis, name) => {
     const dir = repoIn(verzeichnis);
     const datei = join(dir, ".env");

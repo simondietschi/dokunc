@@ -6,22 +6,28 @@
 #   ohne Option     nennt das Compose-Projekt und prueft, ob seine
 #                   Daten-Volumes (<projekt>_db_data, <projekt>_app_data)
 #                   existieren.
+#                   Ein Projekt, dessen Container aus einem anderen, noch
+#                   vorhandenen Verzeichnis stammen, gehoert einer anderen
+#                   Installation und zaehlt nie als bisherige Daten.
 #                   Exit 1: sie fehlen, ein anderes dokunc-Projekt auf
 #                   diesem Host hat aber Daten (Update ohne Festschreiben,
 #                   noch nicht gestartet).
-#                   Exit 2: sie existieren, aber ein anderes dokunc-Projekt
+#                   Exit 2: sie existieren, gehoeren aber wohl nicht
+#                   hierher: die Container des Projekts stammen aus einem
+#                   anderen Verzeichnis (eine andere Installation, up
+#                   uebernaehme sie), oder der bisherige Name des
+#                   Verzeichnisses hat Daten und das aktuelle Projekt keine
+#                   juengeren (ebenso), oder ein anderes dokunc-Projekt
 #                   hat aeltere (Update ohne Festschreiben, schon
-#                   gestartet: eine neue, leere Instanz), oder der
-#                   bisherige Name des Verzeichnisses hat Daten und das
-#                   aktuelle Projekt keine juengeren (es gehoert wohl einer
-#                   anderen Installation, up uebernaehme sie). Entfaellt,
-#                   wenn COMPOSE_PROJECT_NAME den Namen ausdruecklich
-#                   festlegt.
+#                   gestartet: eine neue, leere Instanz). Entfaellt, wenn
+#                   COMPOSE_PROJECT_NAME den Namen ausdruecklich festlegt.
 #   --festschreiben schreibt COMPOSE_PROJECT_NAME in die .env: NAME, sonst
 #                   den bisherigen, aus dem Verzeichnisnamen abgeleiteten
 #                   Namen, wenn es dessen Volumes gibt, sonst den
 #                   aktuellen. Aendert nichts, wenn der Name schon in der
-#                   .env oder in der Umgebung steht.
+#                   .env oder in der Umgebung steht. Exit 1, wenn NAME
+#                   keine Daten hat oder der Name einer anderen
+#                   Installation gehoert.
 #   --name          gibt nur den Namen aus (wie restore.sh ihn bestimmt).
 # Exit 3: falscher Aufruf, docker compose config gescheitert, Docker
 # nicht erreichbar (eine Abfrage der Volumes scheitert anders als mit "no
@@ -34,6 +40,7 @@
 # ihren Daten.
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
+VERZEICHNIS=$(pwd -P)
 
 nutzung() { echo "Nutzung: ./scripts/projektname.sh [--festschreiben [NAME] | --name]"; }
 
@@ -139,6 +146,31 @@ projekte_mit() {
     --format '{{.Label "com.docker.compose.project"}}' 2>"$FEHLER" | sed '/^$/d' | LC_ALL=C sort -u
 }
 
+# Woher die Container eines Projekts $1 stammen. Compose vermerkt beim
+# Anlegen das Verzeichnis (Label com.docker.compose.project.working_dir),
+# auch angehaltene Container zaehlen. Setzt HIER_DA=1, wenn Container aus
+# diesem Verzeichnis stammen, und FREMD auf die anderen Verzeichnisse, die
+# es noch gibt, durch Komma getrennt: dort liegt vermutlich eine andere
+# Installation. Ein Verzeichnis, das es nicht mehr gibt, zaehlt nicht;
+# nach einem Umzug ohne down zeigen die alten Container dorthin. Nicht in
+# einer Subshell aufrufen (docker_gescheitert).
+herkunft() {
+  local liste wd echt
+  FREMD=""
+  HIER_DA=0
+  liste=$(docker ps -a --filter "label=com.docker.compose.project=$1" \
+    --format '{{.Label "com.docker.compose.project.working_dir"}}' 2>"$FEHLER" | LC_ALL=C sort -u) \
+    || docker_gescheitert "docker ps -a"
+  while IFS= read -r wd; do
+    [ -n "$wd" ] || continue
+    echt=$(cd "$wd" 2>/dev/null && pwd -P) || continue
+    if [ "$echt" = "$VERZEICHNIS" ]; then HIER_DA=1; else FREMD="${FREMD:+$FREMD, }$wd"; fi
+  done <<<"$liste"
+}
+
+# Der eigene Name einer anderen Installation: Hinweis fuer beide Meldungen.
+EIGENER_NAME='Diesem Verzeichnis einen eigenen Namen geben: mit Daten unter einem anderen Namen ./scripts/projektname.sh --festschreiben NAME, sonst COMPOSE_PROJECT_NAME=<neuer Name> in der .env'
+
 # ---- Aktueller Name und seine Quelle ----
 
 FEHLER=$(mktemp)
@@ -196,6 +228,14 @@ if [ "$MODUS" = festschreiben ]; then
   # Auch hier vor dem Schreiben fragen: ohne Docker bricht es jetzt ab,
   # nicht erst nach dem Eintrag.
   if hat_daten "$NAME"; then NAME_HAT_DATEN=1; else NAME_HAT_DATEN=0; fi
+  # Nie das Projekt einer anderen Installation festschreiben: dieses
+  # Verzeichnis arbeitete sonst mit deren Datenbank.
+  herkunft "$NAME"
+  if [ -n "$FREMD" ]; then
+    printf '✗ Die Container des Compose-Projekts %s stammen aus einem anderen Verzeichnis (%s): vermutlich eine andere Installation auf diesem Host. Nichts geändert. %s (docs/admin/compose-project.md)\n' \
+      "$NAME" "$FREMD" "$EIGENER_NAME" >&2
+    exit 1
+  fi
   # In eine Datei neben der .env schreiben und dann ersetzen: bricht der
   # Lauf ab, bleibt die .env, wie sie war. Die Rechte der bestehenden
   # Datei bleiben (cp -p), eine neue entsteht nur fuer den Eigentuemer.
@@ -264,15 +304,30 @@ if [ "$QUELLE" = "aus docker-compose.yml" ] && [ -n "$BISHER" ] && [ "$BISHER" !
   if ! printf '%s\n' ${ANDERE[@]+"${ANDERE[@]}"} | grep -qxF -- "$BISHER"; then ANDERE+=("$BISHER"); fi
 fi
 
-# "wiki (angelegt 2026-05-19)" je anderem Projekt, durch Komma getrennt.
-liste_andere() {
-  local p a teile=()
-  for p in ${ANDERE[@]+"${ANDERE[@]}"}; do
-    a=$(angelegt "$p")
-    teile+=("$p (angelegt $(tag "$a"))")
-  done
-  local IFS=,
-  printf '%s' ${teile[*]+"${teile[*]}"} | sed 's/,/, /g'
+# Je anderem Projekt: "wiki (angelegt 2026-05-19)", bei Containern aus
+# einem anderen Verzeichnis mit ", Container in /srv/wiki". Solche
+# Projekte sind andere Installationen und nie die bisherigen Daten dieses
+# Verzeichnisses, auch wenn sie aelter sind; die uebrigen sind KANDIDATEN.
+LISTE=()
+KANDIDATEN=()
+KANDIDATEN_LISTE=()
+for p in ${ANDERE[@]+"${ANDERE[@]}"}; do
+  a=$(angelegt "$p")
+  herkunft "$p"
+  if [ -n "$FREMD" ]; then
+    LISTE+=("$p (angelegt $(tag "$a"), Container in $FREMD)")
+  else
+    LISTE+=("$p (angelegt $(tag "$a"))")
+    KANDIDATEN+=("$p")
+    KANDIDATEN_LISTE+=("$p (angelegt $(tag "$a"))")
+  fi
+done
+
+# Eintraege durch Komma getrennt (Verzeichnisse duerfen Kommas enthalten).
+aufzaehlen() {
+  local e ergebnis=""
+  for e in "$@"; do ergebnis="${ergebnis:+$ergebnis, }$e"; done
+  printf '%s' "$ergebnis"
 }
 
 if hat_daten "$AKTUELL"; then
@@ -282,13 +337,14 @@ else
   EIGENES=""
   echo "Noch keine Daten (neue Installation)."
 fi
-if [ ${#ANDERE[@]} -gt 0 ]; then
-  echo "Weitere dokunc-Projekte auf diesem Host: $(liste_andere)"
+if [ ${#LISTE[@]} -gt 0 ]; then
+  echo "Weitere dokunc-Projekte auf diesem Host: $(aufzaehlen ${LISTE[@]+"${LISTE[@]}"})"
 fi
 
-if [ -z "$EIGENES" ] && [ ${#ANDERE[@]} -gt 0 ]; then
+if [ -z "$EIGENES" ] && [ ${#KANDIDATEN[@]} -gt 0 ]; then
   {
-    printf '✗ Für das Compose-Projekt %s gibt es keine Daten, wohl aber für: %s.' "$AKTUELL" "$(liste_andere)"
+    printf '✗ Für das Compose-Projekt %s gibt es keine Daten, wohl aber für: %s.' "$AKTUELL" \
+      "$(aufzaehlen ${KANDIDATEN_LISTE[@]+"${KANDIDATEN_LISTE[@]}"})"
     if [ "$QUELLE" != "aus docker-compose.yml" ]; then
       printf ' COMPOSE_PROJECT_NAME (%s) nennt %s: stimmt der Name?' "${QUELLE#*, }" "$AKTUELL"
     elif [ "$BISHER_HAT_DATEN" -eq 1 ]; then
@@ -304,12 +360,32 @@ fi
 # Eigene Daten ohne festen Namen. Steht der Name ausdruecklich fest,
 # laufen hier absichtlich mehrere Installationen.
 if [ -n "$EIGENES" ] && [ "$QUELLE" = "aus docker-compose.yml" ]; then
+  # Die Container des Projekts stammen aus einem anderen Verzeichnis, das
+  # es noch gibt: es gehoert einer anderen Installation, wie alt seine
+  # Daten auch sind. up uebernaehme deren Container und fuehrte die
+  # Migrationen gegen deren Datenbank aus; ein down hielte sie an.
+  herkunft "$AKTUELL"
+  AKTUELL_HIER=$HIER_DA
+  if [ -n "$FREMD" ]; then
+    {
+      printf '✗ Die Container des Compose-Projekts %s stammen aus einem anderen Verzeichnis (%s): vermutlich eine andere Installation auf diesem Host.' "$AKTUELL" "$FREMD"
+      printf ' docker compose up übernähme hier deren Container und Datenbank.'
+      if [ "$BISHER_HAT_DATEN" -eq 1 ]; then
+        printf ' Festschreiben mit: ./scripts/projektname.sh --festschreiben (schreibt %s).' "$BISHER"
+      else
+        printf ' %s.' "$EIGENER_NAME"
+      fi
+      printf ' Nicht docker compose -p %s down: das hielte die andere Installation an (docs/admin/compose-project.md)\n' "$AKTUELL"
+    } >&2
+    exit 2
+  fi
+
   EIGEN_S=$(sekunden "$EIGENES")
-  if [ -z "$EIGEN_S" ] && [ ${#ANDERE[@]} -gt 0 ]; then unlesbar "$AKTUELL" "$EIGENES"; fi
+  if [ -z "$EIGEN_S" ] && [ ${#KANDIDATEN[@]} -gt 0 ]; then unlesbar "$AKTUELL" "$EIGENES"; fi
   # Anlagedatum $1 liegt vor dem der eigenen Daten.
   aelter() { local s; s=$(sekunden "$1"); [ -n "$EIGEN_S" ] && [ -n "$s" ] && [ "$s" -lt "$EIGEN_S" ]; }
   AELTER=()
-  for p in ${ANDERE[@]+"${ANDERE[@]}"}; do
+  for p in ${KANDIDATEN[@]+"${KANDIDATEN[@]}"}; do
     a=$(angelegt "$p")
     if [ -n "$EIGEN_S" ] && [ -z "$(sekunden "$a")" ]; then unlesbar "$p" "$a"; fi
     if aelter "$a"; then AELTER+=("$p (angelegt $(tag "$a"))"); fi
@@ -317,9 +393,9 @@ if [ -n "$EIGENES" ] && [ "$QUELLE" = "aus docker-compose.yml" ]; then
 
   # Der bisherige Name hat Daten, das Projekt aus docker-compose.yml
   # aber nicht juengere: es gehoert vermutlich einer anderen Installation
-  # (etwa einer aelteren im Verzeichnis dokunc). up uebernaehme deren
-  # Container und fuehrte die Migrationen gegen deren Datenbank aus; ein
-  # down dort hielte die andere Installation an.
+  # (etwa einer aelteren im Verzeichnis dokunc), deren Container fehlen
+  # oder schon aus diesem Verzeichnis neu angelegt sind. up uebernaehme
+  # sie bzw. hat sie uebernommen; ein down dort hielte sie an.
   if [ "$BISHER_HAT_DATEN" -eq 1 ] && ! aelter "$(angelegt "$BISHER")"; then
     {
       printf '✗ Dieses Verzeichnis gehörte bisher zum Compose-Projekt %s (angelegt %s),' "$BISHER" "$(tag "$(angelegt "$BISHER")")"
@@ -332,18 +408,25 @@ if [ -n "$EIGENES" ] && [ "$QUELLE" = "aus docker-compose.yml" ]; then
     exit 2
   fi
 
-  # Ein anderes dokunc-Projekt ist aelter: das sieht nach einem Start
-  # ohne Festschreiben aus, hier arbeitet eine neue, leere Instanz.
+  # Ein anderes dokunc-Projekt ohne fremde Container ist aelter: das
+  # sieht nach einem Start ohne Festschreiben aus, hier arbeitet eine
+  # neue, leere Instanz. down nur, wenn ihre Container von hier stammen.
   if [ ${#AELTER[@]} -gt 0 ]; then
     {
       if [ ${#AELTER[@]} -eq 1 ]; then WER="das dokunc-Projekt"; HAT="hat"; else WER="die dokunc-Projekte"; HAT="haben"; fi
       printf '✗ Das Compose-Projekt %s hat Daten (angelegt %s), %s %s %s aber ältere.' \
-        "$AKTUELL" "$(tag "$EIGENES")" "$WER" "$(IFS=,; printf '%s' ${AELTER[*]+"${AELTER[*]}"} | sed 's/,/, /g')" "$HAT"
+        "$AKTUELL" "$(tag "$EIGENES")" "$WER" "$(aufzaehlen ${AELTER[@]+"${AELTER[@]}"})" "$HAT"
       printf ' Lief das Update ohne ./scripts/projektname.sh --festschreiben, arbeitet hier eine neue, leere Instanz neben den bisherigen Daten.'
-      printf ' Rückweg: docker compose -p %s down (ohne -v), ./scripts/projektname.sh --festschreiben' "$AKTUELL"
+      printf ' Rückweg: '
+      if [ "$AKTUELL_HIER" -eq 1 ]; then printf 'docker compose -p %s down (ohne -v), ' "$AKTUELL"; fi
+      printf './scripts/projektname.sh --festschreiben'
       if [ "$BISHER_HAT_DATEN" -eq 0 ]; then printf ' NAME'; fi
-      printf ', docker compose up -d.'
-      printf ' Laufen hier absichtlich mehrere Installationen, den Namen in jeder festschreiben (docs/admin/compose-project.md).\n'
+      printf ', docker compose up -d'
+      if [ "$AKTUELL_HIER" -eq 1 ]; then
+        printf '; lief %s vorher für eine andere Installation auf diesem Host, danach dort docker compose up -d' "$AKTUELL"
+      fi
+      printf '. Gehören die Daten von %s doch zu diesem Verzeichnis (mehrere Installationen auf diesem Host): ./scripts/projektname.sh --festschreiben %s (docs/admin/compose-project.md)\n' \
+        "$AKTUELL" "$AKTUELL"
     } >&2
     exit 2
   fi

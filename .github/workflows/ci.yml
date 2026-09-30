@@ -374,9 +374,14 @@ jobs:
       # Labels, die Compose setzt, sind genau das, was das Skript liest
       # (ein echter alter Stack braeuchte einen zweiten Image-Build).
       # a) vor dem ersten Start: Exit 1; b) nach einem Start ohne
-      # Festschreiben (juengere dokunc-Volumes): Exit 2; c) Festschreiben
-      # an eine .env ohne Zeilenende, danach heisst das Projekt dort
-      # wikialt. Die nachgestellten Volumes werden wieder entfernt.
+      # Festschreiben (juengere dokunc-Volumes): Exit 2, down nur mit
+      # Containern von dokunc aus diesem Verzeichnis, bei Containern aus
+      # einem anderen Verzeichnis die Meldung zur anderen Installation;
+      # c) Festschreiben an eine .env ohne Zeilenende, danach heisst das
+      # Projekt dort wikialt. Die Container entstehen ohne Netz aus einem
+      # leeren, importierten Image; Compose vermerkt ihr Verzeichnis im
+      # Label com.docker.compose.project.working_dir, und nur das liest
+      # das Skript. Volumes, Container und Image werden wieder entfernt.
       - name: Compose-Projektname
         run: |
           set -euo pipefail
@@ -389,7 +394,16 @@ jobs:
             docker volume create --label "com.docker.compose.project=$1" \
               --label "com.docker.compose.volume=$2" "$1_$2" >/dev/null
           }
+          container() {
+            docker create --label "com.docker.compose.project=$1" \
+              --label "com.docker.compose.project.working_dir=$2" dokunc-leer:ci nichts >/dev/null
+          }
+          container_weg() {
+            docker ps -aq --filter label=com.docker.compose.project=dokunc | xargs -r docker rm >/dev/null
+          }
           aufraeumen() {
+            container_weg || true
+            docker rmi dokunc-leer:ci >/dev/null 2>&1 || true
             docker volume rm wikialt_db_data wikialt_app_data wikialt_uploads \
               dokunc_db_data dokunc_app_data dokunc_uploads >/dev/null 2>&1 || true
           }
@@ -409,7 +423,15 @@ jobs:
           volume dokunc db_data
           volume dokunc app_data
           volume dokunc uploads
+          pruefe 2 'Rückweg: ./scripts/projektname.sh --festschreiben, docker compose up -d.'
+          tar -cf - --files-from /dev/null | docker import - dokunc-leer:ci >/dev/null
+          mkdir -p "$RUNNER_TEMP/dokunc"
+          container dokunc "$RUNNER_TEMP/dokunc"
+          pruefe 2 'Die Container des Compose-Projekts dokunc stammen aus einem anderen Verzeichnis'
+          container_weg
+          container dokunc "$ALT"
           pruefe 2 'Rückweg: docker compose -p dokunc down (ohne -v)'
+          container_weg
           printf 'APP_URL=http://localhost:7891' > "$ALT/.env"
           # Ohne Zugriff auf Docker: Abbruch, die .env bleibt, wie sie war.
           code=0
@@ -424,6 +446,7 @@ jobs:
           aufraeumen
           trap - EXIT
           test -z "$(docker volume ls -q --filter label=com.docker.compose.project=dokunc)"
+          test -z "$(docker ps -aq --filter label=com.docker.compose.project=dokunc)"
           test ! -f .env
 
       - name: Stack bauen und starten

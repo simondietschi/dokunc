@@ -41,11 +41,17 @@ import { fileURLToPath } from "node:url";
  * - FAKE_OHNE_LABEL  Volumes aus FAKE_VOLUMES ohne die Labels von Compose
  *                     (von Hand angelegt): `volume ls --filter label=…`
  *                     nennt sie nicht, `volume inspect` findet sie.
+ * - FAKE_CONTAINER    Container mit den Labels von Compose, durch ";"
+ *                     getrennt: "wikialt=/srv/Wiki Alt;dokunc=/srv/dokunc".
+ *                     `ps -a --filter label=com.docker.compose.project=P`
+ *                     nennt das Verzeichnis (working_dir) jedes Eintrags
+ *                     von P, einen je Zeile.
  * - FAKE_DOCKER_WEG   ohne Zugriff auf den Docker-Dienst: "alle" laesst
- *                     jeden Aufruf `volume …` scheitern, "ls" nur
- *                     `volume ls`, "inspect" nur `volume inspect`, mit der
- *                     Meldung von Docker bei fehlender Berechtigung.
- *                     `compose config` braucht den Dienst nicht.
+ *                     jeden Aufruf `volume …` und `ps …` scheitern, "ls"
+ *                     nur `volume ls`, "inspect" nur `volume inspect`,
+ *                     "ps" nur `ps`, mit der Meldung von Docker bei
+ *                     fehlender Berechtigung. `compose config` braucht den
+ *                     Dienst nicht.
  *
  * Das Ersetzen der Uploads (`tar xzf - -C /app/uploads`) schreibt den
  * Inhalt des Archivs auf stdin als Zeile "UPLOADS <Eintraege>" mit.
@@ -62,7 +68,7 @@ if [[ "$args" == "compose run "* ]]; then
   echo " Container fake-app-run-1 Created" >&2
 fi
 case "\${FAKE_DOCKER_WEG:-}:$args" in
-  alle:"volume "*|ls:"volume ls "*|inspect:"volume inspect "*)
+  alle:"volume "*|alle:"ps "*|ls:"volume ls "*|inspect:"volume inspect "*|ps:"ps "*)
     echo "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock" >&2
     exit 1 ;;
 esac
@@ -101,6 +107,14 @@ case "$args" in
     for v in "\${!VOLUME[@]}"; do
       case " \${FAKE_OHNE_LABEL:-} " in *" $v "*) continue ;; esac
       case "$v" in *_"$art") printf '%s\n' "\${v%_"$art"}" ;; esac
+    done
+    exit 0 ;;
+  "ps -a --filter label=com.docker.compose.project="*)
+    p="\${args#ps -a --filter label=com.docker.compose.project=}"
+    p="\${p%% *}"
+    IFS=';' read -ra EINTRAEGE <<<"\${FAKE_CONTAINER:-}"
+    for e in "\${EINTRAEGE[@]}"; do
+      if [ "\${e%%=*}" = "$p" ]; then printf '%s\n' "\${e#*=}"; fi
     done
     exit 0 ;;
   *"pg_restore -f /dev/null"*) cat >/dev/null; exit "\${FAKE_DUMP_EXIT:-0}" ;;
