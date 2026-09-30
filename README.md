@@ -707,7 +707,7 @@ Update deshalb sichern und den bisherigen Stand notieren:
     git diff --stat HEAD origin/main -- packages/db/prisma/migrations
     docker compose images               # IDs für den Rückweg notieren
     git pull && docker compose pull --ignore-buildable \
-      && docker compose build --pull && docker compose up -d --wait
+      && docker compose build --pull && docker compose up -d --wait   # (→ docs/admin/compose-project.md)
 
 Die vierte Zeile zeigt, welche Migrationen das Update mitbringt.
 Mit `BACKUP_KEEP_DAYS` löscht ein späterer Lauf auch diese Sicherung,

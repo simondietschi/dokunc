@@ -462,7 +462,9 @@ differently on an existing installation, and what to do about it.
   way back if the update was already started; for the new, empty
   instance it is `docker compose -p dokunc down` (without `-v`), then
   `./scripts/projektname.sh --festschreiben` and `docker compose up -d`
-  (see `docs/admin/compose-project.md`). While the check fails,
+  (see `docs/admin/compose-project.md`). If the old stack is still
+  running, the new proxy fails with "port is already allocated"; take the
+  same way back. While the check fails,
   `scripts/backup.sh` warns on stderr and deletes no old backups. If your
   checkout directory is named `dokunc` and no other installation runs on
   the host, nothing to do. On a host with several installations, run
