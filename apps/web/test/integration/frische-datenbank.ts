@@ -14,7 +14,8 @@ import { createPrismaClient, type PrismaClient } from "@dokunc/db";
  * allen Migrationen (`prisma migrate deploy`, einige Sekunden). Braucht
  * das Recht CREATEDB; in der CI und in der Compose-Datenbank hat der
  * Nutzer es. Fehlt es, scheitert der Test mit der Meldung von Postgres,
- * statt still ausgelassen zu werden.
+ * statt still ausgelassen zu werden. Superuser muss die Rolle nicht sein
+ * (datenbankEntfernen).
  */
 
 const ausfuehren = promisify(execFile);
@@ -23,8 +24,10 @@ const DB_PAKET = fileURLToPath(new URL("../../../../packages/db", import.meta.ur
 export type FrischeDatenbank = {
   url: string;
   client: PrismaClient;
-  entsorgen(): Promise<void>;
+  entsorgen(o?: EntfernenOptionen): Promise<void>;
 };
+
+export type EntfernenOptionen = { versuche?: number; pauseMs?: number };
 
 export async function frischeDatenbank(kennung: string): Promise<FrischeDatenbank> {
   const basis = process.env.DATABASE_URL;
@@ -59,19 +62,56 @@ export async function frischeDatenbank(kennung: string): Promise<FrischeDatenban
   return {
     url: url.toString(),
     client,
-    async entsorgen() {
+    async entsorgen(o) {
       await client.$disconnect();
-      await loeschen(verwaltung.toString(), name);
+      await loeschen(verwaltung.toString(), name, o);
     },
   };
 }
 
-async function loeschen(verwaltung: string, name: string): Promise<void> {
+async function loeschen(
+  verwaltung: string,
+  name: string,
+  o?: EntfernenOptionen,
+): Promise<void> {
   const admin = new Client({ connectionString: verwaltung });
   await admin.connect();
   try {
-    await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
+    await datenbankEntfernen(admin, name, o);
   } finally {
     await admin.end();
   }
+}
+
+/** Postgres: "database … is being accessed by other users". */
+const BELEGT = "55006";
+
+/**
+ * Entfernt die Datenbank, zuerst ohne FORCE. Dabei beendet Postgres
+ * selbst einen Autovacuum-Worker, der an ihr hängt, und wartet bis zu
+ * 5 s auf andere Verbindungen. WITH (FORCE) beendet dagegen jede
+ * Verbindung im Namen der eigenen Rolle; ohne Superuser (so die lokale
+ * Rolle, in der CI ist sie Superuser) scheitert das am Autovacuum-Worker
+ * mit "permission denied to terminate process", und die Datenbank
+ * bliebe liegen. Ist sie noch belegt (eine eben geschlossene Verbindung
+ * des Tests, ein neuer Worker), folgt ein weiterer Versuch; FORCE nur als
+ * letzter, für eine Verbindung, die der Test offen gelassen hat.
+ */
+export async function datenbankEntfernen(
+  admin: { query(sql: string): Promise<unknown> },
+  name: string,
+  o: EntfernenOptionen = {},
+): Promise<void> {
+  const versuche = o.versuche ?? 3;
+  const pauseMs = o.pauseMs ?? 200;
+  for (let i = 0; i < versuche; i++) {
+    try {
+      await admin.query(`DROP DATABASE IF EXISTS "${name}"`);
+      return;
+    } catch (e) {
+      if ((e as { code?: string }).code !== BELEGT) throw e;
+    }
+    if (pauseMs > 0) await new Promise((r) => setTimeout(r, pauseMs));
+  }
+  await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
 }
