@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:net";
+import { connect, createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Redis } from "ioredis";
@@ -18,18 +18,31 @@ import { Redis } from "ioredis";
  * Neustart verliert nichts) und ohne Verdraengung (voll heisst: jeder
  * schreibende Befehl scheitert mit OOM).
  *
+ * Die Adresse (`url`, `port`) bleibt vom Start bis `beenden` dieselbe
+ * und belegt: sie gehoert einem Vorbau in diesem Prozess, der jede
+ * Verbindung zum gerade laufenden redis-server durchreicht; redis-server
+ * selbst bekommt bei jedem Start einen frischen Port. Hoerte er selbst auf
+ * der Adresse, waere ihr Port waehrend eines Ausfalls (bis 30 s) frei: ein
+ * anderer Prozess auf demselben Rechner, etwa ein paralleler Testlauf,
+ * koennte ihn nehmen, und der Neustart scheiterte, oder die Collab-Server
+ * verbaenden sich mit einem fremden Redis. Solange redis-server nicht
+ * laeuft, setzt der Vorbau jede Verbindung sofort zurueck (fuer ioredis
+ * wie ein abgewiesener Verbindungsversuch); durchgereicht wird nur zu
+ * einem redis-server, der mit dem eigenen Passwort geantwortet hat.
+ *
  * Braucht redis-server 7 oder neuer im PATH (der Collab-Server nutzt
  * EXPIRE ... NX). Die CI installiert es im Job e2e; lokal ueberspringt
  * collab-chaos.test.ts sich ohne, mit Hinweis.
  */
 
 export type EigenesRedis = {
-  /** REDIS_URL mit Passwort. */
+  /** REDIS_URL mit Passwort; gilt bis `beenden`, auch ueber Neustarts. */
   url: string;
+  /** Port dieser Adresse (der Vorbau, nicht redis-server). */
   port: number;
   /** SIGTERM, wartet auf das Ende (AOF ist geschrieben). */
   anhalten(): Promise<void>;
-  /** Gleicher Port, gleiches Verzeichnis; wartet, bis PING antwortet. */
+  /** Gleiche Adresse, gleiches Verzeichnis; wartet, bis PING antwortet. */
   starten(): Promise<void>;
   /** anhalten und starten, wie `docker compose restart redis`. */
   neuStarten(): Promise<void>;
@@ -69,13 +82,24 @@ async function freierPort(): Promise<number> {
   });
 }
 
-async function antwortet(url: string, bisMs: number): Promise<boolean> {
+/**
+ * Antwortet unter `url` ein Redis mit PONG? Jede Probe hat eine eigene
+ * Frist: ein fremder Prozess auf dem Port nimmt die Verbindung vielleicht
+ * an und antwortet nie.
+ */
+async function antwortet(
+  url: string,
+  bisMs: number,
+  beendet: () => boolean,
+): Promise<boolean> {
   const ende = Date.now() + bisMs;
-  while (Date.now() < ende) {
+  while (Date.now() < ende && !beendet()) {
     const c = new Redis(url, {
       lazyConnect: true,
       maxRetriesPerRequest: 0,
       retryStrategy: () => null,
+      connectTimeout: 1_000,
+      commandTimeout: 1_000,
     });
     c.on("error", () => undefined);
     try {
@@ -91,15 +115,65 @@ async function antwortet(url: string, bisMs: number): Promise<boolean> {
   return false;
 }
 
+/**
+ * Der Vorbau: haelt seinen Port, reicht zu `ziel` durch und setzt ohne
+ * Ziel jede Verbindung sofort zurueck.
+ */
+async function starteVorbau() {
+  let ziel: number | null = null;
+  const offen = new Set<Socket>();
+  const merke = (s: Socket) => {
+    offen.add(s);
+    s.on("close", () => offen.delete(s));
+  };
+  const server = createServer((client) => {
+    merke(client);
+    client.on("error", () => undefined);
+    if (ziel === null) {
+      client.resetAndDestroy();
+      return;
+    }
+    const redis = connect(ziel, "127.0.0.1");
+    merke(redis);
+    redis.on("error", () => {
+      if (!client.destroyed) client.resetAndDestroy();
+    });
+    client.on("close", () => redis.destroy());
+    redis.on("close", () => client.destroy());
+    client.pipe(redis).pipe(client);
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve());
+  });
+  const adresse = server.address();
+  if (!adresse || typeof adresse === "string") {
+    throw new Error("Vorbau ohne Port");
+  }
+  return {
+    port: adresse.port,
+    /** Port des laufenden redis-server; null, solange keiner laeuft. */
+    ziel(port: number | null) {
+      ziel = port;
+    },
+    async schliessen() {
+      ziel = null;
+      for (const s of offen) s.destroy();
+      await new Promise((r) => server.close(r));
+    },
+  };
+}
+
 export async function starteEigenesRedis(): Promise<EigenesRedis> {
   const verzeichnis = await mkdtemp(join(tmpdir(), "dokunc-redis-"));
   const passwort = randomBytes(12).toString("hex");
   let ausgabe = "";
   let prozess: ChildProcess | null = null;
-  let port = 0;
+  const vorbau = await starteVorbau();
 
-  const url = () => `redis://:${passwort}@127.0.0.1:${port}/0`;
-  const args = () => [
+  const urlAuf = (port: number) => `redis://:${passwort}@127.0.0.1:${port}/0`;
+  const url = urlAuf(vorbau.port);
+  const args = (port: number) => [
     "--port",
     String(port),
     "--bind",
@@ -118,20 +192,40 @@ export async function starteEigenesRedis(): Promise<EigenesRedis> {
     "noeviction",
   ];
 
-  async function starten(): Promise<void> {
-    const p = spawn("redis-server", args(), {
+  async function starteAuf(port: number): Promise<void> {
+    const p = spawn("redis-server", args(port), {
       stdio: ["ignore", "pipe", "pipe"],
     });
     prozess = p;
     p.stdout?.on("data", (d: Buffer) => (ausgabe += d.toString()));
     p.stderr?.on("data", (d: Buffer) => (ausgabe += d.toString()));
-    if (!(await antwortet(url(), 10_000))) {
+    const beendet = () => p.exitCode !== null || p.signalCode !== null;
+    if (!(await antwortet(urlAuf(port), 10_000, beendet))) {
       p.kill("SIGKILL");
+      prozess = null;
       throw new Error(`redis-server nicht gestartet:\n${ausgabe}`);
     }
   }
 
+  // Der Port ist frei, wenn die Probe ihn bekommt; belegt ihn ein anderer
+  // bis zum Start, endet redis-server sofort (oder ein fremdes Redis
+  // lehnt das Passwort ab), und es geht mit dem naechsten weiter. Der
+  // Vorbau reicht erst danach durch.
+  async function starten(): Promise<void> {
+    for (let versuch = 1; ; versuch += 1) {
+      const port = await freierPort();
+      try {
+        await starteAuf(port);
+        vorbau.ziel(port);
+        return;
+      } catch (e) {
+        if (versuch >= 5) throw e;
+      }
+    }
+  }
+
   async function anhalten(): Promise<void> {
+    vorbau.ziel(null);
     const p = prozess;
     if (!p || p.exitCode !== null || p.signalCode !== null) return;
     const beendet = new Promise((r) => p.once("exit", r));
@@ -144,22 +238,17 @@ export async function starteEigenesRedis(): Promise<EigenesRedis> {
     prozess = null;
   }
 
-  // Der Port ist frei, wenn die Probe ihn bekommt; belegt ihn ein anderer
-  // Lauf bis zum Start, endet redis-server sofort, und es geht mit dem
-  // naechsten weiter.
-  for (let versuch = 1; ; versuch += 1) {
-    port = await freierPort();
-    try {
-      await starten();
-      break;
-    } catch (e) {
-      if (versuch >= 5) throw e;
-    }
+  try {
+    await starten();
+  } catch (e) {
+    await vorbau.schliessen();
+    await rm(verzeichnis, { recursive: true, force: true });
+    throw e;
   }
 
   return {
-    url: url(),
-    port,
+    url,
+    port: vorbau.port,
     anhalten,
     starten,
     async neuStarten() {
@@ -167,7 +256,7 @@ export async function starteEigenesRedis(): Promise<EigenesRedis> {
       await starten();
     },
     async voll(an) {
-      const c = new Redis(url(), { maxRetriesPerRequest: 1 });
+      const c = new Redis(url, { maxRetriesPerRequest: 1 });
       c.on("error", () => undefined);
       try {
         await c.config("SET", "maxmemory", an ? "1" : "0");
@@ -177,6 +266,7 @@ export async function starteEigenesRedis(): Promise<EigenesRedis> {
     },
     async beenden() {
       await anhalten();
+      await vorbau.schliessen();
       await rm(verzeichnis, { recursive: true, force: true });
     },
     log: () => ausgabe,
