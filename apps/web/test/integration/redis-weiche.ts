@@ -8,8 +8,10 @@ import { createServer, connect, type Socket } from "node:net";
 export type Weiche = {
   /** REDIS_URL fuer den Pruefling: Weiche statt Redis. */
   url: string;
-  /** Zurueckgesetzte Verbindungsversuche, solange die Weiche zu war. */
+  /** Verbindungsversuche, solange die Weiche zu war. */
   abgewiesen(): number;
+  /** Zeitpunkt (Date.now()), zu dem die Weiche aufging; null, solange zu. */
+  geoeffnetUm(): number | null;
   schliessen(): Promise<void>;
 };
 
@@ -17,14 +19,22 @@ export type Weiche = {
  * Zu Beginn setzt die Weiche jede Verbindung sofort zurueck (fuer ioredis
  * wie ein nicht erreichbares Redis), ab `offenNachMs` nach dem ersten
  * Versuch reicht sie zu `redisUrl` durch.
+ *
+ * Mit `schweigen` nimmt sie die Verbindungen stattdessen an und antwortet
+ * nie, wie ein haengendes Redis: ein Befehl wartet dann, bis die Weiche
+ * aufgeht. Dann schliesst sie die gehaltenen Verbindungen, und der Client
+ * baut neu auf.
  */
 export async function starteWeiche(
   redisUrl: string,
   offenNachMs: number,
+  opts: { schweigen?: boolean } = {},
 ): Promise<Weiche> {
   const ziel = new URL(redisUrl);
   let offen = false;
+  let geoeffnetUm: number | null = null;
   let abgewiesen = 0;
+  const gehalten = new Set<Socket>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const sockets = new Set<Socket>();
   const merke = (s: Socket) => {
@@ -36,9 +46,16 @@ export async function starteWeiche(
     client.on("error", () => undefined);
     timer ??= setTimeout(() => {
       offen = true;
+      geoeffnetUm = Date.now();
+      for (const s of gehalten) s.destroy();
     }, offenNachMs);
     if (!offen) {
       abgewiesen += 1;
+      if (opts.schweigen) {
+        gehalten.add(client);
+        client.on("close", () => gehalten.delete(client));
+        return;
+      }
       client.resetAndDestroy();
       return;
     }
@@ -62,6 +79,7 @@ export async function starteWeiche(
   return {
     url: url.toString(),
     abgewiesen: () => abgewiesen,
+    geoeffnetUm: () => geoeffnetUm,
     schliessen: async () => {
       clearTimeout(timer);
       for (const s of sockets) s.destroy();

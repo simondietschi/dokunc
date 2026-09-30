@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { HocuspocusProvider } from "@hocuspocus/provider";
 import { getSchema } from "@tiptap/core";
 import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap";
+import { Redis } from "ioredis";
 import { decodeJwt } from "jose";
 import { randomBytes } from "node:crypto";
 import * as Y from "yjs";
@@ -31,6 +32,7 @@ import {
   warteBis,
   wieAlterEditor,
 } from "./collab-hilfen";
+import { starteWeiche, type Weiche } from "./redis-weiche";
 
 /**
  * Editor-Schema zwischen Browser, Web-App und Collab-Server.
@@ -845,5 +847,66 @@ describe("Veraltete Instanz", () => {
     expect(b.synced).toBe(false);
     expect(b.gruende[0]).toBe(COLLAB_REJECT_REASON.schemaMismatch);
     b.provider.destroy();
+  }, 60_000);
+});
+
+describe("Start, waehrend Redis nicht antwortet", () => {
+  // Entschieden wird ueber die Marke in der Datenbank; die Ankuendigung
+  // ueber Redis ist nur der schnelle Weg. Ein Redis, das Verbindungen
+  // annimmt und nicht antwortet (oder ein Host, der nicht erreichbar
+  // ist), hielte einen Befehl lange auf; der Port darf nicht darauf
+  // warten.
+  const STILLE_MS = 4_000;
+  let weiche: Weiche | null = null;
+  let server: Pruefserver | null = null;
+  let empfang: Redis | null = null;
+
+  afterAll(async () => {
+    await server?.stop();
+    await weiche?.schliessen();
+    empfang?.disconnect();
+  }, 30_000);
+
+  it("oeffnet den Port, ohne auf die Ankuendigung zu warten, und kuendigt danach an", async () => {
+    // Mitlesen am echten Redis, an der Weiche vorbei.
+    const angekuendigt: string[] = [];
+    empfang = new Redis(redisUrlMitDb(REDIS_DB), { maxRetriesPerRequest: 1 });
+    empfang.on("message", (_kanal: string, m: string) => angekuendigt.push(m));
+    await empfang.subscribe(SCHEMA_ANNOUNCE_CHANNEL);
+
+    weiche = await starteWeiche(redisUrlMitDb(REDIS_DB), STILLE_MS, {
+      schweigen: true,
+    });
+    // Bereit meldet der Pruefstand den Server erst, wenn Redis antwortet.
+    server = await startePruefserver({
+      redisDb: REDIS_DB,
+      appSecret: getAppSecret(),
+      env: { REDIS_URL: weiche.url },
+    });
+    const offen = weiche.geoeffnetUm();
+    expect(offen).not.toBeNull();
+    const zeit = (msg: string) => {
+      const zeile = server!
+        .log()
+        .split("\n")
+        .find((z) => z.includes(`"msg":"${msg}"`));
+      expect(zeile, `Logzeile "${msg}" fehlt:\n${server!.log()}`).toBeDefined();
+      return (JSON.parse(zeile!) as { time: number }).time;
+    };
+    // Die Marke steht vor dem Port, der Port vor der Antwort von Redis.
+    expect(zeit("Editor-Schema")).toBeLessThanOrEqual(zeit("Hocuspocus läuft"));
+    expect(zeit("Hocuspocus läuft")).toBeLessThan(offen!);
+
+    // Angekuendigt wird trotzdem, sobald Redis antwortet.
+    const eigen = editorSchema();
+    await warteBis(
+      () =>
+        angekuendigt.some((m) => {
+          const a = JSON.parse(m) as { version?: number; hash?: string };
+          return a.version === eigen.version && a.hash === eigen.hash;
+        }),
+      "Ankuendigung des eigenen Schemas",
+      { timeoutMs: 10_000, log: server.log },
+    );
   }, 60_000);
 });

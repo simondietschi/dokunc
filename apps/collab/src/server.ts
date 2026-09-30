@@ -2134,12 +2134,24 @@ async function hebeSchemaMarke(): Promise<void> {
       },
       "Editor-Schema dieser Instanz ist aelter als die Marke in der Datenbank: sie nimmt keine Editoren an. Zurueck auf eine aeltere Fassung nur mit der Sicherung von vor dem Update (docs/admin/upgrading.md)",
     );
-    return;
   }
-  // Andere Instanzen lesen daraufhin die Marke und trennen ihre Editoren,
-  // wenn ihr Schema aelter ist. Scheitert das, merken sie es bei der
-  // naechsten Anmeldung oder in ihrer Minutenrunde.
-  await redis
+}
+
+/**
+ * Die eigene Fassung auf SCHEMA_ANNOUNCE_CHANNEL ankuendigen: andere
+ * Instanzen lesen daraufhin die Marke und trennen ihre Editoren, wenn ihr
+ * Schema aelter ist. Scheitert das, merken sie es bei der naechsten
+ * Anmeldung oder in ihrer Minutenrunde.
+ *
+ * Erst nach listen() und ohne zu warten: die Marke steht schon in der
+ * Datenbank und entscheidet allein. Ein Redis, das nicht erreichbar ist
+ * (etwa 30 s je Befehl, ./redis-client) oder Verbindungen annimmt und
+ * nicht antwortet, hielte den Befehl lange auf, und so lange bliebe
+ * sonst der Port zu.
+ */
+function kuendigeSchemaAn(): void {
+  if (schemaWaechter.veraltet) return;
+  void redis
     .publish(
       SCHEMA_ANNOUNCE_CHANNEL,
       JSON.stringify({
@@ -2156,6 +2168,7 @@ async function hebeSchemaMarke(): Promise<void> {
 async function starte(): Promise<void> {
   await hebeSchemaMarke();
   await server.listen();
+  kuendigeSchemaAn();
   log.info({ port: PORT }, "Hocuspocus läuft");
   log.info(
     {
