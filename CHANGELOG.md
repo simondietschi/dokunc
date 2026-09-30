@@ -355,11 +355,12 @@ differently on an existing installation, and what to do about it.
   for every other target; they no longer contain internal page or user
   IDs. The version comparison shows current titles, so renaming a linked
   page no longer shows up there as a change. The template picker shows
-  "Verknüpfte Seite" in its preview instead of link titles. The editor
-  loads titles from `GET /api/pages/titles`; if a proxy in front of the
-  app only passes listed paths, add it, otherwise links that others add
-  while a page is open show "Verknüpfte Seite" there. Nothing else to
-  do.
+  "Verknüpfte Seite" in its preview instead of link titles. Tools that
+  read link targets (`/p/<id>`) from Markdown or HTML exports now find
+  plain text; adjust them. The editor loads titles from
+  `GET /api/pages/titles`: if a proxy in front of the app only passes
+  listed paths, add this path, otherwise links that others add while a
+  page is open show "Verknüpfte Seite" there.
 
 ### Security
 
