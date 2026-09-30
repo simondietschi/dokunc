@@ -40,10 +40,13 @@ vi.mock("@/lib/current-user", () => ({
   }),
 }));
 // Anmelde- und Registrierungsseite fragen den Host der Anfrage (die
-// Ersteinrichtung ohne Token gibt es nur auf localhost). Ausserhalb einer
-// Anfrage wirft headers(); die anderen Seiten hier lesen keine Header.
+// Ersteinrichtung ohne Token gibt es nur auf localhost). Die Anmeldeseite
+// fragt ausserdem, ob noch ein Sitzungs-Cookie da ist (hasSessionCookie):
+// hier nie. Ausserhalb einer Anfrage werfen headers() und cookies(); die
+// anderen Seiten hier lesen beides nicht.
 vi.mock("next/headers", () => ({
   headers: vi.fn(async () => new Headers({ host: "localhost:3000" })),
+  cookies: vi.fn(async () => ({ has: () => false, get: () => undefined })),
 }));
 vi.mock("next/navigation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/navigation")>()),
