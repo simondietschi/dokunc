@@ -100,6 +100,15 @@ You need this in two cases:
 - **You change the schema.** Until its hash is in `EDITOR_SCHEMA_HASHES`, your schema has version 0, which is older than any recorded version, so your local server locks out its editors right away. Reset once; at version 0 the server ignores the recorded hash, so further changes need no reset. Append the hash when the change is final; the server then records the new version. If you change the schema again after that, reset again and append another hash when you are done, instead of replacing the one you appended.
 - **You switch to a branch with an older schema.**
 
+## Migrations
+
+Change `packages/db/prisma/schema.prisma` only together with a migration (`pnpm --filter @dokunc/db migrate --name <name>` runs `prisma migrate dev`). The e2e job compares the schema with the state after all migrations (step "Schema gegen Migrationen (prisma migrate diff)", `pnpm --filter @dokunc/db migrate:check`) and fails with exit code 2 and a summary of the difference when a migration is missing. To run the check locally, create an empty database and point `SHADOW_DATABASE_URL` at it. Prisma wipes and rebuilds that database, so it must never be the application's; `packages/db/prisma.config.ts` refuses the database of `DATABASE_URL`:
+
+    psql -h localhost -U dokunc -d dokunc -c 'CREATE DATABASE dokunc_schatten'
+    SHADOW_DATABASE_URL=postgresql://dokunc:dokunc@localhost:5432/dokunc_schatten pnpm --filter @dokunc/db migrate:check
+
+A migration that drops a column or a table deletes its content on every installation. Prisma writes `DROP COLUMN` plus `ADD COLUMN` for a renamed field; write such a migration by hand with `RENAME COLUMN` instead. If the loss is intended, put the line `-- Datenverlust gewollt: <reason>` (a reason of at least ten characters) into the comment block directly above the statement, without a blank line in between, and add an upgrade note. `apps/web/src/migrationen.test.ts` rejects every `DROP COLUMN` and `DROP TABLE` without it.
+
 ## What is not rewritten
 
 Published Git history and applied database migrations stay as they are. Prisma stores a checksum of every applied migration: changing one, even a comment, makes `prisma migrate dev` ask to reset existing development databases, and a renamed migration directory would run again on every installation. Commits and migrations from before these rules therefore keep their German subjects and internal numbering; `apps/web/src/konventionen.test.ts` lists those migrations by name and checks every other tracked file and path for internal plan references.

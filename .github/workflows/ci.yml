@@ -265,6 +265,17 @@ jobs:
       - name: Run migrations
         run: pnpm --filter @dokunc/db migrate:deploy
 
+      # Vergessene Migration: das Schema nach allen Migrationen (in einer
+      # eigenen, leeren Schattendatenbank aufgebaut; pg_trgm verlangt eine
+      # eigene Datenbank, kein Schema) muss schema.prisma entsprechen.
+      # Exit 2 = Unterschied, die Zusammenfassung steht im Log.
+      - name: Schema gegen Migrationen (prisma migrate diff)
+        env:
+          SHADOW_DATABASE_URL: postgresql://dokunc:dokunc@localhost:5432/dokunc_schatten
+        run: |
+          PGPASSWORD=dokunc psql -h localhost -U dokunc -d dokunc -v ON_ERROR_STOP=1 -c 'CREATE DATABASE dokunc_schatten'
+          pnpm --filter @dokunc/db migrate:check
+
       # Der Ausfalltest (apps/web/test/integration/collab-chaos.test.ts)
       # startet eigene redis-server-Prozesse, die er anhaelt, voll macht
       # und neu startet; den Dienst-Container oben kann er dafuer nicht

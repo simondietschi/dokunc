@@ -13,8 +13,36 @@ loadEnv({
   quiet: true,
 });
 
+/** Host, Port und Datenbankname einer Postgres-URL, zum Vergleich. */
+function datenbankVon(url: string): string {
+  const u = new URL(url);
+  return `${u.hostname.toLowerCase()}:${u.port || "5432"}/${decodeURIComponent(u.pathname.slice(1))}`;
+}
+
+/**
+ * Schattendatenbank fuer `prisma migrate diff` (migrate:check) und
+ * `prisma migrate dev`: eine eigene, leere Datenbank, die Prisma leert
+ * und neu aufbaut. Nie die Datenbank der App; zeigt sie dorthin, bricht
+ * jeder Prisma-Befehl hier ab, bevor etwas geloescht ist. Ohne
+ * SHADOW_DATABASE_URL bleibt es beim Verhalten von Prisma (migrate deploy
+ * braucht keine, migrate dev legt sich eine an).
+ */
+function schattenDatenbank(app: string): string | undefined {
+  const schatten = process.env.SHADOW_DATABASE_URL?.trim();
+  if (!schatten) return undefined;
+  if (datenbankVon(schatten) === datenbankVon(app)) {
+    throw new Error(
+      "SHADOW_DATABASE_URL zeigt auf dieselbe Datenbank wie DATABASE_URL. prisma migrate diff leert " +
+        "die Schattendatenbank; eine eigene, leere Datenbank angeben.",
+    );
+  }
+  return schatten;
+}
+
+const url = env("DATABASE_URL");
+
 export default defineConfig({
   schema: "prisma/schema.prisma",
   migrations: { path: "prisma/migrations" },
-  datasource: { url: env("DATABASE_URL") },
+  datasource: { url, shadowDatabaseUrl: schattenDatenbank(url) },
 });
