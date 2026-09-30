@@ -38,6 +38,8 @@ function aufzeichnender() {
  */
 class Attrappe extends EventEmitter {
   status = "ready";
+  /** ok: bestaetigt sofort; haengt: nie; fehler: lehnt ab. */
+  subscribeModus: "ok" | "haengt" | "fehler" = "ok";
   publishFehler: Error | null = new Error("Connection is closed.");
   versuche = 0;
   veroeffentlicht: { kanal: string; daten: Buffer }[] = [];
@@ -54,8 +56,13 @@ class Attrappe extends EventEmitter {
     const cb = args.at(-1);
     const kanaele = args.filter((a): a is string => typeof a === "string");
     this.abonniert.push(kanaele);
-    if (typeof cb === "function") (cb as (e: null) => void)(null);
-    return Promise.resolve(kanaele.length);
+    if (this.subscribeModus === "haengt") return new Promise<number>(() => {});
+    const fehler =
+      this.subscribeModus === "fehler"
+        ? new Error("SUBSCRIBE abgelehnt")
+        : null;
+    if (typeof cb === "function") (cb as (e: Error | null) => void)(fehler);
+    return fehler ? Promise.reject(fehler) : Promise.resolve(kanaele.length);
   });
   unsubscribe = vi.fn((...args: unknown[]) => {
     const cb = args.at(-1);
@@ -68,7 +75,7 @@ class Attrappe extends EventEmitter {
 }
 
 /** HA-Erweiterung auf zwei Attrappen: erst pub, dann sub. */
-function haMitAttrappen() {
+function haMitAttrappen(opts: { ladenOhneRedisMs?: number } = {}) {
   const clients: Attrappe[] = [];
   const redis = {
     duplicate: () => {
@@ -78,7 +85,11 @@ function haMitAttrappen() {
     },
   } as unknown as Redis;
   const rec = aufzeichnender();
-  const ha = createHaRedis(redis, { onError: () => undefined, log: rec.log });
+  const ha = createHaRedis(redis, {
+    onError: () => undefined,
+    log: rec.log,
+    ...opts,
+  });
   const [pubA, subA] = clients;
   return { ...ha, pubA, subA, ...rec };
 }
@@ -356,5 +367,129 @@ describe("HA-Erweiterung ohne unbehandelte Ablehnungen", () => {
       sub.disconnect();
       redis.disconnect();
     }
+  });
+});
+
+describe("Laden ohne Warten auf Redis", () => {
+  /** afterLoadDocument wie von Hocuspocus nach dem Laden gerufen. */
+  function laden(extension: unknown, name: string) {
+    const dokument = new Document(name);
+    const start = Date.now();
+    return (
+      extension as {
+        afterLoadDocument(d: unknown): Promise<void>;
+      }
+    )
+      .afterLoadDocument({ documentName: name, document: dokument })
+      .then(() => Date.now() - start);
+  }
+
+  // Ist bekannt, dass Redis weg ist, laedt das Dokument sofort, ohne
+  // Abgleich mit anderen Instanzen. Frueher wartete es, bis Redis zurueck
+  // war, und der Editor zeigte so lange "Verbinde...".
+  it("wartet bei bekanntem Ausfall gar nicht", async () => {
+    const { extension, subA, warn } = haMitAttrappen();
+    subA.emit("ready");
+    subA.emit("close");
+    subA.subscribeModus = "haengt";
+    const dauer = await laden(extension, "seite-a");
+    expect(dauer).toBeLessThan(50);
+    expect(warn.map((z) => z.msg)).toEqual([
+      "Dokument ohne Abgleich mit anderen Instanzen geladen, Redis nicht erreichbar",
+    ]);
+    expect(warn[0].detail).toMatchObject({ pageId: "seite-a" });
+  });
+
+  it("wartet sonst hoechstens die Grenze", async () => {
+    const { extension, subA, warn } = haMitAttrappen({ ladenOhneRedisMs: 100 });
+    subA.emit("ready");
+    subA.subscribeModus = "haengt";
+    const dauer = await laden(extension, "seite-b");
+    expect(dauer).toBeGreaterThanOrEqual(90);
+    expect(dauer).toBeLessThan(1_000);
+    expect(warn[0].detail).toMatchObject({ pageId: "seite-b" });
+  });
+
+  // Lehnt das Abonnieren ab, raeumt die Erweiterung ihr Abonnement weg;
+  // das Laden gelingt trotzdem, und der Kanal wird erneut abonniert.
+  it("laedt auch, wenn das Abonnieren abgelehnt wird, und abonniert erneut", async () => {
+    const { extension, subA } = haMitAttrappen();
+    subA.emit("ready");
+    subA.subscribeModus = "fehler";
+    await expect(laden(extension, "seite-c")).resolves.toBeLessThan(1_000);
+    const dokumentKanal = subA.abonniert.filter((k) =>
+      k.includes("hocuspocus:seite-c"),
+    );
+    expect(dokumentKanal.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe("Abgleich nach dem Wiederverbinden", () => {
+  // Waehrend eines Ausfalls tauschen die Instanzen nichts aus. Ohne
+  // Abgleich nach der Wiederkehr blieben sie verschieden, bis jemand
+  // wieder tippt (die Erweiterung veroeffentlicht nur nach Aenderungen).
+  it("abonniert erneut und veroeffentlicht fuer jedes geladene Dokument den ersten Sync-Schritt", async () => {
+    const { extension, pubA, subA, info } = haMitAttrappen();
+    pubA.publishFehler = null;
+    const dokumente = new Map<string, Document>();
+    await extension.onConfigure({
+      instance: { documents: dokumente },
+    } as never);
+    // Erstes "ready" nach dem Start: nichts geladen, nichts zu tun.
+    subA.emit("ready");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(pubA.veroeffentlicht).toEqual([]);
+
+    dokumente.set("seite-d", new Document("seite-d"));
+    const vorher = subA.abonniert.length;
+    subA.emit("close");
+    subA.emit("ready");
+    await new Promise((r) => setTimeout(r, 20));
+
+    const neu = subA.abonniert.slice(vorher);
+    expect(neu).toHaveLength(1);
+    expect(neu[0]).toContain("hocuspocus:seite-d");
+    expect(neu[0].some((k) => k.startsWith("hocuspocus#reply:"))).toBe(true);
+    expect(pubA.veroeffentlicht.map((v) => v.kanal)).toEqual([
+      "hocuspocus:seite-d",
+    ]);
+    // Kennung der eigenen Instanz, dann die Nachricht: Name, Sync (0),
+    // SyncStep1 (0).
+    const daten = pubA.veroeffentlicht[0].daten;
+    const nachricht = daten.subarray(1 + daten[0]);
+    const name = Buffer.from("seite-d");
+    expect(nachricht.subarray(0, 1 + name.length)).toEqual(
+      Buffer.concat([Buffer.from([name.length]), name]),
+    );
+    expect([...nachricht.subarray(1 + name.length, 3 + name.length)]).toEqual([
+      0, 0,
+    ]);
+    expect(info.map((z) => z.msg)).toContain(
+      "Redis wieder erreichbar, Dokumente mit anderen Instanzen abgeglichen",
+    );
+  });
+
+  // Steht die Veroeffentlichungsverbindung noch nicht, ginge der Abgleich
+  // verloren (publish loest bei einem Fehler still mit 0 auf). Er folgt,
+  // sobald auch sie steht.
+  it("wartet mit dem Abgleich, bis auch die Veroeffentlichungsverbindung steht", async () => {
+    const { extension, pubA, subA } = haMitAttrappen();
+    pubA.publishFehler = null;
+    const dokumente = new Map([["seite-e", new Document("seite-e")]]);
+    await extension.onConfigure({
+      instance: { documents: dokumente },
+    } as never);
+    subA.emit("close");
+    pubA.emit("close");
+    pubA.status = "reconnecting";
+    subA.emit("ready");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(pubA.veroeffentlicht).toEqual([]);
+    pubA.status = "ready";
+    pubA.emit("ready");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(pubA.veroeffentlicht.map((v) => v.kanal)).toEqual([
+      "hocuspocus:seite-e",
+    ]);
   });
 });

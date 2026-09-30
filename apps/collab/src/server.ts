@@ -88,6 +88,7 @@ import {
 } from "./limits";
 import { createAttemptLimiter, createTicketLedger } from "./redis-guards";
 import { createHaRedis, createRedisClient } from "./redis-client";
+import { RedisZustand, SCHNELLWEG_NACH_MS } from "./redis-status";
 
 // Stufe und Schwaerzung wie in der Web-App (Begruendung der Felder in
 // packages/config/src/log.ts). logLevelFrom wirft nie; einen ungueltigen
@@ -152,6 +153,14 @@ const redis = createRedisClient(
   process.env.REDIS_URL ?? "redis://localhost:6379",
 );
 redis.on("error", (e: Error) => log.warn({ err: e }, "redis"));
+/**
+ * Seit mehr als SCHNELLWEG_NACH_MS weg? Dann warten Bremse,
+ * Snapshot-Drossel und Mitwirkende nicht mehr auf Redis, sondern nehmen
+ * sofort ihren Ersatz (./redis-status). Der Ticketverbrauch wartet
+ * weiter (./redis-guards).
+ */
+const redisZustand = new RedisZustand(redis);
+const redisGestoert = () => redisZustand.gestoert(SCHNELLWEG_NACH_MS);
 
 /*
  * Grenzen fuer Verbindungen (Begruendung der Vorgaben in ./limits).
@@ -199,11 +208,15 @@ const sizeLocked = new WeakSet<Connection>();
  */
 const UPGRADE_ID_HEADER = "x-dokunc-upgrade-id";
 const userSlots = new UserSlots(limits.maxConnectionsPerUser);
-const attemptConnection = createAttemptLimiter(redis, (err) =>
-  log.warn(
-    { err },
-    "Verbindungsbremse: Redis nicht erreichbar, zaehle im Prozess",
-  ),
+const attemptConnection = createAttemptLimiter(
+  redis,
+  (err) =>
+    log.warn(
+      { err },
+      "Verbindungsbremse: Redis nicht erreichbar, zaehle im Prozess",
+    ),
+  Date.now,
+  redisGestoert,
 );
 const consumeTicket = createTicketLedger(redis, (err) =>
   log.warn(
@@ -220,6 +233,9 @@ const consumeTicket = createTicketLedger(redis, (err) =>
  */
 async function shouldSnapshot(pageId: string): Promise<boolean> {
   try {
+    // Bekannter Ausfall: nicht bis zu etwa 6 s warten, der Speicherlauf
+    // haelt so lange die Speichersperre seiner Seite.
+    if (redisGestoert()) throw new Error("Redis nicht verbunden");
     const res = await redis.set(
       `dokunc:snapshot:${pageId}`,
       "1",
@@ -247,6 +263,8 @@ async function shouldSnapshot(pageId: string): Promise<boolean> {
  * VERSION_INTERVAL_MS von selbst — dann bleibt es beim alten Verhalten.
  */
 async function releaseSnapshot(pageId: string): Promise<void> {
+  // Bei bekanntem Ausfall gar nicht erst: der Schluessel verfaellt.
+  if (redisGestoert()) return;
   try {
     await redis.del(`dokunc:snapshot:${pageId}`);
   } catch (e) {
@@ -526,7 +544,7 @@ const UEBERNAHME = {
  * Bearbeitung mit; wer davor zuletzt schrieb, soll von der neuen
  * Aenderung erfahren.
  */
-const pageEditors = new PageEditors(redisEditorStore(redis), {
+const pageEditors = new PageEditors(redisEditorStore(redis, redisGestoert), {
   windowMs: 2 * VERSION_INTERVAL_MS,
   warn: (err, msg) => log.warn({ err }, msg),
 });
@@ -1400,14 +1418,16 @@ async function speichere(data: onStoreDocumentPayload): Promise<void> {
   ]);
 
   // Glocke der erwähnten Personen sofort aktualisieren — erst nach dem
-  // Commit, sonst holte sie eine Zeile ab, die es noch nicht gibt.
-  await Promise.all(
-    mentioned.map((userId) =>
-      redis
-        .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
-        .catch(() => undefined),
-    ),
-  );
+  // Commit, sonst holte sie eine Zeile ab, die es noch nicht gibt. Ohne
+  // await: waehrend eines Redis-Ausfalls hinge der Speicherlauf sonst bis
+  // zu etwa 6 s daran und hielte so lange die Speichersperre der Seite.
+  // Geht die Nachricht verloren, zeigt die Glocke die Meldung beim
+  // naechsten Seitenaufruf.
+  for (const userId of mentioned) {
+    redis
+      .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
+      .catch(() => undefined);
+  }
 
   // Die beiden Folgeschritte dürfen den Speicherlauf nicht kippen, also
   // wird ihr Fehler nur gemeldet. Dann muss die Meldung aber tragen:
@@ -1523,14 +1543,12 @@ async function speichere(data: onStoreDocumentPayload): Promise<void> {
       throw e;
     }
 
-    // Glocke erst nach dem Commit (wie bei den Erwaehnungen).
-    await Promise.all(
-      notified.map((userId) =>
-        redis
-          .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
-          .catch(() => undefined),
-      ),
-    );
+    // Glocke erst nach dem Commit, ohne await (wie bei den Erwaehnungen).
+    for (const userId of notified) {
+      redis
+        .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
+        .catch(() => undefined);
+    }
   }
 }
 

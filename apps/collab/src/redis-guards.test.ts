@@ -137,6 +137,37 @@ describe("createAttemptLimiter", () => {
   });
 });
 
+describe("createAttemptLimiter waehrend eines bekannten Ausfalls", () => {
+  // Waehrend eines Ausfalls wartete jeder Befehl bis zu etwa 6 s, bevor
+  // er auf den Zaehler im Prozess auswich, und jeder Verbindungsaufbau
+  // mit ihm. Ist die Stoerung bekannt, geht es sofort dorthin.
+  it("zaehlt im Prozess, ohne Redis zu fragen, solange die Verbindung gestoert ist", async () => {
+    const { redis } = fakeRedis();
+    const multi = vi.spyOn(redis, "multi");
+    const onError = vi.fn();
+    let gestoert = true;
+    const attempt = createAttemptLimiter(
+      redis,
+      onError,
+      Date.now,
+      () => gestoert,
+    );
+    const erlaubt = { allowed: true, firstRejection: false };
+    expect(await attempt("k", 2, 60)).toEqual(erlaubt);
+    expect(await attempt("k", 2, 60)).toEqual(erlaubt);
+    expect(await attempt("k", 2, 60)).toEqual({
+      allowed: false,
+      firstRejection: true,
+    });
+    expect(multi).not.toHaveBeenCalled();
+    expect(onError).toHaveBeenCalledTimes(3);
+    expect(String(onError.mock.calls[0][0])).toContain("Redis nicht verbunden");
+    gestoert = false;
+    await attempt("k", 2, 60);
+    expect(multi).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("createTicketLedger", () => {
   it("loest ein Ticket genau einmal ein", async () => {
     const { redis } = fakeRedis();

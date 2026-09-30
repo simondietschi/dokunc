@@ -49,10 +49,21 @@ function checkExec(
 }
 
 /** MULTI/EXEC; exec() wirft bei Einzelfehlern nicht: jedes [err, res]
- *  pruefen und den ersten Fehler werfen, exec() === null ebenfalls. */
-export function redisEditorStore(redis: Redis): EditorStore {
+ *  pruefen und den ersten Fehler werfen, exec() === null ebenfalls.
+ *  Ist die Verbindung bekanntermassen weg (`gestoert`, ./redis-status),
+ *  sofort werfen, statt bis zu etwa 6 s in der Warteschlange von ioredis
+ *  zu warten; der Speicherlauf, der `recent` fragt, hielte sonst so lange
+ *  die Speichersperre seiner Seite. */
+export function redisEditorStore(
+  redis: Redis,
+  gestoert: () => boolean = () => false,
+): EditorStore {
+  const verbunden = () => {
+    if (gestoert()) throw new Error("Redis nicht verbunden");
+  };
   return {
     async note(key, userId, atMs, ttlMs) {
+      verbunden();
       checkExec(
         await redis
           .multi()
@@ -62,6 +73,7 @@ export function redisEditorStore(redis: Redis): EditorStore {
       );
     },
     async recent(key, sinceMs) {
+      verbunden();
       const [, raw] = checkExec(
         await redis
           .multi()

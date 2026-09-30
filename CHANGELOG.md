@@ -151,6 +151,20 @@ differently on an existing installation, and what to do about it.
   `hocuspocus:<pageId>:lock` are no longer written; existing ones expire
   within a second.
 
+- **Redis outages:** the collaboration server no longer needs Redis to open
+  or save pages. While Redis is unreachable, a page opens after at most
+  five seconds, at once when the outage is already known, instead of
+  showing "Verbinde…" until Redis is back; the web app's ticket request
+  can still take a few seconds then. With several collaboration servers,
+  an editor sees changes made on another server only when its own server
+  saves the page again, and live again once Redis is back; open pages are
+  then resynchronised without further typing. A Redis that refuses the
+  collaboration server, for example because of a wrong password, no longer
+  keeps pages from opening: they open after five seconds, and the log
+  shows "Dokument ohne Abgleich mit anderen Instanzen geladen, Redis nicht
+  erreichbar" (at most once per ten seconds). Alert on that line to notice
+  such a misconfiguration. Nothing else to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -272,3 +286,11 @@ differently on an existing installation, and what to do about it.
   server saved in the meantime. A saved state that cannot be read is
   logged ("Gespeicherter Stand nicht lesbar, ohne Zusammenfuehren
   gespeichert") and overwritten as before.
+- Opening a page while Redis was unreachable waited until Redis came back;
+  the editor showed "Verbinde…" all that time.
+- After Redis came back, collaboration servers stayed out of sync until
+  the next edit.
+- While Redis was reconnecting, each connection attempt and each save of
+  the collaboration server waited several seconds per Redis command
+  before it fell back. After a second of outage they now fall back at
+  once; only the check that a collab ticket is used once still waits.

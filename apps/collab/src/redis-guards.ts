@@ -4,9 +4,9 @@
  * Beide zaehlen in Redis, damit mehrere Instanzen dieselbe Grenze sehen,
  * und fallen bei einem Redis-Fehler auf einen Speicher in diesem Prozess
  * zurueck — wie die Bremsen der Web-App (apps/web/src/lib/rate-limit.ts).
- * Ohne Redis waere ohnehin kein neues Dokument ladbar (die
- * HA-Erweiterung abonniert beim Laden), ein Ausfall hier soll aber
- * nicht zusaetzlich jede Anmeldung abweisen.
+ * Ein Redis-Ausfall soll keine Anmeldung abweisen: Dokumente laden auch
+ * ohne Redis (die HA-Erweiterung wartet darauf hoechstens kurz, siehe
+ * ./redis-client).
  */
 
 type GuardMulti = {
@@ -46,11 +46,17 @@ export type Attempt = {
  * (INCR), der Ablauf wird bei jedem Aufruf mit NX sichergestellt: bricht
  * die Verbindung zwischen den beiden Befehlen ab, bliebe ein Schluessel
  * ohne Ablauf sonst fuer immer liegen und die Bremse dauerhaft zu.
+ *
+ * `gestoert` (./redis-status): ist die Verbindung bekanntermassen weg,
+ * zaehlt die Bremse gleich im Prozess. Sonst wartete jeder Versuch bis zu
+ * etwa 6 s in der Warteschlange von ioredis, bevor er auswich, und mit
+ * ihm der Verbindungsaufbau.
  */
 export function createAttemptLimiter(
   redis: GuardRedis,
   onRedisError: (err: unknown) => void,
   now: () => number = Date.now,
+  gestoert: () => boolean = () => false,
 ) {
   const mem = new Map<string, { n: number; reset: number }>();
 
@@ -78,6 +84,7 @@ export function createAttemptLimiter(
     const redisKey = `dokunc:rl:${key}`;
     let count: number;
     try {
+      if (gestoert()) throw new Error("Redis nicht verbunden");
       const res = await redis
         .multi()
         .incr(redisKey)
@@ -97,6 +104,12 @@ export function createAttemptLimiter(
 
 /**
  * Collab-Tickets genau einmal einloesen.
+ *
+ * Bewusst ohne Schnellweg bei gestoerter Verbindung: waehrend eines
+ * kurzen Neuaufbaus wartet der Befehl und gelingt danach, das Ticket ist
+ * dann in Redis verbraucht. Ginge jeder Verbrauch in dieser Zeit in den
+ * Speicher dieses Prozesses, galte dasselbe Ticket auf einer anderen
+ * Instanz noch einmal.
  *
  * Das Ticket gilt zwei Minuten und wurde bisher bei jedem Verbinden nur
  * geprueft: wer es abfing (Proxy-Log, Erweiterung, geteilter Rechner),

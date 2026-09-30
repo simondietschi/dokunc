@@ -204,6 +204,18 @@ describe("redisEditorStore", () => {
     ]);
   });
 
+  // Waehrend eines bekannten Ausfalls sofort, statt bis zu etwa 6 s in
+  // der Warteschlange von ioredis; ein Speicherlauf wartete sonst so lange.
+  it("wirft sofort, ohne Redis zu fragen, solange die Verbindung gestoert ist", async () => {
+    const r = fakeRedis([[null, 1]]);
+    const store = redisEditorStore(r.redis, () => true);
+    await expect(store.note("k", "u1", 1, 1)).rejects.toThrow(
+      "Redis nicht verbunden",
+    );
+    await expect(store.recent("k", 1)).rejects.toThrow("Redis nicht verbunden");
+    expect(r.commands).toEqual([]);
+  });
+
   it("wirft bei einem Einzelfehler oder abgebrochener Transaktion", async () => {
     const fehler = new Error("WRONGTYPE");
     await expect(

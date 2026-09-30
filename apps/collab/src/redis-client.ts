@@ -1,5 +1,7 @@
 import { Redis } from "ioredis";
 import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
+import type { Document, afterLoadDocumentPayload } from "@hocuspocus/server";
+import { RedisZustand } from "./redis-status";
 
 /**
  * Die Redis-Verbindung des Collab-Servers und die HA-Extension. Alle
@@ -93,7 +95,18 @@ export class Drossel {
  */
 type Interna = {
   handleIncomingMessage: (kanal: Buffer, daten: Buffer) => Promise<void>;
+  publishFirstSyncStep: (name: string, dokument: Document) => Promise<unknown>;
+  subKey: (name: string) => string;
+  replyKey: (kennung: string) => string;
 };
+
+/**
+ * So lange wartet das Laden eines Dokuments hoechstens auf Redis
+ * (Abonnieren des Dokumentkanals und Abgleich mit anderen Instanzen).
+ * Der normale Weg (NUMSUB, SUBSCRIBE, bis zu 1 s Warten auf andere
+ * Instanzen) braucht gut eine Sekunde.
+ */
+export const LADEN_OHNE_REDIS_MS = 5_000;
 
 /**
  * Die HA-Erweiterung mit den Aenderungen, die dokunc braucht.
@@ -129,8 +142,141 @@ type Interna = {
  * nach eigenen Aenderungen eine Sekunde vor dem Entladen an.
  */
 export class HaErweiterung extends HocuspocusRedis {
+  // Gesetzt in schuetze(), direkt nach dem Bau.
+  #pub!: Redis;
+  #sub!: Redis;
+  #log!: HaLog;
+  #subZustand!: RedisZustand;
+  #ladenOhneRedisMs = LADEN_OHNE_REDIS_MS;
+  #ladeDrossel = new Drossel();
+  #abgleichDrossel = new Drossel();
+  /** Eine der beiden Verbindungen war seit dem letzten Abgleich weg. */
+  #abgerissen = false;
+  #abgleichGeplant = false;
+
   private get interna(): Interna {
     return this as unknown as Interna;
+  }
+
+  /**
+   * Laden, ohne auf Redis zu warten.
+   *
+   * Die Erweiterung abonniert beim Laden den Kanal des Dokuments und
+   * gleicht mit anderen Instanzen ab; ihr Abonnent hat keine Grenze fuer
+   * Versuche (siehe createHaRedis). War Redis weg, wartete das Laden, bis
+   * Redis zurueck war, und der Editor zeigte so lange "Verbinde...".
+   * Jetzt wartet es hoechstens LADEN_OHNE_REDIS_MS, bei bekanntem Ausfall
+   * gar nicht; danach laedt das Dokument aus der Datenbank, ohne Abgleich.
+   * Mit einer Instanz fehlt dabei nichts; mit mehreren gleichen sich die
+   * Staende beim Speichern (Zusammenfuehren in ./server) und nach dem
+   * Wiederverbinden (#gleicheAb) an. Das Abonnieren laeuft im Hintergrund
+   * weiter. Aus Redis-Gruenden wirft das Laden nie: ein Wurf hiesse fuer
+   * den Editor "Kein Zugriff".
+   */
+  override async afterLoadDocument(
+    data: afterLoadDocumentPayload,
+  ): Promise<void> {
+    const name = data.documentName;
+    const beginn = Date.now();
+    const laden = super.afterLoadDocument(data).then(
+      () => ({ art: "fertig" as const }),
+      (e: unknown) => ({ art: "abgelehnt" as const, e }),
+    );
+    const grenze = this.#subZustand.gestoert() ? 0 : this.#ladenOhneRedisMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const zeit = new Promise<{ art: "zeit" }>((resolve) => {
+      timer = setTimeout(() => resolve({ art: "zeit" }), grenze);
+      timer.unref?.();
+    });
+    const ergebnis = await Promise.race([laden, zeit]);
+    clearTimeout(timer);
+    if (ergebnis.art === "fertig") return;
+
+    // Die Erweiterung hat Eintrag und Abonnement dann abgeraeumt. Wieder
+    // abonnieren: Nachrichten anderer Instanzen findet sie auch ueber die
+    // Dokumente von Hocuspocus. Spaet abgelehnt nur, wenn das Dokument
+    // noch geladen ist (sonst bliebe ein Abonnement ohne Dokument).
+    const abgelehnt = (e: unknown, nochLaden: boolean) => {
+      const sinceLast = this.#ladeDrossel.darf();
+      if (sinceLast !== null) {
+        this.#log.warn(
+          { err: e, pageId: name, sinceLast },
+          "redis-ha: Abgleich nach dem Laden gescheitert, Kanal wird erneut abonniert",
+        );
+      }
+      if (!nochLaden && this.instance?.documents.get(name) !== data.document) {
+        return;
+      }
+      this.#sub.subscribe(this.interna.subKey(name)).catch(() => undefined);
+    };
+    if (ergebnis.art === "abgelehnt") {
+      abgelehnt(ergebnis.e, true);
+      return;
+    }
+    void laden.then((spaeter) => {
+      if (spaeter.art === "abgelehnt") abgelehnt(spaeter.e, false);
+    });
+    const sinceLast = this.#ladeDrossel.darf();
+    if (sinceLast !== null) {
+      this.#log.warn(
+        { pageId: name, waitedMs: Date.now() - beginn, sinceLast },
+        "Dokument ohne Abgleich mit anderen Instanzen geladen, Redis nicht erreichbar",
+      );
+    }
+  }
+
+  /**
+   * Nach dem Wiederverbinden mit anderen Instanzen abgleichen.
+   *
+   * Waehrend eines Ausfalls tauschen die Instanzen nichts aus, und danach
+   * veroeffentlicht die Erweiterung erst mit der naechsten lokalen
+   * Aenderung wieder einen Sync-Schritt. Endet das Tippen mit dem Ausfall,
+   * blieben die Staende verschieden. Deshalb, sobald beide Verbindungen
+   * nach einem Abriss wieder stehen: Antwort- und Dokumentkanaele
+   * abonnieren und die Bestaetigung abwarten (ioredis abonniert zwar von
+   * selbst neu, meldet "ready" aber, bevor Redis das bestaetigt hat), dann
+   * fuer jedes geladene Dokument den ersten Sync-Schritt veroeffentlichen.
+   * Die anderen Instanzen antworten mit ihrem Stand und ihrem eigenen
+   * ersten Schritt, den die Erweiterung wie jeden beantwortet.
+   */
+  #planeAbgleich = (): void => {
+    if (!this.#abgerissen || this.#abgleichGeplant) return;
+    if (this.#sub.status !== "ready" || this.#pub.status !== "ready") return;
+    this.#abgerissen = false;
+    this.#abgleichGeplant = true;
+    setImmediate(() => {
+      this.#abgleichGeplant = false;
+      void this.#gleicheAb();
+    });
+  };
+
+  async #gleicheAb(): Promise<void> {
+    const dokumente = this.instance?.documents;
+    if (!dokumente || dokumente.size === 0) return;
+    const namen = [...dokumente.keys()];
+    const { subKey, replyKey, publishFirstSyncStep } = this.interna;
+    try {
+      await this.#sub.subscribe(
+        replyKey.call(this, this.configuration.identifier),
+        ...namen.map((n) => subKey.call(this, n)),
+      );
+      for (const name of namen) {
+        const dokument = dokumente.get(name);
+        if (dokument) await publishFirstSyncStep.call(this, name, dokument);
+      }
+      this.#log.info(
+        { count: namen.length },
+        "Redis wieder erreichbar, Dokumente mit anderen Instanzen abgeglichen",
+      );
+    } catch (e) {
+      const sinceLast = this.#abgleichDrossel.darf();
+      if (sinceLast !== null) {
+        this.#log.warn(
+          { err: e, count: namen.length, sinceLast },
+          "redis-ha: Abgleich nach dem Wiederverbinden gescheitert",
+        );
+      }
+    }
   }
 
   /** Keine Redlock-Sperre (siehe oben); die Sperre haelt ./store-lock. */
@@ -141,7 +287,16 @@ export class HaErweiterung extends HocuspocusRedis {
    * direkt nach dem Bau (createHaRedis), mit den beiden Verbindungen, die
    * die Erweiterung als `pub` und `sub` haelt.
    */
-  schuetze(pub: Redis, sub: Redis, log: HaLog): void {
+  schuetze(
+    pub: Redis,
+    sub: Redis,
+    log: HaLog,
+    ladenOhneRedisMs = LADEN_OHNE_REDIS_MS,
+  ): void {
+    this.#pub = pub;
+    this.#sub = sub;
+    this.#log = log;
+    this.#ladenOhneRedisMs = ladenOhneRedisMs;
     // onDestroy der Erweiterung ruft redlock.quit(), also pub.quit(),
     // bevor es beide Verbindungen trennt. Waehrend eines Ausfalls wartet
     // das bis zur Versuchsgrenze oder lehnt ab, und das Herunterfahren
@@ -209,6 +364,34 @@ export class HaErweiterung extends HocuspocusRedis {
           "(siehe HaErweiterung in apps/collab/src/redis-client.ts)",
       );
     }
+
+    // Laden und Abgleich nach dem Wiederverbinden (afterLoadDocument,
+    // #gleicheAb) brauchen diese Interna; der Kanalname muss dem
+    // entsprechen, den ihr Nachrichten-Listener erwartet.
+    const { publishFirstSyncStep, subKey, replyKey } = this.interna;
+    if (
+      typeof publishFirstSyncStep !== "function" ||
+      typeof subKey !== "function" ||
+      typeof replyKey !== "function" ||
+      subKey.call(this, "x") !== `${this.configuration.prefix}:x`
+    ) {
+      throw new Error(
+        "@hocuspocus/extension-redis hat publishFirstSyncStep, subKey oder " +
+          "replyKey geaendert (siehe HaErweiterung in " +
+          "apps/collab/src/redis-client.ts)",
+      );
+    }
+    this.#subZustand = new RedisZustand(sub);
+    for (const client of [pub, sub]) {
+      let warVerbunden = client.status === "ready";
+      client.on("close", () => {
+        if (warVerbunden) this.#abgerissen = true;
+      });
+      client.on("ready", () => {
+        warVerbunden = true;
+        this.#planeAbgleich();
+      });
+    }
   }
 }
 
@@ -235,9 +418,10 @@ export type HaRedis = {
  * the max retries per request limit"), und danach scheiterte jedes
  * Laden eines Dokuments, bis der Prozess neu startete. Ohne Grenze
  * wartet das SUBSCRIBE, bis Redis da ist. Dasselbe gilt fuer das
- * Abonnieren eines Dokumentkanals beim Laden: faellt Redis im Betrieb
- * aus, wartet das Laden, bis Redis zurueck ist, statt abzubrechen. Nach
- * einem Wiederaufbau abonniert ioredis die Kanaele von selbst neu.
+ * Abonnieren eines Dokumentkanals beim Laden; auf beides wartet das Laden
+ * selbst aber hoechstens kurz (HaErweiterung.afterLoadDocument), das
+ * Abonnement kommt im Hintergrund nach. Nach einem Wiederaufbau abonniert
+ * ioredis die Kanaele von selbst neu.
  *
  * Die Veroeffentlichungsseite behaelt die zwei Versuche wie bisher:
  * Publish und NUMSUB scheitern bei einem Ausfall nach wenigen Sekunden,
@@ -264,6 +448,8 @@ export function createHaRedis(
     onError: (e: Error, rolle: "pub" | "sub") => void;
     /** Gedrosselte Meldungen der Huellen (HaErweiterung). */
     log: HaLog;
+    /** Hoechstens so lange wartet das Laden auf Redis (Tests). */
+    ladenOhneRedisMs?: number;
   },
 ): HaRedis {
   const { onError } = opts;
@@ -296,7 +482,7 @@ export function createHaRedis(
     );
   }
   try {
-    extension.schuetze(pub, sub, opts.log);
+    extension.schuetze(pub, sub, opts.log, opts.ladenOhneRedisMs);
   } catch (e) {
     for (const client of erzeugt) client.disconnect();
     throw e;
