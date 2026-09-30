@@ -12,9 +12,9 @@
  *
  * Aendert sich das Schema (neuer Knoten, neue Marke, neues Attribut,
  * anderer Vorgabewert), schlaegt apps/web/src/lib/schema-hash.test.ts an:
- * dann den neuen Hash hier anhaengen und im CHANGELOG unter "Upgrade
- * notes" vermerken, dass offene Editor-Tabs nach dem Update neu geladen
- * werden muessen.
+ * dann den neuen Hash hier und in der Abschrift dort (EINGETRAGEN)
+ * anhaengen und im CHANGELOG unter "Upgrade notes" vermerken, dass
+ * offene Editor-Tabs nach dem Update neu geladen werden muessen.
  */
 export const EDITOR_SCHEMA_HASHES: readonly string[] = Object.freeze([
   "e4d7324972931cd1",

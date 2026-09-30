@@ -144,4 +144,23 @@ describe("EDITOR_SCHEMA_HASHES", () => {
     expect(new Set(EDITOR_SCHEMA_HASHES).size).toBe(EDITOR_SCHEMA_HASHES.length);
     for (const h of EDITOR_SCHEMA_HASHES) expect(h).toMatch(/^[0-9a-f]{16}$/);
   });
+
+  // Zweite Abschrift der Liste, damit "nur anhaengen" pruefbar ist. Jede
+  // Installation, die ein Schema schon gefahren hat, hat dessen Version
+  // und Hash in ihrer Marke (InstanceState). Wuerde ein Eintrag ersetzt
+  // statt ein neuer angehaengt, haette der naechste Collab-Server dort
+  // dieselbe Version mit anderem Hash, gaelte als veraltet und naehme
+  // keinen Editor an.
+  const EINGETRAGEN = ["e4d7324972931cd1"];
+
+  it("aendert keinen eingetragenen Hash und haengt neue nur an", () => {
+    expect(
+      EDITOR_SCHEMA_HASHES.slice(0, EINGETRAGEN.length),
+      "Eintraege in EDITOR_SCHEMA_HASHES nie aendern, entfernen oder umstellen, nur anhaengen",
+    ).toEqual(EINGETRAGEN);
+    expect(
+      EDITOR_SCHEMA_HASHES.length,
+      "Neuen Hash auch hier an EINGETRAGEN anhaengen",
+    ).toBe(EINGETRAGEN.length);
+  });
 });
