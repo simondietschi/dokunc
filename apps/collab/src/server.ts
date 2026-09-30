@@ -63,7 +63,7 @@ import { COLLAB_VARIABLEN } from "./config-variablen";
 import { startMailDispatcher } from "./mail-dispatcher";
 import { startAiIndexer } from "./ai-indexer";
 import { createDocResetHandler, type ResetContent } from "./doc-reset";
-import { SchemaWaechter, type SchemaMarke } from "./schema-marke";
+import { SchemaWaechter, istVeraltet, type SchemaMarke } from "./schema-marke";
 import { pruefeGegenSchema, type SchemaBefund } from "./schema-check";
 import { installProcessGuards } from "./process-guards";
 import { resolveAppSecret } from "./secret";
@@ -720,15 +720,13 @@ function markeAus(zustand: {
 
 /**
  * Diese Instanz ist gerade veraltet geworden: eine neuere Fassung hat die
- * Marke gehoben, oder ein Speicherlauf fand im gespeicherten Stand einer
- * anderen Instanz Knoten, die dieses Schema nicht darstellen kann (dann
- * ohne Marke, siehe speichere). Alle Editoren trennen; beim
+ * Marke gehoben. Alle Editoren trennen; beim
  * Wiederverbinden weist onAuthenticate sie mit "schema-mismatch" ab, und
  * ihr Editor zeigt "Aktualisierung läuft", bis eine aktuelle Instanz sie
  * annimmt. Mail-Versand, KI-Index und Rechteprüfung laufen weiter, sie
  * haengen nicht am Schema.
  */
-function trenneVeraltet(marke: SchemaMarke | null): void {
+function trenneVeraltet(marke: SchemaMarke): void {
   let closed = 0;
   for (const doc of server.hocuspocus.documents.values()) {
     for (const connection of Array.from(doc.getConnections())) {
@@ -740,8 +738,8 @@ function trenneVeraltet(marke: SchemaMarke | null): void {
     {
       ownVersion: eigenesSchema.version,
       ownHash: eigenesSchema.hash,
-      markVersion: marke?.version ?? null,
-      markHash: marke?.hash ?? null,
+      markVersion: marke.version,
+      markHash: marke.hash,
       closed,
     },
     "Neuere Editor-Fassung in der Datenbank: Verbindungen getrennt, neue werden abgewiesen",
@@ -1210,11 +1208,20 @@ async function ladeDokument(
  * Vereinigung. Kennt das Dokument schon alles, aendert Yjs nichts.
  *
  * Vorher wird der fremde Stand gegen das eigene Editor-Schema geprueft
- * (./schema-check): enthaelt er Knoten, die diese Fassung nicht
- * darstellen kann, hat ihn eine neuere Fassung geschrieben. Uebernommen
- * loeschte ein Editor dieser Fassung sie beim naechsten Anzeigen fuer
- * alle. Dann gilt diese Instanz als veraltet (keine Editoren mehr), und
- * der Lauf wirft, ohne etwas zu schreiben.
+ * (./schema-check). Enthaelt er Knoten oder Marken, die diese Fassung
+ * nicht darstellen kann, entscheidet die Marke in der Datenbank, woher
+ * sie kommen:
+ *  - Marke neuer als diese Fassung: eine neuere Fassung hat sie
+ *    geschrieben (sie hebt die Marke vor ihrem ersten Editor).
+ *    Uebernommen loeschte ein Editor dieser Fassung sie beim naechsten
+ *    Anzeigen fuer alle. Diese Instanz gilt dann als veraltet (keine
+ *    Editoren mehr), und der Lauf wirft, ohne etwas zu schreiben.
+ *  - Sonst stammen sie aus einem manipulierten Editor an einer Instanz
+ *    derselben Fassung. Dort behaelt der Speicherlauf sie im Yjs-Stand
+ *    (Page.content bleibt beim letzten darstellbaren Stand); hier werden
+ *    sie ebenso uebernommen, mit einer Fehlerzeile. Galte die Instanz
+ *    deshalb als veraltet, legte jedes Mitglied mit Schreibrecht sie mit
+ *    einem manipulierten Editor still, nach jedem Neustart wieder.
  *
  * Ein unlesbarer gespeicherter Stand wird nicht uebernommen, sondern mit
  * dem eigenen ueberschrieben (wie vor dem Zusammenfuehren): wuerfe der
@@ -1246,18 +1253,26 @@ async function uebernimmGespeichertenStand(
   );
   hilfe.destroy();
   if (befund && !befund.darstellbar) {
+    const detail = {
+      pageId,
+      unknownNodes: befund.unknownNodes,
+      unknownMarks: befund.unknownMarks,
+      checkError: befund.checkError,
+    };
+    const marke = markeAus(await readInstanceState(prisma));
+    if (istVeraltet(eigenesSchema, marke)) {
+      log.error(
+        { ...detail, markVersion: marke.version, markHash: marke.hash },
+        "Gespeicherter Stand ausserhalb des Editor-Schemas: nicht zusammengefuehrt, diese Instanz nimmt keine Editoren mehr an",
+      );
+      schemaWaechter.pruefe(marke);
+      throw new Error(
+        `Gespeicherter Stand der Seite ${pageId} ausserhalb des Editor-Schemas`,
+      );
+    }
     log.error(
-      {
-        pageId,
-        unknownNodes: befund.unknownNodes,
-        unknownMarks: befund.unknownMarks,
-        checkError: befund.checkError,
-      },
-      "Gespeicherter Stand ausserhalb des Editor-Schemas: nicht zusammengefuehrt, diese Instanz nimmt keine Editoren mehr an",
-    );
-    schemaWaechter.markiere();
-    throw new Error(
-      `Gespeicherter Stand der Seite ${pageId} ausserhalb des Editor-Schemas`,
+      detail,
+      "Gespeicherter Stand ausserhalb des Editor-Schemas, Marke nicht neuer: zusammengefuehrt wie Inhalt eines manipulierten Editors",
     );
   }
   Y.applyUpdate(document, fremd, UEBERNAHME);

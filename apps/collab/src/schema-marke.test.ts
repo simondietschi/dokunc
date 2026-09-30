@@ -67,15 +67,4 @@ describe("SchemaWaechter", () => {
     expect(w.pruefe({ version: 1, hash: H1 })).toBe(true);
     expect(w.veraltet).toBe(true);
   });
-
-  it("wird ueber den Inhalt veraltet, meldet das einmal ohne Marke und bleibt es", () => {
-    const onVeraltet = vi.fn();
-    const w = new SchemaWaechter({ version: 1, hash: H1 }, onVeraltet);
-    w.markiere();
-    w.markiere();
-    expect(w.veraltet).toBe(true);
-    expect(w.pruefe({ version: 1, hash: H1 })).toBe(true);
-    expect(onVeraltet).toHaveBeenCalledTimes(1);
-    expect(onVeraltet).toHaveBeenCalledWith(null);
-  });
 });

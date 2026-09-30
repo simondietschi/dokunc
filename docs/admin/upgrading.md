@@ -64,10 +64,18 @@ servers behind a load balancer:
   side by side, an edit made on a new server can be missing from the
   database until that server saves the page again.
 - If a collaboration server finds block types or marks its editor does not
-  know in the state another server saved, it does not take that state over,
-  saves nothing for that page and accepts no editors from then on, as if a
-  newer editor version had been recorded. It logs "Gespeicherter Stand
-  ausserhalb des Editor-Schemas".
+  know in the state another server saved, it checks the recorded editor
+  version. A newer server records its version before it accepts editors, so
+  if a newer version is recorded, the server does not take that state over,
+  saves nothing for that page and accepts no editors from then on. It logs
+  "Gespeicherter Stand ausserhalb des Editor-Schemas: nicht
+  zusammengefuehrt, …". Otherwise the unknown elements come from a modified
+  editor on a server of the same release. The server then takes them over
+  like content typed on it and keeps accepting editors. It logs
+  "Gespeicherter Stand ausserhalb des Editor-Schemas, Marke nicht neuer: …",
+  and, as for such content typed on it, "Seiteninhalt nicht uebernommen":
+  search, export and version history keep the page's last displayable
+  content.
 
 ## Rolling back
 
@@ -126,8 +134,9 @@ them. The messages are German; the field names are English.
 | info | `Editor-Schema` (at startup) | `schemaVersion`, `schemaHash`, `markVersion`, `markHash` |
 | error | `Editor-Schema dieser Instanz ist aelter als die Marke in der Datenbank: …` (at startup) | the same |
 | fatal | `Schema-Marke nicht in die Datenbank geschrieben, Start abgebrochen` | `err` |
-| warn | `Neuere Editor-Fassung in der Datenbank: Verbindungen getrennt, neue werden abgewiesen` | `ownVersion`, `ownHash`, `markVersion`, `markHash` (both `null` when stored content triggered it), `closed` |
-| error | `Gespeicherter Stand ausserhalb des Editor-Schemas: nicht zusammengefuehrt, diese Instanz nimmt keine Editoren mehr an` | `pageId`, `unknownNodes`, `unknownMarks`, `checkError` |
+| warn | `Neuere Editor-Fassung in der Datenbank: Verbindungen getrennt, neue werden abgewiesen` | `ownVersion`, `ownHash`, `markVersion`, `markHash`, `closed` |
+| error | `Gespeicherter Stand ausserhalb des Editor-Schemas: nicht zusammengefuehrt, diese Instanz nimmt keine Editoren mehr an` | `pageId`, `unknownNodes`, `unknownMarks`, `checkError`, `markVersion`, `markHash` |
+| error | `Gespeicherter Stand ausserhalb des Editor-Schemas, Marke nicht neuer: zusammengefuehrt wie Inhalt eines manipulierten Editors` | `pageId`, `unknownNodes`, `unknownMarks`, `checkError` |
 | warn | `Collab-Verbindung abgewiesen` with `reason: "schema-mismatch"` (at most once per 10 seconds) | `userId`, `pageId`, `schemaTicket`, `schemaServer`, `instanceOutdated`, `sinceLast` (rejections not logged since the previous line) |
 | info | `Doc-Reset uebergangen: Instanz hat eine veraltete Editor-Fassung` | `pageId` |
 | error | `Seiteninhalt nicht uebernommen: Elemente ausserhalb des Editor-Schemas` | `pageId`, `editorId`, `unknownNodes`, `unknownMarks`, `checkError` |

@@ -130,6 +130,15 @@ async function andereInstanzSpeichert(
   return state;
 }
 
+/** Ein Knoten, den das Editor-Schema nicht kennt, mit Text darin. */
+function zauberknoten(doc: Y.Doc): void {
+  const knoten = new Y.XmlElement("zauberknoten");
+  const text = new Y.XmlText();
+  text.insert(0, "Hokuspokus");
+  knoten.insert(0, [text]);
+  doc.getXmlFragment(COLLAB_FIELD).push([knoten]);
+}
+
 beforeAll(async () => {
   collab = await startePruefserver({
     redisDb: REDIS_DB,
@@ -227,7 +236,7 @@ describe("Speichern mit dem Stand anderer Instanzen", () => {
   });
 });
 
-describe("Speichern mit dem Stand anderer Instanzen, danach ohne Editoren", () => {
+describe("Speichern mit dem Stand anderer Instanzen, eigener Collab-Server je Fall", () => {
   let server: Pruefserver | null = null;
   let markeVorher: { version: number; hash: string | null } | null = null;
 
@@ -244,8 +253,12 @@ describe("Speichern mit dem Stand anderer Instanzen, danach ohne Editoren", () =
 
   // Eine neuere Fassung hat Knoten gespeichert, die diese nicht kennt.
   // Zusammengefuehrt landeten sie im Dokument, und ein Editor dieser
-  // Fassung loeschte sie beim naechsten Anzeigen fuer alle.
-  it("fuehrt einen Stand ausserhalb des eigenen Editor-Schemas nicht zusammen und nimmt keine Editoren mehr an", async () => {
+  // Fassung loeschte sie beim naechsten Anzeigen fuer alle. Die neuere
+  // Fassung hat die Marke vor ihrem ersten Editor gehoben; angekuendigt
+  // wird hier nichts, der Speicherlauf liest die Marke selbst.
+  it("fuehrt einen Stand ausserhalb des eigenen Editor-Schemas nicht zusammen und nimmt keine Editoren mehr an, wenn die Marke neuer ist", async () => {
+    const z = await readInstanceState(prisma);
+    markeVorher = { version: z.editorSchemaVersion, hash: z.editorSchemaHash };
     server = await startePruefserver({
       redisDb: REDIS_DB,
       appSecret: getAppSecret(),
@@ -254,13 +267,12 @@ describe("Speichern mit dem Stand anderer Instanzen, danach ohne Editoren", () =
     const a = await oeffne(server, pageId);
     await warteBis(async () => !!(await zeile(pageId)), "Zeile angelegt");
 
-    const fremd = await andereInstanzSpeichert(pageId, (doc) => {
-      const knoten = new Y.XmlElement("zauberknoten");
-      const text = new Y.XmlText();
-      text.insert(0, "Hokuspokus");
-      knoten.insert(0, [text]);
-      doc.getXmlFragment(COLLAB_FIELD).push([knoten]);
-    });
+    const neuer = {
+      version: editorSchema().version + 1,
+      hash: "eeeeeeeeeeeeeeee",
+    };
+    await prisma.$executeRaw`UPDATE "InstanceState" SET "editorSchemaVersion" = ${neuer.version}, "editorSchemaHash" = ${neuer.hash} WHERE "id" = 1`;
+    const fremd = await andereInstanzSpeichert(pageId, zauberknoten);
     tippe(a.doc, "Eigen-2");
 
     await warteBis(
@@ -280,6 +292,69 @@ describe("Speichern mit dem Stand anderer Instanzen, danach ohne Editoren", () =
     expect(inhalt(a.doc)).not.toContain("Hokuspokus");
     // Nichts ueberschrieben: die Zeile traegt den Stand der anderen Instanz.
     expect(Buffer.compare((await zeile(pageId))!.state, fremd)).toBe(0);
+    const getrennt = server
+      .log()
+      .split("\n")
+      .find((l) => l.includes("Neuere Editor-Fassung in der Datenbank"));
+    expect(getrennt).toContain(`"markVersion":${neuer.version}`);
+    expect(getrennt).toContain(`"markHash":"${neuer.hash}"`);
+  }, 60_000);
+
+  // Unbekannte Knoten bei einer Marke, die nicht neuer ist, stammen nicht
+  // von einer neueren Fassung (die hebt die Marke vor ihrem ersten
+  // Editor), sondern aus einem manipulierten Editor an einer anderen
+  // Instanz derselben Fassung. Dort behaelt der Speicherlauf sie im
+  // Yjs-Stand; hier werden sie ebenso zusammengefuehrt. Galte die Instanz
+  // deshalb als veraltet, legte jedes Mitglied mit Schreibrecht sie mit
+  // einem manipulierten Editor still, nach jedem Neustart wieder.
+  it("fuehrt unbekannte Knoten einer Instanz derselben Fassung zusammen und nimmt weiter Editoren an", async () => {
+    server = await startePruefserver({
+      redisDb: REDIS_DB,
+      appSecret: getAppSecret(),
+    });
+    const pageId = await neueSeite("gleiche-fassung");
+    const q = await oeffne(server, await neueSeite("gleiche-fassung-q"));
+    const a = await oeffne(server, pageId);
+    await warteBis(async () => !!(await zeile(pageId)), "Zeile angelegt");
+
+    await andereInstanzSpeichert(pageId, zauberknoten);
+    tippe(a.doc, "Kollege-1");
+
+    await warteBis(
+      async () => (await yjsText(pageId)).includes("Kollege-1"),
+      "Kollege-1 gespeichert",
+      { log: server.log },
+    );
+    const gespeichert = await yjsText(pageId);
+    expect(gespeichert).toContain("Hokuspokus");
+    expect(gespeichert).toContain("Start");
+    await warteBis(
+      () => server!.log().includes("Seiteninhalt nicht uebernommen"),
+      "Page.content behaelt den letzten darstellbaren Stand",
+      { log: server.log },
+    );
+    expect(await seitenInhalt(pageId)).not.toContain("Hokuspokus");
+    const log = server.log();
+    expect(log).toContain(
+      "Gespeicherter Stand ausserhalb des Editor-Schemas, Marke nicht neuer: zusammengefuehrt",
+    );
+    expect(log).toContain('"unknownNodes":["zauberknoten"]');
+    expect(log).not.toContain("Neuere Editor-Fassung");
+    expect(log).not.toContain("Speicherlauf gescheitert");
+
+    // Weiter verfuegbar: beide Editoren verbunden, ein neuer wird
+    // angenommen und gespeichert.
+    const neu = await neueSeite("gleiche-fassung-r");
+    const r = await oeffne(server, neu);
+    tippe(r.doc, "Neu-1");
+    await warteBis(
+      async () => (await seitenInhalt(neu)).includes("Neu-1"),
+      "Neu-1 in Page.content",
+      { log: server.log },
+    );
+    expect(a.geschlossen()).toBe(false);
+    expect(q.geschlossen()).toBe(false);
+    expect(r.geschlossen()).toBe(false);
   }, 60_000);
 
   // Eine veraltete Instanz hat keine Editoren mehr, kann aber noch einen

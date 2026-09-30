@@ -56,27 +56,14 @@ export function istVeraltet(eigen: EigenesSchema, marke: SchemaMarke): boolean {
  * Merkt sich, ob die Instanz veraltet ist, und meldet den Wechsel genau
  * einmal. Einmal veraltet, bleibt sie es: eine spaeter kleinere Marke
  * (Handarbeit in der Datenbank, Test) oeffnet sie nicht wieder.
- *
- * Veraltet wird sie ueber die Marke (`pruefe`) oder ueber den Inhalt
- * (`markiere`): findet ein Speicherlauf im gespeicherten Stand einer
- * anderen Instanz Knoten, die das eigene Schema nicht darstellen kann,
- * laeuft irgendwo eine neuere Fassung, auch wenn ihre Marke hier noch
- * nicht angekommen ist. `onVeraltet` bekommt dann null statt einer Marke.
  */
 export class SchemaWaechter {
   #veraltet = false;
 
   constructor(
     private readonly eigen: EigenesSchema,
-    private readonly onVeraltet: (marke: SchemaMarke | null) => void,
+    private readonly onVeraltet: (marke: SchemaMarke) => void,
   ) {}
-
-  /** Veraltet wegen gespeicherten Inhalts, nicht wegen der Marke. */
-  markiere(): void {
-    if (this.#veraltet) return;
-    this.#veraltet = true;
-    this.onVeraltet(null);
-  }
 
   get veraltet(): boolean {
     return this.#veraltet;
