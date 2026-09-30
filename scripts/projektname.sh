@@ -257,17 +257,29 @@ if [ "$MODUS" = festschreiben ]; then
   done
   TEIL="$ZIEL.$$.teil"
   trap 'rm -f "$FEHLER" "$TEIL"' EXIT
+  # Jeder Schritt, der schreibt, endet bei einem Fehler mit Exit 3 (etwa
+  # ein Ordner ohne Schreibrecht), nicht mit dem Exit 1 von set -e, der
+  # "keine Daten" hiesse.
+  nicht_schreibbar() {
+    {
+      echo "✗ .env nicht schreibbar ($ZIEL). Nichts geändert."
+      grep -v '^[[:space:]]*$' "$FEHLER" | sed -n '1,5p' | sed 's/^/  /'
+    } >&2
+    exit 3
+  }
   if [ -e "$ZIEL" ]; then
-    cp -p "$ZIEL" "$TEIL"
-    if [ -s "$TEIL" ] && [ -n "$(tail -c 1 "$TEIL")" ]; then printf '\n' >>"$TEIL"; fi
+    cp -p "$ZIEL" "$TEIL" 2>"$FEHLER" || nicht_schreibbar
+    if [ -s "$TEIL" ] && [ -n "$(tail -c 1 "$TEIL")" ]; then
+      printf '\n' 2>"$FEHLER" >>"$TEIL" || nicht_schreibbar
+    fi
   else
-    (umask 077 && : >"$TEIL")
+    (umask 077 && : >"$TEIL") 2>"$FEHLER" || nicht_schreibbar
   fi
   {
     echo "# Compose-Projekt dieser Installation (scripts/projektname.sh)"
     echo "COMPOSE_PROJECT_NAME=$NAME"
-  } >>"$TEIL"
-  mv "$TEIL" "$ZIEL" || { echo "✗ .env nicht schreibbar." >&2; exit 3; }
+  } 2>"$FEHLER" >>"$TEIL" || nicht_schreibbar
+  mv "$TEIL" "$ZIEL" 2>"$FEHLER" || nicht_schreibbar
   if [ "$NAME_HAT_DATEN" -eq 1 ]; then
     echo "✓ COMPOSE_PROJECT_NAME=$NAME in .env eingetragen (Volumes ${NAME}_db_data, ${NAME}_app_data)."
   else

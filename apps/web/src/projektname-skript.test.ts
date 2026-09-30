@@ -551,6 +551,53 @@ describe("scripts/projektname.sh: Festschreiben", () => {
     expect(k.stderr).toBe("✗ .env: zu viele Symlinks hintereinander.\n");
   });
 
+  it("endet mit Exit 3, wenn die .env nicht neu angelegt werden kann", () => {
+    // Die .env zeigt in einen Ordner, den es nicht gibt (etwa ein nicht
+    // eingehaengtes Laufwerk). Als root der einzige Weg, das Anlegen
+    // scheitern zu lassen.
+    const dir = repoIn("Wiki Alt");
+    symlinkSync(join(tmp, "nicht-eingehaengt/wiki.env"), join(dir, ".env"));
+    const r = run(dir, ["--festschreiben"], { FAKE_VOLUMES: volumes(["wikialt", ALT]) });
+    expect(r.status).toBe(3);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toMatch(
+      /^✗ \.env nicht schreibbar \(\S+\/nicht-eingehaengt\/wiki\.env\)\. Nichts geändert\.\n {2}\S.*No such file or directory\n$/,
+    );
+  });
+
+  it("endet mit Exit 3, wenn die Kopie der .env scheitert", () => {
+    // bin/cp scheitert wie in einem Ordner ohne Schreibrecht.
+    const dir = repoIn("Wiki Alt");
+    const datei = join(dir, ".env");
+    writeFileSync(datei, "APP_SECRET=x\n");
+    writeFileSync(
+      join(dir, "bin/cp"),
+      `#!/usr/bin/env bash\necho "cp: cannot create regular file '\${2:-}': Permission denied" >&2\nexit 1\n`,
+    );
+    chmodSync(join(dir, "bin/cp"), 0o755);
+    const r = run(dir, ["--festschreiben"], { FAKE_VOLUMES: volumes(["wikialt", ALT]) });
+    expect(r.status).toBe(3);
+    expect(r.stderr).toContain("✗ .env nicht schreibbar (.env). Nichts geändert.\n  cp: cannot create regular file");
+    expect(lesen(datei)).toBe("APP_SECRET=x\n");
+  });
+
+  it.skipIf(process.getuid?.() === 0)("endet mit Exit 3 in einem Ordner ohne Schreibrecht (nicht als root)", () => {
+    const dir = repoIn("Wiki Alt");
+    const ordner = join(tmp, "nur-lesen");
+    mkdirSync(ordner);
+    writeFileSync(join(ordner, "wiki.env"), "APP_SECRET=x\n");
+    symlinkSync(join(ordner, "wiki.env"), join(dir, ".env"));
+    chmodSync(ordner, 0o555);
+    try {
+      const r = run(dir, ["--festschreiben"], { FAKE_VOLUMES: volumes(["wikialt", ALT]) });
+      expect(r.status).toBe(3);
+      expect(r.stderr).toContain("✗ .env nicht schreibbar");
+      expect(lesen(join(ordner, "wiki.env"))).toBe("APP_SECRET=x\n");
+    } finally {
+      chmodSync(ordner, 0o755);
+    }
+  });
+
   it("schreibt den aktuellen Namen, wenn es keinen bisherigen mit Daten gibt", () => {
     const bestand = repoIn("dokunc");
     const r = run(bestand, ["--festschreiben"], { FAKE_VOLUMES: volumes(["dokunc", ALT]) });

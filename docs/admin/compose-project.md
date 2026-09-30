@@ -106,7 +106,9 @@ containers is judged by the age of its volumes only.
 - **Exit code 3:** the script could not ask Docker about the volumes, for
   example because your user may not use the Docker socket. Run it the way
   you run `docker compose` (with `sudo` if you use that). `--festschreiben`
-  also stops with exit code 3 and changes nothing.
+  also stops with exit code 3 and changes nothing, as it does when it
+  cannot write `.env` or a file next to it (the directory of `.env`, or of
+  the file a symlinked `.env` points to, must be writable).
 
 The way back after a missed step that started a new, empty instance:
 
