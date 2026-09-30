@@ -37,7 +37,7 @@ import { DOC_RESET_CHANNEL } from "@dokunc/editor";
  * | 6      | gruppe-loeschen.test.ts (reserviert, nur Abonnent)         |
  * | 7      | schema-version.test.ts                                     |
  * | 8      | collab-json-log.test.ts (reserviert)                       |
- * | 9      | collab-lesend.test.ts (reserviert)                         |
+ * | 9      | collab-lesend.test.ts                                      |
  * | 10     | collab-size-limits.test.ts                                 |
  * | 11     | page-updated-collab.test.ts                                |
  * | 12     | collab-limits.test.ts                                      |
