@@ -33,7 +33,18 @@ function lesen(datei: string): string {
   return readFileSync(join(ROOT, datei), "utf8");
 }
 
-const COMPOSE_DATEIEN = readdirSync(ROOT).filter((d) => /^docker-compose.*\.ya?ml$/.test(d));
+/**
+ * Die Compose-Dateien des Repos. docker-compose.override.yml ist die
+ * eigene, nicht versionierte Datei eines Betreibers oder Entwicklers
+ * (.gitignore); ihre Variablen gehoeren nicht ins Schema.
+ */
+export function composeDateien(namen: readonly string[]): string[] {
+  return namen.filter(
+    (d) => /^docker-compose.*\.ya?ml$/.test(d) && !/^docker-compose\.override\.ya?ml$/.test(d),
+  );
+}
+
+const COMPOSE_DATEIEN = composeDateien(readdirSync(ROOT));
 
 /** `NAME=` oder `# NAME=` am Zeilenanfang. */
 export function namenAusEnvBeispiel(text: string): Set<string> {
@@ -160,6 +171,18 @@ describe("Hilfen des Gleichlauftests", () => {
   it("liest Namen aus .env.example, auch auskommentierte", () => {
     const text = ['A="1"', "# B=2", "#   C=3", "# Text mit D=4", "E_2=", "f=1"].join("\n");
     expect([...namenAusEnvBeispiel(text)]).toEqual(["A", "B", "E_2"]);
+  });
+
+  it("liest die Compose-Dateien des Repos, nicht die eigene Override-Datei", () => {
+    const namen = [
+      "docker-compose.yml",
+      "docker-compose.domain.yml",
+      "docker-compose.override.yml",
+      "docker-compose.override.yaml",
+      "compose.yml",
+      "README.md",
+    ];
+    expect(composeDateien(namen)).toEqual(["docker-compose.yml", "docker-compose.domain.yml"]);
   });
 
   it("liest Namen aus Compose, ohne maskierte", () => {
