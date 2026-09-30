@@ -125,7 +125,8 @@ const INSTANCE_ID = randomUUID();
  * Ist diese Instanz veraltet (./schema-marke)? Beim Wechsel trennt sie
  * alle Editoren (trenneVeraltet); danach weist onAuthenticate jede
  * Anmeldung ab, `connected` trennt, was beim Wechsel noch im Aufbau war,
- * und Doc-Resets werden uebergangen.
+ * beforeSync verwirft, was Editoren danach noch schicken, und Doc-Resets
+ * werden uebergangen.
  */
 const schemaWaechter = new SchemaWaechter(eigenesSchema, (marke) =>
   trenneVeraltet(marke),
@@ -956,7 +957,9 @@ const server = new Server({
     // durch war (ihr Dokument wurde noch geladen), stand in keinem
     // Dokument und entging trenneVeraltet. Hier steht sie im Dokument:
     // wird die Instanz erst danach veraltet, trennt trenneVeraltet sie,
-    // war sie es schon, trennt sie diese Zeile.
+    // war sie es schon, trennt sie diese Zeile. Ihren Puffer aus der
+    // Ladezeit gibt Hocuspocus schon vor diesem Hook weiter; den
+    // verwirft beforeSync.
     if (schemaWaechter.veraltet) {
       closeConnection(data.connection, "Neuere Editor-Fassung");
       return;
@@ -984,6 +987,15 @@ const server = new Server({
   // vor `connected` aus dem Puffer weitergibt: nach beforeSync prueft es
   // readOnly fuer SyncStep2 und Update und verwirft sie dann.
   async beforeSync({ connection, document }) {
+    // Eine veraltete Instanz uebernimmt nichts mehr von Editoren. Das
+    // Trennen allein reicht nicht: Hocuspocus arbeitet Nachrichten, die
+    // vor dem Trennen eingegangen sind, danach noch ab, auch den Puffer
+    // einer Verbindung, die `connected` gleich wieder trennt. Ohne
+    // Groessenhinweis: die Verbindung ist ohnehin zu oder gleich zu.
+    if (schemaWaechter.veraltet) {
+      connection.readOnly = true;
+      return;
+    }
     if (docSizes.level(document) === "frozen") lockForSize(connection);
   },
 

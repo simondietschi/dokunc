@@ -755,7 +755,9 @@ describe("Veraltete Instanz", () => {
   // Eine Anmeldung, die beim Wechsel schon durch ist, deren Dokument
   // aber noch laedt, steht in keinem Dokument; trenneVeraltet findet sie
   // nicht. Ohne weitere Pruefung bliebe sie an der veralteten Instanz.
-  it("trennt auch eine Verbindung, die beim Wechsel noch im Aufbau war", async () => {
+  // Was sie waehrend des Ladens geschrieben hat, darf die veraltete
+  // Instanz auch nicht mehr uebernehmen.
+  it("trennt auch eine Verbindung, die beim Wechsel noch im Aufbau war, und uebernimmt nichts von ihr", async () => {
     const s = await starte();
     const pageId = await neueSeite("veraltet-aufbau");
 
@@ -818,12 +820,34 @@ describe("Veraltete Instanz", () => {
       // Beim Wechsel war noch keine Verbindung eingetragen.
       expect(s.log()).toContain('"closed":0');
 
+      // Der Editor schreibt weiter. Der Server puffert die Nachricht, bis
+      // das Dokument geladen ist, und gibt sie dann vor `connected` weiter.
+      tippe(a.doc, "nach dem Wechsel geschrieben");
+      await new Promise((r) => setTimeout(r, 300));
+
       freigeben();
       await sperre;
       await warteBis(() => geschlossen, "Verbindung nach dem Aufbau getrennt", {
         timeoutMs: 5_000,
         log: s.log,
       });
+      // Entladen ist das Dokument erst, wenn kein Speicherlauf mehr
+      // aussteht (Kanal der HA-Erweiterung, siehe server.ts).
+      await warteBis(
+        async () => {
+          const [, n] = (await s.redis.pubsub("NUMSUB", `hocuspocus:${pageId}`)) as [
+            string,
+            number | string,
+          ];
+          return Number(n) === 0;
+        },
+        "Dokument entladen",
+        { timeoutMs: 10_000, log: s.log },
+      );
+      // Geladen und angelegt wurde es, gespeichert ist ohne das Getippte.
+      const stand = await gespeichert(pageId);
+      expect(stand).toContain("<callout");
+      expect(stand).not.toContain("nach dem Wechsel geschrieben");
     } finally {
       freigeben();
       await sperre.catch(() => undefined);
