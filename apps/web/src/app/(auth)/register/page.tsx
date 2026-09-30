@@ -14,7 +14,7 @@ export default async function RegisterPage({
   searchParams: SearchParams;
 }) {
   const next = singleParam((await searchParams).next);
-  const status = await setupStatus((await headers()).get("host"));
+  const status = await setupStatus(await headers());
   return (
     <AuthForm
       mode="register"

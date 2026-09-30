@@ -22,9 +22,10 @@ import { frischeDatenbank, type FrischeDatenbank } from "./frische-datenbank";
  *
  * Gegen eine eigene, leere Datenbank (frische-datenbank.ts): die
  * gemeinsame hat immer Konten. Ersetzt sind Sitzung, Bremsen, Anfrage-
- * Header (Host je Fall), die Umleitung und der Beginn des SSO-Flusses
- * (beginOidcFlow; den Weg zum Anbieter prüfen oidc-idp.test.ts und
- * e2e/sso.spec.ts).
+ * Header (Host je Fall), die Umleitung, der Beginn des SSO-Flusses
+ * (beginOidcFlow), das Fluss-Cookie und der Tausch des Codes beim
+ * Anbieter (den Weg zum Anbieter prüfen oidc-idp.test.ts und
+ * e2e/sso.spec.ts). Die Rücksprung-Route selbst läuft echt.
  */
 
 const mocks = vi.hoisted(() => {
@@ -38,8 +39,13 @@ const mocks = vi.hoisted(() => {
   return {
     client: null as PrismaClient | null,
     host: "localhost:3000",
+    /** Weitere Anfrage-Header je Fall (X-Forwarded-Host, Forwarded, Origin). */
+    kopf: {} as Record<string, string>,
     Umleitung,
     beginOidcFlow: vi.fn(async () => "https://idp.ersteinrichtung.test/authorize?x=1"),
+    /** Offene Flüsse im Cookie, für den Rücksprung. */
+    fluesse: [] as Record<string, unknown>[],
+    exchangeCode: vi.fn(),
   };
 });
 
@@ -66,7 +72,7 @@ vi.mock("@/lib/rate-limit", () => ({
   clientKey: vi.fn(async (prefix: string) => `${prefix}:ersteinrichtung`),
 }));
 vi.mock("next/headers", () => ({
-  headers: vi.fn(async () => new Headers({ host: mocks.host })),
+  headers: vi.fn(async () => new Headers({ ...mocks.kopf, host: mocks.host })),
 }));
 vi.mock("next/navigation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/navigation")>()),
@@ -75,9 +81,19 @@ vi.mock("next/navigation", async (importOriginal) => ({
   }),
 }));
 vi.mock("@/lib/oidc-flow", () => ({ beginOidcFlow: mocks.beginOidcFlow }));
+vi.mock("@/lib/oidc-state", () => ({
+  readOidcFlows: vi.fn(async () => mocks.fluesse),
+  consumeOidcFlow: vi.fn(async () => null),
+  startOidcFlow: vi.fn(),
+}));
+vi.mock("@/lib/oidc", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/oidc")>()),
+  exchangeCode: mocks.exchangeCode,
+}));
 
 const { registerAction } = await import("@/app/(auth)/actions");
 const { resolveOidcUser } = await import("@/lib/oidc-account");
+const { GET: ruecksprungRoute } = await import("@/app/api/auth/oidc/callback/route");
 const { createFirstAdmin, sperreErsteinrichtung } = await import("@/lib/first-admin");
 const { setupFingerprint } = await import("@/lib/setup-token");
 const { log } = await import("@/lib/log");
@@ -121,6 +137,7 @@ beforeEach(async () => {
   vi.stubEnv("OIDC_ISSUER", ISSUER);
   vi.stubEnv("OIDC_CLIENT_ID", "dokunc");
   mocks.host = "wiki.example.com";
+  mocks.kopf = {};
   mocks.beginOidcFlow.mockClear();
   vi.mocked(createSession).mockClear();
 });
@@ -175,14 +192,44 @@ function ssoClaims(over: Record<string, unknown> = {}) {
   };
 }
 
-function ssoAnmelden(o: { setupProof?: string | null; host?: string } = {}, over = {}) {
+function ssoAnmelden(
+  o: { setupProof?: string | null; host?: string; kopf?: Record<string, string> } = {},
+  over = {},
+) {
   return resolveOidcUser(ssoClaims(over), {
     issuer: ISSUER,
     allowSignup: false,
     autoLinkByEmail: true,
     setupProof: o.setupProof ?? null,
-    host: o.host ?? mocks.host,
+    anfrage: new Headers({ ...(o.kopf ?? {}), host: o.host ?? mocks.host }),
   });
+}
+
+/**
+ * Rücksprung vom Anbieter über die echte Route: ein offener Fluss im
+ * Cookie (mit oder ohne Fingerabdruck), der Anbieter liefert die
+ * Angaben von ssoClaims(). Ergebnis ist das Ziel der Umleitung.
+ */
+async function ruecksprung(o: { setup?: string; kopf?: Record<string, string> } = {}) {
+  mocks.fluesse = [
+    {
+      state: "zustand-1",
+      nonce: "nonce-1",
+      verifier: "verifier-1",
+      next: "/spaces",
+      begonnen: Date.now(),
+      ...(o.setup ? { setup: o.setup } : {}),
+    },
+  ];
+  mocks.exchangeCode.mockResolvedValue(ssoClaims());
+  const antwort = await ruecksprungRoute(
+    new Request(
+      `http://${mocks.host}/api/auth/oidc/callback?code=code-1&state=zustand-1`,
+      { headers: { ...(o.kopf ?? {}), host: mocks.host } },
+    ),
+  );
+  const ziel = new URL(antwort.headers.get("location") ?? "about:blank");
+  return `${ziel.pathname}${ziel.search}`;
 }
 
 async function konten() {
@@ -344,6 +391,121 @@ describe("erstes Konto über SSO", () => {
     expect(await audits("auth.login_failed")).toEqual([
       { reason: "setup_token", via: "register_sso" },
     ]);
+  });
+});
+
+describe("hinter einem Proxy, der den Host auf localhost umschreibt", () => {
+  // APP_URL blieb auf der Vorgabe, der Proxy schreibt `Host` um und
+  // nennt den öffentlichen Namen in X-Forwarded-Host (Apache mod_proxy
+  // mit ProxyPreserveHost Off) oder Forwarded. Next nimmt die Action an,
+  // weil X-Forwarded-Host zum Origin passt.
+  beforeEach(() => {
+    vi.stubEnv("APP_URL", "http://localhost:3000");
+    mocks.host = "localhost:3000";
+  });
+
+  it("öffentlicher Name in X-Forwarded-Host: Token nötig", async () => {
+    mocks.kopf = { "x-forwarded-host": "wiki.example.com" };
+    expect(await registrieren()).toMatchObject({
+      error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
+    });
+    expect(await konten()).toEqual([]);
+  });
+
+  it("auch ein späterer Eintrag in X-Forwarded-Host zählt", async () => {
+    mocks.kopf = { "x-forwarded-host": "localhost:3000, wiki.example.com" };
+    expect(await registrieren()).toMatchObject({
+      error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
+    });
+    expect(await konten()).toEqual([]);
+  });
+
+  it("öffentlicher Name als host= in Forwarded: Token nötig", async () => {
+    mocks.kopf = {
+      forwarded: 'for=192.0.2.60;proto=https;host="wiki.example.com"',
+    };
+    expect(await registrieren()).toMatchObject({
+      error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
+    });
+    expect(await konten()).toEqual([]);
+  });
+
+  it("Origin der Action unter einer Domain: Token nötig", async () => {
+    mocks.kopf = { origin: "https://wiki.example.com" };
+    expect(await registrieren()).toMatchObject({
+      error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
+    });
+    expect(await konten()).toEqual([]);
+  });
+
+  it("ohne Token geht es auch über SSO nicht zum Anbieter", async () => {
+    mocks.kopf = { "x-forwarded-host": "wiki.example.com" };
+    expect(await ssoBeginnen("")).toMatchObject({
+      error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
+    });
+    expect(mocks.beginOidcFlow).not.toHaveBeenCalled();
+  });
+
+  it("der Rücksprung vom Anbieter verlangt den Fingerabdruck", async () => {
+    expect(
+      await ssoAnmelden({ kopf: { "x-forwarded-host": "wiki.example.com" } }),
+    ).toEqual({ reason: "setup_token" });
+    expect(await konten()).toEqual([]);
+  });
+
+  it("alle Namen auf diesem Rechner (so setzt Next die Header selbst): ohne Token", async () => {
+    mocks.kopf = {
+      "x-forwarded-host": "localhost:3000",
+      forwarded: "for=127.0.0.1;host=localhost:3000",
+      origin: "http://localhost:3000",
+    };
+    expect(await registrieren()).toBe("umgeleitet nach /spaces");
+    expect(await audits("auth.first_admin_created")).toEqual([
+      { via: "password", setupToken: "not_required", verifiedBy: null },
+    ]);
+  });
+});
+
+describe("Rücksprung-Route beim ersten Konto", () => {
+  it("reicht den Fingerabdruck aus dem Fluss weiter: Instanz-Admin", async () => {
+    expect(await ruecksprung({ setup: setupFingerprint(TOKEN) })).toBe("/spaces");
+    expect(await konten()).toEqual([
+      {
+        email: "erste-sso@ersteinrichtung.test",
+        isAdmin: true,
+        oidcSubject: "sso-sub-1",
+      },
+    ]);
+    expect(await audits("auth.first_admin_created")).toEqual([
+      { via: "sso", setupToken: "required", verifiedBy: "email_verified" },
+    ]);
+    expect(createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("ohne Fingerabdruck im Fluss: zurück mit setup_token, kein Konto", async () => {
+    expect(await ruecksprung()).toBe("/login?sso=setup_token");
+    expect(await konten()).toEqual([]);
+    expect(await audits("auth.login_failed")).toEqual([
+      { reason: "setup_token", via: "sso" },
+    ]);
+  });
+
+  it("reicht die Header weiter: auf diesem Rechner ohne Token", async () => {
+    vi.stubEnv("APP_URL", "http://localhost:3000");
+    mocks.host = "localhost:3000";
+    expect(await ruecksprung()).toBe("/spaces");
+    expect(await audits("auth.first_admin_created")).toEqual([
+      { via: "sso", setupToken: "not_required", verifiedBy: "email_verified" },
+    ]);
+  });
+
+  it("reicht die Header weiter: hinter einem Proxy mit öffentlichem Namen Token nötig", async () => {
+    vi.stubEnv("APP_URL", "http://localhost:3000");
+    mocks.host = "localhost:3000";
+    expect(
+      await ruecksprung({ kopf: { "x-forwarded-host": "wiki.example.com" } }),
+    ).toBe("/login?sso=setup_token");
+    expect(await konten()).toEqual([]);
   });
 });
 

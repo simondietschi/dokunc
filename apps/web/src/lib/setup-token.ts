@@ -18,10 +18,14 @@ import { log } from "./log";
  * entsteht nur mit diesem Token.
  *
  * Ohne Token geht es allein auf dem eigenen Rechner: APP_URL ist gesetzt
- * und zeigt auf Loopback, und auch der Host der Anfrage ist Loopback.
- * APP_URL allein genügte nicht: unter einer öffentlichen Domain mit
- * vergessener APP_URL=localhost (oder ohne APP_URL) liefen die Server
- * Actions weiter, weil Next nur Origin und Host vergleicht.
+ * und zeigt auf Loopback, und jeder Name, unter dem die Anfrage die
+ * Instanz anspricht, ist Loopback (Host, X-Forwarded-Host, Forwarded,
+ * Origin; anfrageNamen). APP_URL allein genügte nicht: unter einer
+ * öffentlichen Domain mit vergessener APP_URL=localhost (oder ohne
+ * APP_URL) liefen die Server Actions weiter, weil Next nur Origin und
+ * Host vergleicht. Der Host allein genügte auch nicht: ein Proxy, der
+ * `Host` auf localhost umschreibt und den öffentlichen Namen in
+ * X-Forwarded-Host weitergibt, sieht für ihn wie dieser Rechner aus.
  */
 
 export const SETUP_TOKEN_DATEI_VORGABE = "/app/data/setup_token";
@@ -65,14 +69,72 @@ function hostnameAus(host: string): string | null {
   }
 }
 
+/** Die Header einer Anfrage: `headers()` in Actions und Seiten, `Request.headers` in Routen. */
+export type AnfrageKopf = { get(name: string): string | null };
+
+/** Liste in einem Header: an Kommas getrennt, leere Einträge fallen weg. */
+function liste(wert: string | null): string[] {
+  return (wert ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+/** `host=` aus Forwarded (RFC 7239), auch in Anführungszeichen. */
+function forwardedHosts(wert: string | null): string[] {
+  const hosts: string[] = [];
+  for (const element of liste(wert)) {
+    for (const paar of element.split(";")) {
+      const gleich = paar.indexOf("=");
+      if (gleich < 0) continue;
+      if (paar.slice(0, gleich).trim().toLowerCase() !== "host") continue;
+      let v = paar.slice(gleich + 1).trim();
+      if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+        v = v.slice(1, -1).replace(/\\(.)/g, "$1");
+      }
+      hosts.push(v);
+    }
+  }
+  return hosts;
+}
+
+/**
+ * Jeder Name, unter dem die Anfrage die Instanz anspricht: `Host`, jeder
+ * Eintrag in X-Forwarded-Host (Next nimmt den ersten für die Prüfung der
+ * Server Actions; ein späterer kann von einem weiteren Proxy stammen),
+ * jedes `host=` in Forwarded und der Host aus `Origin`. `null` steht
+ * für einen fehlenden `Host` oder einen Eintrag, der sich nicht lesen
+ * lässt (auch `Origin: null`).
+ *
+ * Next setzt X-Forwarded-Host selbst auf den `Host`, wenn kein Proxy
+ * ihn schickt; auf diesem Rechner ist er darum ebenfalls Loopback.
+ */
+export function anfrageNamen(kopf: AnfrageKopf | null | undefined): (string | null)[] {
+  if (!kopf) return [null];
+  const host = kopf.get("host");
+  const namen: (string | null)[] = [host ? hostnameAus(host) : null];
+  for (const h of liste(kopf.get("x-forwarded-host"))) namen.push(hostnameAus(h));
+  for (const h of forwardedHosts(kopf.get("forwarded"))) namen.push(hostnameAus(h));
+  const origin = kopf.get("origin")?.trim();
+  if (origin) {
+    try {
+      namen.push(origin === "null" ? null : new URL(origin).hostname);
+    } catch {
+      namen.push(null);
+    }
+  }
+  return namen;
+}
+
 /**
  * Braucht das erste Konto das Token? Nein nur, wenn APP_URL gesetzt ist
- * und auf Loopback zeigt und der Host der Anfrage Loopback ist. Eine
- * ungültige APP_URL oder ein fehlender Host gelten als nicht Loopback.
+ * und auf Loopback zeigt und jeder Name der Anfrage (anfrageNamen)
+ * Loopback ist. Eine ungültige APP_URL, ein fehlender Host oder ein
+ * unlesbarer Eintrag gelten als nicht Loopback.
  */
 export function tokenNoetig(
   appUrl: string | undefined,
-  host: string | null | undefined,
+  kopf: AnfrageKopf | null | undefined,
 ): boolean {
   const roh = appUrl?.trim();
   if (!roh) return true;
@@ -83,8 +145,7 @@ export function tokenNoetig(
     return true;
   }
   if (!istLoopback(url.hostname)) return true;
-  const anfrage = host ? hostnameAus(host) : null;
-  return !anfrage || !istLoopback(anfrage);
+  return anfrageNamen(kopf).some((n) => n === null || !istLoopback(n));
 }
 
 /** Gibt es noch kein Konto? */
@@ -223,16 +284,18 @@ export type SetupStatus =
   | { offen: true; tokenNoetig: boolean; tokenBereit: boolean; tokenDatei: string };
 
 /**
- * Zustand der Ersteinrichtung für Seiten und Actions, zum Host der
+ * Zustand der Ersteinrichtung für Seiten und Actions, zu den Headern der
  * Anfrage. Legt das Token bei Bedarf an: so entsteht es auch, wenn beim
  * Start die Datenbank noch nicht erreichbar war.
  */
-export async function setupStatus(host: string | null | undefined): Promise<SetupStatus> {
+export async function setupStatus(
+  kopf: AnfrageKopf | null | undefined,
+): Promise<SetupStatus> {
   if (!(await ersteinrichtungOffen())) return { offen: false };
   const zustand = await ensureSetupToken({ offen: true });
   return {
     offen: true,
-    tokenNoetig: tokenNoetig(process.env.APP_URL, host),
+    tokenNoetig: tokenNoetig(process.env.APP_URL, kopf),
     tokenBereit: zustand.tokenBereit,
     tokenDatei: zustand.datei,
   };

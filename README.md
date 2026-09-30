@@ -271,7 +271,7 @@ Die Datei nur einbinden, wenn der Server IPv6 hat, sonst startet der
 Proxy nicht. Welche Adressen der Proxy tatsächlich belegt, zeigt
 `docker compose ps proxy` in der Spalte `PORTS`.
 
-Dann `docker compose up -d`. Aktualisiert wird wie im Abschnitt „Update
+Dann `docker compose up -d` (erstes Konto → `docs/admin/first-account.md`). Aktualisiert wird wie im Abschnitt „Update
 und Rückweg“ beschrieben; weil keine versionierte Datei geändert ist,
 läuft der Pull ohne Konflikt durch. Ein selbst gesetztes
 `APP_SECRET` hat Vorrang vor dem automatisch erzeugten; ein anderer Wert

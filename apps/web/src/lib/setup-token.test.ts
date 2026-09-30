@@ -39,22 +39,60 @@ describe("tokenNoetig", () => {
     for (const h of fremd) expect(istLoopback(h), h).toBe(false);
   });
 
+  const kopf = (host: string | null, weitere: Record<string, string> = {}) =>
+    new Headers({ ...weitere, ...(host === null ? {} : { host }) });
+
   it("kein Token nur mit APP_URL und Host auf diesem Rechner", () => {
     for (const h of lokal) {
-      expect(tokenNoetig(`https://${h}:7891`, `${h}:7891`), h).toBe(false);
+      expect(tokenNoetig(`https://${h}:7891`, kopf(`${h}:7891`)), h).toBe(false);
     }
-    expect(tokenNoetig("http://localhost:3000", "127.0.0.1:3000")).toBe(false);
+    expect(tokenNoetig("http://localhost:3000", kopf("127.0.0.1:3000"))).toBe(false);
   });
 
   it("Token nötig bei fremder APP_URL, fremdem Host, ohne APP_URL oder Host", () => {
     for (const h of fremd) {
-      expect(tokenNoetig(`https://${h}`, "localhost"), h).toBe(true);
+      expect(tokenNoetig(`https://${h}`, kopf("localhost")), h).toBe(true);
     }
-    expect(tokenNoetig("https://localhost:7891", "wiki.example.com")).toBe(true);
+    expect(tokenNoetig("https://localhost:7891", kopf("wiki.example.com"))).toBe(true);
+    expect(tokenNoetig("https://localhost:7891", kopf(null))).toBe(true);
     expect(tokenNoetig("https://localhost:7891", null)).toBe(true);
-    expect(tokenNoetig(undefined, "localhost:3000")).toBe(true);
-    expect(tokenNoetig("", "localhost:3000")).toBe(true);
-    expect(tokenNoetig("kein url", "localhost:3000")).toBe(true);
+    expect(tokenNoetig(undefined, kopf("localhost:3000"))).toBe(true);
+    expect(tokenNoetig("", kopf("localhost:3000"))).toBe(true);
+    expect(tokenNoetig("kein url", kopf("localhost:3000"))).toBe(true);
+  });
+
+  describe("Namen, die ein Proxy weitergibt", () => {
+    const lokaleUrl = "http://localhost:3000";
+    const noetig = (weitere: Record<string, string>) =>
+      tokenNoetig(lokaleUrl, kopf("localhost:3000", weitere));
+
+    it("X-Forwarded-Host: jeder Eintrag zählt", () => {
+      expect(noetig({ "x-forwarded-host": "wiki.example.com" })).toBe(true);
+      expect(noetig({ "x-forwarded-host": "localhost:3000, wiki.example.com" })).toBe(true);
+      expect(noetig({ "x-forwarded-host": "localhost:3000,127.0.0.1" })).toBe(false);
+      expect(noetig({ "x-forwarded-host": " , localhost " })).toBe(false);
+    });
+
+    it("Forwarded: host= in jedem Element, auch in Anführungszeichen und gross geschrieben", () => {
+      expect(noetig({ forwarded: "for=192.0.2.60;proto=https;host=wiki.example.com" })).toBe(true);
+      expect(noetig({ forwarded: 'for=192.0.2.60;Host="wiki.example.com"' })).toBe(true);
+      expect(noetig({ forwarded: "for=127.0.0.1;host=localhost, for=10.0.0.1;host=wiki.example.com" })).toBe(true);
+      expect(noetig({ forwarded: 'for=127.0.0.1;host="localhost:3000"' })).toBe(false);
+      expect(noetig({ forwarded: "for=127.0.0.1;proto=http" })).toBe(false);
+    });
+
+    it("Origin: fremd, unlesbar oder null verlangt das Token", () => {
+      expect(noetig({ origin: "https://wiki.example.com" })).toBe(true);
+      expect(noetig({ origin: "null" })).toBe(true);
+      expect(noetig({ origin: "kein url" })).toBe(true);
+      expect(noetig({ origin: "http://localhost:3000" })).toBe(false);
+      expect(noetig({ origin: "http://[::1]:3000" })).toBe(false);
+    });
+
+    it("ein unlesbarer weitergegebener Name verlangt das Token", () => {
+      expect(noetig({ "x-forwarded-host": "wiki example" })).toBe(true);
+      expect(noetig({ forwarded: 'host="a b"' })).toBe(true);
+    });
   });
 });
 

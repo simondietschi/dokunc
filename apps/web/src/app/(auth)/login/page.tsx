@@ -17,7 +17,7 @@ export default async function LoginPage({
   const query = await searchParams;
   const next = singleParam(query.next);
   const sso = singleParam(query.sso);
-  const status = await setupStatus((await headers()).get("host"));
+  const status = await setupStatus(await headers());
   return (
     <AuthForm
       mode="login"

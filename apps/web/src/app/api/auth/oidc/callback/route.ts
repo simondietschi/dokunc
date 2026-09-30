@@ -90,9 +90,10 @@ export async function GET(req: Request) {
     autoLinkByEmail,
     // Für das erste Konto der Instanz: das Einrichtungs-Token, das die
     // Anmeldeseite vor dem Sprung geprüft und an diesen state gebunden
-    // hat, und der Host dieses Rücksprungs.
+    // hat, und die Header dieses Rücksprungs (Host und die Namen, die ein
+    // Proxy weitergibt).
     setupProof: flow.setup ?? null,
-    host: req.headers.get("host"),
+    anfrage: req.headers,
   });
   if ("reason" in outcome) {
     await audit({

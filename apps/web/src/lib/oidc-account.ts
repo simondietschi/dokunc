@@ -5,7 +5,11 @@ import { prisma } from "@dokunc/db";
 import { audit } from "./audit";
 import { decideRegistration } from "./registration";
 import { createFirstAdmin } from "./first-admin";
-import { checkSetupFingerprint, setupStatus } from "./setup-token";
+import {
+  checkSetupFingerprint,
+  setupStatus,
+  type AnfrageKopf,
+} from "./setup-token";
 import { BCRYPT_COST } from "./password-policy";
 import { ssoUserName } from "./user-name";
 import type { OidcClaims } from "./oidc";
@@ -28,8 +32,11 @@ export type OidcOptions = {
    * fuer das erste Konto der Instanz.
    */
   setupProof?: string | null;
-  /** Host der Anfrage: ohne Token geht das erste Konto nur auf diesem Rechner. */
-  host?: string | null;
+  /**
+   * Header der Anfrage (Host, X-Forwarded-Host, Forwarded): ohne Token
+   * geht das erste Konto nur auf diesem Rechner (lib/setup-token).
+   */
+  anfrage?: AnfrageKopf | null;
 };
 
 export type Resolved =
@@ -147,13 +154,14 @@ export async function resolveOidcUser(
    * Solange es gar kein Konto gibt (Ersteinrichtung), wird das erste
    * Instanz-Admin, aber nur mit dem Fingerabdruck des Einrichtungs-Tokens
    * aus dem Fluss (die Anmeldeseite hat das Token vor dem Sprung zum
-   * Anbieter geprüft), ausser APP_URL und Host zeigen auf diesen Rechner.
+   * Anbieter geprüft), ausser APP_URL und die Anfrage zeigen auf diesen
+   * Rechner.
    * `OIDC_ALLOW_SIGNUP` spielt dafür keine Rolle. Eine bestätigte Adresse
    * braucht auch das erste Konto; früher wurde die allererste Person ohne
    * sie Admin. Angelegt wird unter der Sperre der Ersteinrichtung; war
    * jemand schneller, gilt der gewöhnliche Weg.
    */
-  const status = await setupStatus(options.host ?? null);
+  const status = await setupStatus(options.anfrage ?? null);
   if (status.offen) {
     const setupTokenOk =
       !status.tokenNoetig ||

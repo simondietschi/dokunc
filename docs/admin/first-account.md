@@ -23,10 +23,11 @@ this first step with a one-time setup token.
   reason `setup_token`.
 - **No token is needed only on the machine itself:** `APP_URL` is set and
   points to `localhost` (or `127.0.0.1`, `[::1]`, a name under
-  `.localhost`), and the request also arrives with such a host name. This is
-  the case for the Docker quick start at `https://localhost:7891` and for
-  development. Without `APP_URL`, or with your own domain, the token is
-  needed.
+  `.localhost`), and every name the request carries is such a host name:
+  the `Host` header, each entry of `X-Forwarded-Host`, each `host=` in
+  `Forwarded`, and the `Origin` of a form submission. This is the case for
+  the Docker quick start at `https://localhost:7891` and for development.
+  Without `APP_URL`, or with your own domain, the token is needed.
 - When the first account exists, the file is deleted, and
   `auth.first_admin_created` is recorded in the audit log, with
   `setupToken: "required"` or `"not_required"`. After that, new accounts
@@ -73,11 +74,25 @@ the provider is down.
 
 ## Remaining risk
 
-The exception for the machine itself relies on the host name of the
-request. If the proxy accepts connections from outside (`APP_BIND=0.0.0.0`)
-while `SITE_ADDRESS` and `APP_URL` are still `localhost`, a request with the
-host name `localhost` from outside needs no token. Set `SITE_ADDRESS` and
-`APP_URL` to your domain before you open the port.
+The exception for the machine itself relies on the host names the request
+carries. Set `APP_URL` to your public address before the instance is
+reachable from outside; with that, the token is always needed. While
+`APP_URL` is still `localhost`:
+
+- If the proxy accepts connections from outside (`APP_BIND=0.0.0.0`) while
+  `SITE_ADDRESS` is still `localhost`, a request with the host name
+  `localhost` from outside needs no token. Set `SITE_ADDRESS` and `APP_URL`
+  to your domain before you open the port.
+- A reverse proxy of your own that rewrites `Host` to `localhost` (for
+  example Apache `mod_proxy` with `ProxyPreserveHost Off`, the default, or
+  nginx with `proxy_pass http://localhost:3000` and no `Host` header set)
+  is covered as long as it passes the public name in `X-Forwarded-Host` or
+  `Forwarded`, as Apache does by default: the token is then needed. A proxy
+  that rewrites `Host` and passes no public name at all hides where the
+  request came from. dokunc then refuses password registrations through
+  that proxy (the browser's `Origin` names your domain), but it cannot tell
+  the return from a single sign-on provider apart from a local one. Set
+  `APP_URL` first.
 
 ## Checking the setup form by hand
 
