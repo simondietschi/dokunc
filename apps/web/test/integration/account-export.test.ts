@@ -12,7 +12,8 @@ import { setPageRestricted } from "@/lib/page-access";
  * auch nach einer Umbenennung durch andere. Fuer solche Seiten stehen nur
  * die ID und der Hinweis "Seite ohne Zugriff" darin. Ebenso die eigenen
  * Audit-Eintraege: Loeschen, Wiederherstellen und Schuetzen einer Seite
- * halten ihren Titel von damals fest (metadata.title).
+ * halten ihren Titel von damals fest (metadata.title). Und die markierte
+ * Stelle eines Kommentars (anchorText), ein Zitat aus der Seite.
  *
  * Echte Route und Datenbank; ersetzt sind Anmeldung und Anfrage-Header
  * (fuer die Adresse im Audit-Eintrag).
@@ -54,7 +55,13 @@ async function spuren(pageId: string, title: string) {
   await prisma.favorite.create({ data: { userId: ich.id, pageId } });
   await prisma.pageSubscription.create({ data: { userId: ich.id, pageId } });
   await prisma.comment.create({
-    data: { pageId, authorId: ich.id, body: `Kommentar zu ${pageId}` },
+    data: {
+      pageId,
+      authorId: ich.id,
+      body: `Kommentar zu ${pageId}`,
+      // Die markierte Stelle: ein Zitat aus der Seite.
+      anchorText: `Zitierte Stelle aus ${pageId}`,
+    },
   });
   await prisma.pageVersion.create({ data: { pageId, authorId: ich.id, title } });
 }
@@ -190,6 +197,24 @@ describe("GET /api/account/export: Titel nur fuer sichtbare Seiten", () => {
       confirmed: true,
       title: null,
     });
+  });
+
+  // Die markierte Stelle eines Kommentars zitiert die Seite. Fuer eine
+  // Seite ohne Zugriff verriete sie deren Inhalt, auch einen, der erst
+  // nach dem Schuetzen entstand, waere er nicht festgehalten; sie faellt
+  // weg wie der Titel. Der eigene Kommentartext bleibt.
+  it("die markierte Stelle nur fuer Seiten, die die Person oeffnen darf", async () => {
+    const { text, daten } = await auskunft();
+    const stellen = new Map(
+      (daten.comments as { anchorText: string | null; page: Seitenangabe }[]).map(
+        (c) => [c.page.id, c.anchorText] as const,
+      ),
+    );
+    expect(stellen.get(offen)).toBe(`Zitierte Stelle aus ${offen}`);
+    expect(stellen.get(geschuetzt)).toBeNull();
+    expect(stellen.get(imVerlassenen)).toBeNull();
+    expect(text).not.toContain(`Zitierte Stelle aus ${geschuetzt}`);
+    expect(text).not.toContain(`Zitierte Stelle aus ${imVerlassenen}`);
   });
 
   it("die eigenen Texte bleiben vollstaendig", async () => {

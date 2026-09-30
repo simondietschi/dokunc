@@ -513,7 +513,9 @@ differently on an existing installation, and what to do about it.
   contains only the page ID with `"title": null` and
   `"note": "Seite ohne Zugriff"`. The person's own audit events (for
   example deleting or protecting a page) keep their other details but
-  show `"title": null` for such pages.
+  show `"title": null` for such pages. Comments on such pages keep their
+  text, but the quoted passage they were attached to (`anchorText`) is
+  `null`.
 
 ### Added
 

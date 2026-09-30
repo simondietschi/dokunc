@@ -37,6 +37,8 @@ function titelSeite(e: AuditEintrag): string | null {
  * Ebenso die eigenen Audit-Eintraege: Loeschen, Wiederherstellen und
  * Schuetzen halten den Titel von damals fest (metadata.title); fuer eine
  * Seite ohne Zugriff steht dort null, der Rest des Eintrags bleibt.
+ * Ebenso die markierte Stelle eines Kommentars (anchorText): sie zitiert
+ * die Seite. Der eigene Kommentartext bleibt vollstaendig.
  */
 export async function GET() {
   const user = await requireUser();
@@ -165,7 +167,11 @@ export async function GET() {
       exportedAt: new Date().toISOString(),
       profile,
       memberships,
-      comments: comments.map((c) => ({ ...c, page: seite(c.page) })),
+      comments: comments.map((c) => ({
+        ...c,
+        anchorText: offen(c.page.id) ? c.anchorText : null,
+        page: seite(c.page),
+      })),
       pageVersions: versions.map((v) => ({
         ...v,
         title: offen(v.page.id) ? v.title : null,
