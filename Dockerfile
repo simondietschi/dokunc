@@ -32,6 +32,7 @@ FROM base AS deps
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/package.json
 COPY apps/collab/package.json apps/collab/package.json
+COPY packages/config/package.json packages/config/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/editor/package.json packages/editor/package.json
 COPY packages/mail/package.json packages/mail/package.json
@@ -47,6 +48,7 @@ FROM base AS deps-prod
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/package.json
 COPY apps/collab/package.json apps/collab/package.json
+COPY packages/config/package.json packages/config/package.json
 COPY packages/db/package.json packages/db/package.json
 COPY packages/editor/package.json packages/editor/package.json
 COPY packages/mail/package.json packages/mail/package.json

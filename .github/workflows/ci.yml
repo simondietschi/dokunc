@@ -113,6 +113,12 @@ jobs:
       - name: Lint
         run: pnpm lint
 
+      # Konfigurationsschema (packages/config): Pruefung, Maskierung,
+      # Startlog. Der Gleichlauf mit .env.example und Compose laeuft im
+      # Unit-Lauf der Web-App (konfiguration.test.ts).
+      - name: Unit tests Konfiguration
+        run: pnpm --filter @dokunc/config test
+
       - name: Unit tests
         run: pnpm --filter @dokunc/web test
 

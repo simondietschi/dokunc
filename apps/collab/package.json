@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dokunc/config": "workspace:*",
     "@dokunc/db": "workspace:*",
     "@dokunc/editor": "workspace:*",
     "@dokunc/mail": "workspace:*",

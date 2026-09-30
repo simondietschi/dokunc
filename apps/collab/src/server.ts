@@ -47,6 +47,8 @@ import {
   encodeDocSizeNotice,
   type DocResetMessage,
 } from "@dokunc/editor";
+import { LOG_REDACT, checkConfigAtStartup, logLevelFrom } from "@dokunc/config";
+import { COLLAB_VARIABLEN } from "./config-variablen";
 import { startMailDispatcher } from "./mail-dispatcher";
 import { startAiIndexer } from "./ai-indexer";
 import { createDocResetHandler, type ResetContent } from "./doc-reset";
@@ -72,25 +74,25 @@ import {
 import { createAttemptLimiter, createTicketLedger } from "./redis-guards";
 import { createHaRedis, createRedisClient } from "./redis-client";
 
+// Stufe und Schwaerzung wie in der Web-App (Begruendung der Felder in
+// packages/config/src/log.ts). logLevelFrom wirft nie; einen ungueltigen
+// Wert meldet die Pruefung direkt darunter.
 const log = pino({
-  level: process.env.LOG_LEVEL ?? "info",
+  level: logLevelFrom(process.env),
   base: { app: "dokunc-collab" },
-  // ioredis haengt an Fehler den Befehl samt Argumenten an; bei einer
-  // gescheiterten Anmeldung (HELLO 3 AUTH <user> <passwort>) steht dort
-  // das Passwort aus REDIS_URL. jose haengt an Claim-Fehler den Inhalt
-  // des Tokens an. Dieselbe Schwaerzung wie in
-  // apps/web/src/lib/log.ts (dort mit Begruendung und Test); dazu die
-  // Ursache, weil verifyTicket den Fehler von jose als `cause` weiterreicht.
-  // Der heutige Serializer faltet sie nur in Meldung und Stack; der
-  // Eintrag haelt die Schwaerzung auch fuer einen, der sie als Objekt
-  // schreibt.
-  redact: [
-    "*.password",
-    "*.passwordHash",
-    "err.command.args",
-    "err.payload",
-    "err.cause.payload",
-  ],
+  redact: LOG_REDACT,
+});
+
+// Die Reihenfolge ist fest: log, dann die Pruefung der Konfiguration, erst
+// danach alles, was Redis, Datenbank oder Port anfasst. Bei einem Fehler
+// endet der Prozess hier mit Code 78 und genau einer Logzeile der Stufe
+// 60, die alle Probleme nennt.
+checkConfigAtStartup({
+  dienst: "collab",
+  variablen: COLLAB_VARIABLEN,
+  env: process.env,
+  log,
+  exit: (code) => process.exit(code),
 });
 
 const PORT = Number(process.env.COLLAB_PORT ?? 3001);

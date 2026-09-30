@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.128.0",
+    "@dokunc/config": "workspace:*",
     "@dokunc/db": "workspace:*",
     "@dokunc/editor": "workspace:*",
     "@dokunc/mail": "workspace:*",

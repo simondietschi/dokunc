@@ -11,4 +11,9 @@ import { fileURLToPath } from "node:url";
 // mit Leerzeichen oder Umlaut, bekäme dotenv einen Pfad wie
 // `/home/u/Mein%20Wiki/.env`, fände die Datei nicht und meldete das
 // nicht — der Collab-Server liefe dann ohne Root-.env weiter.
-loadEnv({ path: fileURLToPath(new URL("../../../.env", import.meta.url)) });
+// `quiet`: ohne schreibt dotenv bei jedem Start eine Zeile "injected env …"
+// auf stdout, auch ohne Datei, und die ist kein JSON.
+loadEnv({
+  path: fileURLToPath(new URL("../../../.env", import.meta.url)),
+  quiet: true,
+});

@@ -9,8 +9,12 @@ import { contentSecurityPolicy } from "./src/lib/csp";
 // `.pathname` liefert den prozentkodierten URL-Pfad. Liegt das
 // Repository in einem Verzeichnis mit Leerzeichen oder Umlaut, bekäme
 // dotenv `/home/u/Mein%20Wiki/.env`, fände die Datei nicht und meldete
-// das nicht.
-loadEnv({ path: fileURLToPath(new URL("../../.env", import.meta.url)) });
+// das nicht. `quiet`: ohne schreibt dotenv bei jedem Start eine Zeile
+// "injected env …" auf stdout, auch ohne Datei, und die ist kein JSON.
+loadEnv({
+  path: fileURLToPath(new URL("../../.env", import.meta.url)),
+  quiet: true,
+});
 
 function appUrlHost(): string[] {
   try {
@@ -78,7 +82,12 @@ export default function nextConfig(phase: string): NextConfig {
   ];
 
   return {
-    transpilePackages: ["@dokunc/db", "@dokunc/editor", "@dokunc/mail"],
+    transpilePackages: [
+      "@dokunc/config",
+      "@dokunc/db",
+      "@dokunc/editor",
+      "@dokunc/mail",
+    ],
     poweredByHeader: false,
     experimental: {
       serverActions: {

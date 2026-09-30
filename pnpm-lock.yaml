@@ -59,6 +59,9 @@ importers:
 
   apps/collab:
     dependencies:
+      '@dokunc/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@dokunc/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -114,6 +117,9 @@ importers:
       '@anthropic-ai/sdk':
         specifier: 0.128.0
         version: 0.128.0(zod@4.6.5)
+      '@dokunc/config':
+        specifier: workspace:*
+        version: link:../../packages/config
       '@dokunc/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -244,6 +250,25 @@ importers:
       yaml:
         specifier: 2.9.1
         version: 2.9.1
+
+  packages/config:
+    dependencies:
+      pino:
+        specifier: 10.3.1
+        version: 10.3.1
+      zod:
+        specifier: 4.6.5
+        version: 4.6.5
+    devDependencies:
+      '@types/node':
+        specifier: 26.6.3
+        version: 26.6.3
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+      vitest:
+        specifier: 5.0.2
+        version: 5.0.2(@types/node@26.6.3)(happy-dom@20.10.6)(vite@8.1.5(@types/node@26.6.3)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.15)(yaml@2.9.1))
 
   packages/db:
     dependencies:

@@ -17,12 +17,33 @@ differently on an existing installation, and what to do about it.
 
 ### Upgrade notes
 
+- **Startup check:** the web app and the collaboration server now check
+  their configuration at startup. When a checked setting is invalid, the
+  server stops with exit code 78 and one `fatal` log line that lists every
+  problem (field `errors`). The first checked setting is `LOG_LEVEL`: an
+  invalid value used to crash both servers with a stack trace, and the
+  value is no longer case-sensitive. On success the log shows one line
+  "Konfiguration geprueft" with the values of the declared settings
+  (secrets masked) and the names of the other settings that are set.
+  Nothing to do for a working installation. If the container keeps
+  restarting after the update, the line "Konfiguration ungueltig" in
+  `docker compose logs app` names the setting to fix.
+
 ### Security
 
 ### Added
 
+- Configuration check at startup for the web app and the collaboration
+  server, with the effective configuration (secrets masked) in the log.
+
 ### Changed
+
+- The web app, the collaboration server and the Prisma CLI no longer print
+  a `dotenv` line ("injected env …") when they load the environment.
 
 ### Removed
 
 ### Fixed
+
+- An invalid `LOG_LEVEL` no longer crashes both servers with a stack
+  trace.

@@ -1,11 +1,11 @@
 import { PHASE_PRODUCTION_BUILD } from "next/constants";
 
 /**
- * Startpunkt fuer Hintergrundarbeit des Web-Prozesses. Next ruft
- * `register()` einmal je Serverinstanz auf, bevor die erste Anfrage
- * bedient wird.
+ * Startpunkt des Web-Prozesses: Pruefung der Konfiguration und
+ * Hintergrundarbeit. Next ruft `register()` einmal je Serverinstanz auf,
+ * bevor die erste Anfrage bedient wird.
  *
- * Hier und nicht im Collab-Prozess, obwohl der sonst die periodischen
+ * Die Hintergrundarbeit hier und nicht im Collab-Prozess, obwohl der sonst die periodischen
  * Aufgaben traegt (Mailversand): das Upload-Verzeichnis gehoert dem
  * Web-Prozess. Ohne UPLOAD_DIR loest lib/uploads es relativ zu dessen
  * Arbeitsverzeichnis auf, und nur wer dieselbe Aufloesung benutzt,
@@ -15,14 +15,33 @@ import { PHASE_PRODUCTION_BUILD } from "next/constants";
  *
  * Nur im Node-Runtime: `register()` laeuft auch fuer die Middleware im
  * Edge-Runtime, und dort gibt es weder Dateisystem noch Prisma. Die
- * Bedingung umschliesst den dynamischen Import, damit der Edge-Build
- * das Modul gar nicht erst einbindet. Nicht waehrend `next build`: Next
+ * Bedingung umschliesst die dynamischen Importe, damit der Edge-Build
+ * die Module gar nicht erst einbindet. Nicht waehrend `next build`: Next
  * laesst `register()` dort heute selbst aus, die eigene Pruefung haelt
  * das fest, falls sich das aendert — ein Build soll nie loeschen.
+ *
+ * Die Reihenfolge ist fest; wer etwas beim Start braucht, haengt sich an
+ * seiner Stelle ein:
+ *  1. Logging (Konsole, Node-Warnungen, Datenbank-Log in das JSON-Log);
+ *  2. Pruefung der Konfiguration. Bei einem Fehler endet der Prozess mit
+ *     Code 78, bevor irgendetwas anderes startet; Warnungen zu einzelnen
+ *     Werten laufen als Hinweise der Pruefung mit, nicht als eigene
+ *     Aufrufe hier;
+ *  3. einmalige Startaufgaben;
+ *  4. Hintergrundjobs.
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     if (process.env.NEXT_PHASE === PHASE_PRODUCTION_BUILD) return;
+
+    // 2. Konfiguration. Kein try/catch wie bei den Jobs: scheitert schon
+    // das Laden der Pruefung, soll das nicht still untergehen. Bei
+    // ungueltigen Werten beendet checkWebConfig den Prozess selbst, weil
+    // Next einen Wurf aus register() nur meldet und weiterlaeuft.
+    const { checkWebConfig } = await import("@/lib/config");
+    checkWebConfig();
+
+    // 4. Hintergrundjobs.
     try {
       const { startUploadSweeper } = await import("@/lib/upload-sweeper");
       startUploadSweeper();
