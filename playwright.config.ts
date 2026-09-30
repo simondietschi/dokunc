@@ -80,5 +80,42 @@ export default defineConfig({
       // Server behaelt seine eigene Einstellung.
       env: { UPLOAD_SWEEP_INTERVAL_H: "0" },
     },
+    {
+      // Test-Identitaetsanbieter fuer e2e/sso.spec.ts (e2e/test-idp).
+      // Geprueft wird ueber 127.0.0.1, weil der IdP nur dort lauscht;
+      // der Aussteller heisst trotzdem localhost (die App nimmt http nur
+      // fuer den eigenen Rechner an).
+      command: "node e2e/test-idp/server.mts",
+      url: "http://127.0.0.1:3010/.well-known/openid-configuration",
+      reuseExistingServer: !CI,
+      timeout: 30_000,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 5_000 },
+      env: {
+        TEST_IDP_PORT: "3010",
+        TEST_IDP_REDIRECT_URIS: "http://localhost:3002/api/auth/oidc/callback",
+      },
+    },
+    {
+      // Dieselbe Build-Ausgabe wie auf Port 3000, aber mit Single
+      // Sign-on gegen den Test-IdP. Nur e2e/sso.spec.ts spricht ihn an:
+      // mit SSO am Haupt-Server saehen alle Dateien die SSO-Schaltflaeche,
+      // und der Fall "kein Anbieter eingerichtet" liesse sich nicht mehr
+      // pruefen. Datenbank, Redis und APP_SECRET teilt er mit dem
+      // Haupt-Server.
+      command: "pnpm --filter @dokunc/web exec next start -p 3002",
+      url: "http://localhost:3002/api/health",
+      reuseExistingServer: !CI,
+      timeout: 120_000,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 20_000 },
+      env: {
+        APP_URL: "http://localhost:3002",
+        UPLOAD_SWEEP_INTERVAL_H: "0",
+        OIDC_ISSUER: "http://localhost:3010",
+        OIDC_CLIENT_ID: "dokunc-test",
+        OIDC_CLIENT_SECRET: "test-idp-geheimnis-nur-fuer-tests",
+        OIDC_BUTTON_LABEL: "Test-IdP",
+        OIDC_ALLOW_SIGNUP: "true",
+      },
+    },
   ],
 });

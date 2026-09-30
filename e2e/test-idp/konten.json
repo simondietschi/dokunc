@@ -1,0 +1,171 @@
+{
+  "entra-mitglied": {
+    "quelle": "Microsoft Entra ID, v2.0 ID token of a member, optional claims email and xms_edov configured (ID token claims reference, optional claims reference)",
+    "id_token": {
+      "ver": "2.0",
+      "tid": "9122040d-6c67-4c5b-b112-36a304b66dad",
+      "oid": "3f2c9b1e-5a7d-4e8f-9c0b-1d2e3f4a5b6c",
+      "preferred_username": "alex.muster@entra.test",
+      "name": "Alex Muster",
+      "email": "alex.muster@entra.test",
+      "xms_edov": true,
+      "rh": "0.AXkAtest-idp",
+      "aio": "test-idp"
+    },
+    "userinfo": {
+      "email": "alex.muster@entra.test",
+      "name": "Alex Muster",
+      "given_name": "Alex",
+      "family_name": "Muster"
+    }
+  },
+  "entra-ohne-email": {
+    "quelle": "Microsoft Entra ID, v2.0 ID token of a member without the optional claim email; the UPN is on the tenant's initial onmicrosoft domain, the mailbox address comes only from userinfo",
+    "id_token": {
+      "ver": "2.0",
+      "tid": "9122040d-6c67-4c5b-b112-36a304b66dad",
+      "oid": "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d",
+      "preferred_username": "kim.beispiel@entratest.onmicrosoft.com",
+      "name": "Kim Beispiel"
+    },
+    "userinfo": {
+      "email": "kim.beispiel@entra.test",
+      "name": "Kim Beispiel"
+    }
+  },
+  "entra-nur-upn": {
+    "quelle": "Microsoft Entra ID, v2.0 ID token of an account without a mailbox: no email claim, the UPN is on a verified domain",
+    "id_token": {
+      "ver": "2.0",
+      "tid": "9122040d-6c67-4c5b-b112-36a304b66dad",
+      "oid": "5c6d7e8f-9a0b-4c1d-8e2f-3a4b5c6d7e8f",
+      "preferred_username": "upn.only@entra.test",
+      "name": "Upn Only"
+    },
+    "userinfo": {
+      "name": "Upn Only"
+    }
+  },
+  "entra-gast": {
+    "quelle": "Microsoft Entra ID, v2.0 ID token of a B2B guest from another tenant: idp names the home tenant, no xms_edov",
+    "id_token": {
+      "ver": "2.0",
+      "tid": "9122040d-6c67-4c5b-b112-36a304b66dad",
+      "oid": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+      "idp": "https://sts.windows.net/0e1d2c3b-4a59-4687-9786-a5b4c3d2e1f0/",
+      "acct": 1,
+      "preferred_username": "gast_extern.test#EXT#@entratest.onmicrosoft.com",
+      "name": "Gast Extern",
+      "email": "gast@extern.test"
+    },
+    "userinfo": {
+      "email": "gast@extern.test",
+      "name": "Gast Extern"
+    }
+  },
+  "entra-gast-vertraute-domain": {
+    "quelle": "Microsoft Entra ID, v2.0 ID token of a B2B guest from another tenant whose address is on a domain of the inviting tenant, without xms_edov",
+    "id_token": {
+      "ver": "2.0",
+      "tid": "9122040d-6c67-4c5b-b112-36a304b66dad",
+      "oid": "8d9e0f1a-2b3c-4d4e-8f5a-6b7c8d9e0f1a",
+      "idp": "https://sts.windows.net/0e1d2c3b-4a59-4687-9786-a5b4c3d2e1f0/",
+      "acct": 1,
+      "preferred_username": "chefin_entra.test#EXT#@entratest.onmicrosoft.com",
+      "name": "Chefin Gast",
+      "email": "chefin@entra.test"
+    },
+    "userinfo": {
+      "email": "chefin@entra.test",
+      "name": "Chefin Gast"
+    }
+  },
+  "google": {
+    "quelle": "Google, Workspace account (OpenID Connect documentation, ID token and userinfo)",
+    "id_token": {
+      "hd": "google.test",
+      "email": "sam@google.test",
+      "email_verified": true,
+      "name": "Sam Google",
+      "given_name": "Sam",
+      "family_name": "Google",
+      "picture": "https://lh3.googleusercontent.test/a/test-idp"
+    },
+    "userinfo": {
+      "email": "sam@google.test",
+      "email_verified": true,
+      "name": "Sam Google"
+    }
+  },
+  "keycloak": {
+    "quelle": "Keycloak, default client scopes email and profile, verified address",
+    "id_token": {
+      "typ": "ID",
+      "acr": "1",
+      "session_state": "test-idp-session",
+      "email_verified": true,
+      "email": "robin@keycloak.test",
+      "preferred_username": "robin",
+      "name": "Robin Keycloak",
+      "given_name": "Robin",
+      "family_name": "Keycloak"
+    },
+    "userinfo": {
+      "email_verified": true,
+      "email": "robin@keycloak.test",
+      "preferred_username": "robin",
+      "name": "Robin Keycloak",
+      "given_name": "Robin",
+      "family_name": "Keycloak"
+    }
+  },
+  "keycloak-unbestaetigt": {
+    "quelle": "Keycloak with self-registration, address not verified; the person chose an address on a trusted domain",
+    "id_token": {
+      "typ": "ID",
+      "email_verified": false,
+      "email": "chef@entra.test",
+      "preferred_username": "chef@entra.test",
+      "name": "Chef Unbestaetigt"
+    },
+    "userinfo": {
+      "email_verified": false,
+      "email": "chef@entra.test",
+      "preferred_username": "chef@entra.test",
+      "name": "Chef Unbestaetigt"
+    }
+  },
+  "authentik": {
+    "quelle": "authentik, default scope mappings openid, email and profile; the default email mapping may report email_verified true without a check",
+    "id_token": {
+      "email": "kai@authentik.test",
+      "email_verified": true,
+      "preferred_username": "kai",
+      "nickname": "kai",
+      "name": "Kai Authentik",
+      "given_name": "Kai Authentik",
+      "groups": ["authentik Admins"]
+    },
+    "userinfo": {
+      "email": "kai@authentik.test",
+      "email_verified": true,
+      "preferred_username": "kai",
+      "nickname": "kai",
+      "name": "Kai Authentik",
+      "given_name": "Kai Authentik",
+      "groups": ["authentik Admins"]
+    }
+  },
+  "userinfo-bestaetigt": {
+    "quelle": "Generic provider with a lean ID token: email without email_verified in the ID token, email_verified only from userinfo (OpenID Connect Core 5.4)",
+    "id_token": {
+      "email": "lou@schlank.test",
+      "name": "Lou Schlank"
+    },
+    "userinfo": {
+      "email": "lou@schlank.test",
+      "email_verified": true,
+      "name": "Lou Schlank"
+    }
+  }
+}

@@ -442,8 +442,18 @@ export const ERWARTUNG: Record<string, Eintrag> = {
   "action:app/spaces/actions.ts#joinSpaceAction": OFFEN,
   "route:app/api/account/export/route.ts#GET": OFFEN,
   "route:app/api/ai/assist/route.ts#POST": OFFEN,
-  "route:app/api/auth/oidc/callback/route.ts#GET": OFFEN,
-  "route:app/api/auth/oidc/start/route.ts#GET": OFFEN,
+  "route:app/api/auth/oidc/callback/route.ts#GET": {
+    stand: "extern",
+    tests: ["e2e/sso.spec.ts"],
+    grund:
+      "Anmeldung ohne Space-Rolle: Rücksprung des Anbieters mit Anmeldung, Verknüpfung, Kontoanlage und falschem state gegen den Test-IdP",
+  },
+  "route:app/api/auth/oidc/start/route.ts#GET": {
+    stand: "extern",
+    tests: ["e2e/sso.spec.ts"],
+    grund:
+      "Anmeldung ohne Space-Rolle: Einstieg in die SSO-Anmeldung gegen den Test-IdP",
+  },
   "route:app/api/collab/ticket/route.ts#POST": OFFEN,
   "route:app/api/favorites/route.ts#GET": OFFEN,
   "route:app/api/files/[name]/route.ts#GET": OFFEN,
@@ -532,8 +542,6 @@ export const OFFEN_BESTAND: readonly string[] = [
   "action:app/spaces/actions.ts#joinSpaceAction",
   "route:app/api/account/export/route.ts#GET",
   "route:app/api/ai/assist/route.ts#POST",
-  "route:app/api/auth/oidc/callback/route.ts#GET",
-  "route:app/api/auth/oidc/start/route.ts#GET",
   "route:app/api/collab/ticket/route.ts#POST",
   "route:app/api/favorites/route.ts#GET",
   "route:app/api/files/[name]/route.ts#GET",
