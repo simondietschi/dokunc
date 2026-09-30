@@ -8,8 +8,9 @@
 #                          schreiben, ausserhalb des Repositorys; sichert sonst
 #                          nichts (README "Sicherung und Rueckweg")
 # Umgebung oder .env: BACKUP_KEEP_DAYS (Vorgabe 0: nie loeschen)
-# Nennt das Compose-Projekt und prueft es (scripts/projektname.sh); schlaegt
-# die Pruefung an, loescht der Lauf keine alten Saetze.
+# Nennt das Compose-Projekt und prueft es (scripts/projektname.sh), auch mit
+# --secret-sichern; schlaegt die Pruefung an, loescht der Lauf keine alten
+# Saetze.
 # Ausgabe: Fortschritt auf stdout, Fehler und Warnungen auf stderr (cron:
 # >/dev/null, gemailt wird nur, was Aufmerksamkeit braucht). Meldungen,
 # nach denen Tests oder die CI suchen, stehen auf einer Zeile.
@@ -81,6 +82,23 @@ MERKMAL_DATEI="backups/.app_secret-merkmal"
 # Befehlszeile.
 gleiches_secret() { [ "$(cat "$1")" = "$(cat "$2")" ]; }
 
+# ---- Compose-Projekt ----
+# Lief ein Update ohne ./scripts/projektname.sh --festschreiben, saehe
+# dieses Skript eine neue, leere Instanz: es sicherte sie, und die
+# Aufbewahrung loeschte nach und nach die guten Saetze; --secret-sichern
+# sicherte deren Secret. Nennt das Projekt als erste Zeile. Alles, was die
+# Pruefung auf stderr schreibt, geht auf stderr weiter (cron verschickt
+# es), auch ein Hinweis bei Exit 0. PROJEKT_OK=0, wenn sie anschlaegt.
+projekt_pruefen() {
+  local ausgabe
+  PROJEKT_OK=1
+  ausgabe=$(./scripts/projektname.sh 2>"$FEHLER") || PROJEKT_OK=0
+  PROJEKT=$(printf '%s\n' "$ausgabe" | sed -n 's/^Compose-Projekt: \([^ ]*\).*/\1/p')
+  PROJEKT=${PROJEKT:-unbekannt}
+  echo "Compose-Projekt: $PROJEKT"
+  if [ -s "$FEHLER" ]; then sed -n '1,20p' "$FEHLER" >&2; fi
+}
+
 if [ -n "$SECRET_ZIEL" ]; then
   [[ "$SECRET_ZIEL" == /* ]] || SECRET_ZIEL="$AUFRUFORT/$SECRET_ZIEL"
   if [ -d "$SECRET_ZIEL" ]; then
@@ -97,6 +115,10 @@ if [ -n "$SECRET_ZIEL" ]; then
     "$REPO"/*|"$BACKUPS_ECHT"/*) scheitern "Das Secret gehört nicht ins Repository und nicht zu den Sicherungen. Einen Pfad ausserhalb wählen, etwa ~/dokunc-app_secret." ;;
   esac
   ZIEL="$ZIEL_ORDNER/$(basename "$SECRET_ZIEL")"
+  projekt_pruefen
+  if [ "$PROJEKT_OK" -eq 0 ]; then
+    echo "Warnung: Die Prüfung des Compose-Projekts schlägt an (./scripts/projektname.sh). Das Secret stammt aus dem Compose-Projekt $PROJEKT; gehört das nicht zu dieser Installation, nach dem Festschreiben erneut sichern." >&2
+  fi
   LAGE=$(secret_lage) || scheitern "APP_SECRET liess sich nicht lesen (docker compose run app gescheitert)." log
   case "$LAGE" in
     env) scheitern "APP_SECRET steht in der .env und hat Vorrang, das Secret im Volume wird nicht verwendet. Die .env getrennt sichern." ;;
@@ -172,18 +194,9 @@ find backups -maxdepth 1 \( -name '.*.teil' -o -name '.fehler.*' -o -name '.list
   -mmin +1440 -exec rm -f {} + 2>/dev/null || true
 
 # ---- Compose-Projekt ----
-# Lief ein Update ohne ./scripts/projektname.sh --festschreiben, saehe
-# dieses Skript eine neue, leere Instanz und sicherte sie; die
-# Aufbewahrung loeschte nach und nach die guten Saetze. Meldet die
-# Pruefung eine Abweichung, steht sie auf stderr (cron verschickt sie),
-# und dieser Lauf loescht nichts.
-PROJEKT_OK=1
-PROJEKT_AUSGABE=$(./scripts/projektname.sh 2>"$FEHLER") || PROJEKT_OK=0
-PROJEKT=$(printf '%s\n' "$PROJEKT_AUSGABE" | sed -n 's/^Compose-Projekt: \([^ ]*\).*/\1/p')
-PROJEKT=${PROJEKT:-unbekannt}
-echo "Compose-Projekt: $PROJEKT"
+# Meldet die Pruefung eine Abweichung, loescht dieser Lauf nichts.
+projekt_pruefen
 if [ "$PROJEKT_OK" -eq 0 ]; then
-  sed -n '1,20p' "$FEHLER" >&2
   echo "Warnung: Die Prüfung des Compose-Projekts schlägt an (./scripts/projektname.sh). Diese Sicherung löscht keine älteren Sätze." >&2
 fi
 

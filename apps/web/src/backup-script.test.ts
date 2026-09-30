@@ -279,6 +279,42 @@ describe("scripts/backup.sh: Compose-Projekt", () => {
     expect(dumpZeilen(r.stdout)).toHaveLength(1);
   });
 
+  it("gibt einen Hinweis der Pruefung auch bei Exit 0 auf stderr weiter", () => {
+    // Das Anlagedatum der eigenen Datenbank ist nicht lesbar: die Pruefung
+    // endet mit 0, der Vergleich mit dem aelteren Projekt blieb aber aus.
+    // cron verwirft stdout; der Hinweis muss auf stderr stehen.
+    for (const ts of [...ALTE, vorTagen(1), vorTagen(2), vorTagen(3)]) satz(ts);
+    const r = run([], {
+      env: { FAKE_VOLUMES: `${vol("altwiki", ALT)} ${vol("dokunc", "kaputt")}`, BACKUP_KEEP_DAYS: "7" },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toContain("Hinweis: Das Anlagedatum von dokunc (kaputt) lässt sich nicht lesen");
+    expect(r.stderr).not.toContain("Warnung: Die Prüfung des Compose-Projekts");
+    expect(r.stdout).toContain("Gelöscht (älter als 7 Tage): 20200101-120000 20200102-120000");
+  });
+
+  it("nennt das Projekt auch beim Sichern des Secrets und warnt bei einer Abweichung", () => {
+    const ziel = join(aussen, "geheim");
+    const secret = { FAKE_SECRET: "s".repeat(40), FAKE_SECRET_LAGE: "merkmal abc" };
+    const gut = run(["--secret-sichern", ziel], { env: { ...secret, FAKE_VOLUMES: vol("dokunc", ALT) } });
+    expect(gut.status, gut.stderr).toBe(0);
+    expect(gut.stdout.split("\n")[0]).toBe("Compose-Projekt: dokunc");
+    expect(gut.stderr).toBe("");
+
+    rmSync(ziel);
+    const r = run(["--secret-sichern", ziel], {
+      env: { ...secret, FAKE_VOLUMES: `${vol("wiki", ALT)} ${vol("dokunc", NEU)}` },
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout.split("\n")[0]).toBe("Compose-Projekt: dokunc");
+    expect(r.stderr).toContain("✗ Das Compose-Projekt dokunc hat Daten");
+    expect(r.stderr).toContain(
+      "Warnung: Die Prüfung des Compose-Projekts schlägt an (./scripts/projektname.sh). Das Secret stammt aus dem " +
+        "Compose-Projekt dokunc; gehört das nicht zu dieser Installation, nach dem Festschreiben erneut sichern.",
+    );
+    expect(existsSync(ziel)).toBe(true);
+  });
+
   it("fragt bei einem nicht laufenden Datenbankdienst nach dem Projektnamen", () => {
     const r = run([], { env: { FAKE_PGDUMP_EXIT: "1" } });
     expect(r.status).toBe(1);

@@ -136,11 +136,14 @@ As long as the new, empty instance has no account, the first account needs
 the setup token (see `docs/admin/first-account.md`), so nobody can take it
 over by registering first.
 
-`scripts/backup.sh` runs the same check. If it reports a problem, the
-backup writes it to stderr (cron mails it) and deletes no old backups in
-that run, so the retention cannot replace good backups with backups of an
-empty instance. The first line of its output and of `scripts/restore.sh`
-names the project they work on.
+`scripts/backup.sh` runs the same check, also with `--secret-sichern`,
+and passes on to stderr whatever the check writes there (cron mails it),
+including a hint without a problem. If the check reports a problem, the
+backup deletes no old backups in that run, so the retention cannot
+replace good backups with backups of an empty instance; with
+`--secret-sichern` it warns that the secret comes from the named project.
+The first line of its output and of `scripts/restore.sh` names the
+project they work on.
 
 ## Moving an installation
 

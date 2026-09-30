@@ -712,8 +712,8 @@ differently on an existing installation, and what to do about it.
   that its unconfirmed changes now exist only in that tab, as after an
   ended session.
 - `scripts/backup.sh` and `scripts/restore.sh` name the Compose project
-  they work on; `backup.sh` checks it and deletes no old backups when the
-  check fails.
+  they work on; `backup.sh` checks it, also with `--secret-sichern`, and
+  deletes no old backups when the check fails.
 
 ### Removed
 
