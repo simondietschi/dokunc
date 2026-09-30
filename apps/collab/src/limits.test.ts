@@ -144,8 +144,6 @@ describe("SocketGate", () => {
     expect(gate.tryAcquire("a")).toEqual({ ok: false, grund: "instanz" });
   });
 
-  // Eine abgewiesene Anfrage belegt nichts: sonst zaehlte jede Abweisung
-  // als offener Socket, bis die Adresse dauerhaft ausgesperrt waere.
   it("zaehlt ohne Adresse (ausgenommenes Netz) nur fuer die Instanz", () => {
     const gate = new SocketGate(4, 2);
     const plaetze = Array.from({ length: 4 }, () => gate.tryAcquire(null));
@@ -166,6 +164,8 @@ describe("SocketGate", () => {
     expect(gate.tryAcquire("203.0.113.9")).toEqual({ ok: false, grund: "adresse" });
   });
 
+  // Eine abgewiesene Anfrage belegt nichts: sonst zaehlte jede Abweisung
+  // als offener Socket, bis die Adresse dauerhaft ausgesperrt waere.
   it("belegt bei einer Abweisung keinen Platz", () => {
     const gate = new SocketGate(100, 1);
     gate.tryAcquire("a");
