@@ -9,11 +9,10 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "nodemailer": "9.1.1"
+    "nodemailer": "10.0.12"
   },
   "devDependencies": {
     "@types/node": "26.6.3",
-    "@types/nodemailer": "8.0.1",
     "typescript": "6.0.3"
   }
 }

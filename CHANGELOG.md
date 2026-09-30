@@ -44,6 +44,12 @@ differently on an existing installation, and what to do about it.
 
 - Docker images no longer include local environment files, Redis dumps,
   `app_secret` files or Compose overrides from the build directory.
+- Mail is sent with nodemailer 10.0.12. It fixes a denial of service
+  through a crafted address (GHSA-v53p-9fqp-m79j, high), the reuse of one
+  SMTP host's TLS server name for another through a shared DNS cache
+  (GHSA-6vj9-mwq6-2f5v), a stack overflow on deeply nested recipient
+  lists (GHSA-8vvx-rff5-p5rq) and a malformed envelope recipient built
+  from a quoted local part with a comment (GHSA-g57g-f23g-4646).
 
 ### Added
 
@@ -67,3 +73,7 @@ differently on an existing installation, and what to do about it.
 
 - An invalid `LOG_LEVEL` no longer crashes both servers with a stack
   trace.
+- A password reset mail that failed because the SMTP server closed the
+  connection before its greeting counted as a permanent failure, so the
+  attempt stayed on the account's hourly limit. It now counts as a
+  temporary connection error, like a refused or timed-out connection.
