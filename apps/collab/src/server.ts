@@ -12,10 +12,11 @@ import {
   canSeePage,
   canSeePageWithGrant,
   countCollabDocumentsOver,
-  currentRestoreEpoch,
   effectiveSpaceRole,
   indexPageChunks,
   prisma,
+  raiseEditorSchemaMark,
+  readInstanceState,
   strongestSpaceRole,
   usersWhoCanSeePage,
   type SpaceRole,
@@ -37,9 +38,11 @@ import {
   DOC_RESET_ACK_TTL_SEC,
   ACCESS_REVOKED_CHANNEL,
   PAGE_ACCESS_CHANNEL,
+  SCHEMA_ANNOUNCE_CHANNEL,
   isDocResetMessage,
   isAccessRevokedMessage,
   isPageAccessMessage,
+  isSchemaAnnouncement,
   extractWikiLinkIds,
   extractMentionIds,
   chunkForAiIndex,
@@ -53,6 +56,7 @@ import { COLLAB_VARIABLEN } from "./config-variablen";
 import { startMailDispatcher } from "./mail-dispatcher";
 import { startAiIndexer } from "./ai-indexer";
 import { createDocResetHandler, type ResetContent } from "./doc-reset";
+import { SchemaWaechter, type SchemaMarke } from "./schema-marke";
 import { resolveAppSecret } from "./secret";
 import { StoreWatch } from "./store-watch";
 import { DocSizeTracker, roleNeedsReconnect } from "./doc-size";
@@ -111,6 +115,16 @@ const extensions = richExtensions();
  * dasselbe Schema nennt.
  */
 const eigenesSchema = editorSchema();
+/** Kennung dieser Instanz auf SCHEMA_ANNOUNCE_CHANNEL (eigene Nachricht uebergehen). */
+const INSTANCE_ID = randomUUID();
+/**
+ * Ist diese Instanz veraltet (./schema-marke)? Beim Wechsel trennt sie
+ * alle Editoren (trenneVeraltet); danach weist onAuthenticate jede
+ * Anmeldung ab und Doc-Resets werden uebergangen.
+ */
+const schemaWaechter = new SchemaWaechter(eigenesSchema, (marke) =>
+  trenneVeraltet(marke),
+);
 
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
 const VERSION_INTERVAL_MS = 2 * 60 * 1000;
@@ -578,11 +592,66 @@ function logSchemaRejection(detail: {
       ...detail,
       reason: COLLAB_REJECT_REASON.schemaMismatch,
       schemaServer: eigenesSchema.hash,
+      instanceOutdated: schemaWaechter.veraltet,
       sinceLast: schemaRejectionsSinceLog - 1,
     },
     "Collab-Verbindung abgewiesen",
   );
   schemaRejectionsSinceLog = 0;
+}
+
+/** Marke aus der Datenbank in der Form von ./schema-marke. */
+function markeAus(zustand: {
+  editorSchemaVersion: number;
+  editorSchemaHash: string | null;
+}): SchemaMarke {
+  return {
+    version: zustand.editorSchemaVersion,
+    hash: zustand.editorSchemaHash,
+  };
+}
+
+/**
+ * Diese Instanz ist gerade veraltet geworden: eine neuere Fassung hat die
+ * Marke gehoben. Alle Editoren trennen; beim Wiederverbinden weist
+ * onAuthenticate sie mit "schema-mismatch" ab, und ihr Editor zeigt
+ * "Aktualisierung läuft", bis eine aktuelle Instanz sie annimmt.
+ * Mail-Versand, KI-Index und Rechteprüfung laufen weiter, sie haengen
+ * nicht am Schema.
+ */
+function trenneVeraltet(marke: SchemaMarke): void {
+  let closed = 0;
+  for (const doc of server.hocuspocus.documents.values()) {
+    for (const connection of Array.from(doc.getConnections())) {
+      closeConnection(connection, "Neuere Editor-Fassung");
+      closed += 1;
+    }
+  }
+  log.warn(
+    {
+      ownVersion: eigenesSchema.version,
+      ownHash: eigenesSchema.hash,
+      markVersion: marke.version,
+      markHash: marke.hash,
+      closed,
+    },
+    "Neuere Editor-Fassung in der Datenbank: Verbindungen getrennt, neue werden abgewiesen",
+  );
+}
+
+/**
+ * Marke lesen und pruefen: nach einer Ankuendigung auf
+ * SCHEMA_ANNOUNCE_CHANNEL und in der Minutenrunde. Entscheidend ist die
+ * Marke, nicht die Nachricht. Ein Fehler beim Lesen aendert nichts; die
+ * naechste Anmeldung liest die Marke ohnehin.
+ */
+async function pruefeSchemaMarke(): Promise<void> {
+  if (schemaWaechter.veraltet) return;
+  try {
+    schemaWaechter.pruefe(markeAus(await readInstanceState(prisma)));
+  } catch (e) {
+    log.warn({ err: e }, "Schema-Marke nicht gelesen");
+  }
 }
 
 // HA: mehrere Collab-Instanzen koordinieren Yjs-Dokumente + Awareness
@@ -731,8 +800,9 @@ const server = new Server({
     // Tab kommt wieder, sobald Web-App und Collab-Server dieselbe Fassung
     // fahren. Den Socket schliesst die Anmeldefrist (limitRejection).
     // Ein Ticket ohne `sh` stammt von einer Web-App von vor dieser
-    // Pruefung und gilt ebenso als abweichend.
-    if (ticket.schemaHash !== eigenesSchema.hash) {
+    // Pruefung und gilt ebenso als abweichend. Eine veraltete Instanz
+    // (./schema-marke) nimmt gar keine Editoren mehr an.
+    if (schemaWaechter.veraltet || ticket.schemaHash !== eigenesSchema.hash) {
       logSchemaRejection({
         userId: ticket.userId,
         pageId,
@@ -782,11 +852,13 @@ const server = new Server({
 
     try {
       const { readOnly } = await checkTicketAccess(ticket, pageId);
+      // Restore-Epoche und Schema-Marke in einer Abfrage.
+      const zustand = await readInstanceState(prisma);
       // Zweite Linie hinter der Ticket-Route: ein Ticket gilt nur fuer die
       // Restore-Epoche, gegen die es ausgestellt wurde. Nach restore.sh
       // scheitert ein altes Ticket meist schon am Sitzungswiderruf; diese
       // Pruefung haelt auch, wenn Sitzungen einmal nicht widerrufen werden.
-      if (ticket.restoreEpoch !== (await currentRestoreEpoch(prisma))) {
+      if (ticket.restoreEpoch !== zustand.restoreEpoch) {
         log.warn(
           {
             userId: ticket.userId,
@@ -796,6 +868,17 @@ const server = new Server({
           "Collab-Verbindung abgewiesen",
         );
         throw limitRejection(COLLAB_REJECT_REASON.restoreEpoch);
+      }
+      // Hat inzwischen eine neuere Fassung die Schema-Marke gehoben (ohne
+      // dass die Ankuendigung hier ankam), merkt es diese Instanz hier:
+      // sie trennt ihre Editoren und weist diesen ab.
+      if (schemaWaechter.pruefe(markeAus(zustand))) {
+        logSchemaRejection({
+          userId: ticket.userId,
+          pageId,
+          schemaTicket: ticket.schemaHash,
+        });
+        throw limitRejection(COLLAB_REJECT_REASON.schemaMismatch);
       }
       // Verbraucht wird erst, wenn alles andere passt: eine Anmeldung,
       // die an einer Grenze oder am Zugriff scheitert, hat nichts
@@ -1540,6 +1623,7 @@ const handleDocReset = createDocResetHandler({
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: Date.now,
   log,
+  veraltet: () => schemaWaechter.veraltet,
 });
 
 /**
@@ -1881,7 +1965,12 @@ function startDocResetListener(): void {
   // zweites SUBSCRIBE auf denselben Kanal ist folgenlos.
   const subscribe = () => {
     subscriber
-      .subscribe(DOC_RESET_CHANNEL, ACCESS_REVOKED_CHANNEL, PAGE_ACCESS_CHANNEL)
+      .subscribe(
+        DOC_RESET_CHANNEL,
+        ACCESS_REVOKED_CHANNEL,
+        PAGE_ACCESS_CHANNEL,
+        SCHEMA_ANNOUNCE_CHANNEL,
+      )
       .catch((e: unknown) => {
         log.warn({ err: e }, "Redis-Kanäle nicht abonniert");
       });
@@ -1892,6 +1981,12 @@ function startDocResetListener(): void {
   subscribe();
   subscriber.on("message", async (channel: string, raw: string) => {
     try {
+      if (channel === SCHEMA_ANNOUNCE_CHANNEL) {
+        const message = readMessage(channel, raw, isSchemaAnnouncement);
+        if (!message || message.instanceId === INSTANCE_ID) return;
+        await pruefeSchemaMarke();
+        return;
+      }
       if (channel === PAGE_ACCESS_CHANNEL) {
         const message = readMessage(channel, raw, isPageAccessMessage);
         if (!message) return;
@@ -1924,67 +2019,119 @@ function startDocResetListener(): void {
   });
 }
 
-server
-  .listen()
-  .then(() => {
-    log.info({ port: PORT }, "Hocuspocus läuft");
-    log.info(
+/**
+ * Schema-Marke heben, bevor der Port aufgeht: eine Instanz, die aelter
+ * ist als die Daten, nimmt so nie auch nur eine Verbindung an. Ohne
+ * Datenbank arbeitet der Collab-Server ohnehin nicht; scheitert das
+ * Schreiben, endet der Start mit einer Zeile der Stufe 60.
+ */
+async function hebeSchemaMarke(): Promise<void> {
+  let marke: SchemaMarke;
+  try {
+    marke = await raiseEditorSchemaMark(prisma, eigenesSchema);
+  } catch (e) {
+    log.fatal(
+      { err: e },
+      "Schema-Marke nicht in die Datenbank geschrieben, Start abgebrochen",
+    );
+    process.exit(1);
+  }
+  log.info(
+    {
+      schemaVersion: eigenesSchema.version,
+      schemaHash: eigenesSchema.hash,
+      markVersion: marke.version,
+      markHash: marke.hash,
+    },
+    "Editor-Schema",
+  );
+  if (eigenesSchema.version === 0) {
+    // Nur in der Entwicklung moeglich (ein Unit-Test verhindert, dass
+    // ein nicht eingetragenes Schema ausgeliefert wird).
+    log.error(
+      { schemaHash: eigenesSchema.hash },
+      "Editor-Schema fehlt in EDITOR_SCHEMA_HASHES (packages/editor): Hash dort anhaengen",
+    );
+  }
+  if (schemaWaechter.pruefe(marke)) {
+    log.error(
       {
         schemaVersion: eigenesSchema.version,
         schemaHash: eigenesSchema.hash,
+        markVersion: marke.version,
+        markHash: marke.hash,
       },
-      "Editor-Schema",
+      "Editor-Schema dieser Instanz ist aelter als die Marke in der Datenbank: sie nimmt keine Editoren an. Zurueck auf eine aeltere Fassung nur mit der Sicherung von vor dem Update (docs/admin/upgrading.md)",
     );
-    if (eigenesSchema.version === 0) {
-      // Nur in der Entwicklung moeglich (ein Unit-Test verhindert, dass
-      // ein nicht eingetragenes Schema ausgeliefert wird).
-      log.error(
-        { schemaHash: eigenesSchema.hash },
-        "Editor-Schema fehlt in EDITOR_SCHEMA_HASHES (packages/editor): Hash dort anhaengen",
-      );
-    }
-    log.info(
-      {
-        dokumentGrenze: sizeLimits.maxDocBytes,
-        warnschwelle: sizeLimits.warnDocBytes,
-        nachrichtenGrenze: sizeLimits.maxMessageBytes,
-      },
-      "Groessengrenzen",
+    return;
+  }
+  // Andere Instanzen lesen daraufhin die Marke und trennen ihre Editoren,
+  // wenn ihr Schema aelter ist. Scheitert das, merken sie es bei der
+  // naechsten Anmeldung oder in ihrer Minutenrunde.
+  await redis
+    .publish(
+      SCHEMA_ANNOUNCE_CHANNEL,
+      JSON.stringify({
+        instanceId: INSTANCE_ID,
+        version: eigenesSchema.version,
+        hash: eigenesSchema.hash,
+      }),
+    )
+    .catch((e: unknown) =>
+      log.warn({ err: e }, "Editor-Schema nicht angekuendigt"),
     );
-    if (sizeLimits.maxDocBytes > 0) {
-      void countCollabDocumentsOver(sizeLimits.maxDocBytes)
-        .then((anzahl) => {
-          if (anzahl > 0) {
-            log.warn(
-              { anzahl, grenze: sizeLimits.maxDocBytes },
-              "Collab-Dokumente ueber der Groessengrenze, nur lesbar (Liste unter /admin/documents)",
-            );
-          }
-        })
-        .catch((e) =>
-          log.warn({ err: e }, "Groesse der Collab-Dokumente nicht geprueft"),
-        );
-    }
-    // Mail-Versand von Benachrichtigungen (periodisch, Redis-gelockt).
-    startMailDispatcher({ redis, log });
-    // KI-Index: Chunks fuer Seiten aus allen Schreibwegen, Embeddings im
-    // Hintergrund (periodisch, Redis-Sperre, siehe ./ai-indexer).
-    startAiIndexer({ redis, log });
-    startDocResetListener();
-    setInterval(() => {
-      void enforceRevocations().catch((e) =>
-        log.warn({ err: e }, "Rechteprüfung fehlgeschlagen"),
+}
+
+async function starte(): Promise<void> {
+  await hebeSchemaMarke();
+  await server.listen();
+  log.info({ port: PORT }, "Hocuspocus läuft");
+  log.info(
+    {
+      dokumentGrenze: sizeLimits.maxDocBytes,
+      warnschwelle: sizeLimits.warnDocBytes,
+      nachrichtenGrenze: sizeLimits.maxMessageBytes,
+    },
+    "Groessengrenzen",
+  );
+  if (sizeLimits.maxDocBytes > 0) {
+    void countCollabDocumentsOver(sizeLimits.maxDocBytes)
+      .then((anzahl) => {
+        if (anzahl > 0) {
+          log.warn(
+            { anzahl, grenze: sizeLimits.maxDocBytes },
+            "Collab-Dokumente ueber der Groessengrenze, nur lesbar (Liste unter /admin/documents)",
+          );
+        }
+      })
+      .catch((e) =>
+        log.warn({ err: e }, "Groesse der Collab-Dokumente nicht geprueft"),
       );
-    }, REVOCATION_INTERVAL_MS).unref();
-  })
-  .catch((e) => {
-    // Ohne diesen Zweig fehlt der Startfehler (belegter Port) im
-    // strukturierten Log vollständig — Node beendete den Prozess wegen
-    // der unbehandelten Rejection mit einer Rohausgabe auf stderr.
-    // Kippt stattdessen der then-Block, steht "Hocuspocus läuft" schon
-    // im Log, während Mailversand und Redis-Listener nie gestartet
-    // sind: ein halb gestarteter Dienst ist nicht brauchbar, also
-    // beenden wir genauso, wie es vorher unbemerkt geschah.
-    log.error({ err: e, port: PORT }, "Collab-Server nicht gestartet");
-    process.exit(1);
-  });
+  }
+  // Mail-Versand von Benachrichtigungen (periodisch, Redis-gelockt).
+  startMailDispatcher({ redis, log });
+  // KI-Index: Chunks fuer Seiten aus allen Schreibwegen, Embeddings im
+  // Hintergrund (periodisch, Redis-Sperre, siehe ./ai-indexer).
+  startAiIndexer({ redis, log });
+  startDocResetListener();
+  setInterval(() => {
+    void enforceRevocations().catch((e) =>
+      log.warn({ err: e }, "Rechteprüfung fehlgeschlagen"),
+    );
+    // Netz unter der Ankuendigung: hat eine neuere Fassung die Marke
+    // gehoben und kam die Nachricht nicht an, trennt diese Runde.
+    void pruefeSchemaMarke();
+  }, REVOCATION_INTERVAL_MS).unref();
+}
+
+starte().catch((e) => {
+  // Ohne diesen Zweig fehlt der Startfehler (belegter Port) im
+  // strukturierten Log vollständig — Node beendete den Prozess wegen
+  // der unbehandelten Rejection mit einer Rohausgabe auf stderr.
+  // Kippt stattdessen der Rest nach listen(), steht "Hocuspocus läuft"
+  // schon im Log, während Mailversand und Redis-Listener nie gestartet
+  // sind: ein halb gestarteter Dienst ist nicht brauchbar, also
+  // beenden wir genauso, wie es vorher unbemerkt geschah.
+  log.error({ err: e, port: PORT }, "Collab-Server nicht gestartet");
+  process.exit(1);
+});

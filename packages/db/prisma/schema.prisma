@@ -585,4 +585,13 @@ model InstanceState {
   restoreEpoch String?
   /// Zeitpunkt dieses Restores (von restore.sh gesetzt, zur Diagnose per SQL).
   restoredAt   DateTime?
+  /// Hoechste Editor-Schema-Version, mit der je ein Collab-Server hier
+  /// gestartet ist (Stelle in EDITOR_SCHEMA_HASHES, packages/editor), 0 =
+  /// noch keiner. Steigt nur (GREATEST beim Start). Eine Instanz mit
+  /// kleinerer Version nimmt keine Editoren an: ihr Editor loeschte, was
+  /// die neuere schon in die Dokumente geschrieben hat. Kommt mit einer
+  /// Sicherung zurueck (restore.sh).
+  editorSchemaVersion Int @default(0)
+  /// Schema-Hash zu dieser Version (16 Hexziffern), null = noch keiner.
+  editorSchemaHash    String?
 }

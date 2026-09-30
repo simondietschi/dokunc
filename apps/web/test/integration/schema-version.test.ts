@@ -5,10 +5,16 @@ import { prosemirrorJSONToYDoc } from "@tiptap/y-tiptap";
 import { decodeJwt } from "jose";
 import { randomBytes } from "node:crypto";
 import * as Y from "yjs";
-import { currentRestoreEpoch, prisma } from "@dokunc/db";
+import {
+  currentRestoreEpoch,
+  prisma,
+  raiseEditorSchemaMark,
+  readInstanceState,
+} from "@dokunc/db";
 import {
   COLLAB_FIELD,
   COLLAB_REJECT_REASON,
+  SCHEMA_ANNOUNCE_CHANNEL,
   editorSchema,
   richExtensions,
 } from "@dokunc/editor";
@@ -40,6 +46,12 @@ import {
  * (./collab-hilfen wieAlterEditor). Echte Route, echte Datenbank, echter
  * Collab-Server (eigener Prozess, Redis-Datenbank 7). Ersetzt ist nur die
  * Anmeldung.
+ *
+ * Mehrere Instanzen: jede hebt beim Start die Schema-Marke in
+ * InstanceState; eine Instanz mit aelterem Schema trennt ihre Editoren
+ * und nimmt keine neuen an. Die Faelle dazu stehen am Ende, starten je
+ * einen frischen Server (dessen Minutenrunde laeuft dann sicher nicht
+ * dazwischen) und setzen die Marke danach zurueck.
  */
 
 const REDIS_DB = 7;
@@ -405,4 +417,227 @@ describe("Ticket-Route und Editor-Schema", () => {
     expect(r.status).toBe(409);
     expect(r.data.code).toBe(COLLAB_REJECT_REASON.restoreEpoch);
   });
+});
+
+describe("Schema-Marke in InstanceState", () => {
+  /** Laeuft in einer Transaktion, die am Ende zurueckgerollt wird. */
+  async function inTransaktion(
+    fn: (tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0]) => Promise<void>,
+  ): Promise<void> {
+    const zurueck = new Error("zurueckrollen");
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await fn(tx);
+        throw zurueck;
+      }),
+    ).rejects.toBe(zurueck);
+  }
+
+  const H1 = "1111111111111111";
+  const H2 = "2222222222222222";
+
+  it("steigt nur, und der Hash folgt der Version", async () => {
+    await inTransaktion(async (tx) => {
+      await tx.$executeRaw`UPDATE "InstanceState" SET "editorSchemaVersion" = 0, "editorSchemaHash" = NULL`;
+      expect(await raiseEditorSchemaMark(tx, { version: 1, hash: H1 })).toEqual({
+        version: 1,
+        hash: H1,
+      });
+      // Gleiche Version, anderer Hash: der erste bleibt.
+      expect(await raiseEditorSchemaMark(tx, { version: 1, hash: H2 })).toEqual({
+        version: 1,
+        hash: H1,
+      });
+      // Eine aeltere Instanz senkt nichts.
+      expect(await raiseEditorSchemaMark(tx, { version: 0, hash: H2 })).toEqual({
+        version: 1,
+        hash: H1,
+      });
+      expect(await raiseEditorSchemaMark(tx, { version: 2, hash: H2 })).toEqual({
+        version: 2,
+        hash: H2,
+      });
+      expect(await readInstanceState(tx)).toMatchObject({
+        editorSchemaVersion: 2,
+        editorSchemaHash: H2,
+      });
+    });
+  });
+
+  it("legt die Zeile an, wenn sie fehlt, und liest ohne Zeile 0", async () => {
+    await inTransaktion(async (tx) => {
+      await tx.instanceState.deleteMany();
+      expect(await readInstanceState(tx)).toEqual({
+        restoreEpoch: null,
+        editorSchemaVersion: 0,
+        editorSchemaHash: null,
+      });
+      expect(await raiseEditorSchemaMark(tx, { version: 1, hash: H1 })).toEqual({
+        version: 1,
+        hash: H1,
+      });
+    });
+  });
+
+  it("erzwingt Format des Hashes und eine Version ab 0", async () => {
+    for (const [sql, bedingung] of [
+      [`UPDATE "InstanceState" SET "editorSchemaHash" = 'xyz'`, "InstanceState_editorSchemaHash_format"],
+      [`UPDATE "InstanceState" SET "editorSchemaVersion" = -1`, "InstanceState_editorSchemaVersion_range"],
+    ] as const) {
+      let fehler = "";
+      try {
+        await prisma.$transaction(async (tx) => {
+          await tx.$executeRawUnsafe(sql);
+        });
+      } catch (e) {
+        fehler = `${String(e)} ${JSON.stringify((e as { meta?: unknown }).meta ?? null)}`;
+      }
+      expect(fehler).toContain("23514");
+      expect(fehler).toContain(bedingung);
+    }
+  });
+});
+
+describe("Veraltete Instanz", () => {
+  const eigen = editorSchema();
+  /** Eine Fassung, die es nicht gibt: neuer als diese hier. */
+  const NEUER = { version: eigen.version + 1, hash: "ffffffffffffffff" };
+  let markeVorher: { version: number; hash: string | null };
+  let server: Pruefserver | null = null;
+
+  async function setzeMarke(m: { version: number; hash: string | null }) {
+    await prisma.$executeRaw`UPDATE "InstanceState" SET "editorSchemaVersion" = ${m.version}, "editorSchemaHash" = ${m.hash} WHERE "id" = 1`;
+  }
+
+  async function starte(): Promise<Pruefserver> {
+    server = await startePruefserver({
+      redisDb: REDIS_DB,
+      appSecret: getAppSecret(),
+      exklusiv: true,
+    });
+    return server;
+  }
+
+  /** Verbindet und sammelt die Gruende einer Ablehnung. */
+  async function versuche(s: Pruefserver, pageId: string) {
+    const gruende: string[] = [];
+    const v = await verbinde({
+      url: s.url,
+      pageId,
+      ticket: ticket(pageId),
+      warteAufSync: false,
+      extra: {
+        onAuthenticationFailed: ({ reason }: { reason: string }) => {
+          gruende.push(reason);
+        },
+      },
+    });
+    providers.push(v.provider);
+    await warteBis(() => gruende.length > 0 || v.provider.isSynced, "Ablehnung oder Abgleich", {
+      timeoutMs: 10_000,
+      log: s.log,
+    });
+    return { synced: v.provider.isSynced, gruende, provider: v.provider };
+  }
+
+  beforeAll(async () => {
+    const z = await readInstanceState(prisma);
+    markeVorher = { version: z.editorSchemaVersion, hash: z.editorSchemaHash };
+    // Der gemeinsame Server laeuft schon eine Weile; seine Minutenrunde
+    // koennte die Marke mitten in einem Fall lesen. Frische Server je Fall.
+    await collab?.stop();
+    collab = null;
+  }, 30_000);
+
+  afterEach(async () => {
+    await server?.stop();
+    server = null;
+    await setzeMarke(markeVorher);
+  }, 30_000);
+
+  it("hebt die Marke beim Start, trennt bei der Ankuendigung einer neueren Fassung und weist neue ab", async () => {
+    await setzeMarke({ version: 0, hash: null });
+    const s = await starte();
+    expect(await readInstanceState(prisma)).toMatchObject({
+      editorSchemaVersion: eigen.version,
+      editorSchemaHash: eigen.hash,
+    });
+
+    const pageId = await neueSeite("veraltet-ankuendigung");
+    let geschlossen = false;
+    const a = await verbinde({
+      url: s.url,
+      pageId,
+      ticket: ticket(pageId),
+      onClose: () => {
+        geschlossen = true;
+      },
+    });
+    providers.push(a.provider);
+
+    // Eine neuere Instanz startet: sie hebt die Marke und kuendigt sich an.
+    await setzeMarke(NEUER);
+    await s.redis.publish(
+      SCHEMA_ANNOUNCE_CHANNEL,
+      JSON.stringify({ instanceId: `${TAG}-neu`, ...NEUER }),
+    );
+    await warteBis(() => geschlossen, "Editor getrennt", {
+      timeoutMs: 5_000,
+      log: s.log,
+    });
+    expect(s.log()).toContain("Neuere Editor-Fassung in der Datenbank");
+    a.provider.destroy();
+
+    const b = await versuche(s, pageId);
+    expect(b.synced).toBe(false);
+    expect(b.gruende[0]).toBe(COLLAB_REJECT_REASON.schemaMismatch);
+    expect(s.log()).toContain('"instanceOutdated":true');
+    b.provider.destroy();
+  }, 60_000);
+
+  it("merkt eine neuere Marke bei der naechsten Anmeldung, auch ohne Ankuendigung", async () => {
+    const s = await starte();
+    const pageId = await neueSeite("veraltet-anmeldung");
+    let geschlossen = false;
+    const a = await verbinde({
+      url: s.url,
+      pageId,
+      ticket: ticket(pageId),
+      onClose: () => {
+        geschlossen = true;
+      },
+    });
+    providers.push(a.provider);
+
+    await setzeMarke(NEUER);
+    const b = await versuche(s, pageId);
+    expect(b.synced).toBe(false);
+    expect(b.gruende[0]).toBe(COLLAB_REJECT_REASON.schemaMismatch);
+    // Die schon offenen Editoren trennt sie dabei ebenfalls.
+    await warteBis(() => geschlossen, "Editor getrennt", {
+      timeoutMs: 5_000,
+      log: s.log,
+    });
+    a.provider.destroy();
+    b.provider.destroy();
+  }, 60_000);
+
+  // Rueckweg ohne Sicherung: die aeltere Fassung startet auf Daten, in
+  // denen die neuere schon steht. Sie darf keine einzige Verbindung
+  // annehmen, und die Marke bleibt, wo sie ist.
+  it("nimmt nach einem Start unter einer hoeheren Marke keine Verbindung an", async () => {
+    await setzeMarke(NEUER);
+    const s = await starte();
+    expect(s.log()).toContain("Editor-Schema dieser Instanz ist aelter als die Marke");
+    expect(await readInstanceState(prisma)).toMatchObject({
+      editorSchemaVersion: NEUER.version,
+      editorSchemaHash: NEUER.hash,
+    });
+
+    const pageId = await neueSeite("veraltet-start");
+    const b = await versuche(s, pageId);
+    expect(b.synced).toBe(false);
+    expect(b.gruende[0]).toBe(COLLAB_REJECT_REASON.schemaMismatch);
+    b.provider.destroy();
+  }, 60_000);
 });

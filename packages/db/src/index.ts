@@ -51,4 +51,5 @@ export * from "./vector";
 export * from "./embeddings";
 export * from "./ai-index";
 export * from "./restore-epoch";
+export * from "./instance-state";
 export * from "./doc-sizes";

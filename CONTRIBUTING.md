@@ -79,6 +79,17 @@ A newer push to a pull request cancels the CI run that is still going for its pr
 
 `pnpm test:e2e` empties the database that `DATABASE_URL` points to; only local hosts are accepted. `e2e/first-account.setup.ts` registers the first account and creates the first space with its page "Willkommen". It runs as the Playwright project `erstes-konto` before every other file, also when you run a single file; the other files log in with that account. Name a new file after the behaviour it covers, such as `trash-and-version-restore.spec.ts`.
 
+## Editor schema
+
+The editor's schema (the nodes, marks and attributes, with their default values, from `richExtensions()` in `packages/editor`) has a hash. The browser, the web app and the collaboration server compare it before a tab may sync, because an editor with a different schema deletes the content it does not know from the shared document. When you change the schema, `apps/web/src/lib/schema-hash.test.ts` fails. Append the new hash to `EDITOR_SCHEMA_HASHES` in `packages/editor/src/schema-version.ts`; never change, remove or reorder an entry. Add an upgrade note that open editor tabs must be reloaded after the update.
+
+- A new node or attribute always goes into `richExtensions()`. A setting may hide it in the interface, but it must not change the schema: the web app and the collaboration server would then run different schemas depending on their environment.
+- Removing or renaming a node, mark or attribute needs a migration of the stored Yjs documents first. A newer editor drops what it does not know, just like an older one.
+
+Every collaboration server records the highest schema version it has started with in the database (`InstanceState`). A server with an older schema accepts no editors. After you switch to a branch with an older schema, reset the mark in your development database:
+
+    UPDATE "InstanceState" SET "editorSchemaVersion" = 0;
+
 ## What is not rewritten
 
 Published Git history and applied database migrations stay as they are. Prisma stores a checksum of every applied migration: changing one, even a comment, makes `prisma migrate dev` ask to reset existing development databases, and a renamed migration directory would run again on every installation. Commits and migrations from before these rules therefore keep their German subjects and internal numbering; `apps/web/src/konventionen.test.ts` lists those migrations by name and checks every other tracked file and path for internal plan references.

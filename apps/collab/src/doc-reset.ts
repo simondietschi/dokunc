@@ -115,6 +115,15 @@ export type DocResetDeps = {
   sleep(ms: number): Promise<void>;
   now(): number;
   log: Log;
+  /**
+   * Hat diese Instanz ein aelteres Editor-Schema als die Marke in der
+   * Datenbank (./schema-marke)? Dann uebergeht sie jeden Doc-Reset und
+   * belegt die Nonce nicht: sie hat ihre Editoren getrennt, und der
+   * Inhalt der Version kann Knoten tragen, die ihr Schema nicht kennt.
+   * Eine aktuelle Instanz fuehrt ihn aus (sie wartet, falls diese hier
+   * das Dokument noch haelt, siehe oben).
+   */
+  veraltet(): boolean;
 };
 
 export type DocResetOptions = {
@@ -284,6 +293,13 @@ export function createDocResetHandler(
   return async function handleDocReset(message: DocResetMessage): Promise<void> {
     const started = deps.now();
     const { pageId, nonce } = message;
+    if (deps.veraltet()) {
+      deps.log.info(
+        { pageId },
+        "Doc-Reset uebergangen: Instanz hat eine veraltete Editor-Fassung",
+      );
+      return;
+    }
     if (!deps.isLoadedHere(pageId)) await deps.sleep(options.nonHolderDelayMs);
     if (!(await claim(nonce, pageId))) return;
 

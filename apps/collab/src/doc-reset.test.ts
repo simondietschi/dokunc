@@ -43,6 +43,7 @@ function setup(over: Partial<DocResetDeps> = {}) {
     }),
     now: () => clock,
     log: { info: vi.fn(), warn: vi.fn() },
+    veraltet: vi.fn(() => false),
     ...over,
   } satisfies DocResetDeps;
   const advance = (ms: number) => {
@@ -63,6 +64,35 @@ function createDocResetHandlerWithBudget(budgetMs: number) {
   });
   return { deps, handle: createDocResetHandler(deps, { ...OPTIONS, budgetMs }) };
 }
+
+describe("Doc-Reset auf einer Instanz mit veraltetem Editor-Schema", () => {
+  // Sie hat ihre Editoren getrennt und entlaedt die Dokumente. Belegte sie
+  // die Nonce, scheiterte sie womoeglich an einer Version mit Knoten, die
+  // ihr Schema nicht kennt, und quittierte negativ, obwohl eine aktuelle
+  // Instanz den Austausch haette machen koennen.
+  it("uebergeht die Nachricht, ohne die Nonce zu belegen", async () => {
+    const { deps, handle } = setup({ veraltet: vi.fn(() => true) });
+    await handle(MESSAGE);
+    expect(deps.claim).not.toHaveBeenCalled();
+    expect(deps.loadContent).not.toHaveBeenCalled();
+    expect(deps.applyContent).not.toHaveBeenCalled();
+    expect(deps.acknowledge).not.toHaveBeenCalled();
+    expect(deps.log.info).toHaveBeenCalledWith(
+      { pageId: "p1" },
+      "Doc-Reset uebergangen: Instanz hat eine veraltete Editor-Fassung",
+    );
+  });
+
+  it("eine aktuelle Instanz fuehrt ihn aus wie bisher", async () => {
+    const { deps, handle } = setup({ veraltet: vi.fn(() => false) });
+    await handle(MESSAGE);
+    expect(deps.claim).toHaveBeenCalledWith("n1");
+    expect(deps.acknowledge).toHaveBeenCalledWith("n1", {
+      ok: true,
+      outcome: "zurueckgesetzt",
+    });
+  });
+});
 
 describe("Doc-Reset auf der Collab-Seite", () => {
   it("tauscht auf der Instanz mit dem Dokument aus und quittiert positiv", async () => {

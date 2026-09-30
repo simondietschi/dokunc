@@ -108,6 +108,17 @@ differently on an existing installation, and what to do about it.
   that call this route need to expect the new answer; otherwise nothing
   to do.
 
+- **Editor schema in the database:** a migration adds two columns to
+  `InstanceState`. At startup the collaboration server records the
+  version of its editor there and stops with a `fatal` line
+  ("Schema-Marke nicht in die Datenbank geschrieben") if it cannot. From
+  now on, a collaboration server whose editor is older than the recorded
+  one accepts no editors: they show "Aktualisierung läuft", and the log
+  says "Editor-Schema dieser Instanz ist aelter als die Marke in der
+  Datenbank". Go back to an older version only with the backup from
+  before the update, as the README describes. Nothing to do for this
+  update.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -155,6 +166,11 @@ differently on an existing installation, and what to do about it.
   "Aktualisierung läuft" and retries by itself.
 - The collaboration server logs the editor schema version and hash at
   startup ("Editor-Schema").
+- The collaboration server records the newest editor schema it has run
+  with in the database. As soon as a server with a newer editor has
+  started, servers with an older one disconnect their editors and accept
+  no new ones, also when an older version is started again later on the
+  same data.
 
 ### Changed
 
