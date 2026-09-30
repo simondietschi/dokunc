@@ -240,3 +240,10 @@ differently on an existing installation, and what to do about it.
   longer delete content with newer block types, marks or attributes for
   everyone: the web app and the collaboration server compare the editor
   schema before a tab may sync.
+- When Redis failed while two collaboration servers synchronized a page
+  (for example during a Redis restart), the answer to the other server
+  could not be published, and the resulting unhandled promise rejection
+  stopped the collaboration server and, through `pnpm start`, the web
+  app. Failed publishes and unreadable messages from other collaboration
+  servers are now logged as warnings ("redis-ha: …", at most one line per
+  ten seconds each).

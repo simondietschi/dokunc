@@ -50,9 +50,145 @@ type HaRedisInstance = ReturnType<
   NonNullable<ConstructorParameters<typeof HocuspocusRedis>[0]["createClient"]>
 >;
 
+/** Wohin die HA-Erweiterung meldet (ein pino-Logger passt). */
+export type HaLog = {
+  warn(detail: Record<string, unknown>, msg: string): void;
+  info(detail: Record<string, unknown>, msg: string): void;
+};
+
+/**
+ * Hoechstens eine Meldung je `abstandMs`; die dazwischen uebergangenen
+ * zaehlt die naechste (`sinceLast`). Waehrend eines Redis-Ausfalls
+ * scheitert jedes Veroeffentlichen, und ein fremder Sender bestimmt, wie
+ * viele unlesbare Nachrichten kommen: ungedrosselt liefe das Log mit.
+ */
+export class Drossel {
+  private zuletzt = Number.NEGATIVE_INFINITY;
+  private uebergangen = 0;
+
+  constructor(
+    private readonly abstandMs = 10_000,
+    private readonly jetzt: () => number = Date.now,
+  ) {}
+
+  /** Zahl der seit der letzten Meldung uebergangenen, oder null: diesmal schweigen. */
+  darf(): number | null {
+    const t = this.jetzt();
+    if (t - this.zuletzt < this.abstandMs) {
+      this.uebergangen += 1;
+      return null;
+    }
+    this.zuletzt = t;
+    const n = this.uebergangen;
+    this.uebergangen = 0;
+    return n;
+  }
+}
+
+/**
+ * Was die Erweiterung (4.7.0) intern hat und dieses Modul nutzt. Privat
+ * in ihren Typen, deshalb hier benannt und beim Bau geprueft
+ * (HaErweiterung.schuetze): aendert ein Update eines davon, bricht der
+ * Start ab, statt dass der Schutz still wegfaellt.
+ */
+type Interna = {
+  handleIncomingMessage: (kanal: Buffer, daten: Buffer) => Promise<void>;
+};
+
+/**
+ * Die HA-Erweiterung mit den Aenderungen, die dokunc braucht.
+ *
+ * Veroeffentlichen und das Verarbeiten von Nachrichten anderer Instanzen
+ * lehnen nie unbehandelt ab. Die Erweiterung antwortet auf Nachrichten
+ * anderer Instanzen ueber einen Rueckruf, der `pub.publish` zurueckgibt,
+ * und MessageReceiver.apply ruft ihn ohne await und ohne catch
+ * (SyncStep2 und eigener SyncStep1 auf einen SyncStep1, die Antwort auf
+ * QueryAwareness). Scheiterte das Veroeffentlichen (Redis startet neu,
+ * waehrend zwei Instanzen abgleichen), war das eine unbehandelte
+ * Ablehnung, und Node beendete den Collab-Server. Ebenso ohne Fang: ihr
+ * Nachrichten-Listener selbst (asynchron, an einem EventEmitter; eine
+ * Nachricht mit unbekanntem Typ wirft) und beforeBroadcastStateless.
+ *
+ * Deshalb:
+ *  - `publish` der Veroeffentlichungsverbindung loest immer auf, bei einem
+ *    Fehler mit 0 und einer gedrosselten Warnung. Keiner der Aufrufer
+ *    braucht den Fehler: ein verlorener Abgleich wird mit dem naechsten
+ *    SyncStep1 nachgeholt. Die eigenen Veroeffentlichungen von dokunc
+ *    laufen ueber die Hauptverbindung und bleiben, wie sie sind.
+ *  - Der Listener fuer `messageBuffer` steckt in einer Huelle, die
+ *    Ablehnungen gedrosselt meldet.
+ */
+export class HaErweiterung extends HocuspocusRedis {
+  private get interna(): Interna {
+    return this as unknown as Interna;
+  }
+
+  /**
+   * Huellen um Veroeffentlichen und Nachrichten legen. Aufzurufen einmal,
+   * direkt nach dem Bau (createHaRedis), mit den beiden Verbindungen, die
+   * die Erweiterung als `pub` und `sub` haelt.
+   */
+  schuetze(pub: Redis, sub: Redis, log: HaLog): void {
+    const { handleIncomingMessage } = this.interna;
+    if (
+      typeof handleIncomingMessage !== "function" ||
+      !sub.listeners("messageBuffer").includes(handleIncomingMessage)
+    ) {
+      throw new Error(
+        "@hocuspocus/extension-redis verarbeitet Nachrichten anderer " +
+          "Instanzen nicht mehr ueber handleIncomingMessage am Ereignis " +
+          "messageBuffer; ohne die Huelle beendete eine unlesbare Nachricht " +
+          "den Prozess (siehe HaErweiterung in apps/collab/src/redis-client.ts)",
+      );
+    }
+
+    const publishDrossel = new Drossel();
+    const publish = pub.publish.bind(pub);
+    pub.publish = ((kanal: string | Buffer, nachricht: string | Buffer) =>
+      publish(kanal, nachricht).catch((e: unknown) => {
+        const sinceLast = publishDrossel.darf();
+        if (sinceLast !== null) {
+          log.warn(
+            { err: e, role: "pub", sinceLast },
+            "redis-ha: Veroeffentlichen gescheitert, andere Instanzen gleichen spaeter ab",
+          );
+        }
+        return 0;
+      })) as typeof pub.publish;
+
+    const nachrichtDrossel = new Drossel();
+    const melde = (e: unknown, kanal: Buffer) => {
+      const sinceLast = nachrichtDrossel.darf();
+      if (sinceLast === null) return;
+      log.warn(
+        { err: e, channel: kanal.toString("utf-8"), sinceLast },
+        "redis-ha: Nachricht einer anderen Instanz nicht verarbeitet",
+      );
+    };
+    const huelle = (kanal: Buffer, daten: Buffer) => {
+      try {
+        handleIncomingMessage(kanal, daten).catch((e: unknown) =>
+          melde(e, kanal),
+        );
+      } catch (e) {
+        melde(e, kanal);
+      }
+    };
+    sub.off("messageBuffer", handleIncomingMessage);
+    sub.on("messageBuffer", huelle);
+    const listener = sub.listeners("messageBuffer");
+    if (listener.length !== 1 || listener[0] !== huelle) {
+      throw new Error(
+        "Nachrichten-Listener der HA-Erweiterung nicht ersetzt " +
+          "(siehe HaErweiterung in apps/collab/src/redis-client.ts)",
+      );
+    }
+  }
+}
+
 /** Die HA-Extension samt ihren beiden Verbindungen. */
 export type HaRedis = {
-  extension: HocuspocusRedis;
+  extension: HaErweiterung;
   /** Veroeffentlichen, NUMSUB und die Sperre vor dem Speichern. */
   pub: Redis;
   /** Nur SUBSCRIBE/UNSUBSCRIBE: Antwortkanal und Dokumentkanaele. */
@@ -98,10 +234,16 @@ export type HaRedis = {
  */
 export function createHaRedis(
   redis: Redis,
-  onError: (e: Error, rolle: "pub" | "sub") => void,
+  opts: {
+    /** Verbindungsfehler eines der beiden Duplikate (Ereignis "error"). */
+    onError: (e: Error, rolle: "pub" | "sub") => void;
+    /** Gedrosselte Meldungen der Huellen (HaErweiterung). */
+    log: HaLog;
+  },
 ): HaRedis {
+  const { onError } = opts;
   const erzeugt: Redis[] = [];
-  const extension = new HocuspocusRedis({
+  const extension = new HaErweiterung({
     createClient: () => {
       const rolle = erzeugt.length === 0 ? "pub" : "sub";
       const client =
@@ -127,6 +269,12 @@ export function createHaRedis(
         "pub, dann sub; der Abonnent haette sonst eine Grenze fuer " +
         "Versuche (siehe createHaRedis in apps/collab/src/redis-client.ts)",
     );
+  }
+  try {
+    extension.schuetze(pub, sub, opts.log);
+  } catch (e) {
+    for (const client of erzeugt) client.disconnect();
+    throw e;
   }
   return { extension, pub, sub };
 }

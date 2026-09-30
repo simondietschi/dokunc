@@ -720,9 +720,10 @@ async function pruefeSchemaMarke(): Promise<void> {
 // Der Abonnent hat keine Grenze für Versuche je Befehl, sonst bliebe
 // der Prozess nach einem kurzen Redis-Ausfall beim Start dauerhaft
 // unfähig, Dokumente zu laden (Begründung in ./redis-client).
-const { extension: haExtension } = createHaRedis(redis, (e, rolle) =>
-  log.warn({ err: e, rolle }, "redis-ha"),
-);
+const { extension: haExtension } = createHaRedis(redis, {
+  onError: (e, rolle) => log.warn({ err: e, rolle }, "redis-ha"),
+  log,
+});
 
 const server = new Server({
   port: PORT,
