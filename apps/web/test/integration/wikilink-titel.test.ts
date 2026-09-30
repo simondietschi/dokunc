@@ -68,6 +68,8 @@ let spaceId: string;
 let slug: string;
 const s = {} as Record<"a" | "b" | "o" | "c" | "p" | "weg", string>;
 let versionId: string;
+/** Juengere Version von A: ihr Vergleich "gegen die vorherige" zeigt versionId. */
+let neuereVersionId: string;
 
 function inhaltVonA() {
   const link = (pageId: string, label: string) => ({
@@ -151,6 +153,22 @@ beforeAll(async () => {
   versionId = (
     await prisma.pageVersion.create({
       data: { pageId: s.a, title: "Quelle", content: inhaltVonA() },
+      select: { id: true },
+    })
+  ).id;
+  const nachtrag = inhaltVonA();
+  nachtrag.content.push({
+    type: "paragraph",
+    content: [{ type: "text", text: "Nachtrag" }],
+  });
+  neuereVersionId = (
+    await prisma.pageVersion.create({
+      data: {
+        pageId: s.a,
+        title: "Quelle",
+        content: nachtrag,
+        createdAt: new Date(Date.now() + 60_000),
+      },
       select: { id: true },
     })
   ).id;
@@ -409,5 +427,22 @@ describe("Versionsverlauf", () => {
     const html = await verlauf(n.mf, "preview");
     expect(html).toContain(`href="/p/${s.b}"`);
     expect(html).not.toContain(`href="/p/${s.weg}"`);
+  });
+
+  it("gegen die vorherige Version als MEMBER ohne Freigabe: kein Titel des Ziels", async () => {
+    const html = await als(n.me, async () =>
+      renderToStaticMarkup(
+        await VersionComparePage({
+          params: Promise.resolve({ slug, pageId: s.a, versionId: neuereVersionId }),
+          searchParams: Promise.resolve({ view: "diff", against: "previous" }),
+        }),
+      ),
+    );
+    // Voraussetzung: verglichen wird wirklich mit der vorherigen Version.
+    expect(html).toContain("Vorherige Version");
+    expect(html).toContain("Nachtrag");
+    ohneSchnappschuesse(html);
+    expect(html).not.toContain(NEU);
+    expect(html).toContain("Seite ohne Zugriff");
   });
 });
