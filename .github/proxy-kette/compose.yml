@@ -9,7 +9,7 @@
 # sonst bekaeme proxy beim Neuerzeugen die erste freie Adresse, und
 # vorproxy scheiterte an "Address already in use".
 #
-#   198.18.250.2   vorproxy (in TRUSTED_PROXIES)
+#   198.18.250.2   vorproxy (nginx, in TRUSTED_PROXIES)
 #   198.18.250.3   proxy
 #   198.18.250.11  Sonde A
 #   198.18.250.12  Sonde B
@@ -23,11 +23,14 @@
 # Standard-Pool von Docker und nicht das Netz der Runner.
 services:
   vorproxy:
-    image: caddy:2
+    # Fester Tag: der Test haengt an nginx' Verhalten (Anhaengen an
+    # X-Forwarded-For, Weiterreichen des WebSocket-Upgrades), nicht an
+    # einer neuen Version.
+    image: nginx:1.30.5-alpine
     depends_on:
       - proxy
     volumes:
-      - ./.github/proxy-kette/Caddyfile.vorproxy:/etc/caddy/Caddyfile:ro
+      - ./.github/proxy-kette/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     networks:
       kette:
         ipv4_address: 198.18.250.2
