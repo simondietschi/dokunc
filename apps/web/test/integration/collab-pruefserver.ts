@@ -32,7 +32,8 @@ import { DOC_RESET_CHANNEL } from "@dokunc/editor";
  * | DB     | Nutzer                                                     |
  * |--------|------------------------------------------------------------|
  * | 0      | Entwicklung, E2E                                           |
- * | 1–2    | frei (Reserve)                                             |
+ * | 1      | collab-speichersperre.test.ts                              |
+ * | 2      | frei (Reserve)                                             |
  * | 3      | collab-zusammenfuehren.test.ts                             |
  * | 4      | collab-konfiguration.test.ts                               |
  * | 5      | collab-ausnahmen.test.ts (reserviert)                      |

@@ -505,7 +505,8 @@ const storeWatch = new StoreWatch();
  * in ./store-lock). Ein eigener kleiner Pool neben dem von Prisma: wer
  * eine Sperre haelt oder auf sie wartet, nimmt keinem Lauf die
  * Verbindung zum Schreiben. Ein Fehler einer ruhenden Verbindung (etwa
- * ein Neustart der Datenbank) kaeme sonst als unbehandeltes "error".
+ * ein Neustart der Datenbank) kaeme sonst als unbehandeltes "error";
+ * den einer ausgeliehenen faengt createStoreLock (onAbriss).
  */
 const sperrPool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
@@ -514,7 +515,13 @@ const sperrPool = new pg.Pool({
 sperrPool.on("error", (e: Error) =>
   log.warn({ err: e }, "Speichersperre: Verbindung zur Datenbank abgerissen"),
 );
-const withStoreLock = createStoreLock(sperrPool);
+const withStoreLock = createStoreLock(sperrPool, {
+  onAbriss: (pageId, e) =>
+    log.warn(
+      { err: e, pageId },
+      "Speichersperre: Verbindung waehrend des Speicherlaufs abgerissen",
+    ),
+});
 
 /**
  * updatedAt der CollabDocument-Zeile nach dem letzten eigenen Laden oder

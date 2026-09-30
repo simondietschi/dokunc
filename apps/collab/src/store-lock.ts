@@ -35,6 +35,18 @@
  *    sonst mitten im Lauf die Verbindung und damit die Sperre, und das
  *    COMMIT schluege fehl, obwohl alles geschrieben ist.
  *
+ * Reisst die Datenbank die Verbindung ab, waehrend ein Lauf sie haelt
+ * (Neustart oder Failover, Neustart von PgBouncer, pg_terminate_backend,
+ * transaction_timeout), meldet pg das als "error" am Client, auch
+ * ausserhalb jedes Befehls. pg-pool hoert darauf nur, solange die
+ * Verbindung im Pool ruht; waehrend sie ausgeliehen ist, hoert hier
+ * jemand, sonst endete der Prozess (uncaughtException) samt allem, was
+ * er noch nicht gespeichert hat. Mit der Verbindung ist auch die Sperre
+ * weg: der Lauf scheitert dann mit "Speichersperre ... verloren", auch
+ * wenn er selbst durchlief, denn eine andere Instanz kann inzwischen
+ * gleichzeitig gespeichert haben. Das Dokument bleibt im Speicher, und
+ * der naechste Lauf fuehrt zusammen, was die andere geschrieben hat.
+ *
  * Der Schluessel beginnt mit SPERR_PRAEFIX und bleibt bei einer
  * Umbenennung des Produkts gleich: alte und neue Instanzen muessen sich
  * waehrend eines Updates gegenseitig ausschliessen.
@@ -50,6 +62,8 @@ export type SperrVerbindung = {
   query(text: string, values?: unknown[]): Promise<unknown>;
   /** Mit Fehler: die Verbindung wird verworfen statt zurueckgegeben. */
   release(err?: boolean | Error): void;
+  on(event: "error", hoerer: (err: Error) => void): unknown;
+  off(event: "error", hoerer: (err: Error) => void): unknown;
 };
 
 /** Verbindungen im Pool der Sperre, also hoechstens gleichzeitig sperrende Laeufe. */
@@ -81,7 +95,11 @@ function istWartenAbgebrochen(e: unknown): boolean {
 
 export function createStoreLock(
   pool: SperrPool,
-  opts: { sperreWartenMs?: number } = {},
+  opts: {
+    sperreWartenMs?: number;
+    /** Die Verbindung eines Laufs ist abgerissen (einmal je Lauf). */
+    onAbriss?: (pageId: string, err: Error) => void;
+  } = {},
 ): <T>(pageId: string, lauf: () => Promise<T>) => Promise<T> {
   const wartenMs = opts.sperreWartenMs ?? SPERRE_WARTEN_MS;
   return async function mitSperre<T>(
@@ -92,6 +110,16 @@ export function createStoreLock(
     // Fehler auf der Verbindung selbst (abgerissen, COMMIT gescheitert):
     // dann nicht zurueck in den Pool.
     let kaputt: Error | undefined;
+    // Abriss waehrend der Leihe (siehe oben). pg meldet ihn oft zweimal
+    // (Fehlermeldung der Datenbank, dann Ende des Sockets).
+    let abriss: Error | undefined;
+    const beiAbriss = (e: Error) => {
+      if (abriss) return;
+      abriss = e;
+      kaputt ??= e;
+      opts.onAbriss?.(pageId, e);
+    };
+    verbindung.on("error", beiAbriss);
     const befehl = async (text: string, values?: unknown[]) => {
       try {
         await verbindung.query(text, values);
@@ -134,9 +162,16 @@ export function createStoreLock(
         await zurueck();
         throw e;
       }
+      if (abriss) {
+        throw new Error(`Speichersperre fuer Seite ${pageId} verloren`, {
+          cause: abriss,
+        });
+      }
       await befehl("COMMIT");
       return ergebnis;
     } finally {
+      // Vor der Freigabe: danach hoert pg-pool selbst.
+      verbindung.off("error", beiAbriss);
       verbindung.release(kaputt);
     }
   };

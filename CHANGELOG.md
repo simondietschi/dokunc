@@ -147,7 +147,12 @@ differently on an existing installation, and what to do about it.
   `idle_in_transaction_session_timeout` for itself. A save that waits more
   than 30 seconds for the lock fails with "Speicherlauf gescheitert,
   Dokument bleibt im Speicher" (cause "Speichersperre fuer Seite …
-  nicht erhalten"); the next edit of the page saves it again. Redis keys
+  nicht erhalten"); the next edit of the page saves it again. If the
+  database ends a lock connection during a save (a restart, a failover, a
+  PgBouncer restart or `pg_terminate_backend`), the collaboration server
+  keeps running, logs "Speichersperre: Verbindung waehrend des
+  Speicherlaufs abgerissen", and that save fails the same way (cause
+  "Speichersperre fuer Seite … verloren"). Redis keys
   `hocuspocus:<pageId>:lock` are no longer written; existing ones expire
   within a second.
 
