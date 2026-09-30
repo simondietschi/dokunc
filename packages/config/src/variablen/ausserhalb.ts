@@ -11,6 +11,22 @@ const unveraendert = (roh: string | undefined) => ({ ok: true as const, wert: ro
  */
 export const AUSSERHALB_VARIABLEN: readonly Variable[] = [
   defineVariable({
+    name: "LOG_MAX_FILE",
+    dienste: ["compose"],
+    beschreibung:
+      "Number of log files Docker keeps per container (json-file log driver, all services). A whole number of at least 1; Docker refuses to create the container otherwise.",
+    vorgabe: "5",
+    parse: unveraendert,
+  }),
+  defineVariable({
+    name: "LOG_MAX_SIZE",
+    dienste: ["compose"],
+    beschreibung:
+      "Maximum size of one log file per container before Docker rotates it (json-file log driver, all services), for example 10m; units k, m or g. Docker refuses to create the container with an invalid size.",
+    vorgabe: "10m",
+    parse: unveraendert,
+  }),
+  defineVariable({
     name: "SHADOW_DATABASE_URL",
     dienste: ["skript"],
     beschreibung:

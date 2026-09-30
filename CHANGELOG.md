@@ -437,6 +437,17 @@ differently on an existing installation, and what to do about it.
   more than 35 seconds now fail with "PDF-Dienst (Gotenberg) nicht
   erreichbar."; the print view still works. Otherwise nothing to do.
 
+- **Log rotation:** all containers of the stack now use the `json-file`
+  log driver with at most 5 files of 10 MB each per container
+  (`LOG_MAX_SIZE`, `LOG_MAX_FILE`); older lines are deleted. The update
+  re-creates every container, also `db` and `redis`, and Docker deletes
+  a container's logs when it re-creates it: save the logs you still need
+  before the update, for example with
+  `docker compose logs --no-log-prefix db > db-log.txt`. A log driver set
+  in `/etc/docker/daemon.json` no longer applies to these containers;
+  set it in `docker-compose.override.yml` instead (see
+  `docs/admin/logging.md`). Otherwise nothing to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -612,6 +623,10 @@ differently on an existing installation, and what to do about it.
   and when it is deleted.
 - Routes `POST /logout` (sign out this device) and `GET /session-ended`
   (finish an ended session in the browser).
+- `LOG_MAX_SIZE` and `LOG_MAX_FILE` to size the log rotation of all
+  containers.
+- `docs/admin/logging.md`: log format, reading the logs, rotation,
+  central collection and the startup configuration check.
 
 ### Changed
 

@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parse as parseYaml } from "yaml";
+import { isAlias, parse as parseYaml, parseDocument, type Scalar, type YAMLMap } from "yaml";
 
 /**
  * Die Bindeadressen der Compose-Dateien.
@@ -287,5 +287,54 @@ describe("Mail-Absender: leere Vorgabe", () => {
       .split("\n")
       .filter((z) => /^#?\s*MAIL_FROM_ADDRESS=/.test(z));
     expect(zeilen).toEqual(['MAIL_FROM_ADDRESS=""']);
+  });
+});
+
+describe("Log-Rotation", () => {
+  // Ohne Angabe rotiert der Logtreiber json-file nie, und die Platte
+  // laeuft ueber Monate voll. Ein YAML-Anker in docker-compose.yml setzt
+  // Treiber und Grenzen fuer jeden Dienst; ein Dienst mit eigener Angabe
+  // oder ohne Angabe faellt hier auf. Die Zusatzdateien aendern nur
+  // Ports: Compose behaelt beim Zusammenfuehren das logging der
+  // Hauptdatei, eine eigene Angabe dort ersetzte sie still.
+  const ERWARTET = {
+    driver: "json-file",
+    options: { "max-size": "${LOG_MAX_SIZE:-10m}", "max-file": "${LOG_MAX_FILE:-5}" },
+  };
+
+  it("jeder Dienst in docker-compose.yml rotiert seine Logs", () => {
+    const compose = parseYaml(lesen("docker-compose.yml")) as {
+      services: Record<string, { logging?: unknown }>;
+    };
+    const dienste = Object.keys(compose.services);
+    expect(dienste.length).toBeGreaterThanOrEqual(5);
+    for (const dienst of dienste) {
+      expect(compose.services[dienst].logging, dienst).toEqual(ERWARTET);
+    }
+  });
+
+  it("jeder Dienst nimmt den gemeinsamen Anker, keiner eine eigene Angabe", () => {
+    const doc = parseDocument(lesen("docker-compose.yml"));
+    const dienste = doc.get("services") as YAMLMap<Scalar<string>, YAMLMap>;
+    const ohneAnker = dienste.items
+      .filter((paar) => {
+        const logging = paar.value?.get("logging", true);
+        return !isAlias(logging) || logging.source !== "logging";
+      })
+      .map((paar) => paar.key.value);
+    expect(ohneAnker).toEqual([]);
+  });
+
+  it("die Zusatzdateien setzen kein eigenes logging", () => {
+    for (const datei of DATEIEN.filter((d) => d !== "docker-compose.yml")) {
+      expect(lesen(datei), datei).not.toMatch(/^\s*logging:/m);
+    }
+  });
+
+  it(".env.example nennt beide Grenzen mit ihren Vorgaben", () => {
+    const zeilen = lesen(".env.example")
+      .split("\n")
+      .filter((z) => /^#?\s*LOG_MAX_(SIZE|FILE)=/.test(z));
+    expect(zeilen).toEqual(["# LOG_MAX_SIZE=10m", "# LOG_MAX_FILE=5"]);
   });
 });

@@ -1,9 +1,21 @@
+# Log-Rotation fuer alle Dienste: Docker behaelt je Container hoechstens
+# LOG_MAX_FILE Dateien zu LOG_MAX_SIZE (Vorgabe 5 x 10 MB). Ohne diese
+# Angabe rotiert json-file nie, und die Platte laeuft ueber Monate voll.
+# Einen anderen Treiber (journald, syslog, Loki) setzt eine
+# docker-compose.override.yml je Dienst; docs/admin/logging.md.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: ${LOG_MAX_SIZE:-10m}
+    max-file: "${LOG_MAX_FILE:-5}"
+
 services:
   # TLS-Terminierung + einziger nach aussen exponierter Dienst (Vorgabe:
   # nur localhost, s. APP_BIND).
   proxy:
     image: caddy:2
     restart: unless-stopped
+    logging: *logging
     depends_on:
       app:
         condition: service_healthy
@@ -75,6 +87,7 @@ services:
       args:
         NEXT_PUBLIC_COLLAB_URL: ${NEXT_PUBLIC_COLLAB_URL:-}
     restart: unless-stopped
+    logging: *logging
     depends_on:
       db:
         condition: service_healthy
@@ -281,6 +294,7 @@ services:
     # und Rückweg).
     image: postgres:18-trixie
     restart: unless-stopped
+    logging: *logging
     environment:
       POSTGRES_USER: dokunc
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dokunc}
@@ -318,6 +332,7 @@ services:
   gotenberg:
     image: gotenberg/gotenberg:8
     restart: unless-stopped
+    logging: *logging
     command:
       - gotenberg
       - --chromium-disable-javascript=true
@@ -362,6 +377,7 @@ services:
   redis:
     image: redis:8
     restart: unless-stopped
+    logging: *logging
     entrypoint: ["sh", "/usr/local/bin/dokunc-redis-start"]
     # maxmemory unter mem_limit (unten): ist Redis voll, lehnt es Schreiben
     # ab (noeviction), statt vom Kernel beendet zu werden und alle

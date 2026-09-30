@@ -562,7 +562,8 @@ jobs:
 
       # Jeder Dienst, auch ein kuenftiger, in jeder Dateikombination: alle
       # Faehigkeiten abgegeben, keine neuen Rechte, Dateisystem
-      # schreibgeschuetzt, Grenzen fuer Speicher und Prozesse. Welche
+      # schreibgeschuetzt, Grenzen fuer Speicher und Prozesse, Logs
+      # rotiert (json-file mit max-size und max-file). Welche
       # Faehigkeiten zurueckkommen und ob alles wirkt, prueft der Schritt
       # "Container gehaertet (am Stack)".
       - name: Container gehaertet (Konfiguration)
@@ -573,7 +574,10 @@ jobs:
             fehlt=$(COMPOSE_FILE=$dateien docker compose config --format json | jq -c '.services
               | map_values(select((.cap_drop == ["ALL"]
                   and ((.security_opt // []) | index("no-new-privileges:true") != null)
-                  and .read_only == true and .mem_limit != null and .pids_limit != null) | not))
+                  and .read_only == true and .mem_limit != null and .pids_limit != null
+                  and .logging.driver == "json-file"
+                  and (.logging.options["max-size"] // "") != ""
+                  and (.logging.options["max-file"] // "") != "") | not))
               | keys')
             test "$fehlt" = '[]' || { echo "Ohne Haertung ($dateien): $fehlt"; exit 1; }
           done
