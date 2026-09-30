@@ -164,12 +164,15 @@ differently on an existing installation, and what to do about it.
   several collaboration servers, an editor sees changes made on another
   server only when its own server saves the page again, and live again
   once Redis is back; open pages are then resynchronised without further
-  typing. A Redis that refuses the collaboration server, for example
-  because of a wrong password, no longer keeps pages from opening: they
-  open after a few seconds, and the log shows "Dokument ohne Abgleich mit
-  anderen Instanzen geladen, Redis nicht erreichbar" (at most once per ten
-  seconds). Alert on that line to notice such a misconfiguration. Nothing
-  else to do.
+  typing. During the outage, each collaboration server also keeps its own
+  record of used collaboration tickets, so a ticket (valid for two
+  minutes, for one user and page) can open that page once on each server
+  rather than once in total. A Redis that refuses the collaboration
+  server, for example because of a wrong password, no longer keeps pages
+  from opening: they open after a few seconds, and the log shows
+  "Dokument ohne Abgleich mit anderen Instanzen geladen, Redis nicht
+  erreichbar" (at most once per ten seconds). Alert on that line to notice
+  such a misconfiguration. Nothing else to do.
 
 ### Security
 
