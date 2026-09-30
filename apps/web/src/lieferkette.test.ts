@@ -12,9 +12,10 @@ import { parse } from "yaml";
  * gegen den CI-Schritt, der ihn ausfuehrt; exakt gepinnte Overrides
  * gegen die Ausnahmen von Dependabot; die pnpm-Version an jeder Stelle;
  * die Ausnahmen fuer pnpm audit und Trivy (eng und befristet); die
- * Service-Images des e2e-Jobs gegen docker-compose.yml. Das Geruest des
- * Workflows steht in einem Test. Ob die Befehle wirklich laufen, prueft
- * der CI-Job docker, ob die Gates greifen, die Jobs audit und docker.
+ * Zeitgrenzen der CI-Jobs; die Service-Images des e2e-Jobs gegen
+ * docker-compose.yml. Das Geruest des Workflows steht in einem Test. Ob
+ * die Befehle wirklich laufen, prueft der CI-Job docker, ob die Gates
+ * greifen, die Jobs audit und docker.
  */
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -31,12 +32,14 @@ type Schritt = {
   run?: string;
   if?: unknown;
   "continue-on-error"?: unknown;
+  "timeout-minutes"?: number;
   with?: Obj;
 };
 
 type Job = {
   if?: unknown;
   "continue-on-error"?: unknown;
+  "timeout-minutes"?: number;
   permissions?: unknown;
   services?: Record<string, { image?: string }>;
   steps?: Schritt[];
@@ -219,6 +222,33 @@ describe("Lieferkette", () => {
     ).toBe(true);
     expect(trivy.some((s) => typeof s.with?.["image-ref"] === "string")).toBe(
       true,
+    );
+  });
+
+  it("CI: jeder Job hat eine Zeitgrenze, Playwright eine kuerzere", () => {
+    // Ohne timeout-minutes laeuft ein Haenger bis zur Grenze von GitHub
+    // (360 min), wie der e2e-Job von PR #12.
+    const wf = ci();
+    for (const [name, job] of Object.entries(wf.jobs)) {
+      const grenze = job["timeout-minutes"];
+      expect(Number.isInteger(grenze), name).toBe(true);
+      expect(grenze, name).toBeGreaterThan(0);
+      expect(grenze, name).toBeLessThan(360);
+    }
+    // Laeuft die Grenze eines Schritts ab, gilt er als gescheitert, und
+    // der Upload mit failure() laeuft noch. Die Grenze des Jobs bricht ab
+    // (cancelled); dann faellt der Upload weg.
+    const e2e = wf.jobs.e2e;
+    const playwright = e2e?.steps?.find((s) =>
+      runZeilen(s).includes("pnpm test:e2e"),
+    );
+    const upload = e2e?.steps?.find((s) =>
+      s.uses?.startsWith("actions/upload-artifact@"),
+    );
+    expect(String(upload?.if ?? "")).toMatch(/failure\(\)/);
+    expect(Number.isInteger(playwright?.["timeout-minutes"])).toBe(true);
+    expect(playwright?.["timeout-minutes"]).toBeLessThan(
+      e2e?.["timeout-minutes"] ?? 0,
     );
   });
 

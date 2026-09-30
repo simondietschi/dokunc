@@ -18,6 +18,12 @@ on:
 permissions:
   contents: read
 
+# Jeder Job hat eine Zeitgrenze. Ohne sie lief ein Haenger bis zur Grenze
+# von GitHub (6 h): der e2e-Job von PR #12 hing nach dem letzten
+# Playwright-Test. Die laengsten Laeufe bis Ende September 2026, auf ganze
+# Minuten aufgerundet: audit 1, build-test 3, e2e 13 (rot mit
+# Wiederholungen 20), docker 7. Die Grenzen lassen mindestens die Haelfte
+# mehr, meist ein Mehrfaches.
 jobs:
   # Eigener Job: eine neue Advisory soll Lint, Tests und Build nicht
   # verdecken. Ausnahmen mit Begruendung: pnpm-workspace.yaml
@@ -25,6 +31,7 @@ jobs:
   audit:
     name: Bekannte Luecken (pnpm audit, Trivy)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: pnpm installieren
@@ -54,6 +61,7 @@ jobs:
 
   build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       # prisma.config.ts löst DATABASE_URL strikt auf — für generate/build
       # reicht ein Platzhalter (es wird keine Verbindung aufgebaut).
@@ -123,6 +131,7 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       # Images wie in docker-compose.yml (db, redis); lieferkette.test.ts
       # haelt beide gleich, Dependabot pflegt nur die Compose-Datei.
@@ -193,7 +202,13 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install chromium --with-deps
 
+      # Eigene, kuerzere Grenze: laeuft sie ab, gilt der Schritt als
+      # gescheitert, und "Upload traces on failure" laeuft noch. Die Grenze
+      # des Jobs bricht dagegen ab (cancelled), dann entfallen Schritte mit
+      # failure(). Laengster Lauf 7 min, rot mit Wiederholungen 19; die
+      # Schritte davor brauchen zusammen bis 7.
       - name: E2E tests
+        timeout-minutes: 20
         run: pnpm test:e2e
 
       - name: Upload traces on failure
@@ -210,6 +225,7 @@ jobs:
   docker:
     name: Docker-Stack (ohne .env)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 
