@@ -280,6 +280,25 @@ describe("parseNetworkList", () => {
     expect(r.wert.enthaelt("10.200.0.1")).toBe(true);
   });
 
+  it("weist nicht auf Host-Bits hin, wenn ein Netz nur anders geschrieben ist", () => {
+    // Fuehrende Nullen, ausgeschriebene Nullgruppen, eingebettetes IPv4:
+    // das Netz ist richtig maskiert, nur die Schreibweise ist lang.
+    const r = liste("2001:0db8::/32 2001:db8:0:0::/64 ::ffff:10.0.0.0/104 2001:DB8:1::/48");
+    expect(r.wert.eintraege).toEqual([
+      "2001:db8::/32",
+      "2001:db8::/64",
+      "::ffff:a00:0/104",
+      "2001:db8:1::/48",
+    ]);
+    expect(r.hinweise ?? []).toEqual([]);
+    expect(r.wert.enthaelt("2001:db8:ffff::1")).toBe(true);
+    expect(r.wert.enthaelt("10.1.2.3")).toBe(true);
+    // Mit gesetzten Host-Bits in langer Schreibweise weiter der Hinweis.
+    expect(liste("2001:0db8::1/32").hinweise).toEqual([
+      'Eintrag "2001:0db8::1/32" gilt als 2001:db8::/32',
+    ]);
+  });
+
   it("trennt fuer Caddy nur mit Leerraum und kennt dann private_ranges", () => {
     const caddy = { trenner: "nur-leerraum", privateRanges: true } as const;
     expect(fehler("10.0.0.5,10.0.0.6", caddy)).toMatch(/Leerzeichen.*Komma/);

@@ -204,8 +204,11 @@ export function parseNetworkList(
     }
     const bits = BigInt(max);
     const maske = praefix === 0 ? 0n : ((1n << bits) - 1n) ^ ((1n << (bits - BigInt(praefix))) - 1n);
-    const netz = `${alsText(alsZahl(adresse, v) & maske, v)}/${praefix}`;
-    if (netz !== `${adresse}/${praefix}`) hinweise.push(`Eintrag ${zitat(eintrag)} gilt als ${netz}`);
+    const zahl = alsZahl(adresse, v);
+    const netz = `${alsText(zahl & maske, v)}/${praefix}`;
+    // Die Zahlen vergleichen, nicht die Texte: 2001:0db8::/32 ist richtig
+    // maskiert und nur anders geschrieben als 2001:db8::/32.
+    if ((zahl & maske) !== zahl) hinweise.push(`Eintrag ${zitat(eintrag)} gilt als ${netz}`);
     if (praefix === 0) {
       hinweise.push(`Eintrag ${zitat(eintrag)} umfasst alle ${v === 4 ? "IPv4" : "IPv6"}-Adressen`);
     }
