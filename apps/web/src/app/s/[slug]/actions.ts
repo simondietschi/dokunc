@@ -202,7 +202,8 @@ export async function restorePageAction(form: FormData) {
 }
 
 export async function purgePageAction(form: FormData) {
-  const access = await authorizeAction(form, "managePages");
+  // Unwiderruflich: nur die Space-Verwaltung (lib/permissions).
+  const access = await authorizeAction(form, "purgePages");
   const { space, user } = access;
   const pageId = str(form, "pageId");
   const page = await findTrashedPage(scopeOf(access), pageId);
@@ -212,7 +213,9 @@ export async function purgePageAction(form: FormData) {
   }
 
   // Dasselbe wie beim Loeschen, nur unwiderruflich: ein geschuetzter
-  // Ast, den diese Person nicht sehen darf, faellt hier nicht mit.
+  // Ast, den diese Person nicht sehen darf, faellt hier nicht mit. Die
+  // Verwaltung sieht heute alles; die Huerde bleibt fuer den Fall, dass
+  // das Recht spaeter weiter gefasst wird.
   if (await subtreeHasHiddenPages(scopeOf(access), page.id)) {
     throw new Error(
       "Unterhalb dieser Seite liegt eine geschützte Seite, auf die du " +

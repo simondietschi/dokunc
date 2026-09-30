@@ -186,16 +186,8 @@ export const ERWARTUNG: Record<string, Eintrag> = {
         akteure: {
           ...AUSSEN_ABGELEHNT,
           VIEWER: "abgelehnt",
-          MEMBER: {
-            erwartet: "abgelehnt",
-            heute: "erlaubt",
-            luecke: "loeschen-verwaltung",
-          },
-          MEMBER_FREIGABE: {
-            erwartet: "abgelehnt",
-            heute: "erlaubt",
-            luecke: "loeschen-verwaltung",
-          },
+          MEMBER: "abgelehnt",
+          MEMBER_FREIGABE: "abgelehnt",
           ADMIN: "erlaubt",
           OWNER: "erlaubt",
         },
@@ -205,11 +197,7 @@ export const ERWARTUNG: Record<string, Eintrag> = {
           ...AUSSEN_ABGELEHNT,
           VIEWER: "abgelehnt",
           MEMBER: "abgelehnt",
-          MEMBER_FREIGABE: {
-            erwartet: "abgelehnt",
-            heute: "erlaubt",
-            luecke: "loeschen-verwaltung",
-          },
+          MEMBER_FREIGABE: "abgelehnt",
           ADMIN: "erlaubt",
           OWNER: "erlaubt",
         },

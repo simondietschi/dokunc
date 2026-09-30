@@ -773,6 +773,29 @@ describe("Papierkorb", () => {
     });
   });
 
+  it("endgültig löschen darf nur die Space-Verwaltung, und page.purged bleibt im Audit", async () => {
+    const p = await seite("Altes Protokoll");
+    await trashPageTree(w.space.id, p);
+
+    for (const akteur of ["MEMBER", "MEMBER_FREIGABE"] as const) {
+      await expect(
+        als(w.personen[akteur], () => purgePageAction(formular({ pageId: p }))),
+      ).rejects.toThrow("Kein Zugriff auf diese Aktion");
+    }
+    expect(await prisma.page.count({ where: { id: p } })).toBe(1);
+
+    await als(w.personen.ADMIN, () => purgePageAction(formular({ pageId: p })));
+    expect(await prisma.page.count({ where: { id: p } })).toBe(0);
+    expect(
+      await prisma.auditLog.findMany({
+        where: { action: "page.purged", targetId: p },
+        select: { actorId: true, metadata: true },
+      }),
+    ).toEqual([
+      { actorId: w.personen.ADMIN.id, metadata: { title: "Altes Protokoll" } },
+    ]);
+  });
+
   it("ein offenes lebendes Kind bleibt beim endgültigen Löschen offen, ohne Audit", async () => {
     const p = await seite("Offen im Papierkorb");
     const kind = await seite("Offenes Kind", { parentId: p });

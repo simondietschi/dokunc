@@ -80,6 +80,11 @@ differently on an existing installation, and what to do about it.
   keep their current visibility: check the top-level pages named in
   earlier `page.restored` and `page.purged` audit entries.
 
+- **Permanent deletion:** only space admins and owners can permanently
+  delete pages from the trash. Members no longer see the delete button
+  there, only a note. Members who emptied the trash by hand ask a space
+  admin now, or set `TRASH_RETENTION_DAYS` so the trash empties itself.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -107,6 +112,9 @@ differently on an existing installation, and what to do about it.
   permanently deleting a page with live sub-pages (by hand or by the trash
   retention job) and rolling back an import no longer make the affected
   pages visible to the whole space.
+- Any member could permanently delete every page they could see from the
+  trash, with its versions and comments; permanent deletion is now
+  limited to space admins and owners.
 
 ### Added
 

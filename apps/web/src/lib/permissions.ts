@@ -9,12 +9,18 @@ export type Action =
   | "comment"
   | "write"
   | "managePages"
+  | "purgePages"
   | "manageSpace";
 
 /**
  * Kommentieren hängt bewusst nicht am Schreibrecht: wer eine Seite
  * lesen darf, darf sie auch besprechen. Ohne das konnte eine VIEWER-Rolle
  * eine Fehlinformation sehen, aber nicht darauf hinweisen.
+ *
+ * Endgültig löschen (`purgePages`) ist unwiderruflich, samt Versionen und
+ * Kommentaren: nur die Verwaltung. MEMBER ist die Standardrolle beim
+ * Beitritt zu einem offenen Space. Sonst leert sich der Papierkorb über
+ * TRASH_RETENTION_DAYS.
  */
 const MATRIX: Record<SpaceRole, Record<Action, boolean>> = {
   OWNER: {
@@ -22,6 +28,7 @@ const MATRIX: Record<SpaceRole, Record<Action, boolean>> = {
     comment: true,
     write: true,
     managePages: true,
+    purgePages: true,
     manageSpace: true,
   },
   ADMIN: {
@@ -29,6 +36,7 @@ const MATRIX: Record<SpaceRole, Record<Action, boolean>> = {
     comment: true,
     write: true,
     managePages: true,
+    purgePages: true,
     manageSpace: true,
   },
   MEMBER: {
@@ -36,6 +44,7 @@ const MATRIX: Record<SpaceRole, Record<Action, boolean>> = {
     comment: true,
     write: true,
     managePages: true,
+    purgePages: false,
     manageSpace: false,
   },
   VIEWER: {
@@ -43,6 +52,7 @@ const MATRIX: Record<SpaceRole, Record<Action, boolean>> = {
     comment: true,
     write: false,
     managePages: false,
+    purgePages: false,
     manageSpace: false,
   },
 };

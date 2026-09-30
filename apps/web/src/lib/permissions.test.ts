@@ -42,6 +42,14 @@ describe("can()", () => {
     }
   });
 
+  it("endgültig löschen darf nur die Space-Verwaltung", () => {
+    expect(can("OWNER", "purgePages")).toBe(true);
+    expect(can("ADMIN", "purgePages")).toBe(true);
+    expect(can("MEMBER", "purgePages")).toBe(false);
+    expect(can("VIEWER", "purgePages")).toBe(false);
+    expect(can(null, "purgePages")).toBe(false);
+  });
+
   it("keine Rolle = kein Zugriff", () => {
     expect(can(null, "read")).toBe(false);
     expect(can(undefined, "read")).toBe(false);

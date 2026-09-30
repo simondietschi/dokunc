@@ -38,6 +38,8 @@ export default async function TrashPage({
     select: { id: true, title: true, deletedAt: true, isTemplate: true },
   });
   const frist = retentionNotes(currentRetentionConfig()).papierkorb;
+  // Endgültig löschen nur die Verwaltung; der Server prüft dasselbe.
+  const canPurge = can(role, "purgePages");
 
   return (
     <div className="mx-auto max-w-2xl px-8 py-14 animate-[rise_0.4s_ease]">
@@ -50,6 +52,11 @@ export default async function TrashPage({
         Unterseiten wieder her.
       </p>
       {frist && <p className="mt-1 text-sm text-muted">{frist}</p>}
+      {!canPurge && (
+        <p className="mt-1 text-sm text-muted">
+          Endgültig löschen kann nur die Space-Verwaltung.
+        </p>
+      )}
 
       <ul className="mt-8 space-y-2">
         {pages.map((p) => (
@@ -83,17 +90,19 @@ export default async function TrashPage({
                   Wiederherstellen
                 </Button>
               </form>
-              <form action={purgePageAction}>
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="pageId" value={p.id} />
-                <ConfirmButton
-                  message={`„${p.title}" endgültig löschen? Das kann nicht rückgängig gemacht werden.`}
-                  title="Endgültig löschen"
-                  className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </ConfirmButton>
-              </form>
+              {canPurge && (
+                <form action={purgePageAction}>
+                  <input type="hidden" name="slug" value={slug} />
+                  <input type="hidden" name="pageId" value={p.id} />
+                  <ConfirmButton
+                    message={`„${p.title}" endgültig löschen? Das kann nicht rückgängig gemacht werden.`}
+                    title="Endgültig löschen"
+                    className="grid h-8 w-8 place-items-center rounded-md text-faint transition-colors hover:bg-danger/10 hover:text-danger"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </ConfirmButton>
+                </form>
+              )}
             </div>
           </li>
         ))}
