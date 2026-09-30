@@ -8,8 +8,11 @@ import { Node, mergeAttributes } from "@tiptap/core";
  * `label` ist ein Schnappschuss des Titels beim Verlinken und wird nicht
  * angezeigt: der Editor holt den aktuellen Titel nur für Ziele, die die
  * lesende Person öffnen darf, und Export, Druck, Freigabe und Verlauf
- * setzen ihn vor dem Rendern ein (apps/web lib/link-labels). Neue Links
- * speichern keinen mehr (null).
+ * setzen ihn vor dem Rendern ein (apps/web lib/link-labels). Links aus
+ * dem [[-Vorschlag speichern keinen mehr (null); Kopien bestehender Links
+ * (Einfuegen, Duplizieren, Vorlagen) behalten ihn, der Import speichert
+ * den Linktext. Beim Kopieren kommt der Schnappschuss als Text und als
+ * HTML in die Zwischenablage.
  */
 export const WikiLink = Node.create({
   name: "wikiLink",

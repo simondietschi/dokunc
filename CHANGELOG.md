@@ -344,11 +344,11 @@ differently on an existing installation, and what to do about it.
   page, and only to readers who can open that page; everyone else sees
   "Seite ohne Zugriff" without a link, also when the target is in the
   trash or deleted. While the title loads, the link shows "…", and
-  "Verknüpfte Seite" when the title cannot be loaded. Links added in the
-  editor no longer store the title of their target. Exports (Markdown,
-  HTML, PDF) and the print view show wiki links as plain text without a
-  link target, also to pages the reader can open, and mentions without
-  the internal user ID.
+  "Verknüpfte Seite" when the title cannot be loaded. Links inserted from
+  the `[[` suggestion no longer store the title of their target; copies
+  of existing links keep it. Exports (Markdown, HTML, PDF) and the print
+  view show wiki links as plain text without a link target, also to
+  pages the reader can open, and mentions without the internal user ID.
   Shared pages show wiki links as plain text as well, with the current
   title only for pages that belong to the share (the shared page and,
   when sub-pages are included, its open sub-pages) and "Verknüpfte Seite"
@@ -430,10 +430,12 @@ differently on an existing installation, and what to do about it.
   open the target, and imports no longer put the text of wiki links into
   the search text. The title stored in existing links is still delivered
   to readers of the linking page with the page data and is still included
-  when such a link is copied as text; links added in the editor no longer
-  store it. Pages imported before this version keep the text of their
-  wiki links in the search text until they are next edited. Shared pages
-  no longer contain internal page and user IDs.
+  when such a link is copied to the clipboard (as text and HTML); links
+  inserted from the `[[` suggestion no longer store it, copies of
+  existing links (pasted, in duplicated pages, in pages from templates)
+  keep it. Pages imported before this version keep the text of their
+  wiki links in the search text and the AI index until they are next
+  edited. Shared pages no longer contain internal page and user IDs.
 - Deleting a group left its members' open editors connected until the
   collaboration server's next periodic check, up to a minute, so they
   could keep reading and writing pages they had lost access to. They are
