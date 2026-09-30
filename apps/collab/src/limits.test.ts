@@ -7,9 +7,9 @@ import {
   UserSlots,
   clientAddress,
   readConnectionLimits,
-  trustedProxyHops,
   type Admission,
 } from "./limits";
+import { AdressMelder, type AdressMeldung } from "@dokunc/config";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -288,17 +288,21 @@ describe("clientAddress", () => {
       "198.51.100.4",
     );
   });
-});
 
-describe("trustedProxyHops", () => {
-  it.each([
-    [undefined, 0],
-    ["", 0],
-    ["1", 1],
-    ["2", 2],
-    ["-1", 0],
-    ["eins", 0],
-  ])("liest %j als %i", (raw, hops) => {
-    expect(trustedProxyHops(raw)).toBe(hops);
+  it("zaehlt einen Eintrag, der keine IP ist, unter unknown", () => {
+    // Sonst bekaeme jeder erfundene Wert einen frischen Zaehler.
+    expect(clientAddress("evil, <script>", "172.18.0.2", 1)).toBe("unknown");
+  });
+
+  it("meldet Probleme an den Melder, sonst nichts", () => {
+    const zeilen: AdressMeldung[] = [];
+    const melder = new AdressMelder((z) => zeilen.push(z));
+    clientAddress("203.0.113.9", "172.18.0.2", 1, melder);
+    clientAddress("203.0.113.9", "172.18.0.2", 2, melder);
+    clientAddress("6.6.6.6", "10.0.0.7", 0, melder);
+    expect(zeilen.map((z) => z.reason)).toEqual([
+      "header_too_short",
+      "hops_zero_with_header",
+    ]);
   });
 });

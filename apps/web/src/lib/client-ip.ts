@@ -1,69 +1,46 @@
 import "server-only";
 import { headers } from "next/headers";
+import {
+  adressMelderFuerLog,
+  parseProxyHops,
+  resolveClientAddress,
+} from "@dokunc/config";
+import { log } from "./log";
 
 /**
- * Anzahl eigener Reverse-Proxys vor der App. 0 = die App haengt direkt
- * am Netz, dann ist X-Forwarded-For komplett unglaubwuerdig.
- * Das mitgelieferte Compose-Setup hat genau einen Proxy (Caddy) und
- * setzt die Variable auch (siehe .env.example, docker-compose.yml).
+ * Anzahl eigener Reverse-Proxys vor der App (TRUSTED_PROXY_HOPS). 0 = die
+ * App haengt direkt am Netz, dann ist X-Forwarded-For unglaubwuerdig.
+ * Das mitgelieferte Compose-Setup hat genau einen Proxy (Caddy) und setzt
+ * die Variable auch (siehe .env.example, docker-compose.yml).
  *
- * Fehlt sie oder steht Unsinn darin, wird 0 angenommen und nicht 1:
- * ein angenommener Proxy, den es gar nicht gibt, macht den vom Client
- * frei geschriebenen Header zur Client-IP. Ein Angreifer bekaeme dann
- * mit einem zufaelligen X-Forwarded-For pro Anfrage einen frischen
- * Bremszaehler, und derselbe erfundene Wert landete im Protokoll.
- * Mit 0 fallen alle Anfragen in einen gemeinsamen Topf — das bremst
- * zu streng statt gar nicht.
+ * Steht Unsinn darin, gilt 0 (Begruendung bei parseProxyHops in
+ * @dokunc/config).
  */
-export function trustedProxyHops(
-  raw: string | undefined = process.env.TRUSTED_PROXY_HOPS,
-): number {
-  const n = Number(raw);
-  return Number.isInteger(n) && n >= 0 ? n : 0;
+function proxyHops(): number {
+  const r = parseProxyHops(process.env.TRUSTED_PROXY_HOPS);
+  return r.ok ? r.wert : 0;
 }
 
 /**
- * Ermittelt die Client-IP aus X-Forwarded-For.
- *
- * Der Header ist eine Liste, die von links nach rechts waechst: ganz
- * links steht, was der Client selbst schicken durfte, ganz rechts, was
- * der letzte Proxy angehaengt hat. Der erste Eintrag ist also frei
- * faelschbar — genau darauf hat die alte Implementierung gehoert.
- * Vertrauenswuerdig ist nur der Eintrag, den der aeusserste eigene
- * Proxy geschrieben hat: `laenge - hops`.
- *
- * Gibt null zurueck, wenn kein verlaesslicher Wert ableitbar ist
- * (keine Proxys konfiguriert, Header fehlt, oder die Liste ist kuerzer
- * als die eigene Infrastruktur sie machen wuerde).
+ * Meldet gedrosselt, wenn sich aus X-Forwarded-For keine Adresse ergibt
+ * (die Kette passt nicht zu TRUSTED_PROXY_HOPS). Ohne die Zeile fielen
+ * alle Anfragen unbemerkt in den gemeinsamen Topf "unknown".
  */
-export function clientIpFrom(
-  forwardedFor: string | null | undefined,
-  hops: number,
-): string | null {
-  if (hops <= 0 || !forwardedFor) return null;
-  const parts = forwardedFor
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (parts.length < hops) return null;
-  return normalizeIp(parts[parts.length - hops]);
-}
+const melder = adressMelderFuerLog((felder, meldung) => log.warn(felder, meldung));
 
-/** Klammern und Port entfernen, damit derselbe Peer denselben Schluessel ergibt. */
-export function normalizeIp(value: string): string | null {
-  let ip = value.trim().toLowerCase();
-  if (!ip) return null;
-  // IPv6 in Klammern, optional mit Port: [::1]:443
-  const bracketed = ip.match(/^\[([^\]]+)\](?::\d+)?$/);
-  if (bracketed) return bracketed[1];
-  // IPv4 mit Port (IPv6 ohne Klammern enthaelt mehrere Doppelpunkte).
-  const colons = ip.split(":").length - 1;
-  if (colons === 1) ip = ip.split(":")[0];
-  return ip || null;
-}
-
-/** Client-IP der aktuellen Anfrage, oder null wenn nicht vertrauenswuerdig. */
+/**
+ * Client-IP der aktuellen Anfrage, oder null, wenn sich keine
+ * verlaessliche ableiten laesst (keine Proxys konfiguriert, Header fehlt
+ * oder ist kuerzer als die eigene Kette, massgeblicher Eintrag keine IP).
+ *
+ * Gezaehlt wird von rechts: vertrauenswuerdig ist nur der Eintrag, den
+ * der aeusserste eigene Proxy geschrieben hat (@dokunc/config,
+ * resolveClientAddress).
+ */
 export async function clientIp(): Promise<string | null> {
   const h = await headers();
-  return clientIpFrom(h.get("x-forwarded-for"), trustedProxyHops());
+  const hops = proxyHops();
+  const aufloesung = resolveClientAddress(h.get("x-forwarded-for"), undefined, hops);
+  melder.notiere(aufloesung, hops);
+  return aufloesung.adresse;
 }

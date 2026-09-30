@@ -24,6 +24,7 @@ imports types only (`import type { Ergebnis } from "@dokunc/config"`).
 | `src/start.ts` | `checkConfigAtStartup()`, `EXIT_KONFIGURATION` (78) |
 | `src/log.ts` | `LOG_LEVELS`, `logLevelFrom()` (never throws), `LOG_REDACT` |
 | `src/altbestand.ts` | `NOCH_OHNE_SCHEMA`: existing variables without a declaration yet |
+| `src/client-address.ts` | the client address from `X-Forwarded-For` for both servers: `parseProxyHops()`, `normalizeIp()`, `resolveClientAddress()` and the throttled warning `AdressMelder` |
 | `src/variablen/gemeinsam.ts` | variables read by the web app and the collaboration server |
 | `src/variablen/ausserhalb.ts` | variables read only by Docker Compose, the proxy or scripts |
 

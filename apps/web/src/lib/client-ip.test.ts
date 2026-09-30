@@ -1,75 +1,88 @@
-import { describe, expect, it } from "vitest";
-import { clientIpFrom, normalizeIp, trustedProxyHops } from "./client-ip";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("clientIpFrom", () => {
-  it("nimmt bei einem Proxy den letzten Eintrag", () => {
-    // Caddy hängt an bzw. setzt: rechts steht der echte Peer.
-    expect(clientIpFrom("203.0.113.9", 1)).toBe("203.0.113.9");
+/**
+ * Die Client-Adresse der Web-App aus den Kopfzeilen der Anfrage.
+ *
+ * Die Regeln selbst (Zaehlen von rechts, Pruefung auf eine IP, Auspacken
+ * von ::ffff:) prueft packages/config/src/client-address.test.ts; hier
+ * steht, dass die Web-App sie benutzt und Probleme meldet.
+ */
+
+const mocks = vi.hoisted(() => ({
+  xff: null as string | null,
+  warn: vi.fn(),
+}));
+
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => {
+    const h = new Headers();
+    if (mocks.xff !== null) h.set("x-forwarded-for", mocks.xff);
+    return h;
+  }),
+}));
+vi.mock("./log", () => ({
+  log: { warn: mocks.warn, info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+}));
+
+const { clientIp } = await import("./client-ip");
+
+beforeEach(() => {
+  vi.stubEnv("TRUSTED_PROXY_HOPS", "1");
+  mocks.warn.mockClear();
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  mocks.xff = null;
+});
+
+describe("clientIp", () => {
+  it("nimmt bei einem Proxy den Eintrag ganz rechts", async () => {
+    mocks.xff = "6.6.6.6, 203.0.113.9";
+    expect(await clientIp()).toBe("203.0.113.9");
   });
 
-  it("ignoriert einen vom Client vorangestellten Wert", () => {
-    // Genau der Angriff, den die alte Implementierung geschluckt hat.
-    expect(clientIpFrom("1.2.3.4, 203.0.113.9", 1)).toBe("203.0.113.9");
+  it("packt IPv4 aus der IPv6-Schreibweise aus wie der Collab-Server", async () => {
+    // Dieselbe Adresse soll in Web und Collab denselben Zaehler treffen
+    // und im Audit-Log gleich aussehen.
+    mocks.xff = "::ffff:192.0.2.1";
+    expect(await clientIp()).toBe("192.0.2.1");
   });
 
-  it("zählt bei mehreren Proxys von rechts", () => {
-    expect(clientIpFrom("1.2.3.4, 203.0.113.9, 10.0.0.1", 2)).toBe(
-      "203.0.113.9",
+  it("nimmt keinen Text, der keine IP ist, als Adresse", async () => {
+    // Steht TRUSTED_PROXY_HOPS zu hoch, liest die App einen Eintrag, den
+    // der Client geschrieben hat. Er darf weder Bremsschluessel noch
+    // Audit-IP werden.
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "2");
+    mocks.xff = "<script>, 203.0.113.9";
+    expect(await clientIp()).toBeNull();
+    mocks.xff = `${"a".repeat(10_000)}, 203.0.113.9`;
+    expect(await clientIp()).toBeNull();
+  });
+
+  it("meldet eine nicht bestimmbare Adresse im Log, mit Grund", async () => {
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "2");
+    mocks.xff = "203.0.113.9";
+    expect(await clientIp()).toBeNull();
+    expect(mocks.warn).toHaveBeenCalledTimes(1);
+    const [felder, meldung] = mocks.warn.mock.calls[0];
+    expect(meldung).toBe(
+      "Client-Adresse nicht bestimmbar, Anfragen zaehlen unter unknown",
     );
+    expect(felder).toMatchObject({
+      reason: "header_too_short",
+      hops: 2,
+      entries: 1,
+      count: 1,
+    });
+    expect(String(felder.hint)).toContain("TRUSTED_PROXY_HOPS");
   });
 
-  it("traut dem Header ohne konfigurierten Proxy nicht", () => {
-    expect(clientIpFrom("203.0.113.9", 0)).toBeNull();
-  });
-
-  it("gibt null zurück, wenn der Header fehlt", () => {
-    expect(clientIpFrom(null, 1)).toBeNull();
-    expect(clientIpFrom("", 1)).toBeNull();
-  });
-
-  it("gibt null zurück, wenn die Liste kürzer ist als die Infrastruktur", () => {
-    // Weniger Einträge als eigene Proxys: der Header ist nicht der,
-    // den die eigene Kette geschrieben hat.
-    expect(clientIpFrom("203.0.113.9", 2)).toBeNull();
-  });
-
-  it("verkraftet Leerraum und leere Felder", () => {
-    expect(clientIpFrom(" 1.2.3.4 ,  203.0.113.9 ,", 1)).toBe("203.0.113.9");
-  });
-});
-
-describe("normalizeIp", () => {
-  it("entfernt den Port bei IPv4", () => {
-    expect(normalizeIp("203.0.113.9:41234")).toBe("203.0.113.9");
-  });
-
-  it("entfernt Klammern und Port bei IPv6", () => {
-    expect(normalizeIp("[2001:db8::1]:443")).toBe("2001:db8::1");
-  });
-
-  it("lässt blankes IPv6 unangetastet", () => {
-    expect(normalizeIp("2001:db8::1")).toBe("2001:db8::1");
-  });
-
-  it("gibt null für Leerraum zurück", () => {
-    expect(normalizeIp("   ")).toBeNull();
-  });
-});
-
-describe("trustedProxyHops", () => {
-  it("traut ohne Konfiguration keinem Proxy", () => {
-    // Fehlt die Variable, koennte die App direkt am Netz haengen; dann
-    // waere der Header frei gefaelscht.
-    expect(trustedProxyHops(undefined)).toBe(0);
-  });
-
-  it("erlaubt ausdrückliches Misstrauen mit 0", () => {
-    expect(trustedProxyHops("0")).toBe(0);
-  });
-
-  it("fällt bei Unsinn auf den sicheren Standard zurück", () => {
-    expect(trustedProxyHops("viele")).toBe(0);
-    expect(trustedProxyHops("-2")).toBe(0);
-    expect(trustedProxyHops("1.5")).toBe(0);
+  it("traut dem Header ohne konfigurierten Proxy nicht und meldet nichts", async () => {
+    // Next setzt X-Forwarded-For selbst, wenn es fehlt: mit 0 ist der
+    // Header also immer da und bedeutet nichts.
+    vi.stubEnv("TRUSTED_PROXY_HOPS", "0");
+    mocks.xff = "203.0.113.9";
+    expect(await clientIp()).toBeNull();
+    expect(mocks.warn).not.toHaveBeenCalled();
   });
 });

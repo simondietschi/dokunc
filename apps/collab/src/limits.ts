@@ -12,6 +12,7 @@
  * sich fuer sich pruefen laesst. Die Verdrahtung steht in server.ts.
  */
 
+import { resolveClientAddress, type AdressMelder } from "@dokunc/config";
 import { readWholeNumber, type EnvWarn } from "@dokunc/editor";
 
 /** Fenster der Versuchsbremsen (s). */
@@ -290,56 +291,23 @@ export class UserSlots {
 }
 
 /**
- * Anzahl eigener Reverse-Proxys, wie in apps/web/src/lib/client-ip.ts:
- * fehlt die Angabe oder steht Unsinn darin, gilt 0. Ein angenommener
- * Proxy, den es nicht gibt, machte den vom Client frei geschriebenen
- * Header zur Adresse, und jeder erfundene Wert bekaeme eine frische
- * Bremse.
- */
-export function trustedProxyHops(raw: string | undefined): number {
-  const n = Number(raw);
-  return Number.isInteger(n) && n >= 0 ? n : 0;
-}
-
-/** Klammern und Port entfernen, IPv4 in IPv6 auspacken. */
-function normalizeIp(value: string): string | null {
-  let ip = value.trim().toLowerCase();
-  if (!ip) return null;
-  const bracketed = ip.match(/^\[([^\]]+)\](?::\d+)?$/);
-  if (bracketed) ip = bracketed[1];
-  else if (ip.split(":").length - 1 === 1) ip = ip.split(":")[0];
-  // Node meldet IPv4-Gegenstellen an einem IPv6-Socket als
-  // ::ffff:1.2.3.4 — dieselbe Adresse soll denselben Zaehler treffen.
-  if (ip.startsWith("::ffff:") && ip.includes(".")) ip = ip.slice(7);
-  return ip || null;
-}
-
-/**
- * Adresse, nach der die Versuchsbremse zaehlt.
+ * Adresse, nach der die Versuchsbremse und die Grenze je Adresse zaehlen
+ * (@dokunc/config, resolveClientAddress).
  *
  * Ohne Proxy (hops 0) ist die Gegenstelle des Sockets der Client — anders
  * als in der Web-App, die unter Next.js keinen Socket sieht, laesst sich
  * das hier also verlaesslich bestimmen. Mit Proxys zaehlt der Eintrag,
  * den der aeusserste eigene Proxy in X-Forwarded-For geschrieben hat.
- * Fehlt er, faellt alles in einen gemeinsamen Topf: das bremst zu streng
- * statt gar nicht.
+ * Ergibt sich keine Adresse, faellt alles in einen gemeinsamen Topf: das
+ * bremst zu streng statt gar nicht. Probleme meldet `melder` gedrosselt.
  */
 export function clientAddress(
   forwardedFor: string | string[] | undefined,
   remoteAddress: string | undefined,
   hops: number,
+  melder?: AdressMelder,
 ): string {
-  if (hops <= 0) {
-    return (remoteAddress && normalizeIp(remoteAddress)) || "unknown";
-  }
-  const header = Array.isArray(forwardedFor)
-    ? forwardedFor.join(",")
-    : forwardedFor;
-  if (!header) return "unknown";
-  const parts = header
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  if (parts.length < hops) return "unknown";
-  return normalizeIp(parts[parts.length - hops]) ?? "unknown";
+  const aufloesung = resolveClientAddress(forwardedFor, remoteAddress, hops);
+  melder?.notiere(aufloesung, hops);
+  return aufloesung.adresse ?? "unknown";
 }

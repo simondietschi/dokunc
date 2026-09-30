@@ -256,6 +256,17 @@ differently on an existing installation, and what to do about it.
   `docker compose exec app pnpm --filter @dokunc/db exec prisma migrate status`.
   Otherwise nothing to do.
 
+- **Client addresses:** the web app now writes IPv4 addresses that arrive
+  in IPv6 form (`::ffff:192.0.2.1`) as plain IPv4 (`192.0.2.1`), like the
+  collaboration server. This changes the stored form in the audit log
+  (`ip`), in the session list and in the rate-limit keys in Redis; adjust
+  log or SIEM filters that match the old form. An `X-Forwarded-For` entry
+  that is not an IP address no longer becomes the client address; such
+  requests count as unknown. When `TRUSTED_PROXY_HOPS` does not match the
+  proxy chain, both servers now log "Client-Adresse nicht bestimmbar,
+  Anfragen zaehlen unter unknown" (at most one line per reason every ten
+  minutes); see `docs/admin/network.md`. Nothing to do otherwise.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -305,6 +316,11 @@ differently on an existing installation, and what to do about it.
   5.0.9: CVE-2026-102276, CVE-2026-102278; undici 6.28.0:
   CVE-2026-19534), which the image scan reported although dokunc never
   loads them.
+- An `X-Forwarded-For` entry that is not an IP address is no longer used as
+  the client address. With `TRUSTED_PROXY_HOPS` set higher than the real
+  number of proxies, a client could choose its own rate-limit counter with
+  every request and write any text, up to the header size limit, into the
+  audit log, the session list and Redis keys.
 
 ### Added
 
@@ -349,6 +365,8 @@ differently on an existing installation, and what to do about it.
   `docs/admin/first-account.md`) and the audit event
   `auth.first_admin_created`; refused first registrations record the
   reason `setup_token`.
+- `docs/admin/network.md` on how the web app and the collaboration server
+  determine client addresses.
 
 ### Changed
 
@@ -385,6 +403,9 @@ differently on an existing installation, and what to do about it.
 - The registration page says "Nur per Einladung." once an instance has an
   account. While it has none, the sign-in and registration pages explain
   the first setup and ask for the setup token where it is needed.
+- The web app and the collaboration server share one implementation of the
+  client address; the web app now normalizes IPv4-mapped IPv6 addresses
+  like the collaboration server.
 
 ### Removed
 

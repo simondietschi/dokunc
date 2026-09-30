@@ -58,7 +58,13 @@ import {
   editorSchema,
   type DocResetMessage,
 } from "@dokunc/editor";
-import { LOG_REDACT, checkConfigAtStartup, logLevelFrom } from "@dokunc/config";
+import {
+  LOG_REDACT,
+  adressMelderFuerLog,
+  checkConfigAtStartup,
+  logLevelFrom,
+  parseProxyHops,
+} from "@dokunc/config";
 import { COLLAB_VARIABLEN } from "./config-variablen";
 import { startMailDispatcher } from "./mail-dispatcher";
 import { startAiIndexer } from "./ai-indexer";
@@ -84,7 +90,6 @@ import {
   UserSlots,
   clientAddress,
   readConnectionLimits,
-  trustedProxyHops,
 } from "./limits";
 import { createAttemptLimiter, createTicketLedger } from "./redis-guards";
 import { createHaRedis, createRedisClient } from "./redis-client";
@@ -181,7 +186,13 @@ const redisGestoert = () => redisZustand.gestoert(SCHNELLWEG_NACH_MS);
 const limits = readConnectionLimits(process.env, (detail, msg) =>
   log.warn(detail, msg),
 );
-const proxyHops = trustedProxyHops(process.env.TRUSTED_PROXY_HOPS);
+// Unsinn gilt als 0 wie in der Web-App (@dokunc/config, parseProxyHops).
+const proxyHopsRoh = parseProxyHops(process.env.TRUSTED_PROXY_HOPS);
+const proxyHops = proxyHopsRoh.ok ? proxyHopsRoh.wert : 0;
+/** Meldet gedrosselt, wenn die Client-Adresse nicht zur Kette passt. */
+const adressMelder = adressMelderFuerLog((felder, meldung) =>
+  log.warn(felder, meldung),
+);
 const sockets = new SocketGate(
   limits.maxConnections,
   limits.maxConnectionsPerIp,
@@ -827,6 +838,7 @@ const server = new Server({
         request.headers["x-forwarded-for"],
         request.socket.remoteAddress,
         proxyHops,
+        adressMelder,
       );
       const versuch = await attemptConnection(
         `collab-ip:${ip}`,

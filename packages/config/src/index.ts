@@ -13,5 +13,18 @@ export { ANZEIGE_FEHLGESCHLAGEN, MAX_ANZEIGE, maskValue, maskedConfig } from "./
 export { EXIT_KONFIGURATION, checkConfigAtStartup, type StartLog } from "./start";
 export { LOG_LEVELS, LOG_REDACT, logLevelFrom, parseLogLevel, type LogLevel } from "./log";
 export { NOCH_OHNE_SCHEMA } from "./altbestand";
+export {
+  ADRESS_HINWEIS,
+  AdressMelder,
+  MAX_PROXY_HOPS,
+  adressMeldung,
+  adressMelderFuerLog,
+  normalizeIp,
+  parseProxyHops,
+  resolveClientAddress,
+  type AdressMeldung,
+  type AdressProblem,
+  type Aufloesung,
+} from "./client-address";
 export { GEMEINSAME_VARIABLEN } from "./variablen/gemeinsam";
 export { AUSSERHALB_VARIABLEN } from "./variablen/ausserhalb";
