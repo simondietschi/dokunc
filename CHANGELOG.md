@@ -128,6 +128,15 @@ differently on an existing installation, and what to do about it.
   everything. Existing pages are expected to pass. Nothing to do
   otherwise.
 
+- **Collab process errors:** an unhandled promise rejection no longer
+  stops the collaboration server, and with it the web app when both run
+  through `pnpm start` as in the Docker image. It is logged at level 50
+  with the message "Unbehandelte Ablehnung, Collab-Server laeuft weiter".
+  An uncaught exception is logged at level 60 ("Unbehandelter Fehler,
+  Collab-Server beendet sich") before the process exits with code 1, as
+  before. Monitoring that relies on container restarts to notice such
+  errors should alert on these two lines instead.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,

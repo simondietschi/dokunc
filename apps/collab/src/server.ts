@@ -59,6 +59,7 @@ import { startAiIndexer } from "./ai-indexer";
 import { createDocResetHandler, type ResetContent } from "./doc-reset";
 import { SchemaWaechter, type SchemaMarke } from "./schema-marke";
 import { pruefeGegenSchema, type SchemaBefund } from "./schema-check";
+import { installProcessGuards } from "./process-guards";
 import { resolveAppSecret } from "./secret";
 import { StoreWatch } from "./store-watch";
 import { DocSizeTracker, roleNeedsReconnect } from "./doc-size";
@@ -90,10 +91,13 @@ const log = pino({
   redact: LOG_REDACT,
 });
 
-// Die Reihenfolge ist fest: log, dann die Pruefung der Konfiguration, erst
-// danach alles, was Redis, Datenbank oder Port anfasst. Bei einem Fehler
+// Die Reihenfolge ist fest: log, die Prozesswaechter, dann die Pruefung
+// der Konfiguration, erst danach alles, was Redis, Datenbank oder Port
+// anfasst. Die Waechter zuerst, damit auch ein Fehler beim Start als
+// Logzeile erscheint (./process-guards). Bei einem Konfigurationsfehler
 // endet der Prozess hier mit Code 78 und genau einer Logzeile der Stufe
 // 60, die alle Probleme nennt.
+installProcessGuards(log);
 checkConfigAtStartup({
   dienst: "collab",
   variablen: COLLAB_VARIABLEN,
