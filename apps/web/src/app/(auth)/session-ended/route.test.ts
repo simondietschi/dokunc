@@ -22,8 +22,8 @@ const { GET } = await import("./route");
 
 const DOKUMENT = { "sec-fetch-dest": "document", "sec-fetch-site": "same-origin" };
 
-function anfrage(h: Record<string, string>): Request {
-  return new Request("http://localhost:3000/session-ended", { headers: h });
+function anfrage(h: Record<string, string>, query = ""): Request {
+  return new Request(`http://localhost:3000/session-ended${query}`, { headers: h });
 }
 
 beforeEach(() => {
@@ -77,5 +77,28 @@ describe("GET /session-ended", () => {
     expect(r.headers.get("location")).toBe("/login");
     expect(r.headers.get("clear-site-data")).toBeNull();
     expect(mocks.dropSessionCookie).toHaveBeenCalledTimes(1);
+  });
+
+  // Die Anmeldeseite kam mit einem Ziel oder einem SSO-Hinweis hierher
+  // (Mail-Link, Einladung, SSO-Fehler): beides geht mit zurueck.
+  it("behaelt next und sso auf dem Weg zurueck zur Anmeldung", async () => {
+    const r = await GET(anfrage(DOKUMENT, "?next=%2Fnotifications%2Fabc&sso=state"));
+    expect(r.headers.get("location")).toBe("/login?next=%2Fnotifications%2Fabc&sso=state");
+    expect(r.headers.get("clear-site-data")).toBe('"cache", "storage"');
+    expect(mocks.dropSessionCookie).toHaveBeenCalledTimes(1);
+  });
+
+  it("ein fremdes Ziel faellt weg: kein offener Umleiter", async () => {
+    const r = await GET(anfrage(DOKUMENT, "?next=%2F%2Fevil.example&sso=%3Cb%3E"));
+    expect(r.headers.get("location")).toBe("/login");
+  });
+
+  it("gueltige Sitzung mit Ziel: dorthin, sonst /spaces", async () => {
+    mocks.user = { id: "u1" };
+    const r = await GET(anfrage(DOKUMENT, "?next=%2Faccount"));
+    expect(r.headers.get("location")).toBe("/account");
+    const fremd = await GET(anfrage(DOKUMENT, "?next=https%3A%2F%2Fevil.example"));
+    expect(fremd.headers.get("location")).toBe("/spaces");
+    expect(mocks.dropSessionCookie).not.toHaveBeenCalled();
   });
 });

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { removeAllLocalDocs } from "@/lib/local-doc";
-import { SESSION_ENDED_PATH, shouldCompleteSessionEnd } from "@/lib/session-end";
+import { sessionEndedPath, shouldCompleteSessionEnd } from "@/lib/session-end";
 
 /** Zeitpunkt des letzten Wegs nach /session-ended in diesem Tab. */
 const VERSUCH = "dokunc:sitzungsende-versuch";
@@ -36,9 +36,18 @@ function merkeVersuch(jetzt: number): boolean {
  * Passwoerter), laedt die Seite danach /session-ended als Dokument. Dort
  * leert Clear-Site-Data auch den HTTP-Cache mit Dateien geschuetzter
  * Seiten. Nur ueber HTTPS und localhost und hoechstens einmal je Minute
- * und Tab (lib/session-end). Zeigt nichts.
+ * und Tab (lib/session-end). Ziel und SSO-Hinweis der Anmeldeseite
+ * (`next`, `sso`) gehen mit und kommen zurueck. Zeigt nichts.
  */
-export function LocalDataCleanup({ sitzungsCookie = false }: { sitzungsCookie?: boolean }) {
+export function LocalDataCleanup({
+  sitzungsCookie = false,
+  next,
+  sso,
+}: {
+  sitzungsCookie?: boolean;
+  next?: string;
+  sso?: string;
+}) {
   useEffect(() => {
     let aktiv = true;
     void removeAllLocalDocs().then((geloescht) => {
@@ -53,11 +62,13 @@ export function LocalDataCleanup({ sitzungsCookie = false }: { sitzungsCookie?: 
       });
       // Ohne gemerkten Versuch nie: sonst droht eine Schleife, falls weder
       // Cookie noch Kopf wirken.
-      if (nachholen && merkeVersuch(jetzt)) window.location.replace(SESSION_ENDED_PATH);
+      if (nachholen && merkeVersuch(jetzt)) {
+        window.location.replace(sessionEndedPath({ next, sso }));
+      }
     });
     return () => {
       aktiv = false;
     };
-  }, [sitzungsCookie]);
+  }, [sitzungsCookie, next, sso]);
   return null;
 }

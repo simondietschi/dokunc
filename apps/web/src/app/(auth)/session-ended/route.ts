@@ -1,8 +1,10 @@
 import { getCurrentUser } from "@/lib/current-user";
+import { safeNext } from "@/lib/safe-redirect";
 import { dropSessionCookie, hasSessionCookie } from "@/lib/session";
 import {
   CLEAR_SITE_DATA,
   clearSiteDataAllowed,
+  loginPath,
   seeOther,
   sessionCookieDroppable,
 } from "@/lib/session-end";
@@ -24,14 +26,20 @@ export const runtime = "nodejs";
  * Das Cookie geht nur weg, wenn es mitkam und die Anfrage von hier kommt
  * (sessionCookieDroppable); nach einem Link von einer fremden Seite
  * bleibt es, damit die Anmeldeseite den Weg hierher wiederholt.
+ *
+ * `next` und `sso` der Anmeldeseite gehen mit zurueck (lib/session-end,
+ * loginPath): sonst fuehrte ein Mail-Link nach der Anmeldung nach
+ * /spaces statt zur Benachrichtigung. `next` nur als interner Pfad.
  */
 export async function GET(req: Request) {
-  if (await getCurrentUser()) return seeOther("/spaces");
+  const query = new URL(req.url).searchParams;
+  const next = query.get("next");
+  if (await getCurrentUser()) return seeOther(safeNext(next));
   if (sessionCookieDroppable(req.headers, await hasSessionCookie())) {
     await dropSessionCookie();
   }
   return seeOther(
-    "/login",
+    loginPath({ next, sso: query.get("sso") }),
     clearSiteDataAllowed(req.headers) ? { "Clear-Site-Data": CLEAR_SITE_DATA } : {},
   );
 }

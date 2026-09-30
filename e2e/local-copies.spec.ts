@@ -344,6 +344,26 @@ async function anmeldeseiten(page: Page): Promise<() => number> {
   return () => n;
 }
 
+/** Die Anmeldeseite, zu der /session-ended mit Clear-Site-Data weiterleitet. */
+function anmeldungNachKopf(page: Page) {
+  return page.waitForResponse(
+    async (r) => {
+      if (new URL(r.url()).pathname !== "/login") return false;
+      const vorher = await r.request().redirectedFrom()?.response();
+      if (!vorher || new URL(vorher.url()).pathname !== "/session-ended") return false;
+      return (await vorher.allHeaders())["clear-site-data"] === '"cache", "storage"';
+    },
+    { timeout: 20_000 },
+  );
+}
+
+/** Auf der Anmeldeseite, die gerade angezeigt wird, anmelden. */
+async function meldeHierAn(page: Page, k: Konto) {
+  await page.fill('input[name="email"]', k.email);
+  await page.fill('input[name="password"]', k.passwort);
+  await page.click('button[type="submit"]');
+}
+
 /** Alle lokalen Kopien von dokunc in diesem Browserkontext. */
 async function alleKopien(page: Page): Promise<string[]> {
   return (await idbNames(page)).filter((n) => n.startsWith("dokunc:"));
@@ -521,6 +541,75 @@ test("Nach dem Sitzungsende leert auch ein Link von einer fremden Seite den Spei
   expect(await marke(page)).toBeNull();
   const cookies = await page.context().cookies();
   expect(cookies.some((c) => c.name === "dokunc_session")).toBe(false);
+});
+
+// Der Mail-Link einer Benachrichtigung fuehrt ohne Sitzung nach
+// /login?next=/notifications/<id>. Endete die Sitzung (das Cookie ist
+// noch da), laedt die Anmeldeseite /session-ended nach; das Ziel kommt
+// mit zurueck, und nach der Anmeldung steht die Person auf der Seite
+// der Benachrichtigung statt auf /spaces.
+test("Nach dem Sitzungsende fuehrt ein Mail-Link nach der Anmeldung zum Ziel", async ({
+  page,
+  baseURL,
+}) => {
+  const a = await neuesMitglied("Mail-Link mit Ziel");
+  const p = await seite(`Mail-Ziel ${ZEIT}`, "Seite aus der Benachrichtigung");
+  const meldung = neueId();
+  // Schon zugestellt: der Mail-Versand der App fasst sie nicht an.
+  await mitDatenbank((db) =>
+    db.query(
+      `INSERT INTO "Notification" (id, "userId", type, "pageId", "emailedAt")
+       VALUES ($1, $2, 'MENTION', $3, now())`,
+      [meldung, a.id, p],
+    ),
+  );
+  await login(page, a);
+  await setzeMarke(page);
+
+  await widerrufeSitzungen(a.id);
+  const ziel = new URL(`/notifications/${meldung}`, baseURL).toString();
+  await page.route("https://mail.example/**", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><a href="${ziel}">Zur Benachrichtigung</a>`,
+    }),
+  );
+  await page.goto("https://mail.example/");
+  const angezeigt = await anmeldeseiten(page);
+  const zurueck = anmeldungNachKopf(page);
+  await page.getByRole("link", { name: "Zur Benachrichtigung" }).click();
+  expect(new URL((await zurueck).url()).search).toBe(
+    `?next=${encodeURIComponent(`/notifications/${meldung}`)}`,
+  );
+  await expect.poll(angezeigt, { timeout: 15_000 }).toBe(2);
+  await page.waitForLoadState();
+  expect(await marke(page)).toBeNull();
+
+  await meldeHierAn(page, a);
+  await page.waitForURL(`**/s/${space.slug}/p/${p}`);
+});
+
+// Ebenso ein SSO-Fehler (/login?sso=state) zusammen mit einem Ziel, hier
+// von Hand eingegeben: der Hinweis steht nach dem Weg ueber
+// /session-ended noch da, und die Anmeldung fuehrt zum Ziel.
+test("Nach dem Sitzungsende bleiben Ziel und SSO-Hinweis der Anmeldeseite", async ({ page }) => {
+  const a = await neuesMitglied("Ziel und SSO-Hinweis");
+  await login(page, a);
+  await setzeMarke(page);
+
+  await widerrufeSitzungen(a.id);
+  const angezeigt = await anmeldeseiten(page);
+  const zurueck = anmeldungNachKopf(page);
+  // Die Seite ersetzt sich gleich selbst: nur bis zum ersten Dokument warten.
+  await page.goto("/login?next=%2Faccount&sso=state", { waitUntil: "commit" });
+  expect(new URL((await zurueck).url()).search).toBe("?next=%2Faccount&sso=state");
+  await expect.poll(angezeigt, { timeout: 15_000 }).toBe(2);
+  await page.waitForLoadState();
+  expect(await marke(page)).toBeNull();
+  await expect(page.getByText("Der Anmeldevorgang passt nicht zusammen.")).toBeVisible();
+
+  await meldeHierAn(page, a);
+  await page.waitForURL("**/account");
 });
 
 test("Dieses Geraet auf der Kontoseite abmelden leert den Speicher", async ({ page }) => {

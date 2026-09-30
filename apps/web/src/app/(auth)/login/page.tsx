@@ -29,17 +29,19 @@ export default async function LoginPage({
   const sitzungsCookie = !angemeldet && (await hasSessionCookie());
   return (
     <>
-      {!angemeldet && <LocalDataCleanup sitzungsCookie={sitzungsCookie} />}
+      {!angemeldet && (
+        <LocalDataCleanup sitzungsCookie={sitzungsCookie} next={next} sso={sso} />
+      )}
       <AuthForm
-      mode="login"
-      next={next}
-      sso={oidcConfig()?.label ?? null}
-      ssoError={sso}
-      ersteinrichtung={
-        status.offen
-          ? { tokenNoetig: status.tokenNoetig, tokenDatei: status.tokenDatei }
-          : null
-      }
+        mode="login"
+        next={next}
+        sso={oidcConfig()?.label ?? null}
+        ssoError={sso}
+        ersteinrichtung={
+          status.offen
+            ? { tokenNoetig: status.tokenNoetig, tokenDatei: status.tokenDatei }
+            : null
+        }
       />
     </>
   );

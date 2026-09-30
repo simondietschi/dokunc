@@ -4,7 +4,9 @@ import {
   SESSION_ENDED_PATH,
   SESSION_END_RETRY_MS,
   clearSiteDataAllowed,
+  loginPath,
   seeOther,
+  sessionEndedPath,
   sessionCookieDroppable,
   sessionEndTarget,
   shouldCompleteSessionEnd,
@@ -154,5 +156,45 @@ describe("shouldCompleteSessionEnd()", () => {
     expect(shouldCompleteSessionEnd({ ...o, lastAttempt: o.now - SESSION_END_RETRY_MS })).toBe(true);
     // Uhr zurueckgestellt: der Versuch zaehlt nicht.
     expect(shouldCompleteSessionEnd({ ...o, lastAttempt: o.now + 5_000 })).toBe(true);
+  });
+});
+
+/**
+ * Ziel und Hinweis der Anmeldeseite ueberdauern den Weg ueber
+ * /session-ended: ein Mail-Link (/login?next=/notifications/<id>), der
+ * Anmelde-Link einer Einladung und SSO-Fehler (/login?sso=state) fuehren
+ * nach der Anmeldung sonst nach /spaces bzw. ohne Hinweis.
+ */
+describe("sessionEndedPath() und loginPath()", () => {
+  it("ohne Ziel und Hinweis: der blosse Pfad", () => {
+    expect(sessionEndedPath({})).toBe(SESSION_ENDED_PATH);
+    expect(loginPath({ next: null, sso: null })).toBe("/login");
+    expect(loginPath({ next: "", sso: "" })).toBe("/login");
+  });
+
+  it("ein interner Pfad als next bleibt, kodiert", () => {
+    expect(sessionEndedPath({ next: "/notifications/abc" })).toBe(
+      "/session-ended?next=%2Fnotifications%2Fabc",
+    );
+    expect(loginPath({ next: "/invite/x?t=1#a" })).toBe("/login?next=%2Finvite%2Fx%3Ft%3D1%23a");
+  });
+
+  it("ein SSO-Hinweis bleibt, zusammen mit next", () => {
+    expect(loginPath({ next: "/account", sso: "state" })).toBe("/login?next=%2Faccount&sso=state");
+    expect(sessionEndedPath({ sso: "no_email" })).toBe("/session-ended?sso=no_email");
+  });
+
+  // Kein offener Umleiter: was den Ursprung verlassen koennte, faellt weg.
+  it("fremde oder ungueltige Ziele fallen weg", () => {
+    for (const next of ["//evil.example", "https://evil.example/", "/\t/evil.example", "konto"]) {
+      expect(loginPath({ next })).toBe("/login");
+      expect(sessionEndedPath({ next })).toBe(SESSION_ENDED_PATH);
+    }
+  });
+
+  it("ein Hinweis ist nur ein kurzes Kennwort", () => {
+    for (const sso of ["<b>x</b>", "a".repeat(41), "state&next=//evil", "Fehler"]) {
+      expect(loginPath({ sso })).toBe("/login");
+    }
   });
 });

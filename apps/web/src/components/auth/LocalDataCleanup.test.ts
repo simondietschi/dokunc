@@ -44,7 +44,9 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-async function zeige(props: { sitzungsCookie?: boolean } = {}) {
+async function zeige(
+  props: { sitzungsCookie?: boolean; next?: string; sso?: string } = {},
+) {
   const host = document.createElement("div");
   root = createRoot(host);
   await act(async () => {
@@ -98,10 +100,30 @@ describe("LocalDataCleanup", () => {
   });
 
   it("ohne Tab-Speicher kein Weg dorthin: sonst droht eine Schleife", async () => {
-    vi.spyOn(window.sessionStorage, "setItem").mockImplementation(() => {
+    const voll = vi.spyOn(window.sessionStorage, "setItem").mockImplementation(() => {
       throw new DOMException("voll", "QuotaExceededError");
     });
-    await zeige({ sitzungsCookie: true });
-    expect(replace).not.toHaveBeenCalled();
+    try {
+      await zeige({ sitzungsCookie: true });
+      expect(replace).not.toHaveBeenCalled();
+    } finally {
+      // restoreAllMocks() stellt einen Spion auf dem Speicher von
+      // happy-dom nicht wieder her; die folgenden Faelle brauchen ihn.
+      voll.mockRestore();
+    }
+  });
+
+  // Mail-Link (/login?next=/notifications/<id>), Einladung, SSO-Fehler:
+  // Ziel und Hinweis gehen mit ueber /session-ended und zurueck.
+  it("gibt next und sso an /session-ended weiter", async () => {
+    await zeige({ sitzungsCookie: true, next: "/notifications/abc", sso: "state" });
+    expect(replace).toHaveBeenCalledWith(
+      "/session-ended?next=%2Fnotifications%2Fabc&sso=state",
+    );
+  });
+
+  it("ein fremdes Ziel geht nicht mit", async () => {
+    await zeige({ sitzungsCookie: true, next: "//evil.example" });
+    expect(replace).toHaveBeenCalledWith("/session-ended");
   });
 });

@@ -16,8 +16,45 @@
  * - Der Editor loescht sie, wenn die Ticket-Route "keine Sitzung" meldet.
  */
 
+import { safeNext } from "./safe-redirect";
+
 /** Route, die eine beendete Sitzung im Browser abschliesst. */
 export const SESSION_ENDED_PATH = "/session-ended";
+
+/**
+ * Was die Anmeldeseite ueber den Weg nach /session-ended und zurueck
+ * behalten muss: das Ziel nach der Anmeldung (Mail-Link
+ * /login?next=/notifications/<id>, Einladung) und den SSO-Hinweis
+ * (/login?sso=state).
+ */
+export type LoginQuery = { next?: string | null; sso?: string | null };
+
+/** SSO-Hinweise sind kurze Kennwoerter wie `state` oder `no_email`. */
+const SSO_HINWEIS = /^[a-z_-]{1,40}$/;
+
+/**
+ * Query fuer /login und /session-ended. `next` nur als interner Pfad
+ * (safeNext, sonst faellt es weg: kein offener Umleiter), `sso` nur als
+ * kurzes Kennwort. Leer ohne beides.
+ */
+function loginQuery(q: LoginQuery): string {
+  const p = new URLSearchParams();
+  const next = safeNext(q.next, "");
+  if (next) p.set("next", next);
+  if (q.sso && SSO_HINWEIS.test(q.sso)) p.set("sso", q.sso);
+  const s = p.toString();
+  return s ? `?${s}` : "";
+}
+
+/** /session-ended mit dem Ziel und Hinweis der Anmeldeseite. */
+export function sessionEndedPath(q: LoginQuery): string {
+  return `${SESSION_ENDED_PATH}${loginQuery(q)}`;
+}
+
+/** /login mit Ziel und Hinweis, wie sie nach /session-ended kamen. */
+export function loginPath(q: LoginQuery): string {
+  return `/login${loginQuery(q)}`;
+}
 
 /**
  * Wert fuer `Clear-Site-Data`: Speicher (IndexedDB, localStorage) und

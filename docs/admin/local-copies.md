@@ -100,7 +100,11 @@ editor had already deleted the copies.
 A reverse proxy that only forwards listed paths must allow `/logout` and
 `/session-ended`. `/logout` accepts only posts from the app's own origin
 (`APP_URL`); otherwise it shows a page that names `APP_URL` and the session
-stays. `/session-ended` changes nothing for a signed-in browser.
+stays. `/session-ended` changes nothing for a signed-in browser. When the
+sign-in page loads `/session-ended`, the page to open after signing in
+(`next`, for example from a notification mail or an invitation) and a
+single sign-on error hint (`sso`) come back with it; `next` is kept only as
+a path on this site.
 
 The sign-out button asks for confirmation when the editor in the same tab
 has changes the server has not confirmed. Other tabs of the same browser
