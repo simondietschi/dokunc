@@ -125,6 +125,7 @@ The web app answers a tab with a different editor with `409` and
 
 ## Development
 
-Switching to a branch with an older editor locks the editors of your local
-collaboration server, because the database records the newer version. See
-"Editor schema" in `CONTRIBUTING.md` for how to reset it.
+A local collaboration server locks out its editors after you switch to a
+branch with an older editor, and as soon as you change the editor schema
+before its hash is registered, because the database records a newer version.
+See "Editor schema" in `CONTRIBUTING.md` for how to reset it.

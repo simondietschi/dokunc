@@ -86,9 +86,14 @@ The editor's schema (the nodes, marks and attributes, with their default values,
 - A new node or attribute always goes into `richExtensions()`. A setting may hide it in the interface, but it must not change the schema: the web app and the collaboration server would then run different schemas depending on their environment.
 - Removing or renaming a node, mark or attribute needs a migration of the stored Yjs documents first. A newer editor drops what it does not know, just like an older one.
 
-Every collaboration server records the highest schema version it has started with in the database (`InstanceState`). A server with an older schema accepts no editors. After you switch to a branch with an older schema, reset the mark in your development database:
+Every collaboration server records the highest schema version it has started with in the database (`InstanceState`). A server with an older schema accepts no editors: they show "Aktualisierung läuft", and the server logs "Editor-Schema dieser Instanz ist aelter als die Marke in der Datenbank". In your development database, reset the mark and restart the collaboration server:
 
     UPDATE "InstanceState" SET "editorSchemaVersion" = 0;
+
+You need this in two cases:
+
+- **You change the schema.** Until its hash is in `EDITOR_SCHEMA_HASHES`, your schema has version 0, which is older than any recorded version, so your local server locks out its editors right away. Reset once; at version 0 the server ignores the recorded hash, so further changes need no reset. Append the hash when the change is final; the server then records the new version. If you change the schema again after that, reset again and append another hash when you are done, instead of replacing the one you appended.
+- **You switch to a branch with an older schema.**
 
 ## What is not rewritten
 

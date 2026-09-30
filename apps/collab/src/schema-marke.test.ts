@@ -31,10 +31,13 @@ describe("istVeraltet()", () => {
   });
 
   it("ein nicht eingetragenes Schema (Version 0) weicht nur einer Version aus", () => {
-    // In der Entwicklung aendert sich der Hash mit jedem Speichern.
+    // In der Entwicklung, nach dem Zuruecksetzen der Marke auf 0: der
+    // Hash aendert sich mit jedem Speichern.
     expect(istVeraltet({ version: 0, hash: H1 }, { version: 0, hash: H2 })).toBe(
       false,
     );
+    // Gegen jede eingetragene Version ist Version 0 aelter (deshalb das
+    // Zuruecksetzen, CONTRIBUTING "Editor schema").
     expect(istVeraltet({ version: 0, hash: H1 }, { version: 1, hash: H2 })).toBe(
       true,
     );

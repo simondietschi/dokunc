@@ -35,9 +35,12 @@ export type SchemaMarke = { version: number; hash: string | null };
  *    laesst sich nicht entscheiden, und keine Editoren anzunehmen ist der
  *    sichere Weg.
  *  - Version 0 (Schema nicht in EDITOR_SCHEMA_HASHES eingetragen, nur in
- *    der Entwicklung): nur eine hoehere Version zaehlt. Waehrend jemand am
- *    Schema arbeitet, aendert sich der Hash mit jedem Speichern, und die
- *    Instanz sperrte sich sonst nach dem ersten Neustart selbst aus.
+ *    der Entwicklung): aelter als jede eingetragene Version, also gesperrt,
+ *    sobald die Marke hoeher steht. Wer am Schema arbeitet, setzt die
+ *    Marke deshalb einmal auf 0 zurueck (CONTRIBUTING, "Editor schema").
+ *    Danach zaehlt bei Version 0 nur eine hoehere Version, nicht der
+ *    Hash: der aendert sich mit jedem Speichern, und die Instanz sperrte
+ *    sich sonst nach jedem Neustart wieder aus.
  */
 export function istVeraltet(eigen: EigenesSchema, marke: SchemaMarke): boolean {
   if (marke.version > eigen.version) return true;
