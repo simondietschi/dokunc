@@ -59,6 +59,37 @@ export async function resolveOidcUser(
     return bySubject.isActive ? { user: bySubject } : { reason: "inactive" };
   }
 
+  /**
+   * Umstellung der Bindung: OIDC_SUBJECT_CLAIM ist nicht mehr `sub`
+   * (für Entra ID `oid`), das Konto hängt aber noch am `sub` dieses
+   * Ausstellers. Sicher, weil `sub` beim selben Aussteller und derselben
+   * App-Registrierung dieselbe Person bezeichnet und die Bindung vorher
+   * genau darauf lag. So bricht die Umstellung auf einer laufenden
+   * Instanz nichts: jede Person wandert bei ihrer nächsten Anmeldung.
+   * Der neue Wert kann nie ein altes `sub` treffen (lib/oidc-claims,
+   * bestimmeSubject).
+   */
+  if (claims.legacySubject) {
+    const bisher = await prisma.user.findFirst({
+      where: { oidcIssuer: issuer, oidcSubject: claims.legacySubject },
+      select,
+    });
+    if (bisher) {
+      if (!bisher.isActive) return { reason: "inactive" };
+      const umgestellt = await prisma.user.update({
+        where: { id: bisher.id },
+        data: { oidcSubject: claims.subject },
+        select,
+      });
+      await audit({
+        action: "auth.sso_linked",
+        actorId: umgestellt.id,
+        metadata: { issuer, subjectClaim: "oid", previousClaim: "sub" },
+      });
+      return { user: umgestellt };
+    }
+  }
+
   if (!claims.email) return { reason: "no_email" };
 
   const byEmail = await prisma.user.findUnique({
@@ -86,10 +117,16 @@ export async function resolveOidcUser(
       data: { oidcSubject: claims.subject, oidcIssuer: issuer },
       select,
     });
+    // Quelle und Grund der Bestätigung: die Spur, falls eine Verknüpfung
+    // über die Adresse später untersucht werden muss.
     await audit({
       action: "auth.sso_linked",
       actorId: linked.id,
-      metadata: { issuer },
+      metadata: {
+        issuer,
+        emailSource: claims.emailSource ?? null,
+        verifiedBy: claims.verifiedBy ?? null,
+      },
     });
     return { user: linked };
   }
@@ -138,7 +175,12 @@ export async function resolveOidcUser(
   await audit({
     action: "auth.registered",
     actorId: created.id,
-    metadata: { via: "sso", isAdmin: decision.isAdmin },
+    metadata: {
+      via: "sso",
+      isAdmin: decision.isAdmin,
+      emailSource: claims.emailSource ?? null,
+      verifiedBy: claims.verifiedBy ?? null,
+    },
   });
   return { user: created };
 }

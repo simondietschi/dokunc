@@ -1257,8 +1257,8 @@ Kurz, was die App bewusst tut:
 - **Single Sign-on** mit PKCE, `state` und `nonce`; das ID-Token wird
   gegen die JWKS des Anbieters, den Aussteller und den Empfänger
   geprüft. Verknüpft wird über den Subject-Claim; eine E-Mail-Adresse
-  übernimmt ein bestehendes Konto nur, wenn der Anbieter sie als
-  bestätigt meldet, und nie bei einem Konto mit Verwaltungsrechten
+  übernimmt ein bestehendes Konto nur, wenn sie als bestätigt gilt
+  (→ `docs/admin/sso.md`), und nie bei einem Konto mit Verwaltungsrechten
   (`OIDC_AUTO_LINK_BY_EMAIL=false` schaltet die Verknüpfung ganz ab).
   Neue Konten entstehen nur mit `OIDC_ALLOW_SIGNUP=true` — sonst bleibt
   es bei Einladungen. Der zweite Faktor gilt auch bei SSO.

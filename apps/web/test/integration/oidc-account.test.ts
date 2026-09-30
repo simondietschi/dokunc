@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { prisma } from "@dokunc/db";
 import { resolveOidcUser, type OidcOptions } from "@/lib/oidc-account";
+import {
+  VORGABE_REGELN,
+  parseSubjectClaim,
+  readClaims,
+} from "@/lib/oidc-claims";
 import { USER_NAME_MAX, userNameSchema } from "@/lib/user-name";
 
 /**
@@ -219,5 +224,152 @@ describe("Kontoanlage", () => {
         allowSignup: true,
       }),
     ).toEqual({ reason: "no_email" });
+  });
+});
+
+/** Audit-Einträge eines Kontos zu einer Aktion, neueste zuerst. */
+async function audits(actorId: string, action: string) {
+  return prisma.auditLog.findMany({
+    where: { actorId, action },
+    orderBy: { createdAt: "desc" },
+    select: { metadata: true },
+  });
+}
+
+describe("Entra ID und Anbieter ohne email_verified", () => {
+  it("verknüpft über xms_edov und hält Quelle und Grund im Audit fest", async () => {
+    const user = await makeUser();
+    const out = await resolveOidcUser(
+      claims({ emailSource: "email", verifiedBy: "xms_edov" }),
+      base,
+    );
+    expect(out).toMatchObject({ user: { id: user.id } });
+    const [eintrag] = await audits(user.id, "auth.sso_linked");
+    expect(eintrag.metadata).toMatchObject({
+      issuer: ISSUER,
+      emailSource: "email",
+      verifiedBy: "xms_edov",
+    });
+  });
+
+  it("hält Quelle und Grund auch bei einem neuen Konto fest", async () => {
+    const out = await resolveOidcUser(
+      claims({ emailSource: "preferred_username", verifiedBy: "domain" }),
+      { ...base, allowSignup: true },
+    );
+    if (!("user" in out)) throw new Error(`kein Konto: ${out.reason}`);
+    const [eintrag] = await audits(out.user.id, "auth.registered");
+    expect(eintrag.metadata).toMatchObject({
+      via: "sso",
+      emailSource: "preferred_username",
+      verifiedBy: "domain",
+    });
+  });
+});
+
+describe("Umstellung der Bindung auf OIDC_SUBJECT_CLAIM", () => {
+  const OID = "7a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d";
+
+  it("stellt ein Konto am alten sub auf die neue Kennung um", async () => {
+    const user = await makeUser({
+      oidcIssuer: ISSUER,
+      oidcSubject: `${TAG}-legacy`,
+    });
+    const out = await resolveOidcUser(
+      claims({ subject: OID, legacySubject: `${TAG}-legacy` }),
+      base,
+    );
+    expect(out).toMatchObject({ user: { id: user.id } });
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { oidcSubject: true, oidcIssuer: true },
+    });
+    expect(row).toEqual({ oidcSubject: OID, oidcIssuer: ISSUER });
+    const [eintrag] = await audits(user.id, "auth.sso_linked");
+    expect(eintrag.metadata).toMatchObject({
+      issuer: ISSUER,
+      subjectClaim: "oid",
+      previousClaim: "sub",
+    });
+
+    // Die nächste Anmeldung findet das Konto direkt über die Objekt-ID.
+    expect(
+      await resolveOidcUser(claims({ subject: OID, legacySubject: "egal" }), base),
+    ).toMatchObject({ user: { id: user.id } });
+  });
+
+  it("stellt ein deaktiviertes Konto nicht um", async () => {
+    const user = await makeUser({
+      oidcIssuer: ISSUER,
+      oidcSubject: `${TAG}-legacy`,
+      isActive: false,
+    });
+    expect(
+      await resolveOidcUser(
+        claims({ subject: OID, legacySubject: `${TAG}-legacy` }),
+        base,
+      ),
+    ).toEqual({ reason: "inactive" });
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { oidcSubject: true },
+    });
+    expect(row.oidcSubject).toBe(`${TAG}-legacy`);
+  });
+
+  it("stellt keine Bindung an einen anderen Aussteller um", async () => {
+    const user = await makeUser({
+      email: `${TAG}-alt@example.test`,
+      oidcIssuer: "https://alter-anbieter.example",
+      oidcSubject: `${TAG}-legacy`,
+    });
+    const out = await resolveOidcUser(
+      claims({ subject: OID, legacySubject: `${TAG}-legacy` }),
+      base,
+    );
+    expect(out).toEqual({ reason: "no_account" });
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      select: { oidcSubject: true },
+    });
+    expect(row.oidcSubject).toBe(`${TAG}-legacy`);
+  });
+
+  it("eine Kennung aus einem anderen Claim trifft kein Konto, das noch an einem gleichlautenden sub hängt", async () => {
+    // A ist noch an sub = "42" gebunden (etwa eine numerische ID wie bei
+    // GitLab). B meldet sich an, nachdem OIDC_SUBJECT_CLAIM umgestellt
+    // wurde, und trägt im neuen Claim ebenfalls "42".
+    const a = await makeUser({ oidcIssuer: ISSUER, oidcSubject: "42" });
+
+    /** Wohin führt die Anmeldung von B: Konto-ID oder der Grund dagegen. */
+    async function landetIn(claim: string): Promise<string> {
+      const regel = parseSubjectClaim(claim);
+      if (!regel.ok) return "Einstellung abgelehnt";
+      let b;
+      try {
+        b = readClaims(
+          {
+            sub: `${TAG}-b`,
+            [claim]: "42",
+            email: `${TAG}-b@example.test`,
+            email_verified: true,
+          },
+          { regeln: { ...VORGABE_REGELN, subjectClaim: regel.wert } },
+        );
+      } catch {
+        return "Kennung abgelehnt";
+      }
+      const out = await resolveOidcUser(b, base);
+      return "user" in out ? out.user.id : out.reason;
+    }
+
+    expect(await landetIn("oid")).toBe("Kennung abgelehnt");
+    expect(await landetIn("employee_id")).toBe("Einstellung abgelehnt");
+    // A selbst bleibt gebunden und unberührt.
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: a.id },
+      select: { oidcSubject: true },
+    });
+    expect(row.oidcSubject).toBe("42");
   });
 });

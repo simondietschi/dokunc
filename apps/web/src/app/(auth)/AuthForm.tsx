@@ -51,9 +51,11 @@ const SSO_ERRORS: Record<string, string> = {
   state: "Der Anmeldevorgang passt nicht zusammen. Bitte neu beginnen.",
   error: "Die Anmeldung über den Anbieter hat nicht geklappt.",
   no_email: "Der Anbieter hat keine E-Mail-Adresse mitgeschickt.",
+  // Welche Regel gegriffen hat, steht nicht hier, sondern im Audit
+  // (auth.login_failed) und im Log.
   unverified:
-    "Der Anbieter meldet die E-Mail-Adresse als unbestätigt. " +
-    "Eine unbestätigte Adresse kann kein Konto übernehmen.",
+    "Der Anbieter bestätigt diese E-Mail-Adresse nicht. Eine " +
+    "unbestätigte Adresse kann kein Konto übernehmen oder anlegen.",
   linked_elsewhere:
     "Zu dieser E-Mail gehört bereits ein anderes SSO-Konto.",
   no_link:

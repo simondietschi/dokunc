@@ -1,8 +1,17 @@
 import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { createRemoteJWKSet, jwtVerify } from "jose";
-import { normalizeEmail } from "./invitations";
 import { log } from "./log";
+import {
+  brauchtUserinfo,
+  claimRegelnAus,
+  fehltEntraBestaetigung,
+  readClaims,
+  type ClaimRegeln,
+  type OidcClaims,
+} from "./oidc-claims";
+
+export { readClaims, type OidcClaims };
 
 /**
  * Anmeldung über einen OIDC-Anbieter (Authorization Code mit PKCE).
@@ -18,7 +27,7 @@ import { log } from "./log";
  * ein Ausfall des Anbieters niemanden aussperrt.
  */
 
-export type OidcConfig = {
+export type OidcConfig = ClaimRegeln & {
   issuer: string;
   clientId: string;
   clientSecret: string;
@@ -27,6 +36,19 @@ export type OidcConfig = {
   /** Legt ein Konto an, wenn der Anbieter jemanden Unbekanntes schickt. */
   allowSignup: boolean;
 };
+
+/**
+ * Meldungen zur Konfiguration einmal je Prozess und Text: oidcConfig()
+ * läuft bei jedem Aufruf der Anmeldeseite, und eine unbrauchbare
+ * Einstellung füllte sonst das Log mit derselben Zeile.
+ */
+const gemeldeteProbleme = new Set<string>();
+function meldeEinmal(felder: Record<string, unknown>, meldung: string): void {
+  const schluessel = `${meldung}\u0000${JSON.stringify(felder)}`;
+  if (gemeldeteProbleme.has(schluessel)) return;
+  gemeldeteProbleme.add(schluessel);
+  log.error(felder, meldung);
+}
 
 /**
  * Warum der konfigurierte Aussteller unbrauchbar ist — oder null.
@@ -66,10 +88,21 @@ export function oidcConfig(): OidcConfig | null {
     // Lieber gar kein SSO als eines, dessen Schlüssel jemand unterwegs
     // austauschen kann: die Anmeldung mit Passwort bleibt bestehen, und
     // die Ursache steht im Log statt nur als „sso=error" im Browser.
-    log.error({ issuer, problem }, "OIDC_ISSUER unbrauchbar — SSO bleibt aus");
+    meldeEinmal({ issuer, problem }, "OIDC_ISSUER unbrauchbar — SSO bleibt aus");
+    return null;
+  }
+  // Die Prüfung beim Start lehnt ungültige Werte schon ab; das hier
+  // greift nur, wenn die Umgebung danach eine andere ist (Tests).
+  const regeln = claimRegelnAus(process.env);
+  if (!regeln.ok) {
+    meldeEinmal(
+      { problem: regeln.fehler },
+      "OIDC-Konfiguration unbrauchbar — SSO bleibt aus",
+    );
     return null;
   }
   return {
+    ...regeln.wert,
     issuer,
     clientId,
     clientSecret: process.env.OIDC_CLIENT_SECRET?.trim() ?? "",
@@ -85,19 +118,58 @@ type Discovery = {
   jwks_uri: string;
   issuer: string;
   end_session_endpoint?: string;
+  userinfo_endpoint?: string;
 };
 
 /**
  * Discovery-Dokument, für eine Stunde gemerkt.
  *
  * Ohne den Zwischenspeicher hinge jede Anmeldung an einem zusätzlichen
- * Netzaufruf zum Anbieter.
+ * Netzaufruf zum Anbieter. Gemerkt samt Aussteller: das Dokument wird
+ * nur beim Abruf gegen den konfigurierten Aussteller geprüft, und ein
+ * Dokument eines anderen Ausstellers darf nie gelten (ändert sich
+ * OIDC_ISSUER im selben Prozess, wie in Tests).
  */
-let cached: { at: number; doc: Discovery } | null = null;
+let cached: { at: number; issuer: string; doc: Discovery } | null = null;
 const DISCOVERY_TTL_MS = 60 * 60 * 1000;
 
+const MULTI_TENANT_MELDUNG =
+  "OIDC_ISSUER zeigt auf einen Multi-Tenant-Endpunkt von Microsoft " +
+  "(common, organizations, consumers). Unterstützt ist nur der Aussteller " +
+  "eines Tenants: https://login.microsoftonline.com/<Tenant-ID>/v2.0";
+
+/**
+ * Multi-Tenant-Endpunkte von Microsoft Entra ID.
+ *
+ * Dort darf jeder Tenant Token ausstellen, und mit dem Claim `email`
+ * könnte ein fremder Tenant jede Adresse behaupten. Das Dokument von
+ * `common` und `organizations` nennt als Aussteller eine Vorlage mit
+ * `{tenantid}`; `consumers` hat einen festen Aussteller, der nie zum
+ * konfigurierten passt. Erkannt wird deshalb beides, der konfigurierte
+ * Pfad und die Vorlage im Dokument.
+ */
+function multiTenant(issuer: string): boolean {
+  try {
+    const url = new URL(issuer);
+    const tenant = url.pathname.split("/").filter(Boolean)[0]?.toLowerCase();
+    return (
+      url.hostname === "login.microsoftonline.com" &&
+      ["common", "organizations", "consumers"].includes(tenant ?? "")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export async function discover(config: OidcConfig): Promise<Discovery> {
-  if (cached && Date.now() - cached.at < DISCOVERY_TTL_MS) return cached.doc;
+  if (
+    cached &&
+    cached.issuer === config.issuer &&
+    Date.now() - cached.at < DISCOVERY_TTL_MS
+  ) {
+    return cached.doc;
+  }
+  if (multiTenant(config.issuer)) throw new Error(MULTI_TENANT_MELDUNG);
   const url = `${config.issuer}/.well-known/openid-configuration`;
   const res = await fetch(url, {
     headers: { accept: "application/json" },
@@ -115,13 +187,14 @@ export async function discover(config: OidcConfig): Promise<Discovery> {
   ) {
     throw new Error("OIDC-Discovery unvollständig");
   }
+  if (doc.issuer.includes("{tenantid}")) throw new Error(MULTI_TENANT_MELDUNG);
   // Der Aussteller im Dokument muss zum konfigurierten passen, sonst
   // liesse sich mit einer untergeschobenen Adresse ein fremder Anbieter
   // unterschieben.
   if (doc.issuer.replace(/\/+$/, "") !== config.issuer) {
     throw new Error("OIDC-Aussteller stimmt nicht mit der Konfiguration");
   }
-  cached = { at: Date.now(), doc };
+  cached = { at: Date.now(), issuer: config.issuer, doc };
   return doc;
 }
 
@@ -159,19 +232,17 @@ export function authorizationUrl(opts: {
   return url.toString();
 }
 
-export type OidcClaims = {
-  subject: string;
-  email: string | null;
-  emailVerified: boolean;
-  name: string | null;
-};
-
 /**
  * Tauscht den Code gegen Tokens und prüft das ID-Token.
  *
  * Geprüft werden Signatur (über JWKS des Anbieters), Aussteller,
  * Empfänger und die Nonce. Ohne die Nonce liesse sich ein anderswo
  * erbeutetes ID-Token hier einspielen.
+ *
+ * Fehlt dem ID-Token die Adresse oder jede Aussage zu ihr, fragt die
+ * Anmeldung zusätzlich den Userinfo-Endpunkt des Anbieters
+ * (lib/oidc-claims, brauchtUserinfo). Dessen Antwort zählt nur mit
+ * demselben `sub` wie im ID-Token.
  */
 export async function exchangeCode(opts: {
   config: OidcConfig;
@@ -217,7 +288,10 @@ export async function exchangeCode(opts: {
     );
     throw new Error("Token-Tausch fehlgeschlagen");
   }
-  const tokens = (await res.json()) as { id_token?: string };
+  const tokens = (await res.json()) as {
+    id_token?: string;
+    access_token?: unknown;
+  };
   if (!tokens.id_token) throw new Error("Kein ID-Token erhalten");
 
   const jwks = jwksFor(doc.jwks_uri);
@@ -227,8 +301,97 @@ export async function exchangeCode(opts: {
   });
   if (payload.nonce !== opts.nonce) throw new Error("Nonce stimmt nicht");
   if (!payload.sub) throw new Error("ID-Token ohne Subject");
+  meldeEntraOhneBestaetigung(payload);
 
-  return readClaims(payload);
+  const regeln: ClaimRegeln = opts.config;
+  if (
+    brauchtUserinfo(payload, regeln) &&
+    doc.userinfo_endpoint &&
+    typeof tokens.access_token === "string" &&
+    tokens.access_token
+  ) {
+    const userinfo = await fetchUserinfo(
+      doc.userinfo_endpoint,
+      tokens.access_token,
+      String(payload.sub),
+    );
+    if (userinfo) return readClaims(payload, { userinfo, regeln });
+  }
+  return readClaims(payload, { regeln });
+}
+
+let entraHinweisGemeldet = false;
+
+/**
+ * Einmal je Prozess: Entra ID schickt zu einer Adresse weder `xms_edov`
+ * noch `email_verified`. Dann entscheidet allein die Domainliste, und
+ * Gäste aus fremden Verzeichnissen fallen nur über `idp` heraus.
+ */
+export function meldeEntraOhneBestaetigung(
+  idToken: Record<string, unknown>,
+): void {
+  if (entraHinweisGemeldet || !fehltEntraBestaetigung(idToken)) return;
+  entraHinweisGemeldet = true;
+  log.warn(
+    { issuer: idToken.iss },
+    "Entra ID schickt weder xms_edov noch email_verified — optionalen Claim xms_edov in der App-Registrierung einrichten",
+  );
+}
+
+/**
+ * Userinfo des Anbieters (OpenID Connect Core 5.3), oder null.
+ *
+ * Wirft nie: scheitert der Abruf, läuft die Anmeldung mit dem ID-Token
+ * allein weiter, und der Grund steht im Log. Verworfen wird auch eine
+ * Antwort mit anderem `sub` als im ID-Token (5.3.2), sonst liessen sich
+ * Angaben einer anderen Person unterschieben. Signierte Userinfo
+ * (application/jwt) wird nicht unterstützt.
+ */
+export async function fetchUserinfo(
+  endpoint: string,
+  accessToken: string,
+  subject: string,
+): Promise<Record<string, unknown> | null> {
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        accept: "application/json",
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) {
+    log.warn({ err: e }, "OIDC-Userinfo nicht erreichbar");
+    return null;
+  }
+  if (!res.ok) {
+    log.warn({ status: res.status }, "OIDC-Userinfo abgelehnt");
+    return null;
+  }
+  const typ = res.headers.get("content-type") ?? "";
+  let body: unknown = null;
+  if (/^application\/(?:[\w.+-]+\+)?json\s*(?:;|$)/i.test(typ)) {
+    try {
+      body = await res.json();
+    } catch {
+      body = null;
+    }
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    log.warn({ contentType: typ }, "OIDC-Userinfo nicht als JSON");
+    return null;
+  }
+  const claims = body as Record<string, unknown>;
+  const sub =
+    typeof claims.sub === "string" || typeof claims.sub === "number"
+      ? String(claims.sub)
+      : null;
+  if (sub !== subject) {
+    log.warn("OIDC-Userinfo gehört zu einem anderen Subject — verworfen");
+    return null;
+  }
+  return claims;
 }
 
 /** JWKS pro Adresse einmal aufbauen — die Menge hält ihren eigenen Cache. */
@@ -240,53 +403,4 @@ function jwksFor(uri: string) {
     jwksCache.set(uri, set);
   }
   return set;
-}
-
-/**
- * Grobe Form einer Adresse: genau ein „@", links und rechts davon etwas
- * ohne Leerraum.
- *
- * Bewusst nicht strenger — massgeblich ist das Verzeichnis des
- * Anbieters, und dort kommen Adressen ohne Punkt in der Domain
- * („alex@intranet") vor. Ein blosses `includes("@")` liesse dagegen den
- * Claim „@" durch: der wanderte als eindeutiger Schlüssel in die
- * Benutzertabelle und ergäbe beim Anlegen über `split("@")[0]` ein Konto
- * mit leerem Anzeigenamen. 254 Zeichen ist die Obergrenze einer Adresse
- * nach RFC 5321; ohne sie landet ein beliebig langer Claim in derselben
- * Spalte.
- */
-const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+$/;
-const EMAIL_MAX_LENGTH = 254;
-
-/**
- * Liest die Angaben, auf die sich diese App stützt.
- *
- * `email_verified` wird ernst genommen: eine unbestätigte Adresse darf
- * kein bestehendes Konto übernehmen. Fehlt der Claim ganz, gilt die
- * Adresse als unbestätigt — die Instanz kann die Verknüpfung dann
- * immer noch über das Subject herstellen.
- */
-
-export function readClaims(payload: Record<string, unknown>): OidcClaims {
-  // normalizeEmail und nicht von Hand trimmen: die Adresse wird gleich
-  // als eindeutiger Schlüssel gegen dieselbe Spalte gesucht, die der
-  // Passwortweg füllt — dieselbe Schreibweise muss dabei denselben
-  // Datensatz treffen.
-  const candidate =
-    typeof payload.email === "string" ? normalizeEmail(payload.email) : "";
-  const email =
-    candidate.length <= EMAIL_MAX_LENGTH && EMAIL_SHAPE.test(candidate)
-      ? candidate
-      : null;
-  const name =
-    (typeof payload.name === "string" && payload.name.trim()) ||
-    (typeof payload.preferred_username === "string" &&
-      payload.preferred_username.trim()) ||
-    null;
-  return {
-    subject: String(payload.sub),
-    email,
-    emailVerified: payload.email_verified === true,
-    name: name || null,
-  };
 }

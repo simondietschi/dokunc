@@ -9,6 +9,11 @@ import {
   randomToken,
   type OidcClaims,
 } from "@/lib/oidc";
+import {
+  FALL_VARIABLEN,
+  IDP_FAELLE,
+  type FallUmgebung,
+} from "../oidc-faelle";
 import { idpAnmelden } from "./idp-anmelden";
 import { startIdp, type TestIdp } from "./idp-prozess";
 
@@ -17,7 +22,8 @@ import { startIdp, type TestIdp } from "./idp-prozess";
  * (e2e/test-idp): Discovery, Autorisierung mit PKCE, Token-Tausch mit
  * Basic-Auth, Pruefung des ID-Tokens ueber JWKS und Nonce. Die Konten
  * tragen die Claim-Formate von Entra ID, Google, Keycloak und authentik
- * (e2e/test-idp/konten.json).
+ * (e2e/test-idp/konten.json); die Faelle stehen in test/oidc-faelle.ts
+ * und laufen ohne Netz auch in src/lib/oidc-claims.test.ts.
  *
  * Ohne Datenbank: geprueft wird, was der Anmeldeweg aus den Claims
  * liest. Was daraus fuer Konten folgt, pruefen oidc-account.test.ts und
@@ -25,15 +31,6 @@ import { startIdp, type TestIdp } from "./idp-prozess";
  */
 
 const REDIRECT = "http://localhost:3000/api/auth/oidc/callback";
-
-/** Die Konfiguration, die ein Fall ueber die Umgebung setzt. */
-const FALL_VARIABLEN = [
-  "OIDC_TRUSTED_EMAIL_DOMAINS",
-  "OIDC_EMAIL_CLAIM",
-  "OIDC_NAME_CLAIM",
-  "OIDC_SUBJECT_CLAIM",
-] as const;
-type FallUmgebung = Partial<Record<(typeof FALL_VARIABLEN)[number], string>>;
 
 let idp: TestIdp;
 
@@ -94,139 +91,13 @@ async function anmelden(
   });
 }
 
-type Fall = {
-  name: string;
-  konto: string;
-  umgebung?: FallUmgebung;
-  erwartet: Partial<OidcClaims>;
-  /**
-   * Der heutige Anmeldeweg besteht den Fall nicht: Entra ID ohne
-   * email_verified, keine Userinfo, keine Claim-Zuordnung. Solche Faelle
-   * laufen als erwarteter Fehlschlag, bis die Anmeldung sie kann; dann
-   * faellt der Marker weg.
-   */
-  scheitertHeute?: true;
-};
-
-const ENTRA_OID = "3f2c9b1e-5a7d-4e8f-9c0b-1d2e3f4a5b6c";
-
-const FAELLE: Fall[] = [
-  {
-    name: "Google: bestätigte Adresse (email_verified)",
-    konto: "google",
-    erwartet: { email: "sam@google.test", emailVerified: true },
-  },
-  {
-    name: "Keycloak: bestätigte Adresse (email_verified)",
-    konto: "keycloak",
-    erwartet: { email: "robin@keycloak.test", emailVerified: true },
-  },
-  {
-    name: "authentik: bestätigte Adresse (email_verified)",
-    konto: "authentik",
-    erwartet: { email: "kai@authentik.test", emailVerified: true },
-  },
-  {
-    name: "Entra ID: xms_edov bestätigt die Adresse",
-    konto: "entra-mitglied",
-    erwartet: { email: "alex.muster@entra.test", emailVerified: true },
-    scheitertHeute: true,
-  },
-  {
-    name: "Entra ID ohne Adresse im ID-Token: Adresse aus Userinfo, unbestätigt",
-    konto: "entra-ohne-email",
-    erwartet: { email: "kim.beispiel@entra.test", emailVerified: false },
-    scheitertHeute: true,
-  },
-  {
-    name: "Entra ID ohne Adresse im ID-Token: vertraute Domain bestätigt die Adresse aus Userinfo",
-    konto: "entra-ohne-email",
-    umgebung: { OIDC_TRUSTED_EMAIL_DOMAINS: "entra.test" },
-    erwartet: { email: "kim.beispiel@entra.test", emailVerified: true },
-    scheitertHeute: true,
-  },
-  {
-    name: "Entra ID ohne Postfach: ohne Claim-Liste keine Adresse",
-    konto: "entra-nur-upn",
-    erwartet: { email: null, emailVerified: false },
-  },
-  {
-    name: "Entra ID ohne Postfach: UPN auf vertrauter Domain aus der Claim-Liste",
-    konto: "entra-nur-upn",
-    umgebung: {
-      OIDC_EMAIL_CLAIM: "email,preferred_username",
-      OIDC_TRUSTED_EMAIL_DOMAINS: "entra.test",
-    },
-    erwartet: { email: "upn.only@entra.test", emailVerified: true },
-    scheitertHeute: true,
-  },
-  {
-    name: "Entra ID ohne Postfach: UPN ohne vertraute Domain zählt nicht",
-    konto: "entra-nur-upn",
-    umgebung: { OIDC_EMAIL_CLAIM: "email,preferred_username" },
-    erwartet: { email: null, emailVerified: false },
-  },
-  {
-    name: "Entra-Gast: fremde Adresse bleibt, auch wenn die UPN-Domain vertraut ist",
-    konto: "entra-gast",
-    umgebung: {
-      OIDC_EMAIL_CLAIM: "email,preferred_username",
-      OIDC_TRUSTED_EMAIL_DOMAINS: "entra.test entratest.onmicrosoft.com",
-    },
-    erwartet: { email: "gast@extern.test", emailVerified: false },
-  },
-  {
-    name: "Entra-Gast aus fremdem Tenant mit Adresse auf vertrauter Domain: unbestätigt",
-    konto: "entra-gast-vertraute-domain",
-    umgebung: { OIDC_TRUSTED_EMAIL_DOMAINS: "entra.test" },
-    erwartet: { email: "chefin@entra.test", emailVerified: false },
-  },
-  {
-    name: "Entra ID mit Claim-Liste: Userinfo-Adresse vor dem UPN der Start-Domain",
-    konto: "entra-ohne-email",
-    umgebung: {
-      OIDC_EMAIL_CLAIM: "email,preferred_username",
-      OIDC_TRUSTED_EMAIL_DOMAINS: "entra.test",
-    },
-    erwartet: { email: "kim.beispiel@entra.test", emailVerified: true },
-    scheitertHeute: true,
-  },
-  {
-    name: "Keycloak: ausdrückliches email_verified false schlägt die vertraute Domain",
-    konto: "keycloak-unbestaetigt",
-    umgebung: { OIDC_TRUSTED_EMAIL_DOMAINS: "entra.test" },
-    erwartet: { email: "chef@entra.test", emailVerified: false },
-  },
-  {
-    name: "schlankes ID-Token: email_verified aus Userinfo",
-    konto: "userinfo-bestaetigt",
-    erwartet: { email: "lou@schlank.test", emailVerified: true },
-    scheitertHeute: true,
-  },
-  {
-    name: "Entra ID: OIDC_SUBJECT_CLAIM=oid bindet an die Objekt-ID",
-    konto: "entra-mitglied",
-    umgebung: { OIDC_SUBJECT_CLAIM: "oid" },
-    erwartet: { subject: ENTRA_OID },
-    scheitertHeute: true,
-  },
-  {
-    name: "OIDC_NAME_CLAIM wählt den Claim für den Namen",
-    konto: "google",
-    umgebung: { OIDC_NAME_CLAIM: "given_name" },
-    erwartet: { name: "Sam" },
-    scheitertHeute: true,
-  },
-];
-
 describe("SSO-Anmeldung gegen den Test-IdP", () => {
-  for (const fall of FAELLE) {
-    const test = fall.scheitertHeute ? it.fails : it;
-    test(fall.name, async () => {
+  for (const fall of IDP_FAELLE) {
+    it(fall.name, async () => {
       const claims = await anmelden(fall.konto, fall.umgebung);
       expect(claims).toMatchObject({
         subject: paarweise(fall.konto),
-        ...fall.erwartet,
+        ...fall.erwartet(paarweise(fall.konto)),
       });
     });
   }

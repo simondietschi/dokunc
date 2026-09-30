@@ -595,7 +595,8 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       und `nonce` in einem eigenen kurzlebigen Cookie
       (Audience `dokunc-oidc`, zehn Minuten, genau einmal gültig);
       ID-Token gegen JWKS, Aussteller und Empfänger geprüft; Bindung an
-      den Subject-Claim, E-Mail-Verknüpfung nur bei `email_verified`;
+      den Subject-Claim, E-Mail-Verknüpfung nur bei bestätigter Adresse
+      (→ `docs/admin/sso.md`);
       Kontoanlage nur mit `OIDC_ALLOW_SIGNUP`; der zweite Faktor gilt
       auch hier, damit er nicht an der Sicherheit des Anbieters hängt
 - [x] Seite folgen meldet Änderungen (PAGE_UPDATED mit dem Snapshot,

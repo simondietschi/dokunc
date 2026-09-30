@@ -174,6 +174,34 @@ differently on an existing installation, and what to do about it.
   erreichbar" (at most once per ten seconds). Alert on that line to notice
   such a misconfiguration. Nothing else to do.
 
+- **Single sign-on with Microsoft Entra ID:** providers that send no
+  `email_verified` now work. `xms_edov: true` from Entra ID counts as a
+  verified address, and when the ID token carries no address, or one
+  without `email_verified` and `xms_edov`, the sign-in also asks the
+  provider's userinfo endpoint (its `sub` must match). The new settings
+  `OIDC_TRUSTED_EMAIL_DOMAINS`, `OIDC_EMAIL_CLAIM`, `OIDC_NAME_CLAIM` and
+  `OIDC_SUBJECT_CLAIM` are described in `docs/admin/sso.md`;
+  `docker-compose.yml` passes them through, and an invalid value stops the
+  start with an error that names the variable. With
+  `OIDC_AUTO_LINK_BY_EMAIL=true` (the default), existing accounts are now
+  linked on the first SSO sign-in of such providers, where this failed
+  before: if addresses in your directory can be reassigned, set
+  `OIDC_AUTO_LINK_BY_EMAIL=false` before you update. Only the issuer of a
+  single tenant works (`https://login.microsoftonline.com/<tenant-id>/v2.0`);
+  `common`, `organizations` and `consumers` fail with a log line that says
+  so.
+
+- **Changing `OIDC_SUBJECT_CLAIM`:** when you set it to `oid`, as
+  recommended for Entra ID, each existing binding moves to the object ID on
+  the person's next sign-in. There is no automatic way back. Before you
+  switch back to `sub` or go back to an older version, clear the bindings
+  with `UPDATE "User" SET "oidcSubject" = NULL, "oidcIssuer" = NULL WHERE
+  "oidcIssuer" = '<issuer>'`; the next sign-in then links the accounts
+  again by verified email address (with `OIDC_AUTO_LINK_BY_EMAIL=true`,
+  never for admin accounts). Versions before this update do not know
+  `xms_edov`, so Entra ID accounts sign in there with their password, as
+  they did before.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -230,6 +258,16 @@ differently on an existing installation, and what to do about it.
   deploy order for separate services and several collaboration servers,
   rolling back across an update that changed the editor, and the log
   lines to watch.
+- Single sign-on: `OIDC_TRUSTED_EMAIL_DOMAINS`, `OIDC_EMAIL_CLAIM`,
+  `OIDC_NAME_CLAIM` and `OIDC_SUBJECT_CLAIM`; support for Entra ID's
+  `xms_edov` claim; a userinfo fallback for providers that send the email
+  address or its verification only there. The audit entries
+  `auth.sso_linked` and `auth.registered` record which claim the address
+  came from (`emailSource`) and what verified it (`verifiedBy`).
+- `docs/admin/sso.md`: provider settings, how dokunc decides that an
+  address is verified, a warning about account takeover through email
+  claims, and the setup for Microsoft Entra ID, Google, Keycloak and
+  authentik.
 
 ### Changed
 
@@ -254,6 +292,10 @@ differently on an existing installation, and what to do about it.
 - Several collaboration servers or separate web and collaboration
   services: update all of them to the same release, collaboration servers
   first (see `docs/admin/upgrading.md`).
+- The sign-in message for an unverified address now says that the provider
+  does not confirm it and that it can neither take over nor create an
+  account ("Der Anbieter bestätigt diese E-Mail-Adresse nicht."). Which
+  rule applied is recorded in the audit log.
 
 ### Removed
 
@@ -303,3 +345,7 @@ differently on an existing installation, and what to do about it.
   the collaboration server waited several seconds per Redis command
   before it fell back. After a second of outage they now fall back at
   once.
+- A multi-tenant Entra ID issuer (`common`, `organizations`) failed with
+  "OIDC-Aussteller stimmt nicht mit der Konfiguration" without naming the
+  cause. The log now says that only the issuer of a single tenant is
+  supported.

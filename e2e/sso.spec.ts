@@ -101,9 +101,7 @@ test("Google: eine bestätigte Adresse legt ein Konto an", async ({ page }) => {
 test("Entra ID: ein bestehendes Konto wird beim ersten SSO-Login verknüpft", async ({
   page,
 }) => {
-  // Heute scheitert die Anmeldung mit "unbestätigt": Entra ID schickt
-  // kein email_verified, sondern xms_edov.
-  test.fail();
+  // Entra ID schickt kein email_verified, sondern xms_edov.
   await kontoAnlegen("alex.muster@entra.test", "Alex Muster");
 
   const url = await ueberIdpAnmelden(page, "entra-mitglied");
@@ -125,9 +123,9 @@ test("Entra ID: ein bestehendes Konto wird beim ersten SSO-Login verknüpft", as
 test("Entra ID ohne Adresse im ID-Token: die Adresse kommt aus Userinfo", async ({
   page,
 }) => {
-  // Heute scheitert die Anmeldung mit "keine Adresse": der Anmeldeweg
-  // fragt Userinfo nicht.
-  test.fail();
+  // Ohne den optionalen Claim email steht die Adresse nur in Userinfo;
+  // der UPN liegt auf der Start-Domain des Tenants, die nicht in
+  // OIDC_TRUSTED_EMAIL_DOMAINS steht.
   const url = await ueberIdpAnmelden(page, "entra-ohne-email");
   expect(`${url.pathname}${url.search}`).toBe("/spaces");
 
@@ -143,7 +141,7 @@ test("Entra-Gast mit fremder Domain wird abgewiesen", async ({ page }) => {
   expect(url.pathname).toBe("/login");
   expect(url.searchParams.get("sso")).toBe("unverified");
   await expect(
-    page.getByText(/bestätigt diese E-Mail-Adresse nicht|als unbestätigt/),
+    page.getByText("Der Anbieter bestätigt diese E-Mail-Adresse nicht."),
   ).toBeVisible();
   expect(await konto("gast@extern.test")).toBeNull();
 });

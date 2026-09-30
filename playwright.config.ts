@@ -115,6 +115,11 @@ export default defineConfig({
         OIDC_CLIENT_SECRET: "test-idp-geheimnis-nur-fuer-tests",
         OIDC_BUTTON_LABEL: "Test-IdP",
         OIDC_ALLOW_SIGNUP: "true",
+        // Wie eine Entra-Instanz: Adressen der eigenen Domain gelten ohne
+        // xms_edov als bestaetigt, Konten ohne Postfach melden sich mit
+        // dem UPN an.
+        OIDC_TRUSTED_EMAIL_DOMAINS: "entra.test",
+        OIDC_EMAIL_CLAIM: "email,preferred_username",
       },
     },
   ],
