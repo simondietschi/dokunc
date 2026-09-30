@@ -456,3 +456,25 @@ describe("runImport: Titel kappen", () => {
     expect(result.roots[0].title.isWellFormed()).toBe(true);
   });
 });
+
+describe("runImport: Suchtext", () => {
+  it("ohne den Text von Wiki-Links: der kann der Titel des Ziels sein", async () => {
+    // Suche und KI-Index lesen Page.textContent, auch Personen, die das
+    // Ziel nicht öffnen dürfen (wird es später geschützt). Der Link
+    // bleibt im Inhalt, sein Text kommt nicht in den Suchtext; der
+    // Collab-Server hält es beim Speichern genauso.
+    db.prisma.page.update.mockClear();
+    await importOf([
+      { path: "a.md", data: text("# A\n\nSiehe [Kündigung M. Muster](b.md) dort.\n") },
+      { path: "b.md", data: text("# B\n\nInhalt\n") },
+    ]);
+    const updates = db.prisma.page.update.mock.calls.map(
+      ([arg]) => (arg as { data: { content: unknown; textContent: string } }).data,
+    );
+    const a = updates.find((d) => d.textContent.includes("Siehe"));
+    expect(a).toBeDefined();
+    expect(JSON.stringify(a!.content)).toContain('"type":"wikiLink"');
+    expect(a!.textContent).not.toContain("Kündigung");
+    expect(a!.textContent).toContain("dort.");
+  });
+});

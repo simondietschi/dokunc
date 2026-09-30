@@ -117,3 +117,16 @@ describe("rewriteLinks()", () => {
     ]);
   });
 });
+
+describe("extractText()", () => {
+  it("nimmt den Text von Wiki-Links nicht in den Suchtext", async () => {
+    const { doc } = markdownToDoc("Siehe [Kapitel 1](Kapitel%201.md) und [hier](Kapitel%201.md) weiter.");
+    const out = await rewriteLinks(doc, ctx().c);
+    expect(findNodes(out, "wikiLink")).toHaveLength(2);
+    const text = extractText(out);
+    expect(text).not.toContain("Kapitel");
+    expect(text).not.toContain("hier");
+    expect(text).toContain("Siehe");
+    expect(text).toContain("weiter.");
+  });
+});

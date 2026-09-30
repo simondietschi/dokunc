@@ -344,10 +344,11 @@ differently on an existing installation, and what to do about it.
   page, and only to readers who can open that page; everyone else sees
   "Seite ohne Zugriff" without a link, also when the target is in the
   trash or deleted. While the title loads, the link shows "…", and
-  "Verknüpfte Seite" when the title cannot be loaded. New links no longer
-  store the title of their target. Exports (Markdown, HTML, PDF) and the
-  print view show wiki links as plain text without a link target, also to
-  pages the reader can open, and mentions without the internal user ID.
+  "Verknüpfte Seite" when the title cannot be loaded. Links added in the
+  editor no longer store the title of their target. Exports (Markdown,
+  HTML, PDF) and the print view show wiki links as plain text without a
+  link target, also to pages the reader can open, and mentions without
+  the internal user ID.
   Shared pages show wiki links as plain text as well, with the current
   title only for pages that belong to the share (the shared page and,
   when sub-pages are included, its open sub-pages) and "Verknüpfte Seite"
@@ -423,10 +424,14 @@ differently on an existing installation, and what to do about it.
 - Wiki links revealed the title of the linked page to every reader of the
   linking page, also after the target was protected or renamed: in the
   editor, on shared pages, in exports, the print view, the version history
-  and the template preview. They now show the current title only to
-  readers who can open the target. The title stored in existing links is
-  still delivered to readers of the linking page with the page data; it
-  is no longer displayed, and new links no longer store it. Shared pages
+  and the template preview, and for imported pages in search results and
+  the AI index. They now show the current title only to readers who can
+  open the target, and imports no longer put the text of wiki links into
+  the search text. The title stored in existing links is still delivered
+  to readers of the linking page with the page data and is still included
+  when such a link is copied as text; links added in the editor no longer
+  store it. Pages imported before this version keep the text of their
+  wiki links in the search text until they are next edited. Shared pages
   no longer contain internal page and user IDs.
 - Deleting a group left its members' open editors connected until the
   collaboration server's next periodic check, up to a minute, so they

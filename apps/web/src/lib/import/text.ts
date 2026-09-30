@@ -16,7 +16,11 @@ export function decodeHead(bytes: Uint8Array, max = 64 * 1024): string {
 
 /**
  * Plain-Text aus ProseMirror-JSON (fuer Page.textContent / Suche).
- * Entspricht der Extraktion im Collab-Server.
+ * Wie im Collab-Server nur Textknoten, dazu hier der Code von
+ * Mermaid-Diagrammen. Wiki-Links tragen nichts bei: ihr Label ist oft
+ * der Titel des Ziels, und Suchtreffer und KI-Index zeigen den Suchtext
+ * allen, die diese Seite lesen, auch wenn sie das Ziel nicht oeffnen
+ * duerfen (lib/link-labels).
  */
 export function extractText(node: unknown): string {
   if (!node || typeof node !== "object") return "";
@@ -24,9 +28,6 @@ export function extractText(node: unknown): string {
   if (n.type === "text" && typeof n.text === "string") return n.text;
   if (n.type === "mermaid" && typeof n.attrs?.code === "string") {
     return n.attrs.code;
-  }
-  if (n.type === "wikiLink" && typeof n.attrs?.label === "string") {
-    return n.attrs.label;
   }
   if (Array.isArray(n.content)) {
     return n.content.map(extractText).join(" ");
