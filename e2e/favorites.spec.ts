@@ -28,10 +28,15 @@ async function waitForLive(page: Page) {
   });
 }
 
-/** Neue Seite anlegen, Titel setzen und auf die Sidebar warten. */
+/**
+ * Neue Seite anlegen, Titel setzen und auf die Sidebar warten. Auf eine
+ * andere Adresse als vorher warten: steht der Test schon auf einer Seite
+ * "Untitled", passten sonst Adresse und Titel sofort.
+ */
 async function createPage(page: Page, title: string): Promise<string> {
+  const vorher = page.url();
   await page.click("text=Neue Seite");
-  await page.waitForURL("**/p/**");
+  await page.waitForURL((u) => u.pathname.includes("/p/") && u.href !== vorher);
   const input = page.locator('input[name="title"]');
   await expect(input).toHaveValue("Untitled", { timeout: 15_000 });
   await waitForLive(page);

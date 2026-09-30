@@ -47,10 +47,13 @@ test("Wiki-Links erzeugen Backlinks", async ({ page }) => {
   // Hilfsfunktion: neue Seite anlegen und WARTEN, bis der frische Editor
   // gemountet ist (Titel-Feld = "Untitled"). Ohne das tippt der Test in
   // den noch sichtbaren alten Editor (der zeigt während der Navigation
-  // weiterhin "Live").
+  // weiterhin "Live"). Auf eine andere Adresse als vorher warten: heisst
+  // die Seite davor ebenfalls "Untitled", passten sonst Adresse und
+  // Titel sofort.
   async function createPage(title: string): Promise<string> {
+    const vorher = page.url();
     await page.click("text=Neue Seite");
-    await page.waitForURL("**/p/**");
+    await page.waitForURL((u) => u.pathname.includes("/p/") && u.href !== vorher);
     await expect(page.locator('input[name="title"]')).toHaveValue(
       "Untitled",
       { timeout: 15_000 },
@@ -131,9 +134,11 @@ test("Kommentar-Thread anlegen und auflösen", async ({ page }) => {
 
   // Eigene Seite: die Startseite sammelt ueber die Suite hinweg
   // Kommentare an, und ein voller Thread-Baum macht den Test langsam
-  // und von frueheren Tests abhaengig.
+  // und von frueheren Tests abhaengig. Auf eine andere Adresse warten:
+  // die erste Seite der Seitenleiste kann selbst "Untitled" heissen.
+  const vorher = page.url();
   await page.click("text=Neue Seite");
-  await page.waitForURL("**/p/**");
+  await page.waitForURL((u) => u.pathname.includes("/p/") && u.href !== vorher);
   await expect(page.locator('input[name="title"]')).toHaveValue("Untitled", {
     timeout: 15_000,
   });
@@ -511,8 +516,10 @@ test("Seitenkommentar ohne Textstelle", async ({ page }) => {
   // Eigene Seite, aus demselben Grund wie beim Thread-Test: auf der
   // Startseite sammeln sich über die Suite hinweg Kommentare an, und
   // ein voller Thread-Baum macht das Rendern last- statt sachabhängig.
+  // Auf eine andere Adresse warten, wie dort.
+  const vorher = page.url();
   await page.click("text=Neue Seite");
-  await page.waitForURL("**/p/**");
+  await page.waitForURL((u) => u.pathname.includes("/p/") && u.href !== vorher);
   await expect(page.locator('input[name="title"]')).toHaveValue("Untitled", {
     timeout: 15_000,
   });

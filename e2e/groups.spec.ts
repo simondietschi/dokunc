@@ -119,8 +119,12 @@ test("Seite schützen und wieder öffnen", async ({ page }) => {
   await login(page);
   const slug = await openFirstSpace(page);
 
+  // Auf eine andere Adresse warten: openFirstSpace steht schon auf einer
+  // Seite, und heisst die ebenfalls "Untitled", passten Adresse und Titel
+  // sofort, und der Test schuetzte die alte Seite.
+  const vorher = page.url();
   await page.click("text=Neue Seite");
-  await page.waitForURL("**/p/**");
+  await page.waitForURL((u) => u.pathname.includes("/p/") && u.href !== vorher);
   await expect(page.locator('input[name="title"]')).toHaveValue("Untitled", {
     timeout: 15_000,
   });
