@@ -1,0 +1,10 @@
+# Nur Code, der in einer Installation laeuft. Tests und E2E-Dateien laufen
+# dort nie und enthalten absichtlich Zugangsdaten von Testkonten.
+# lieferkette.test.ts laesst hier nur Testcode zu.
+# Muster nach der CodeQL-Doku: ** nur am Anfang, am Ende oder zwischen
+# Schraegstrichen, Sterne in Anfuehrungszeichen.
+paths-ignore:
+  - e2e
+  - apps/web/test
+  - "**/*.test.ts"
+  - "**/*.test.tsx"

@@ -65,9 +65,12 @@ For example `fix/redis-reconnect` or `feat/page-labels`, with the types from the
 | Check | Runs on | Fails when |
 |---|---|---|
 | CI (`.github/workflows/ci.yml`): known vulnerabilities, lint, types, unit, integration and end-to-end tests, Docker stack | pushes, pull requests, weekly | a step fails or a time limit is reached |
+| CodeQL (`.github/workflows/codeql.yml`): JavaScript/TypeScript and the workflows | pull requests, pushes to `main`, weekly | the analysis fails; new alerts show in the pull request |
 | PR title (`.github/workflows/pr-title.yml`) | pull requests | the title does not follow the rules above |
 
 A newer push to a pull request cancels the CI run that is still going for its previous state; every other run completes.
+
+**CodeQL alert.** Fix it, or dismiss it in the Security tab with a reason. Test code (`e2e/`, `apps/web/test/`, `*.test.ts`, `*.test.tsx`) is not analysed; it never runs in an installation.
 
 ## Maintainers
 
@@ -75,3 +78,4 @@ These rules rely on repository settings that are not stored in the repository:
 
 - **Merging:** "Allow merge commits" with the default commit message "Pull request title", so the subject on `main` is the checked title. Rebase merging is off. Squash merging is off, or its default commit message is "Pull request title"; otherwise a pull request with a single commit lands with that commit's subject.
 - **Required checks:** a ruleset for `main` requires the checks above once each of them has passed on `main`.
+- **Code scanning:** CodeQL "Default setup" stays off; while it is on, GitHub rejects the results of `codeql.yml`. The CodeQL checks become required only after the alerts of the first analysis of `main` have been triaged.

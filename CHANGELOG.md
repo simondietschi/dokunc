@@ -49,6 +49,10 @@ differently on an existing installation, and what to do about it.
 
 - Configuration check at startup for the web app and the collaboration
   server, with the effective configuration (secrets masked) in the log.
+- Code scanning with CodeQL (`security-extended` queries) for the JavaScript
+  and TypeScript code and the GitHub Actions workflows, on pull requests,
+  pushes to `main` and weekly; results appear under Security → Code
+  scanning.
 
 ### Changed
 

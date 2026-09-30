@@ -37,11 +37,13 @@ type Schritt = {
 };
 
 type Job = {
+  name?: string;
   if?: unknown;
   "continue-on-error"?: unknown;
   "timeout-minutes"?: number;
   permissions?: unknown;
   services?: Record<string, { image?: string }>;
+  strategy?: { matrix?: Record<string, unknown> };
   steps?: Schritt[];
 };
 
@@ -61,6 +63,17 @@ function workflows(): [string, Workflow][] {
     .sort()
     .map((d) => [d, parse(lesen(`.github/workflows/${d}`)) as Workflow]);
 }
+
+/**
+ * Schreibrechte auf Jobebene, je "datei:job". Alle anderen Jobs und jede
+ * oberste Ebene lesen nur. Ein neuer Eintrag braucht eine Begruendung im
+ * Kommentar:
+ * - codeql.yml:analyse: security-events, um die Ergebnisse (SARIF) in den
+ *   Security-Tab zu laden.
+ */
+const ERLAUBTE_SCHREIBRECHTE: Record<string, string[]> = {
+  "codeql.yml:analyse": ["security-events"],
+};
 
 /** Ausloeser eines Workflows; `on` darf Text, Liste oder Objekt sein. */
 function ereignisse(wf: Workflow): string[] {
@@ -347,6 +360,88 @@ describe("Lieferkette", () => {
       expect(nurPr ? [GRUPPE_JE_PR, GRUPPE_PR_NUMMER] : [GRUPPE_JE_PR], datei).toContain(
         c?.group,
       );
+    }
+  });
+
+  it("CodeQL: security-extended fuer JS/TS und Workflows, auf PR, main und woechentlich", () => {
+    const wf = parse(lesen(".github/workflows/codeql.yml")) as Workflow;
+    expect("pull_request" in wf.on).toBe(true);
+    expect((wf.on.push as Obj | undefined)?.branches as string[]).toContain("main");
+    // Ohne Zeitplan liefen neue Abfragen erst mit der naechsten Aenderung
+    const schedule = wf.on.schedule as { cron: string }[] | undefined;
+    expect(schedule?.length).toBeGreaterThanOrEqual(1);
+    for (const s of schedule ?? []) {
+      expect(s.cron.trim().split(/\s+/)).toHaveLength(5);
+    }
+    const jobs = Object.values(wf.jobs);
+    expect(jobs).toHaveLength(1);
+    const job = jobs[0];
+    expect(job.if).toBeUndefined();
+    expect(job["continue-on-error"]).toBeUndefined();
+    expect(job.strategy?.matrix?.language).toEqual(
+      expect.arrayContaining(["javascript-typescript", "actions"]),
+    );
+    const schritte = job.steps ?? [];
+    for (const s of schritte) {
+      expect(s["continue-on-error"], s.uses ?? s.name).toBeUndefined();
+      expect(s.if, s.uses ?? s.name).toBeUndefined();
+    }
+    const init = schritte.find((s) => s.uses?.startsWith("github/codeql-action/init@"));
+    expect(init?.with?.queries).toBe("security-extended");
+    expect(init?.with?.languages).toBe("${{ matrix.language }}");
+    // Interpretierte Sprachen: kein Build, der scheitern koennte
+    expect(init?.with?.["build-mode"]).toBe("none");
+    const konfiguration = String(init?.with?.["config-file"] ?? "");
+    expect(existsSync(join(ROOT, konfiguration)), konfiguration).toBe(true);
+    expect(
+      schritte.some((s) => s.uses?.startsWith("github/codeql-action/analyze@")),
+    ).toBe(true);
+  });
+
+  it("CodeQL: ausgenommen ist nur Testcode", () => {
+    const wf = parse(lesen(".github/workflows/codeql.yml")) as Workflow;
+    const init = schritte(wf).find((s) => s.uses?.startsWith("github/codeql-action/init@"));
+    const cfg = parse(lesen(String(init?.with?.["config-file"]))) as {
+      paths?: unknown;
+      "paths-ignore"?: string[];
+    };
+    // Eine Positivliste liesse neuen Code still ungeprueft
+    expect(cfg.paths).toBeUndefined();
+    for (const pfad of cfg["paths-ignore"] ?? []) {
+      expect(["e2e", "apps/web/test", "**/*.test.ts", "**/*.test.tsx"], pfad).toContain(pfad);
+    }
+  });
+
+  it("Alle Workflows: Schreibrechte nur wo erlaubt, dort jede Action per SHA", () => {
+    for (const [datei, wf] of workflows()) {
+      const text = lesen(`.github/workflows/${datei}`).split("\n");
+      // Oberste Ebene: gesetzt und nur lesend; sonst gaelten die
+      // Vorgaben des Repositorys
+      expect(wf.permissions, `${datei}: permissions fehlt`).toBeDefined();
+      expect(JSON.stringify(wf.permissions), datei).not.toMatch(/write/);
+      for (const [name, job] of Object.entries(wf.jobs)) {
+        const wo = `${datei}:${name}`;
+        const rechte = job.permissions;
+        expect(typeof rechte === "string" ? rechte : "", wo).not.toMatch(/write/);
+        const schreibend = Object.entries(
+          typeof rechte === "object" && rechte !== null ? (rechte as Obj) : {},
+        )
+          .filter(([, w]) => w === "write")
+          .map(([k]) => k);
+        expect(ERLAUBTE_SCHREIBRECHTE[wo] ?? [], wo).toEqual(expect.arrayContaining(schreibend));
+        for (const s of job.steps ?? []) {
+          if (s.uses === undefined) continue;
+          // Wo geschrieben werden darf, und bei Actions ausserhalb von
+          // actions/*, ist jede Action per Commit festgelegt; ein
+          // verschobener Tag kann dann keinen fremden Code einschleusen.
+          // Der Kommentar nennt die Version fuer Menschen und Dependabot.
+          if (schreibend.length === 0 && s.uses.startsWith("actions/")) continue;
+          expect(s.uses, wo).toMatch(/@[0-9a-f]{40}$/);
+          const zeilen = text.filter((z) => z.includes(`uses: ${s.uses}`));
+          expect(zeilen.length, `${wo}: ${s.uses}`).toBeGreaterThan(0);
+          for (const z of zeilen) expect(z, wo).toMatch(/ # v\d+\.\d+\.\d+\s*$/);
+        }
+      }
     }
   });
 
