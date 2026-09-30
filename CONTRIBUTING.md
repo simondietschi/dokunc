@@ -1,0 +1,77 @@
+# Contributing
+
+## Commit messages
+
+Commits follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) and are written in English.
+
+    <type>(<scope>)!: <description>
+
+    <body>
+
+    <footers>
+
+| Type | Use it for |
+|---|---|
+| `feat` | new behaviour for users or operators |
+| `fix` | bug fixes; runtime dependency updates as `fix(deps)` |
+| `perf` | faster or leaner, same behaviour |
+| `revert` | undoing a change: `revert: <subject of the reverted commit>` |
+| `refactor` | code changes without behaviour change |
+| `docs` | documentation only |
+| `test` | tests only |
+| `build` | Dockerfile, Compose files, package manager |
+| `ci` | GitHub workflows and Dependabot |
+| `chore` | everything else; development dependencies as `chore(deps-dev)` |
+| `style` | formatting only |
+
+- **Scope** (optional): lowercase letters, digits and hyphens. Common scopes: `web`, `collab`, `db`, `editor`, `mail`, `e2e`, `docker`, `deps`, `deps-dev`.
+- **`!`** after the type or scope marks a breaking change: an existing installation has to act although its configuration was valid so far, or a documented interface changes incompatibly. Explain it in a `BREAKING CHANGE:` footer and under "Upgrade notes" in `CHANGELOG.md`.
+- **Description:** imperative mood ("add", not "added"), no full stop at the end. The whole first line has at most 100 characters.
+- **Body:** why the change was needed, what changed, and how it was verified. A new test names its counter-check: the change reverted or broken on purpose, and the failure that was seen.
+- **References:** refer to GitHub issues (`Fixes #123`, `Refs #123`). Do not refer to internal plans, review rounds or finding numbers; describe what the change does.
+
+## Changelog
+
+`CHANGELOG.md` follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). A change that operators or people evaluating the project notice gets its entry in the same commit, under `## [Unreleased]`:
+
+- **Upgrade notes:** everything that behaves differently on an existing installation after the update, such as migrations, changed defaults and new or stricter settings. Each note starts with a bold keyword and a colon and says what to do, or "Nothing to do.": `- **Mail sender:** ...`.
+- **Security:** fixed vulnerabilities.
+- **Added, Changed, Removed, Fixed:** as described by Keep a Changelog.
+
+Rules for entries:
+
+- Use only the headings that already exist under "Unreleased", and append your entries at the end of their section. Do not add headings.
+- An entry is a list item (`- `); continuation lines are indented by two spaces.
+- Changes that only concern contributors, such as tests, CI mechanics or this file, get no entry.
+- No internal plan identifiers, stage names or finding numbers, not even in parentheses.
+
+`.gitattributes` sets `merge=union` for `CHANGELOG.md`: when branches that each appended entries are merged or cherry-picked one after another, Git keeps the lines of both sides instead of writing conflict markers. Check the result once: every entry must still be under its heading, and none may appear twice. `apps/web/src/changelog.test.ts` checks the format.
+
+## Pull requests
+
+- The title has the same format as a commit subject and becomes the subject of the commit on `main`. Choose the type for the pull request as a whole.
+- The workflow "PR-Titel" checks the title whenever the pull request is opened, edited, reopened or updated. It runs the check as it is on the target branch, so a change to the check takes effect once it is merged.
+- GitHub's revert button suggests `Revert "<title>"`. Rename it to `revert: <title>`.
+- Dependabot titles follow these rules through `commit-message` in `.github/dependabot.yml`. Dependabot does not shorten its titles, so the length limit does not apply to them.
+
+## Branches
+
+    <type>/<short-description>
+
+For example `fix/redis-reconnect` or `feat/page-labels`, with the types from the table above. Branches created by tools keep their own prefix (`dependabot/…`, `claude/…`). `release/X.Y` is reserved for maintenance releases.
+
+## Checks
+
+| Check | Runs on | Fails when |
+|---|---|---|
+| CI (`.github/workflows/ci.yml`): known vulnerabilities, lint, types, unit, integration and end-to-end tests, Docker stack | pushes, pull requests, weekly | a step fails or a time limit is reached |
+| PR title (`.github/workflows/pr-title.yml`) | pull requests | the title does not follow the rules above |
+
+A newer push to a pull request cancels the CI run that is still going for its previous state; every other run completes.
+
+## Maintainers
+
+These rules rely on repository settings that are not stored in the repository:
+
+- **Merging:** "Allow merge commits" with the default commit message "Pull request title", so the subject on `main` is the checked title. Rebase merging is off. Squash merging is off, or its default commit message is "Pull request title"; otherwise a pull request with a single commit lands with that commit's subject.
+- **Required checks:** a ruleset for `main` requires the checks above once each of them has passed on `main`.

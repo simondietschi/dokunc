@@ -1,0 +1,46 @@
+name: PR-Titel
+
+# Der Titel eines Pull-Requests wird zum Betreff des Commits auf main:
+# Conventional Commits auf Englisch (CONTRIBUTING.md). "edited" prueft
+# einen geaenderten Titel; "synchronize" haengt das Ergebnis an jeden
+# neuen Stand, weil Pflichtpruefungen je Commit gelten. Eigener Workflow,
+# damit ein geaenderter Titel nicht die ganze CI neu startet.
+#
+# pull_request_target statt pull_request: Workflow und Pruefskript kommen
+# vom Zielbranch, nicht aus dem Pull-Request. Sonst koennte ein
+# Pull-Request das Skript aendern und so seine eigene Pruefung bestehen.
+# Deshalb checkt der Job nie Code aus dem Pull-Request aus (kein ref), und
+# er darf nur lesen. Eine Aenderung an Workflow oder Skript wirkt erst,
+# wenn sie auf dem Zielbranch liegt.
+on:
+  pull_request_target:
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+# Nur das Ergebnis zum neuesten Titel und Stand zaehlt
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  titel:
+    name: PR-Titel (Conventional Commits)
+    runs-on: ubuntu-latest
+    # Das Skript braucht unter einer Sekunde
+    timeout-minutes: 5
+    steps:
+      # Ohne ref: bei pull_request_target der Stand des Zielbranches
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/scripts
+          persist-credentials: false
+      # Titel und Autor nur ueber env, nie als Ausdruck in run: sonst liefe
+      # ein Titel wie 'fix: $(curl …)' als Befehl. Der Autor entscheidet
+      # nur ueber die Laengengrenze (Dependabot kuerzt nicht).
+      - name: Titel pruefen
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: node .github/scripts/pr-title.mjs

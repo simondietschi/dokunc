@@ -3,6 +3,11 @@
 # schaltet die Repository-Einstellung ein (Settings > Code security),
 # nicht diese Datei. Pruefung der Datei: apps/web/src/lieferkette.test.ts
 #
+# Titel und Commits nach Conventional Commits (Workflow PR-Titel,
+# CONTRIBUTING.md): commit-message je Oekosystem, include: scope ergibt
+# den Bereich deps bzw. deps-dev. apps/web/src/konventionen.test.ts
+# prueft, dass jeder Vorschlag die Titelpruefung besteht.
+#
 # Bei gleitenden Tags (caddy:2, node:26-trixie-slim, postgres:18-trixie,
 # redis:8, gotenberg/gotenberg:8) schlaegt Dependabot nur neue
 # Hauptversionen mit demselben Suffix vor. Fuer node, postgres und redis
@@ -29,6 +34,12 @@ updates:
     # rechnet in Tagen, deshalb einer mehr.
     cooldown:
       default-days: 2
+    # Laufzeitabhaengigkeiten landen im Image: fix(deps). Entwicklungs-
+    # abhaengigkeiten nicht: chore(deps-dev).
+    commit-message:
+      prefix: fix
+      prefix-development: chore
+      include: scope
     open-pull-requests-limit: 10
     groups:
       prisma:
@@ -44,7 +55,7 @@ updates:
       tailwind:
         patterns: ["tailwindcss", "@tailwindcss/*"]
       # Alles uebrige in einem PR, Hauptversionen einzeln
-      uebrige:
+      other:
         patterns: ["*"]
         update-types: ["minor", "patch"]
     ignore:
@@ -87,6 +98,10 @@ updates:
       day: monday
       time: "05:00"
       timezone: Europe/Zurich
+    # Das Basis-Image landet im Image der App
+    commit-message:
+      prefix: fix
+      include: scope
     ignore:
       # Node-Hauptversion nur zusammen mit engines, .nvmrc und CI
       - dependency-name: node
@@ -99,6 +114,10 @@ updates:
       day: monday
       time: "05:00"
       timezone: Europe/Zurich
+    # Die Images der Dienste ziehen Installationen mit dem Update-Befehl
+    commit-message:
+      prefix: fix
+      include: scope
     # Gotenberg-Hauptversionen prueft der CI-Schritt "PDF-Dienst laedt keine
     # fremden Adressen" (Allow-List und eingebettete Bilder).
     ignore:
@@ -118,6 +137,9 @@ updates:
       day: monday
       time: "05:00"
       timezone: Europe/Zurich
+    commit-message:
+      prefix: ci
+      include: scope
     groups:
       actions:
         patterns: ["*"]
