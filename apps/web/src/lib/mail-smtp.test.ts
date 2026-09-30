@@ -271,6 +271,27 @@ describe("Fehler fuer das Log ohne Empfaengeradresse (mailErrorForLog)", () => {
     expect(imLog(fehler).toLowerCase()).not.toMatch(/a@b\.ch|c@d\.ch/);
   });
 
+  it("schwaerzt auch die Punycode-Form einer Domain mit Umlauten", async () => {
+    // Bei einem lokalen Teil in ASCII schreibt nodemailer die Domain in
+    // den Umschlag als Punycode, und so kommt sie in der Antwort zurueck.
+    verhalten.rcpt = "550 5.1.1 <KIM@XN--MLLER-KVA.CH>: Recipient address rejected";
+    const roh = await mail.sendMail({ ...MAIL, to: "kim@müller.ch" }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(roh).toBeInstanceOf(Error);
+    expect(befehle).toContain("RCPT TO:<kim@xn--mller-kva.ch>");
+    expect(imLog(roh as Error).toLowerCase()).toContain("kim@xn--mller-kva.ch");
+    const text = imLog(mail.mailErrorForLog(roh, "kim@müller.ch")).toLowerCase();
+    expect(text).not.toContain("xn--mller-kva");
+    expect(text).toContain("<[adresse]>: recipient address rejected");
+    // Umgekehrt: mit Umlauten im lokalen Teil bleibt die Domain in Unicode,
+    // auch wenn die Adresse als Punycode angegeben ist.
+    expect(mail.mailErrorForLog("Abgelehnt: jörg@müller.ch", "jörg@xn--mller-kva.ch").message).toBe(
+      "Abgelehnt: [adresse]",
+    );
+  });
+
   it("schwaerzt auch die Ursache", () => {
     const ursache = Object.assign(new Error("Mailbox kim@example.org voll"), { code: "EMESSAGE" });
     const fehler = mail.mailErrorForLog(new Error("Versand gescheitert", { cause: ursache }), ADRESSE);

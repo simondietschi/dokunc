@@ -1,3 +1,4 @@
+import { domainToASCII, domainToUnicode } from "node:url";
 import { effectiveSender } from "@dokunc/config";
 import nodemailer, { type Transporter } from "nodemailer";
 
@@ -105,23 +106,45 @@ const MAX_URSACHEN = 3;
  * Reset-Link oder eine Benachrichtigung bekommen sollte.
  *
  * Liefert ein neues Error mit `name`, `message` und `stack`, in denen jede
- * der Adressen (ohne Beachtung der Grossschreibung) durch `[adresse]`
+ * der Adressen (ohne Beachtung der Grossschreibung, auch mit der Domain
+ * als Punycode oder in Unicode, s. adressFormen) durch `[adresse]`
  * ersetzt ist, dazu `code`, `responseCode`, `command` und `response`
  * (ebenso ersetzt) und die Ursache (`cause`) auf dieselbe Weise. Alle
  * übrigen Felder (`rejected`, `rejectedErrors`, `accepted`, `envelope`)
  * fallen weg.
  */
 export function mailErrorForLog(e: unknown, adresse: string | readonly string[]): Error {
-  const adressen = (typeof adresse === "string" ? [adresse] : [...adresse])
-    .map((a) => a.trim())
-    .filter((a) => a !== "")
-    .sort((a, b) => b.length - a.length);
+  const adressen = [
+    ...new Set(
+      (typeof adresse === "string" ? [adresse] : [...adresse])
+        .map((a) => a.trim())
+        .filter((a) => a !== "")
+        .flatMap(adressFormen),
+    ),
+  ].sort((a, b) => b.length - a.length);
   const muster =
     adressen.length > 0
       ? new RegExp(adressen.map((a) => a.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi")
       : null;
   const ohne = (text: string) => (muster ? text.replace(muster, "[adresse]") : text);
   return ohneAdresse(e, ohne, MAX_URSACHEN);
+}
+
+/**
+ * Die Formen, in denen eine Adresse in einem Fehler stehen kann: wie
+ * angegeben und mit der Domain als Punycode und in Unicode. nodemailer
+ * schreibt die Domain in den Umschlag als Punycode, wenn der lokale Teil
+ * ASCII ist ("kim@müller.ch" -> "kim@xn--mller-kva.ch"), sonst in
+ * Unicode; der Server wiederholt sie so in seiner Antwort.
+ */
+function adressFormen(adresse: string): string[] {
+  const at = adresse.lastIndexOf("@");
+  if (at < 0) return [adresse];
+  const lokal = adresse.slice(0, at);
+  const domain = adresse.slice(at + 1);
+  // domainToASCII und domainToUnicode liefern "" für eine ungültige Domain.
+  const domains = [domainToASCII(domain), domainToUnicode(domain)].filter((d) => d !== "");
+  return [adresse, ...domains.map((d) => `${lokal}@${d}`)];
 }
 
 function ohneAdresse(e: unknown, ohne: (text: string) => string, tiefe: number): Error {
