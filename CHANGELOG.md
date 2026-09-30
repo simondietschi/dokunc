@@ -387,25 +387,29 @@ differently on an existing installation, and what to do about it.
   to do.
 
 - **Signing out and ended sessions:** signing out is now a form post to
-  `/logout`, and the first page opened after a session ended elsewhere
-  (idle timeout `SESSION_IDLE_TIMEOUT`, "Gerät abmelden" or "Überall
-  abmelden" on another device, a password change on another device)
-  passes through `/session-ended` on its way to the sign-in page;
-  "Gerät abmelden" for the own device, "Überall abmelden" and deleting
-  the account go there as well. If a reverse proxy in front of the app
-  only forwards listed paths, allow `/logout` and `/session-ended`;
-  otherwise nothing to do. Both delete all page copies in the browser,
-  and over HTTPS and on `localhost` they send `Clear-Site-Data: "cache",
-  "storage"`: the browser empties the site's cache and storage, which
-  also resets the theme and the table-of-contents setting. Over plain
-  HTTP browsers ignore the header; the sign-in page then deletes the page
-  copies itself, and files of opened pages can stay in the browser cache.
-  A session that expires together with its cookie (`JWT_EXPIRES_IN`)
-  leads straight to the sign-in page, which deletes the page copies
-  without the header. The sign-out button asks first if the editor in
-  that tab has changes the server has not confirmed; other tabs lose
-  such changes without asking. After a rollback to an earlier version,
-  signing out deletes no page copies.
+  `/logout`. After a session ended elsewhere (idle timeout
+  `SESSION_IDLE_TIMEOUT`, "Gerät abmelden" or "Überall abmelden" on
+  another device, a password change on another device), the next full
+  page load (reload, typed address, bookmark) passes through
+  `/session-ended` on its way to the sign-in page; "Gerät abmelden" for
+  the own device, "Überall abmelden" and deleting the account go there
+  right away. If a reverse proxy in front of the app only forwards listed
+  paths, allow `/logout` and `/session-ended`; otherwise nothing to do.
+  Both delete all page copies in the browser, and over HTTPS and on
+  `localhost` they send `Clear-Site-Data: "cache", "storage"`: the
+  browser empties the site's cache and storage, which also resets the
+  theme and the table-of-contents setting. A click inside the app, a link
+  from another site (for example in a mail), the sign-out after too many
+  wrong passwords and a session that expires together with its cookie
+  (`JWT_EXPIRES_IN`) reach the sign-in page without the header. The
+  sign-in page deletes the page copies itself and, over HTTPS and on
+  `localhost`, then loads `/session-ended` once if the browser still sent
+  the old session cookie or still held page copies. Over plain HTTP
+  browsers ignore the header: only the page copies are deleted, and files
+  of opened pages can stay in the browser cache. The sign-out button asks
+  first if the editor in that tab has changes the server has not
+  confirmed; other tabs lose such changes without asking. After a
+  rollback to an earlier version, signing out deletes no page copies.
 
 ### Security
 

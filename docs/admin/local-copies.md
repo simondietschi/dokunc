@@ -45,8 +45,9 @@ The editor opens only its own account's copy of a page.
 | Event | What is deleted |
 |---|---|
 | Signing out (`POST /logout`) | All copies, and over HTTPS the site's storage and cache |
-| The first page opened after the session ended (idle timeout, "Gerät abmelden" or "Überall abmelden", a password change on another device, account deleted), through `GET /session-ended` | All copies, and over HTTPS the site's storage and cache |
-| The sign-in page is shown without a valid session | All copies |
+| "Gerät abmelden" for the own device, "Überall abmelden", deleting the account: the browser loads `GET /session-ended` | All copies, and over HTTPS the site's storage and cache |
+| The next full page load (reload, typed address, bookmark) after the session ended elsewhere (idle timeout, "Gerät abmelden" or "Überall abmelden" on another device, a password change on another device), through `GET /session-ended` | All copies, and over HTTPS the site's storage and cache |
+| The sign-in page is shown without a valid session | All copies. Over HTTPS, if the browser still sent the ended session's cookie or still held page copies, the page then loads `GET /session-ended` once: the site's storage and cache as well |
 | The server confirms the account in an editor tab (every connection) | Copies of other accounts and other restore epochs, and all copies made by earlier versions without an account |
 | The server refuses a page for good: access removed, page in the trash or deleted | The copy of that page |
 | The server answers that the session is no longer valid | All copies in the browser |
@@ -72,10 +73,29 @@ that:
   the app sends it only for a page navigation from the site itself or typed
   in (`Sec-Fetch-Dest: document`, `Sec-Fetch-Site: same-origin` or `none`).
 - The sign-in page deletes all page copies itself when nobody is signed
-  in. This also works over plain HTTP, where the browser cache keeps files
-  of pages that were open.
+  in. This also works over plain HTTP.
 - The editor deletes all copies when the server answers that the session
   is no longer valid.
+
+Only a full page load with the ended session's cookie goes through
+`/session-ended` directly. These ways reach the sign-in page without the
+header:
+
+- a click inside the app, which loads the next page without a full page
+  load;
+- a link from another site, for example in a mail: the header is only sent
+  for navigations from the site itself, so `/session-ended` keeps the old
+  cookie and sends the browser on to the sign-in page;
+- the sign-out after too many wrong passwords;
+- a session that expires together with its cookie (`JWT_EXPIRES_IN`).
+
+There the sign-in page deletes the page copies and, over HTTPS and on
+`localhost`, loads `/session-ended` once if the browser still sent the old
+session cookie or still held page copies; that response carries the header.
+The browser cache keeps files of opened pages only over plain HTTP, and over
+HTTPS when the sign-in page finds neither the old cookie nor page copies,
+for example after a cookie expired together with its session while an open
+editor had already deleted the copies.
 
 A reverse proxy that only forwards listed paths must allow `/logout` and
 `/session-ended`. `/logout` accepts only posts from the app's own origin
@@ -85,10 +105,6 @@ stays. `/session-ended` changes nothing for a signed-in browser.
 The sign-out button asks for confirmation when the editor in the same tab
 has changes the server has not confirmed. Other tabs of the same browser
 lose such changes without a question, and an idle timeout cannot ask.
-
-A session that expires together with its cookie (`JWT_EXPIRES_IN`) sends no
-cookie, so the browser goes straight to the sign-in page; there the page
-copies are deleted without `Clear-Site-Data`.
 
 ## Open tabs
 

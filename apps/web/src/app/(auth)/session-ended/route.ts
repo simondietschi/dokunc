@@ -1,6 +1,11 @@
 import { getCurrentUser } from "@/lib/current-user";
-import { dropSessionCookie } from "@/lib/session";
-import { CLEAR_SITE_DATA, clearSiteDataAllowed, seeOther } from "@/lib/session-end";
+import { dropSessionCookie, hasSessionCookie } from "@/lib/session";
+import {
+  CLEAR_SITE_DATA,
+  clearSiteDataAllowed,
+  seeOther,
+  sessionCookieDroppable,
+} from "@/lib/session-end";
 
 export const runtime = "nodejs";
 
@@ -9,16 +14,22 @@ export const runtime = "nodejs";
  * "Gerät abmelden", "Überall abmelden", Konto geloescht): Cookie weg,
  * `Clear-Site-Data` fuer die lokalen Kopien und den HTTP-Cache, weiter
  * zur Anmeldung. Hierher fuehren requireUser() bei einer Dokumentanfrage
- * mit ungueltigem Cookie und die Konto-Actions nach dem Abmelden
- * (window.location.assign, lib/session-end).
+ * mit ungueltigem Cookie, die Konto-Actions nach dem Abmelden
+ * (window.location.assign) und die Anmeldeseite, wenn sie ohne den Kopf
+ * erreicht wurde (LocalDataCleanup, lib/session-end).
  *
  * Mit gueltiger Sitzung passiert nichts: ein Link hierher loescht bei
  * angemeldeten Personen nichts. Ohne Sitzung gibt es nach der Regel
  * ohnehin keine lokalen Kopien, nur Design und Inhaltsverzeichnis-Zustand.
+ * Das Cookie geht nur weg, wenn es mitkam und die Anfrage von hier kommt
+ * (sessionCookieDroppable); nach einem Link von einer fremden Seite
+ * bleibt es, damit die Anmeldeseite den Weg hierher wiederholt.
  */
 export async function GET(req: Request) {
   if (await getCurrentUser()) return seeOther("/spaces");
-  await dropSessionCookie();
+  if (sessionCookieDroppable(req.headers, await hasSessionCookie())) {
+    await dropSessionCookie();
+  }
   return seeOther(
     "/login",
     clearSiteDataAllowed(req.headers) ? { "Clear-Site-Data": CLEAR_SITE_DATA } : {},

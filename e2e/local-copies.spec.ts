@@ -97,9 +97,21 @@ async function oeffne(page: Page, pageId: string) {
   await waitForLive(page);
 }
 
-/** Namen der IndexedDB-Datenbanken dieses Browserkontexts. */
+/**
+ * Namen der IndexedDB-Datenbanken dieses Browserkontexts. Laedt die
+ * Anmeldeseite gerade /session-ended nach, wird erneut gefragt.
+ */
 async function idbNames(page: Page): Promise<string[]> {
-  return page.evaluate(async () => (await indexedDB.databases()).map((d) => d.name ?? ""));
+  for (let versuch = 0; ; versuch++) {
+    try {
+      return await page.evaluate(async () =>
+        (await indexedDB.databases()).map((d) => d.name ?? ""),
+      );
+    } catch (e) {
+      if (versuch >= 5 || !/Execution context was destroyed/.test(String(e))) throw e;
+      await page.waitForLoadState();
+    }
+  }
 }
 
 /** Die Kopien eines Kontos fuer eine Seite (jede Epoche, jede Schemaversion). */
@@ -359,8 +371,11 @@ test("Abmelden loescht die Kopien, ein zweites Konto sieht keine alte Kopie", as
 test("Ohne Clear-Site-Data raeumt die Anmeldeseite die Kopien", async ({ page }) => {
   const a = await neuesMitglied("Abmelden ohne Kopf");
   const p = await seite(`Ohne Kopf ${ZEIT}`, "Seite ohne Kopf");
-  // Wie ueber reines HTTP: der Browser bekommt den Kopf nicht.
-  await page.route("**/logout", async (route) => {
+  // Wie ueber reines HTTP: der Browser bekommt den Kopf nie, weder von
+  // /logout noch von /session-ended.
+  let sitzungsende = 0;
+  await page.route(/\/(logout|session-ended)$/, async (route) => {
+    if (new URL(route.request().url()).pathname === "/session-ended") sitzungsende += 1;
     const antwort = await route.fetch({ maxRedirects: 0 });
     const koepfe = { ...antwort.headers() };
     delete koepfe["clear-site-data"];
@@ -370,10 +385,17 @@ test("Ohne Clear-Site-Data raeumt die Anmeldeseite die Kopien", async ({ page })
   await mitKopie(page, a, p, " ohne Kopf");
   await setzeMarke(page);
   await page.locator("aside").getByRole("button", { name: "Abmelden" }).click();
+  // Die Anmeldeseite fand noch Kopien und versucht den Kopf einmal ueber
+  // /session-ended; kommt er nicht an, bleibt es bei diesem einen Versuch.
+  await expect.poll(() => sitzungsende, { timeout: 15_000 }).toBe(1);
   await page.waitForURL("**/login");
+  await page.waitForLoadState();
   await expect.poll(() => alleKopien(page), { timeout: 15_000 }).toEqual([]);
   // Die Marke bleibt: geraeumt hat die Seite, nicht der Kopf.
   expect(await marke(page)).toBe("1");
+  await page.waitForTimeout(3_000);
+  expect(sitzungsende).toBe(1);
+  expect(new URL(page.url()).pathname).toBe("/login");
 });
 
 test("Abgelaufene Sitzung loescht die Kopien ueber /session-ended", async ({ page }) => {
@@ -393,6 +415,84 @@ test("Abgelaufene Sitzung loescht die Kopien ueber /session-ended", async ({ pag
   await page.waitForURL("**/login");
   await expect.poll(() => alleKopien(page), { timeout: 15_000 }).toEqual([]);
   expect(await marke(page)).toBeNull();
+});
+
+// Eine offene Seite, deren Sitzung anderswo endete: ein Klick in der App
+// ist eine weiche Navigation (RSC-Abruf). requireUser leitet dort nach
+// /login, ohne Clear-Site-Data; die Anmeldeseite sieht das ungueltige
+// Cookie und laedt /session-ended als Dokument nach.
+test("Nach dem Sitzungsende leert auch ein Klick in der App den Speicher", async ({ page }) => {
+  const a = await neuesMitglied("Weiche Navigation");
+  const p1 = await seite(`Weich eins ${ZEIT}`, "Erste Seite");
+  const p2 = await seite(`Weich zwei ${ZEIT}`, "Zweite Seite");
+  await login(page, a);
+  await mitKopie(page, a, p1, " vor dem Ende");
+  await setzeMarke(page);
+
+  await widerrufeSitzungen(a.id);
+  // Jeder Weg ueber /session-ended ist ein Dokumentaufruf, nie ein
+  // RSC-Abruf eines Route-Handlers.
+  const wege: boolean[] = [];
+  page.on("request", (r) => {
+    if (new URL(r.url()).pathname === "/session-ended") wege.push(r.isNavigationRequest());
+  });
+  const weich = page.waitForRequest(
+    (r) => new URL(r.url()).pathname === `/s/${space.slug}/p/${p2}`,
+  );
+  const ende = page.waitForResponse((r) => new URL(r.url()).pathname === "/session-ended", {
+    timeout: 20_000,
+  });
+  await page.locator("aside").getByRole("link", { name: `Weich zwei ${ZEIT}`, exact: true }).click();
+  // Der Klick war kein Dokumentaufruf.
+  const klick = await weich;
+  expect(klick.isNavigationRequest()).toBe(false);
+  expect(await klick.headerValue("rsc")).toBe("1");
+  expect((await (await ende).allHeaders())["clear-site-data"]).toBe('"cache", "storage"');
+  await page.waitForURL("**/login");
+  await expect.poll(() => alleKopien(page), { timeout: 15_000 }).toEqual([]);
+  expect(await marke(page)).toBeNull();
+  const cookies = await page.context().cookies();
+  expect(cookies.some((c) => c.name === "dokunc_session")).toBe(false);
+  expect(wege).toEqual([true]);
+});
+
+// Ein Link aus einer Mail ist eine Navigation von einer fremden Seite:
+// /session-ended darf dort keinen Kopf schicken (Sec-Fetch-Site) und
+// laesst das ungueltige Cookie stehen. Die Anmeldeseite sieht es und
+// laedt /session-ended von hier aus, jetzt mit dem Kopf. Die verlinkte
+// Seite war nie offen (keine Kopien): das zeigt allein den Weg ueber das
+// Cookie.
+test("Nach dem Sitzungsende leert auch ein Link von einer fremden Seite den Speicher", async ({
+  page,
+  baseURL,
+}) => {
+  const a = await neuesMitglied("Link aus der Mail");
+  const p = await seite(`Mail-Link ${ZEIT}`, "Seite aus der Mail");
+  await login(page, a);
+  await setzeMarke(page);
+  expect(await alleKopien(page)).toEqual([]);
+
+  await widerrufeSitzungen(a.id);
+  const ziel = new URL(`/s/${space.slug}/p/${p}`, baseURL).toString();
+  await page.route("https://mail.example/**", (route) =>
+    route.fulfill({
+      contentType: "text/html",
+      body: `<!doctype html><a href="${ziel}">Link aus der Mail</a>`,
+    }),
+  );
+  await page.goto("https://mail.example/");
+  const koepfe: (string | null)[] = [];
+  page.on("response", (r) => {
+    if (new URL(r.url()).pathname !== "/session-ended") return;
+    void r.allHeaders().then((h) => koepfe.push(h["clear-site-data"] ?? null));
+  });
+  await page.getByRole("link", { name: "Link aus der Mail" }).click();
+  await expect.poll(() => koepfe, { timeout: 15_000 }).toEqual([null, '"cache", "storage"']);
+  await page.waitForURL("**/login");
+  await page.waitForLoadState();
+  expect(await marke(page)).toBeNull();
+  const cookies = await page.context().cookies();
+  expect(cookies.some((c) => c.name === "dokunc_session")).toBe(false);
 });
 
 test("Dieses Geraet auf der Kontoseite abmelden leert den Speicher", async ({ page }) => {

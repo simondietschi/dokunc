@@ -9,10 +9,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   user: null as { id: string } | null,
+  cookie: true,
   dropSessionCookie: vi.fn(async () => {}),
 }));
 vi.mock("@/lib/current-user", () => ({ getCurrentUser: vi.fn(async () => mocks.user) }));
-vi.mock("@/lib/session", () => ({ dropSessionCookie: mocks.dropSessionCookie }));
+vi.mock("@/lib/session", () => ({
+  dropSessionCookie: mocks.dropSessionCookie,
+  hasSessionCookie: vi.fn(async () => mocks.cookie),
+}));
 
 const { GET } = await import("./route");
 
@@ -24,6 +28,7 @@ function anfrage(h: Record<string, string>): Request {
 
 beforeEach(() => {
   mocks.user = null;
+  mocks.cookie = true;
   mocks.dropSessionCookie.mockClear();
 });
 
@@ -46,10 +51,31 @@ describe("GET /session-ended", () => {
     expect(mocks.dropSessionCookie).toHaveBeenCalledTimes(1);
   });
 
-  it("von einer fremden Seite eingebettet: kein Clear-Site-Data", async () => {
+  // Ein <img src=".../session-ended"> einer fremden Seite schickt unter
+  // SameSite=Lax kein Cookie, auch wenn die Sitzung gueltig ist: nichts
+  // loeschen, auch nicht das Cookie.
+  it("von einer fremden Seite eingebettet: kein Clear-Site-Data, Cookie bleibt", async () => {
+    mocks.cookie = false;
     const r = await GET(anfrage({ "sec-fetch-dest": "image", "sec-fetch-site": "cross-site" }));
     expect(r.status).toBe(303);
     expect(r.headers.get("location")).toBe("/login");
     expect(r.headers.get("clear-site-data")).toBeNull();
+    expect(mocks.dropSessionCookie).not.toHaveBeenCalled();
+  });
+
+  // Link in einer Mail: der Kopf ist dort nicht erlaubt. Das ungueltige
+  // Cookie bleibt, die Anmeldeseite laedt /session-ended dann von hier.
+  it("Navigation von einer fremden Seite: Cookie bleibt fuer den Weg von hier", async () => {
+    const r = await GET(anfrage({ "sec-fetch-dest": "document", "sec-fetch-site": "cross-site" }));
+    expect(r.headers.get("location")).toBe("/login");
+    expect(r.headers.get("clear-site-data")).toBeNull();
+    expect(mocks.dropSessionCookie).not.toHaveBeenCalled();
+  });
+
+  it("ohne Sec-Fetch-Angaben (reines HTTP): Cookie weg, kein Kopf", async () => {
+    const r = await GET(anfrage({}));
+    expect(r.headers.get("location")).toBe("/login");
+    expect(r.headers.get("clear-site-data")).toBeNull();
+    expect(mocks.dropSessionCookie).toHaveBeenCalledTimes(1);
   });
 });

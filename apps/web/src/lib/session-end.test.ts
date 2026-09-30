@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   CLEAR_SITE_DATA,
   SESSION_ENDED_PATH,
+  SESSION_END_RETRY_MS,
   clearSiteDataAllowed,
   seeOther,
+  sessionCookieDroppable,
   sessionEndTarget,
+  shouldCompleteSessionEnd,
 } from "./session-end";
 
 describe("seeOther()", () => {
@@ -65,5 +68,91 @@ describe("sessionEndTarget()", () => {
     expect(isDocumentRequest(new Headers({ accept: "text/html" }))).toBe(true);
     expect(isDocumentRequest(new Headers({ "next-action": "abc" }))).toBe(false);
     expect(isDocumentRequest(new Headers({ rsc: "1" }))).toBe(false);
+  });
+
+  // So sieht die App einen RSC-Abruf: Next verbirgt `rsc` und die
+  // Router-Koepfe vor headers(), Sec-Fetch und Accept bleiben.
+  it("erkennt einen RSC-Abruf auch ohne den verborgenen rsc-Kopf", async () => {
+    const { isDocumentRequest } = await import("./session-end");
+    const rsc = { "sec-fetch-dest": "empty", "sec-fetch-mode": "cors", accept: "*/*" };
+    expect(isDocumentRequest(new Headers(rsc))).toBe(false);
+    expect(
+      isDocumentRequest(
+        new Headers({ "sec-fetch-dest": "document", "sec-fetch-mode": "navigate", accept: "text/html" }),
+      ),
+    ).toBe(true);
+    // Reines HTTP ohne Sec-Fetch-Angaben: Accept entscheidet.
+    expect(isDocumentRequest(new Headers({ accept: "*/*" }))).toBe(false);
+    expect(
+      isDocumentRequest(new Headers({ accept: "text/html,application/xhtml+xml,*/*;q=0.8" })),
+    ).toBe(true);
+  });
+});
+
+describe("sessionCookieDroppable()", () => {
+  const kopf = (h: Record<string, string>) => new Headers(h);
+  const hier = kopf({ "sec-fetch-dest": "document", "sec-fetch-site": "same-origin" });
+
+  it("loescht das Cookie bei einer Navigation von hier oder ohne Sec-Fetch-Angaben", () => {
+    expect(sessionCookieDroppable(hier, true)).toBe(true);
+    expect(
+      sessionCookieDroppable(kopf({ "sec-fetch-dest": "document", "sec-fetch-site": "none" }), true),
+    ).toBe(true);
+    // Reines HTTP und sehr alte Browser schicken keine Angaben.
+    expect(sessionCookieDroppable(kopf({}), true)).toBe(true);
+  });
+
+  it("ohne mitgeschicktes Cookie gibt es nichts zu loeschen", () => {
+    expect(sessionCookieDroppable(hier, false)).toBe(false);
+    expect(sessionCookieDroppable(kopf({}), false)).toBe(false);
+  });
+
+  // Link in einer Mail: das Cookie bleibt, damit die Anmeldeseite den Weg
+  // von hier aus wiederholt und der Kopf ankommt. Eine Unterressource
+  // einer fremden Seite loescht es nie.
+  it("nicht bei einer Anfrage von einer fremden Seite", () => {
+    expect(
+      sessionCookieDroppable(
+        kopf({ "sec-fetch-dest": "document", "sec-fetch-site": "cross-site" }),
+        true,
+      ),
+    ).toBe(false);
+    expect(
+      sessionCookieDroppable(kopf({ "sec-fetch-dest": "image", "sec-fetch-site": "cross-site" }), true),
+    ).toBe(false);
+  });
+});
+
+describe("shouldCompleteSessionEnd()", () => {
+  const basis = {
+    cookie: false,
+    removedCopies: 0,
+    secureContext: true,
+    lastAttempt: null as number | null,
+    now: 1_000_000,
+  };
+
+  it("nachholen, wenn noch ein Sitzungs-Cookie da ist oder Kopien lagen", () => {
+    expect(shouldCompleteSessionEnd({ ...basis, cookie: true })).toBe(true);
+    expect(shouldCompleteSessionEnd({ ...basis, removedCopies: 2 })).toBe(true);
+  });
+
+  it("nicht ohne Anlass: weder Cookie noch Kopien", () => {
+    expect(shouldCompleteSessionEnd(basis)).toBe(false);
+  });
+
+  it("nicht ohne sicheren Kontext: dort wirkt der Kopf nicht", () => {
+    expect(shouldCompleteSessionEnd({ ...basis, cookie: true, secureContext: false })).toBe(false);
+  });
+
+  it("hoechstens einmal je Frist", () => {
+    const o = { ...basis, cookie: true };
+    expect(shouldCompleteSessionEnd({ ...o, lastAttempt: o.now - 1 })).toBe(false);
+    expect(
+      shouldCompleteSessionEnd({ ...o, lastAttempt: o.now - SESSION_END_RETRY_MS + 1 }),
+    ).toBe(false);
+    expect(shouldCompleteSessionEnd({ ...o, lastAttempt: o.now - SESSION_END_RETRY_MS })).toBe(true);
+    // Uhr zurueckgestellt: der Versuch zaehlt nicht.
+    expect(shouldCompleteSessionEnd({ ...o, lastAttempt: o.now + 5_000 })).toBe(true);
   });
 });
