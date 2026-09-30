@@ -38,7 +38,7 @@ export function routenMuster(schluessel: string): RegExp {
   const datei = schluessel.slice("route:".length, schluessel.indexOf("#"));
   const segmente = datei
     .replace(/^app\//, "")
-    .replace(/\/?route\.(?:ts|js)$/, "")
+    .replace(/\/?route\.(?:ts|tsx|js|jsx)$/, "")
     .split("/")
     .filter((s) => s && !/^\(.*\)$/.test(s));
   const teile = segmente.map((s) =>

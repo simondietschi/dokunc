@@ -1,4 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { ERWARTUNG, OFFEN_BESTAND, type Eintrag } from "./erwartung";
@@ -125,6 +127,91 @@ describe("Rechtematrix: Inventar-Regeln", () => {
       expect(() => routenAusQuelltext("app/api/x/route.ts", zeile)).toThrow(
         /Wieder- oder Standardexport/,
       );
+    },
+  );
+});
+
+describe("Rechtematrix: Inventar ohne tote Winkel", () => {
+  /** Inventar eines ausgedachten src-Verzeichnisses. */
+  function inventarVon(dateien: Record<string, string>): string[] {
+    const dir = mkdtempSync(join(tmpdir(), "rechtematrix-"));
+    try {
+      for (const [pfad, text] of Object.entries(dateien)) {
+        mkdirSync(dirname(join(dir, pfad)), { recursive: true });
+        writeFileSync(join(dir, pfad), text);
+      }
+      return inventar(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  const ACTION = "\nexport async function heimlichAction(form: FormData) {}\n";
+
+  it.each([
+    '"use server"; // Probe',
+    "'use server' /* Probe */;",
+    '/* Kopf */ "use server";',
+    '/**\n * Kopf\n */ "use server"',
+    '"use strict";\n"use server";',
+  ])("erkennt die Direktive in %j", (kopf) => {
+    expect(inventarVon({ "app/probe/actions.ts": `${kopf}\n${ACTION}` })).toEqual([
+      "action:app/probe/actions.ts#heimlichAction",
+    ]);
+  });
+
+  it("wirft bei einer zweiten Exportform in derselben Zeile", () => {
+    const text = `"use server";\nexport async function aAction() {} export const bAction = async () => {};\n`;
+    expect(() => inventarVon({ "app/x/actions.ts": text })).toThrow(
+      /app\/x\/actions\.ts:2: Exportform/,
+    );
+  });
+
+  it("wirft bei einer Direktive mit Kommentar im Funktionskörper", () => {
+    const text = [
+      "export function Knopf() {",
+      "  async function speichern() {",
+      '    "use server"; // inline',
+      "  }",
+      "}",
+    ].join("\n");
+    expect(() => inventarVon({ "app/x/Knopf.tsx": text })).toThrow(
+      "app/x/Knopf.tsx:3: Inline-Server-Action",
+    );
+  });
+
+  it("wirft bei einer Direktive nach den Importen", () => {
+    const text = `import { a } from "b";\n"use server"; // zu spät\n${ACTION}`;
+    expect(() => inventarVon({ "app/x/actions.ts": text })).toThrow(/app\/x\/actions\.ts:2: /);
+  });
+
+  it.each([
+    'export const { POST } = { POST: async () => new Response("x") };',
+    'export let PUT = async () => new Response("x");',
+    'export var GET = async () => new Response("x");',
+    "export const hilfe = 1;",
+    "export function hilfe() {}",
+    "export class Handler {}",
+    'export async function GET() { return new Response("x"); } export const { POST } = h;',
+  ])("wirft in einer route.ts bei %s", (zeile) => {
+    expect(() => inventarVon({ "app/api/x/route.ts": `${zeile}\n` })).toThrow(
+      /app\/api\/x\/route\.ts:1: /,
+    );
+  });
+
+  it("liest route.tsx wie route.ts", () => {
+    const text = 'export async function GET() { return new Response("x"); }\n';
+    expect(inventarVon({ "app/api/bild/route.tsx": text })).toEqual([
+      "route:app/api/bild/route.tsx#GET",
+    ]);
+    expect(routenMuster("route:app/api/bild/route.tsx#GET").test('"/api/bild"')).toBe(true);
+  });
+
+  it.each(["app/s/[slug]/opengraph-image.tsx", "app/sitemap.ts", "pages/api/x.ts"])(
+    "wirft bei der ungelesenen Endpunktdatei %s",
+    (pfad) => {
+      expect(() =>
+        inventarVon({ [pfad]: 'export default function h() { return new Response("x"); }\n' }),
+      ).toThrow(/Endpunkt, den das Inventar nicht liest/);
     },
   );
 });
