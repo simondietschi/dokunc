@@ -5,18 +5,24 @@ import { datenbankEntfernen, frischeDatenbank } from "./frische-datenbank";
 /**
  * Entsorgen der Wegwerf-Datenbank: zuerst ohne FORCE (Postgres beendet
  * dabei selbst einen Autovacuum-Worker, den eine Rolle ohne Superuser
- * nicht beenden darf), bei "wird noch benutzt" noch einmal, FORCE nur
- * als letzter Versuch.
+ * nicht beenden darf), bei "wird noch benutzt" die eigenen Verbindungen
+ * beenden und noch einmal, FORCE nur als letzter Versuch.
  */
 
-/** Verwaltungsverbindung zum Schein: merkt sich die Befehle, wirft nach Plan. */
+const DROP = 'DROP DATABASE IF EXISTS "dokunc_it_x_1"';
+const BEENDEN = expect.stringContaining("pg_terminate_backend");
+
+/**
+ * Verwaltungsverbindung zum Schein: merkt sich die Befehle; DROP wirft
+ * nach Plan.
+ */
 function scheinVerbindung(fehler: (Error & { code?: string })[]) {
   const befehle: string[] = [];
   return {
     befehle,
     async query(sql: string) {
       befehle.push(sql);
-      const f = fehler.shift();
+      const f = sql.startsWith("DROP") ? fehler.shift() : undefined;
       if (f) throw f;
       return {};
     },
@@ -34,26 +40,24 @@ describe("datenbankEntfernen", () => {
   it("zuerst ohne FORCE", async () => {
     const v = scheinVerbindung([]);
     await datenbankEntfernen(v, "dokunc_it_x_1", { pauseMs: 0 });
-    expect(v.befehle).toEqual(['DROP DATABASE IF EXISTS "dokunc_it_x_1"']);
+    expect(v.befehle).toEqual([DROP]);
   });
 
-  it("bei belegter Datenbank noch einmal ohne FORCE", async () => {
+  it("bei belegter Datenbank: eigene Verbindungen beenden, noch einmal ohne FORCE", async () => {
     const v = scheinVerbindung([BELEGT(), BELEGT()]);
     await datenbankEntfernen(v, "dokunc_it_x_1", { versuche: 3, pauseMs: 0 });
-    expect(v.befehle).toEqual([
-      'DROP DATABASE IF EXISTS "dokunc_it_x_1"',
-      'DROP DATABASE IF EXISTS "dokunc_it_x_1"',
-      'DROP DATABASE IF EXISTS "dokunc_it_x_1"',
-    ]);
+    expect(v.befehle).toEqual([DROP, BEENDEN, DROP, BEENDEN, DROP]);
   });
 
   it("FORCE nur als letzter Versuch", async () => {
     const v = scheinVerbindung([BELEGT(), BELEGT()]);
     await datenbankEntfernen(v, "dokunc_it_x_1", { versuche: 2, pauseMs: 0 });
     expect(v.befehle).toEqual([
-      'DROP DATABASE IF EXISTS "dokunc_it_x_1"',
-      'DROP DATABASE IF EXISTS "dokunc_it_x_1"',
-      'DROP DATABASE IF EXISTS "dokunc_it_x_1" WITH (FORCE)',
+      DROP,
+      BEENDEN,
+      DROP,
+      BEENDEN,
+      `${DROP} WITH (FORCE)`,
     ]);
   });
 
@@ -65,8 +69,11 @@ describe("datenbankEntfernen", () => {
     expect(v.befehle).toHaveLength(1);
   });
 
-  it("gegen Postgres: eine offene Verbindung blockiert, FORCE räumt sie am Ende weg", async () => {
+  it("gegen Postgres: eine offene eigene Verbindung wird beendet, ohne FORCE", async () => {
+    // FORCE darf hier nicht nötig sein: ohne Superuser scheitert es, sobald
+    // ein Autovacuum-Worker an der frischen Datenbank hängt.
     const db = await frischeDatenbank("entsorgen");
+    await db.client.$disconnect();
     const name = new URL(db.url).pathname.slice(1);
     const verwaltung = new URL(db.url);
     verwaltung.pathname = "/postgres";
@@ -77,7 +84,17 @@ describe("datenbankEntfernen", () => {
     await admin.connect();
     try {
       await offen.connect();
-      await db.entsorgen({ versuche: 1, pauseMs: 0 });
+      const befehle: string[] = [];
+      await datenbankEntfernen(
+        {
+          query: (sql: string, werte?: unknown[]) => {
+            befehle.push(sql.replace(`"${name}"`, '"dokunc_it_x_1"'));
+            return admin.query(sql, werte);
+          },
+        },
+        name,
+      );
+      expect(befehle).toEqual([DROP, BEENDEN, DROP]);
       const rest = await admin.query(`SELECT 1 FROM pg_database WHERE datname = $1`, [name]);
       expect(rest.rowCount).toBe(0);
     } finally {

@@ -93,12 +93,13 @@ const BELEGT = "55006";
  * Verbindung im Namen der eigenen Rolle; ohne Superuser (so die lokale
  * Rolle, in der CI ist sie Superuser) scheitert das am Autovacuum-Worker
  * mit "permission denied to terminate process", und die Datenbank
- * bliebe liegen. Ist sie noch belegt (eine eben geschlossene Verbindung
- * des Tests, ein neuer Worker), folgt ein weiterer Versuch; FORCE nur als
- * letzter, für eine Verbindung, die der Test offen gelassen hat.
+ * bliebe liegen. Ist sie noch belegt (eine Verbindung, die der Test offen
+ * gelassen hat, ein neuer Worker), beendet die Funktion die Verbindungen
+ * der eigenen Rolle (das darf jede Rolle) und versucht es noch einmal
+ * ohne FORCE; FORCE nur als letzter Versuch.
  */
 export async function datenbankEntfernen(
-  admin: { query(sql: string): Promise<unknown> },
+  admin: { query(sql: string, werte?: unknown[]): Promise<unknown> },
   name: string,
   o: EntfernenOptionen = {},
 ): Promise<void> {
@@ -111,6 +112,11 @@ export async function datenbankEntfernen(
     } catch (e) {
       if ((e as { code?: string }).code !== BELEGT) throw e;
     }
+    await admin.query(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+        WHERE datname = $1 AND usename = current_user AND pid <> pg_backend_pid()`,
+      [name],
+    );
     if (pauseMs > 0) await new Promise((r) => setTimeout(r, pauseMs));
   }
   await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
