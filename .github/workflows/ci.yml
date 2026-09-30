@@ -262,6 +262,20 @@ jobs:
       - name: Sicherstellen, dass keine .env existiert
         run: test ! -f .env
 
+      # Dateien, die nie ins Image duerfen (.dockerignore, geprueft von
+      # apps/web/src/image-inhalt.test.ts), als Attrappen im Build-Kontext.
+      # Keine davon heisst .env: Compose liest nur diese, der Schritt davor
+      # bleibt gueltig. Die Liste liest "Keine Geheimnisse im Image".
+      - name: Attrappen von Geheimnissen im Build-Kontext
+        run: |
+          printf '%s\n' .env.local .env.production apps/web/.env.local \
+            apps/collab/dump.rdb dump.rdb scripts/app_secret \
+            .claude/settings.local.json > "$RUNNER_TEMP/attrappen"
+          while read -r f; do
+            mkdir -p "$(dirname "$f")"
+            echo "ATTRAPPE=nicht-im-image" > "$f"
+          done < "$RUNNER_TEMP/attrappen"
+
       - name: Stack bauen und starten
         id: start
         run: docker compose up -d --build --wait --wait-timeout 600
@@ -287,6 +301,25 @@ jobs:
           done
           echo "Proxy hat auf Port $PORT nach 60 s nicht geantwortet"
           exit 1
+
+      # Die Attrappen von oben fehlen unter /app, ebenso die Arbeitsordner
+      # .claude und .github. Mit der frueheren .dockerignore lagen dort
+      # .env.local, .env.production, apps/web/.env.local, beide dump.rdb,
+      # scripts/app_secret, .claude und .github. Der erste Aufruf haelt
+      # fest, dass exec ueberhaupt antwortet; sonst hiesse jeder
+      # Fehlschlag von `test -e` "fehlt". </dev/null, weil exec sonst die
+      # Liste der Schleife als eigene Eingabe liest.
+      - name: Keine Geheimnisse im Image
+        run: |
+          docker compose exec -T app test -f /app/package.json
+          fehler=0
+          while read -r f; do
+            if docker compose exec -T app test -e "/app/$f" </dev/null; then
+              echo "/app/$f im Image"
+              fehler=1
+            fi
+          done < <(cat "$RUNNER_TEMP/attrappen"; printf '%s\n' .claude .github)
+          exit "$fehler"
 
       - name: Anmeldeseite wird ausgeliefert
         run: curl -fsSk "https://localhost:${APP_PORT:-7891}/login" -o /dev/null

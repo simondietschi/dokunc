@@ -1,3 +1,29 @@
+# Geheimnisse wie im markierten Block der .gitignore, hier auch in
+# Unterordnern: Docker wendet ein Muster ohne / nur im Wurzelordner an.
+# Build- und Runner-Stufe kopieren mit COPY . . den ganzen Kontext, alles
+# hier Fehlende landet also im Laufzeit-Image.
+# apps/web/src/image-inhalt.test.ts haelt beide Dateien gleich.
+.env
+.env.*
+**/.env
+**/.env.*
+!.env.example
+*.rdb
+**/*.rdb
+app_secret
+**/app_secret
+docker-compose.override.yml
+**/docker-compose.override.yml
+
+# Arbeitsordner von Werkzeugen und CI, Dateien fuer Beitragende: im Image
+# ohne Nutzen.
+.claude
+.github
+.gitleaksignore
+CONTRIBUTING.md
+coverage
+**/coverage
+
 node_modules
 **/node_modules
 .next
@@ -8,8 +34,7 @@ dist
 .pgdata
 .redis
 *.log
-.env
-**/.env
+**/*.log
 
 # Laufzeit- und Testartefakte gehören nicht in den Build-Kontext
 uploads
@@ -19,16 +44,14 @@ test-results
 playwright-report
 
 # Testquellen ebenso wenig: sie landen sonst im Laufzeit-Image, das sie
-# nie ausführt. Die Unit-Tests liegen neben dem Code, deshalb nach Muster.
+# nie ausführt. Die Unit-Tests liegen neben dem Code, deshalb nach Muster;
+# die Helfer der Integrationstests liegen in apps/web/test.
 e2e
 playwright.config.ts
 **/*.test.ts
 **/*.test.tsx
 **/vitest.config.ts
 **/vitest.integration.config.ts
+apps/web/test
 # Bilddateien, die nur Tests lesen (Metadaten-Entfernung).
 **/test/fixtures
-
-# Ein versehentlich hier abgelegtes APP_SECRET kaeme sonst mit COPY . .
-# ins Image.
-app_secret

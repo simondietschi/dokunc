@@ -29,7 +29,20 @@ differently on an existing installation, and what to do about it.
   restarting after the update, the line "Konfiguration ungueltig" in
   `docker compose logs app` names the setting to fix.
 
+- **Docker image contents:** images built from a checkout no longer
+  contain `.env.*` files (except `.env.example`), `*.rdb` files,
+  `app_secret`, `docker-compose.override.yml`, `.claude/`, `.github/`,
+  `.gitleaksignore`, `CONTRIBUTING.md` or the test helpers in
+  `apps/web/test`, also in subdirectories. If you relied on a file such as
+  `.env.production` or `apps/web/.env.local` being read during the image
+  build, set the values in `.env` instead: Docker Compose passes them to
+  the container, and `NEXT_PUBLIC_COLLAB_URL` to the build. Otherwise
+  nothing to do.
+
 ### Security
+
+- Docker images no longer include local environment files, Redis dumps,
+  `app_secret` files or Compose overrides from the build directory.
 
 ### Added
 

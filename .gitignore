@@ -2,14 +2,27 @@ node_modules/
 .next/
 dist/
 build/
-# Alle Schreibweisen, die Next.js von sich aus einliest (.env.production,
-# .env.development.local …). Mit nur .env und .env.local nahm `git add -A`
-# eine so benannte Datei mit echtem APP_SECRET oder SMTP_PASSWORD
-# kommentarlos auf. .env.example ist die einzige Ausnahme: sie enthält
-# nur Platzhalter und gehört ins Repo.
+
+# Geheimnisse (Anfang): .dockerignore fuehrt dieselben Muster, zusaetzlich
+# mit **/ davor (Docker wendet ein Muster ohne / nur im Wurzelordner an).
+# apps/web/src/image-inhalt.test.ts haelt beide Dateien gleich.
+#
+# .env.*: alle Schreibweisen, die Next.js von sich aus einliest
+# (.env.production, .env.development.local …). Mit nur .env und .env.local
+# nahm `git add -A` eine so benannte Datei mit echtem APP_SECRET oder
+# SMTP_PASSWORD kommentarlos auf. .env.example ist die einzige Ausnahme:
+# sie enthält nur Platzhalter und gehört ins Repo.
 .env
 .env.*
 !.env.example
+# Redis-Dumps (dump.rdb der Entwicklung): der Inhalt der Redis-Datenbank.
+*.rdb
+# Getrennt gesichertes APP_SECRET (README "Sicherung und Rückweg").
+app_secret
+# Eigene Compose-Anpassungen des Betreibers (s. README zu COMPOSE_FILE).
+docker-compose.override.yml
+# Geheimnisse (Ende)
+
 *.log
 .DS_Store
 .pgdata/
@@ -26,11 +39,3 @@ playwright-report/
 
 # TypeScript incremental build info
 *.tsbuildinfo
-dump.rdb
-
-# Eigene Compose-Anpassungen des Betreibers (s. README zu COMPOSE_FILE)
-docker-compose.override.yml
-
-# Getrennt gesichertes APP_SECRET (README "Sicherung und Rückweg"): nie
-# ins Repository und nie ins Image (Dockerfile: COPY . .).
-app_secret
