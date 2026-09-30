@@ -41,11 +41,11 @@ Commits follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/
 Rules for entries:
 
 - Use only the headings that already exist under "Unreleased", and append your entries at the end of their section. Do not add headings.
-- An entry is a list item (`- `); continuation lines are indented by two spaces.
+- An entry is a list item (`- `); continuation lines are indented by two spaces. Upgrade notes are separated from each other by a blank line.
 - Changes that only concern contributors, such as tests, CI mechanics or this file, get no entry.
 - No internal plan identifiers, stage names or finding numbers, not even in parentheses.
 
-`.gitattributes` sets `merge=union` for `CHANGELOG.md`: when branches that each appended entries are merged or cherry-picked one after another, Git keeps the lines of both sides instead of writing conflict markers. Check the result once: every entry must still be under its heading, and none may appear twice. `apps/web/src/changelog.test.ts` checks the format.
+`.gitattributes` sets `merge=union` for `CHANGELOG.md`: when branches that each appended entries are merged or cherry-picked one after another, Git keeps the lines of both sides instead of writing conflict markers. Check the result once: every entry must still be under its heading, and none may appear twice. Where two branches appended upgrade notes at the same place, the union merge writes their shared blank line only once, so two notes run together; `apps/web/src/changelog.test.ts` checks the format and reports this case.
 
 ## Pull requests
 

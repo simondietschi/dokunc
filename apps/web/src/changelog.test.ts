@@ -30,7 +30,12 @@ export const ABSCHNITTE = [
 const PFLICHT_UNRELEASED = ["Upgrade notes", "Security"];
 
 type Version = { kopf: string; zeile: number; abschnitte: Abschnitt[] };
-type Abschnitt = { name: string; zeile: number; inhalt: { text: string; zeile: number }[] };
+/** `nachLeerzeile`: die Zeile davor ist leer (oder die Ueberschrift selbst). */
+type Abschnitt = {
+  name: string;
+  zeile: number;
+  inhalt: { text: string; zeile: number; nachLeerzeile: boolean }[];
+};
 
 /** Zerlegt den Text in Versionen und ihre Abschnitte. */
 export function zerlegen(text: string): { kopf: string[]; versionen: Version[] } {
@@ -39,6 +44,7 @@ export function zerlegen(text: string): { kopf: string[]; versionen: Version[] }
   const versionen: Version[] = [];
   let version: Version | undefined;
   let abschnitt: Abschnitt | undefined;
+  let leerDavor = false;
   zeilen.forEach((z, i) => {
     const nr = i + 1;
     if (z.startsWith("## ")) {
@@ -53,8 +59,9 @@ export function zerlegen(text: string): { kopf: string[]; versionen: Version[] }
       kopf.push(z);
     } else if (z.trim() !== "") {
       if (!abschnitt) throw new Error(`Zeile ${nr}: Text ausserhalb eines Abschnitts`);
-      abschnitt.inhalt.push({ text: z, zeile: nr });
+      abschnitt.inhalt.push({ text: z, zeile: nr, nachLeerzeile: leerDavor });
     }
+    leerDavor = z.trim() === "";
   });
   return { kopf, versionen };
 }
@@ -96,14 +103,22 @@ export function pruefen(text: string): string[] {
       if (pos < vorher) fehler.push(`Zeile ${a.zeile}: Abschnitt '${a.name}' steht ausser der Reihe`);
       gesehen.add(a.name);
       vorher = Math.max(vorher, pos);
-      for (const z of a.inhalt) {
+      a.inhalt.forEach((z, n) => {
         if (!z.text.startsWith("- ") && !z.text.startsWith("  ")) {
           fehler.push(`Zeile ${z.zeile}: Eintrag beginnt weder mit '- ' noch mit zwei Leerzeichen`);
         }
         if (a.name === "Upgrade notes" && z.text.startsWith("- ") && !/^- \*\*[^*]+:\*\* /.test(z.text)) {
           fehler.push(`Zeile ${z.zeile}: Upgrade note beginnt nicht mit einem fetten Stichwort samt Doppelpunkt`);
         }
-      }
+        // Upgrade notes stehen durch Leerzeilen getrennt. Haengen zwei
+        // Zweige ihre Notes an dieselbe Stelle an, schreibt die
+        // Union-Zusammenfuehrung (.gitattributes) gleiche Zeilen an der
+        // Naht nur einmal, und die Leerzeile zwischen den Bloecken faellt
+        // weg: die zweite Note klebt dann an der ersten.
+        if (a.name === "Upgrade notes" && n > 0 && z.text.startsWith("- ") && !z.nachLeerzeile) {
+          fehler.push(`Zeile ${z.zeile}: Upgrade note steht nicht nach einer Leerzeile`);
+        }
+      });
     }
   }
   return fehler;
@@ -132,6 +147,9 @@ describe("pruefen", () => {
     "",
     "- **Mail sender:** Set MAIL_FROM. Nothing else to do.",
     "",
+    "- **Log rotation:** Docker keeps five files",
+    "  per container. Nothing to do.",
+    "",
     "### Security",
     "",
     "### Fixed",
@@ -153,13 +171,20 @@ describe("pruefen", () => {
   it.each([
     ["falscher Kopf", gut.replace("# Changelog", "# Changes"), "erste Zeile"],
     ["Unreleased umbenannt", gut.replace("## [Unreleased]", "## Unreleased"), "erste Version"],
-    ["Upgrade notes fehlt", gut.replace("### Upgrade notes\n\n- **Mail sender:** Set MAIL_FROM. Nothing else to do.\n\n", ""), "'### Upgrade notes' fehlt"],
+    ["Upgrade notes fehlt", gut.replace(/### Upgrade notes\n[\s\S]*?(?=### Security)/, ""), "'### Upgrade notes' fehlt"],
     ["fremder Abschnitt", gut.replace("### Fixed", "### Features"), "nicht erlaubt"],
     ["doppelter Abschnitt", gut.replace("### Fixed", "### Security"), "doppelt"],
     ["falsche Reihenfolge", gut.replace("### Security", "### Changed").replace("### Fixed", "### Security"), "ausser der Reihe"],
     ["Fliesstext", gut.replace("- A fix", "A fix"), "weder mit '- '"],
     ["Upgrade note ohne Stichwort", gut.replace("- **Mail sender:** Set", "- Set"), "fetten Stichwort"],
     ["Version ohne Klammern", gut.replace("## [0.9.0] - 2026-11-02", "## 0.9.0"), "Versionskopf"],
+    // So sieht die Naht zweier Zweige nach einer Union-Zusammenfuehrung
+    // aus: die gemeinsame Leerzeile steht nur noch einmal im Text.
+    [
+      "Upgrade note ohne Leerzeile davor",
+      gut.replace("Nothing else to do.\n\n- **Log rotation:**", "Nothing else to do.\n- **Log rotation:**"),
+      "Zeile 10: Upgrade note steht nicht nach einer Leerzeile",
+    ],
   ])("meldet: %s", (_name, text, erwartet) => {
     expect(pruefen(text).join("\n")).toContain(erwartet);
   });
