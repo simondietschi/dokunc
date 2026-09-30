@@ -223,7 +223,7 @@ differently on an existing installation, and what to do about it.
 
 - **Password reset only for active accounts:** deactivated accounts get
   no reset link any more, and links issued before the deactivation no
-  longer work. There is nothing to configure for this.
+  longer work. Nothing to do.
 
 - **Setup token for the first account:** as long as an instance has no
   account, the web app writes a one-time token to `/app/data/setup_token`
