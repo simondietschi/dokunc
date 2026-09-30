@@ -112,7 +112,7 @@ export async function GET(req: Request) {
    * Sicherheit des Anbieters — genau das sollte er nicht.
    */
   if (user.totpEnabledAt) {
-    await startPending2fa(user.id, safeNext(flow.next));
+    await startPending2fa(user.id, safeNext(flow.next), "sso");
     return NextResponse.redirect(new URL("/login/2fa", req.url), {
       headers: { "Cache-Control": "no-store" },
     });

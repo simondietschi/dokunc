@@ -11,6 +11,8 @@ import {
 } from "vitest";
 import { prisma } from "@dokunc/db";
 import { generateInviteToken } from "@/lib/invitations";
+import { seal } from "@/lib/secret-box";
+import { generateTotpSecret, totpAt } from "@/lib/totp";
 
 /**
  * Passwortweg für Konten mit SSO-Bindung und deaktivierte Konten.
@@ -25,11 +27,13 @@ import { generateInviteToken } from "@/lib/invitations";
  * am Schalter, nicht an Aussteller oder Gültigkeit der OIDC-
  * Konfiguration: eine kaputte Einstellung darf den Weg nicht öffnen.
  *
- * Geprüft über loginAction, completeTotpLoginAction und
- * performResetAction gegen die echte Datenbank und das echte Redis.
- * Ersetzt sind Sitzung, zweiter Faktor (Cookies), Anfrage-Header (eine
- * eigene IP je Test) und die Umleitung. requestResetAction prüft
- * reset-request.test.ts (dort ist der Mailversand ersetzt).
+ * Geprüft über loginAction, completeTotpLoginAction, performResetAction
+ * und die Rücksprung-Route des Anbieters gegen die echte Datenbank und
+ * das echte Redis. Ersetzt sind Sitzung, das Cookie des zweiten
+ * Schritts, Anfrage-Header (eine eigene IP je Test), die Umleitung, das
+ * Fluss-Cookie und der Tausch des Codes beim Anbieter.
+ * requestResetAction prüft reset-request.test.ts (dort ist der
+ * Mailversand ersetzt).
  */
 
 const mocks = vi.hoisted(() => {
@@ -40,7 +44,14 @@ const mocks = vi.hoisted(() => {
       this.url = url;
     }
   }
-  return { ip: "", Umleitung };
+  return {
+    ip: "",
+    Umleitung,
+    /** Der offene zweite Schritt, wie ihn das Cookie liefern würde. */
+    pending: null as { userId: string; next: string; via: string } | null,
+    fluesse: [] as Record<string, unknown>[],
+    exchangeCode: vi.fn(),
+  };
 });
 
 vi.mock("@/lib/session", () => ({
@@ -51,7 +62,16 @@ vi.mock("@/lib/session", () => ({
 vi.mock("@/lib/pending-2fa", () => ({
   startPending2fa: vi.fn(),
   clearPending2fa: vi.fn(),
-  readPending2fa: vi.fn(async () => null),
+  readPending2fa: vi.fn(async () => mocks.pending),
+}));
+vi.mock("@/lib/oidc-state", () => ({
+  readOidcFlows: vi.fn(async () => mocks.fluesse),
+  consumeOidcFlow: vi.fn(async () => null),
+  startOidcFlow: vi.fn(),
+}));
+vi.mock("@/lib/oidc", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/oidc")>()),
+  exchangeCode: mocks.exchangeCode,
 }));
 vi.mock("next/headers", () => ({
   headers: vi.fn(async () => new Headers({ "x-forwarded-for": mocks.ip })),
@@ -68,7 +88,8 @@ const { loginAction, completeTotpLoginAction } = await import(
 );
 const { performResetAction } = await import("@/app/(auth)/reset/actions");
 const { createSession } = await import("@/lib/session");
-const { startPending2fa } = await import("@/lib/pending-2fa");
+const { startPending2fa, clearPending2fa } = await import("@/lib/pending-2fa");
+const { GET: ruecksprungRoute } = await import("@/app/api/auth/oidc/callback/route");
 
 const TAG = `pw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 const NET = `203.0.${Math.floor(Math.random() * 250)}`;
@@ -145,6 +166,8 @@ beforeAll(async () => {
 beforeEach(() => {
   vi.mocked(createSession).mockClear();
   vi.mocked(startPending2fa).mockClear();
+  vi.mocked(clearPending2fa).mockClear();
+  mocks.pending = null;
   neueIp();
   vi.stubEnv("OIDC_ISSUER", ISSUER);
   vi.stubEnv("OIDC_CLIENT_ID", "dokunc");
@@ -230,6 +253,106 @@ describe("Passwortanmeldung eines Kontos mit SSO-Bindung", () => {
     const user = await konto("ohne");
     expect(await anmelden(user.email)).toBe("angemeldet");
     expect(createSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("zweiter Schritt der Anmeldung", () => {
+  async function mitTotp(name: string, over: Record<string, unknown> = {}) {
+    const geheimnis = generateTotpSecret();
+    const user = await konto(name, {
+      totpSecret: seal(geheimnis),
+      totpEnabledAt: new Date(),
+      ...over,
+    });
+    usedKeys.push(`dokunc:rl:login:totp:${user.id}`);
+    return { ...user, code: () => totpAt(geheimnis, Math.floor(Date.now() / 1000)) };
+  }
+
+  async function zweiterSchritt(code: string) {
+    try {
+      return await completeTotpLoginAction(undefined, formular({ code }));
+    } catch (e) {
+      if (e instanceof mocks.Umleitung) return "angemeldet";
+      throw e;
+    }
+  }
+
+  it("die Passwortanmeldung merkt sich den Weg", async () => {
+    const user = await mitTotp("weg-passwort");
+    expect(await anmelden(user.email)).toBe("angemeldet");
+    expect(startPending2fa).toHaveBeenCalledWith(user.id, "/spaces", "password");
+  });
+
+  it("ein offener Schritt von vor der Bindung öffnet keine Sitzung", async () => {
+    const user = await mitTotp("danach-gebunden");
+    mocks.pending = { userId: user.id, next: "/spaces", via: "password" };
+    // Zwischen erstem und zweitem Schritt wird das Konto an SSO gebunden.
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { oidcIssuer: ISSUER, oidcSubject: `${TAG}-danach-gebunden` },
+    });
+    expect(await zweiterSchritt(user.code())).toEqual({
+      error: "Anmeldung nicht möglich.",
+    });
+    expect(createSession).not.toHaveBeenCalled();
+    expect(clearPending2fa).toHaveBeenCalled();
+    expect(await gruende(user.id)).toEqual([
+      { reason: "sso_required", via: "second_factor" },
+    ]);
+    // Der Code ist nicht verbraucht.
+    expect(
+      await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        select: { totpLastStep: true },
+      }),
+    ).toEqual({ totpLastStep: null });
+  });
+
+  it("nach der SSO-Anmeldung führt der zweite Schritt weiter", async () => {
+    const user = await mitTotp("nach-sso", {
+      oidcIssuer: ISSUER,
+      oidcSubject: `${TAG}-nach-sso`,
+    });
+    mocks.pending = { userId: user.id, next: "/spaces", via: "sso" };
+    expect(await zweiterSchritt(user.code())).toBe("angemeldet");
+    expect(createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("ohne Bindung führt der Passwortweg weiter", async () => {
+    const user = await mitTotp("ohne-bindung");
+    mocks.pending = { userId: user.id, next: "/spaces", via: "password" };
+    expect(await zweiterSchritt(user.code())).toBe("angemeldet");
+    expect(createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("die Rücksprung-Route merkt sich den Weg sso", async () => {
+    const subject = `${TAG}-route`;
+    const user = await mitTotp("route", { oidcIssuer: ISSUER, oidcSubject: subject });
+    mocks.fluesse = [
+      {
+        state: "zustand-1",
+        nonce: "nonce-1",
+        verifier: "verifier-1",
+        next: "/spaces",
+        begonnen: Date.now(),
+      },
+    ];
+    mocks.exchangeCode.mockResolvedValue({
+      subject,
+      legacySubject: null,
+      email: user.email,
+      emailVerified: true,
+      emailSource: "email",
+      verifiedBy: "email_verified",
+      name: "route",
+    });
+    const antwort = await ruecksprungRoute(
+      new Request(
+        "https://wiki.passwortweg.test/api/auth/oidc/callback?code=c&state=zustand-1",
+      ),
+    );
+    expect(new URL(antwort.headers.get("location") ?? "").pathname).toBe("/login/2fa");
+    expect(startPending2fa).toHaveBeenCalledWith(user.id, "/spaces", "sso");
   });
 });
 

@@ -4,12 +4,16 @@ import { SignJWT, jwtVerify } from "jose";
 import { getAppSecret } from "./secret";
 
 /**
- * Zwischenschritt der Anmeldung: Passwort stimmt, der zweite Faktor
- * fehlt noch.
+ * Zwischenschritt der Anmeldung: Passwort (oder SSO) stimmt, der zweite
+ * Faktor fehlt noch.
  *
  * Bewusst ein eigenes, kurzlebiges Cookie mit eigener Audience — kein
  * Sitzungscookie. Wer nur das Passwort kennt, hält damit nichts in der
  * Hand, was für die App selbst nützlich wäre.
+ *
+ * Das Cookie hält fest, wie der erste Schritt lief: der zweite prüft für
+ * den Passwortweg die SSO-Bindung erneut (lib/sso-policy), denn das
+ * Konto kann inzwischen gebunden worden sein.
  */
 const COOKIE = "dokunc_2fa";
 const AUDIENCE = "dokunc-2fa";
@@ -21,11 +25,15 @@ function secret(): Uint8Array {
   return _secret;
 }
 
+/** Wie der erste Schritt lief. */
+export type ErsterSchritt = "password" | "sso";
+
 export async function startPending2fa(
   userId: string,
   next: string,
+  via: ErsterSchritt,
 ): Promise<void> {
-  const token = await new SignJWT({ next })
+  const token = await new SignJWT({ next, via })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(userId)
     .setAudience(AUDIENCE)
@@ -46,6 +54,7 @@ export async function startPending2fa(
 export async function readPending2fa(): Promise<{
   userId: string;
   next: string;
+  via: ErsterSchritt;
 } | null> {
   const store = await cookies();
   const token = store.get(COOKIE)?.value;
@@ -55,7 +64,12 @@ export async function readPending2fa(): Promise<{
       audience: AUDIENCE,
     });
     if (!payload.sub) return null;
-    return { userId: payload.sub, next: String(payload.next ?? "/spaces") };
+    return {
+      userId: payload.sub,
+      next: String(payload.next ?? "/spaces"),
+      // Ohne Angabe (ein Cookie von vor dem Update): der strengere Fall.
+      via: payload.via === "sso" ? "sso" : "password",
+    };
   } catch {
     return null;
   }

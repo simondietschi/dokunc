@@ -400,7 +400,7 @@ export async function loginAction(
 
   // Zweiter Faktor: die Sitzung entsteht erst nach dem Code.
   if (user.totpEnabledAt) {
-    await startPending2fa(user.id, safeNext(formData.get("next")));
+    await startPending2fa(user.id, safeNext(formData.get("next")), "password");
     redirect("/login/2fa");
   }
 
@@ -457,10 +457,27 @@ export async function completeTotpLoginAction(
       tokenVersion: true,
       totpSecret: true,
       totpEnabledAt: true,
+      oidcSubject: true,
     },
   });
   if (!user || !user.isActive || !user.totpEnabledAt || !user.totpSecret) {
     await clearPending2fa();
+    return { error: "Anmeldung nicht möglich." };
+  }
+  /**
+   * Erster Schritt mit Passwort, und das Konto hängt inzwischen an SSO
+   * (gebunden nach dem ersten Schritt, oder ein Zwischenschritt von vor
+   * dem Update): kein Passwortweg, wie in loginAction. Geprüft vor dem
+   * Code, damit er nicht verbraucht wird. Nach einer SSO-Anmeldung gilt
+   * der zweite Schritt weiter.
+   */
+  if (pending.via === "password" && passwordBlockedBySso(user)) {
+    await clearPending2fa();
+    await audit({
+      action: "auth.login_failed",
+      actorId: user.id,
+      metadata: { reason: "sso_required", via: "second_factor" },
+    });
     return { error: "Anmeldung nicht möglich." };
   }
 
