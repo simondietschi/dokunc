@@ -2181,7 +2181,9 @@ async function starte(): Promise<void> {
   await hebeSchemaMarke();
   await server.listen();
   kuendigeSchemaAn();
-  log.info({ port: PORT }, "Hocuspocus läuft");
+  // Der tatsaechlich belegte Port: mit COLLAB_PORT=0 waehlt ihn das
+  // Betriebssystem (so starten die Pruefstaende ihre Server).
+  log.info({ port: server.address.port }, "Hocuspocus läuft");
   log.info(
     {
       dokumentGrenze: sizeLimits.maxDocBytes,

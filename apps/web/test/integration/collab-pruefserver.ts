@@ -1,5 +1,4 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createServer } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Redis } from "ioredis";
@@ -8,7 +7,17 @@ import { DOC_RESET_CHANNEL } from "@dokunc/editor";
 /**
  * Ein echter Collab-Server fuer Integrationstests: eigener Prozess
  * (apps/collab/src/server.ts wie unter `pnpm --filter @dokunc/collab
- * start`), eigener Port aus 3150 bis 3199, eigene Redis-Datenbank.
+ * start`), eigener Port, eigene Redis-Datenbank.
+ *
+ * Den Port waehlt der Server selbst (COLLAB_PORT=0, das Betriebssystem
+ * vergibt einen freien), und der Pruefstand liest ihn aus dessen
+ * Startzeile. Frueher suchte der Pruefstand vorher einen freien Port aus
+ * 3150 bis 3199; zwischen dieser Probe und dem listen() des Servers
+ * vergingen Sekunden, und liefen zwei Integrationslaeufe auf einer
+ * Maschine, bekamen beide denselben Port. Der zweite Server endete mit
+ * EADDRINUSE, und weil Pub/Sub ueber alle Datenbanken gilt, sah der
+ * Pruefstand trotzdem einen neuen Abonnenten des Reset-Kanals (den des
+ * ersten) und meldete den fremden Server als den eigenen.
  *
  * Er arbeitet auf derselben Postgres-Datenbank wie die Tests. Damit sein
  * Mail-Versand dort nichts anfasst, belegt der Pruefstand dessen Sperre
@@ -62,16 +71,26 @@ export function redisUrlMitDb(db: number): string {
   return url.toString();
 }
 
-async function freierPort(): Promise<number> {
-  for (let port = 3150; port <= 3199; port += 1) {
-    const frei = await new Promise<boolean>((resolve) => {
-      const probe = createServer();
-      probe.once("error", () => resolve(false));
-      probe.listen(port, "127.0.0.1", () => probe.close(() => resolve(true)));
-    });
-    if (frei) return port;
+/**
+ * Port aus der Startzeile "Hocuspocus läuft" des Servers (pino, eine
+ * JSON-Zeile je Eintrag); null, solange sie fehlt.
+ */
+function gemeldeterPort(ausgabe: string): number | null {
+  for (const zeile of ausgabe.split("\n")) {
+    if (!zeile.includes("Hocuspocus läuft")) continue;
+    try {
+      const { msg, port } = JSON.parse(zeile) as {
+        msg?: unknown;
+        port?: unknown;
+      };
+      if (msg === "Hocuspocus läuft" && typeof port === "number" && port > 0) {
+        return port;
+      }
+    } catch {
+      /* unvollstaendige Zeile, kommt im naechsten Takt ganz */
+    }
   }
-  throw new Error("Kein freier Port zwischen 3150 und 3199");
+  return null;
 }
 
 async function resetZuhoerer(redis: Redis): Promise<number> {
@@ -98,8 +117,7 @@ export async function startePruefserver(opts: {
   exklusiv?: boolean;
   /**
    * Fester Port, etwa fuer einen Neustart auf demselben Port (Provider
-   * verbinden dann von selbst neu). Ohne Angabe der erste freie aus 3150
-   * bis 3199.
+   * verbinden dann von selbst neu). Ohne Angabe waehlt ihn der Server.
    */
   port?: number;
 }): Promise<Pruefserver> {
@@ -117,7 +135,6 @@ export async function startePruefserver(opts: {
   await redis.set("dokunc:mail-dispatch:lock", "pruefstand", "PX", 300_000);
   const vorher = await resetZuhoerer(redis);
 
-  const port = opts.port ?? (await freierPort());
   let ausgabe = "";
   const child: ChildProcess = spawn(
     join(COLLAB_DIR, "node_modules/.bin/tsx"),
@@ -126,7 +143,7 @@ export async function startePruefserver(opts: {
       cwd: COLLAB_DIR,
       env: {
         ...process.env,
-        COLLAB_PORT: String(port),
+        COLLAB_PORT: String(opts.port ?? 0),
         REDIS_URL: redisUrl,
         APP_SECRET: opts.appSecret,
         LOG_LEVEL: "info",
@@ -150,10 +167,18 @@ export async function startePruefserver(opts: {
     redis.disconnect();
   };
 
-  // Bereit ist er, wenn er auf dem Reset-Kanal hoert: das abonniert er
-  // erst, nachdem der Port offen ist.
+  // Bereit ist er, wenn er selbst gemeldet hat, auf welchem Port er
+  // lauscht, und auf dem Reset-Kanal hoert: das abonniert er erst nach
+  // dieser Zeile. Die Startzeile kommt nur von diesem Prozess; die Zahl
+  // der Abonnenten dagegen zaehlt jeden Collab-Server an diesem Redis
+  // (starten zwei zugleich, kann der Kanal des einen einen Moment nach
+  // dem des anderen abonniert sein; Pruefstaende mit Doc-Reset starten
+  // deshalb exklusiv).
   const ende = Date.now() + 30_000;
-  while ((await resetZuhoerer(redis)) <= vorher) {
+  let port: number | null;
+  for (;;) {
+    port = gemeldeterPort(ausgabe);
+    if (port !== null && (await resetZuhoerer(redis)) > vorher) break;
     if (child.exitCode !== null || Date.now() > ende) {
       await stop();
       throw new Error(`Collab-Server nicht gestartet:\n${ausgabe}`);

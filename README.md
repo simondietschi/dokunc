@@ -1047,7 +1047,7 @@ weglässt und dass keine dieser Adressen einen Serverfehler auslöst.
 Sie brauchen eine erreichbare Datenbank und ein erreichbares Redis aus
 `.env` und legen ihre eigenen
 Datensätze an (und wieder ab); sie leeren nichts. Einige starten dafür einen eigenen
-Collab-Server (Port 3150 bis 3199, eigene Redis-Datenbank). Solange sie
+Collab-Server (eigene Redis-Datenbank). Solange sie
 laufen, darf kein anderer Collab-Server an demselben Redis hängen, etwa
 aus `pnpm dev`: Pub/Sub gilt über alle Redis-Datenbanken hinweg, und er
 führte die Wiederherstellungen der Tests mit aus. Der Prüf-Collab-Server

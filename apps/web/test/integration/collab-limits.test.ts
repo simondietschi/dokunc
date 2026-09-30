@@ -54,6 +54,29 @@ function roherSocket(): Beobachtet {
 }
 
 /**
+ * Rohen Socket oeffnen, sobald die Grenze je Adresse einen Platz frei
+ * hat. Der Server gibt einen Platz erst beim "close" seines eigenen
+ * Sockets frei; das kommt nach dem des Clients, unter Last auch Sekunden
+ * spaeter. Gewartet wird deshalb auf den freien Platz selbst (bis zur
+ * Frist), nicht eine feste Zeit. Jeder abgewiesene Versuch zaehlt fuer
+ * die Versuchsbremse je Adresse (Vorgabe 300 je Minute); der Takt haelt
+ * beide Faelle zusammen weit darunter.
+ */
+async function sobaldFrei(timeoutMs = 15_000): Promise<Beobachtet> {
+  const ende = Date.now() + timeoutMs;
+  for (;;) {
+    const socket = roherSocket();
+    if (await socket.geoeffnet) return socket;
+    if (Date.now() > ende) {
+      throw new Error(
+        `Zeitlimit: kein Platz je Adresse frei geworden\n${collab!.log()}`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+/**
  * Ausgabe des Servers, sobald sie `text` enthaelt (hoechstens 2 s).
  * Die Logzeile kommt ueber die Pipe des Kindprozesses und kann nach der
  * Abweisung beim Client eintreffen, obwohl der Server sie vorher
@@ -132,24 +155,16 @@ describe("Grenzen des Collab-Servers vor der Anmeldung", () => {
 
     erlaubt[0].ws.close();
     await erlaubt[0].geschlossenNach;
-    // Der Server gibt den Platz beim "close" seines Sockets frei; das
-    // kommt kurz nach dem des Clients.
-    let wieder = false;
-    for (let i = 0; i < 20 && !wieder; i += 1) {
-      await new Promise((r) => setTimeout(r, 100));
-      const neu = roherSocket();
-      wieder = await neu.geoeffnet;
-    }
-    expect(wieder).toBe(true);
+    // Frei wird genau der eine Platz: bis dahin bleibt die Grenze zu.
+    await sobaldFrei();
+    expect(await roherSocket().geoeffnet).toBe(false);
     for (const ws of offen) ws.close();
   }, 30_000);
 
   it("schliesst einen Socket ohne Anmeldung nach 15 s, einen angemeldeten nicht", async () => {
-    // Die Plaetze aus dem ersten Test sind frei, sobald der Server die
-    // Sockets geschlossen hat.
-    await new Promise((r) => setTimeout(r, 500));
-    const stumm = roherSocket();
-    expect(await stumm.geoeffnet).toBe(true);
+    // Die Plaetze aus dem ersten Test werden frei, sobald der Server die
+    // Sockets geschlossen hat (siehe sobaldFrei).
+    const stumm = await sobaldFrei();
 
     let synced = false;
     let getrennt = false;
@@ -167,7 +182,10 @@ describe("Grenzen des Collab-Servers vor der Anmeldung", () => {
       },
     });
     providers.push(provider);
-    const bisSync = Date.now() + 10_000;
+    // Einen zweiten Platz bekommt der Provider, sobald der naechste Socket
+    // aus dem ersten Test auf dem Server zu ist; bis dahin versucht er es
+    // selbst erneut.
+    const bisSync = Date.now() + 20_000;
     while (!synced && Date.now() < bisSync) {
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -180,5 +198,5 @@ describe("Grenzen des Collab-Servers vor der Anmeldung", () => {
     // Der angemeldete Socket ist ueber dieselbe Frist hinaus offen.
     await new Promise((r) => setTimeout(r, 1_000));
     expect(getrennt).toBe(false);
-  }, 40_000);
+  }, 60_000);
 });
