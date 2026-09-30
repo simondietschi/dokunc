@@ -3,7 +3,7 @@ import { prisma } from "@dokunc/db";
 
 /**
  * Seitenschutz auf den Wegen, die eine Seite neu entstehen lassen oder
- * umhängen: Kopie, Seite aus Vorlage.
+ * umhängen: Kopie, Seite aus Vorlage, Vorlage aus geschützter Seite.
  *
  * Geprüft wird die echte Action gegen die echte Datenbank, als Person
  * der Welt aus der Rechtematrix (rechtematrix-welt.ts). Ersetzt sind nur
@@ -40,8 +40,10 @@ vi.mock("next/headers", async () =>
 
 const { baueWelt, raeumeWelt, Umleitung } = await import("./rechtematrix-welt");
 const { createPageAction } = await import("@/app/s/[slug]/actions");
-const { createFromTemplateAction, duplicatePageAction } = await import(
-  "@/app/s/[slug]/template-actions"
+const { createFromTemplateAction, duplicatePageAction, saveAsTemplateAction } =
+  await import("@/app/s/[slug]/template-actions");
+const { BestaetigungNoetig, schutzwechselToken } = await import(
+  "@/lib/confirmation"
 );
 const { readablePageRole, setPageRestricted } = await import("@/lib/page-access");
 
@@ -333,5 +335,99 @@ describe("Seite aus Vorlage", () => {
     const n = await zeile(neu);
     expect(n.title).not.toBe("Geheime Vorlage");
     expect(n.textContent).not.toContain("vertraulich");
+  });
+});
+
+describe("Vorlage aus geschützter Seite", () => {
+  async function vorlagen(text: string) {
+    return prisma.page.findMany({
+      where: { spaceId: w.space.id, isTemplate: true, textContent: text },
+      select: { id: true, isRestricted: true, accessRootId: true },
+    });
+  }
+  async function changed(targetId: string) {
+    return prisma.auditLog.findMany({
+      where: { action: "page.protection_changed", targetId },
+      select: { actorId: true, metadata: true },
+    });
+  }
+
+  it("die Verwaltung bekommt ohne passendes Token eine Rückfrage, und es entsteht nichts", async () => {
+    const p = await seite("Abmahnung", { text: "abmahnung-inhalt" });
+    await w.schuetze(p);
+    const andere = await seite("Andere Wurzel");
+
+    for (const token of [undefined, schutzwechselToken(andere, null)]) {
+      const fehler = await w
+        .alsPerson(w.personen.ADMIN, () =>
+          saveAsTemplateAction(
+            formular({ pageId: p, ...(token ? { confirmProtection: token } : {}) }),
+          ),
+        )
+        .then(
+          () => null,
+          (e: unknown) => e,
+        );
+      expect(fehler).toBeInstanceOf(BestaetigungNoetig);
+      expect((fehler as InstanceType<typeof BestaetigungNoetig>).token).toBe(
+        schutzwechselToken(p, null),
+      );
+    }
+    expect(await vorlagen("abmahnung-inhalt")).toEqual([]);
+  });
+
+  it("mit dem Token der Rückfrage entsteht eine offene Vorlage, und das Audit hält es fest", async () => {
+    const { ADMIN } = w.personen;
+    const r = await seite("Personal", { text: "personal-inhalt" });
+    const c = await seite("Zeugnis", { parentId: r, text: "zeugnis-inhalt" });
+    await w.schuetze(r);
+
+    const vorlage = await neueSeite(ADMIN, () =>
+      saveAsTemplateAction(
+        formular({ pageId: c, confirmProtection: schutzwechselToken(r, null) }),
+      ),
+    );
+
+    expect(await vorlagen("zeugnis-inhalt")).toEqual([
+      { id: vorlage, isRestricted: false, accessRootId: null },
+    ]);
+    expect(await changed(vorlage)).toEqual([
+      {
+        actorId: ADMIN.id,
+        metadata: {
+          via: "template",
+          sourcePageId: c,
+          fromRootId: r,
+          toRootId: null,
+          confirmed: true,
+          title: "Zeugnis",
+        },
+      },
+    ]);
+  });
+
+  it("MEMBER mit Freigabe darf eine geschützte Seite nicht als Vorlage speichern, auch nicht mit richtigem Token", async () => {
+    const p = await seite("Gehälter", { text: "gehaelter-inhalt" });
+    await w.schuetze(p);
+
+    await expect(
+      w.alsPerson(w.personen.MEMBER_FREIGABE, () =>
+        saveAsTemplateAction(
+          formular({ pageId: p, confirmProtection: schutzwechselToken(p, null) }),
+        ),
+      ),
+    ).rejects.toThrow(
+      "Geschützte Seiten kann nur die Space-Verwaltung als Vorlage speichern.",
+    );
+    expect(await vorlagen("gehaelter-inhalt")).toEqual([]);
+  });
+
+  it("eine offene Seite wird ohne Rückfrage und ohne Audit zur Vorlage", async () => {
+    const p = await seite("Checkliste", { text: "checkliste-inhalt" });
+    const vorlage = await neueSeite(w.personen.MEMBER, () =>
+      saveAsTemplateAction(formular({ pageId: p })),
+    );
+    expect(await vorlagen("checkliste-inhalt")).toHaveLength(1);
+    expect(await changed(vorlage)).toEqual([]);
   });
 });

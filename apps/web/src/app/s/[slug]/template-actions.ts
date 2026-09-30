@@ -13,7 +13,12 @@ import {
 } from "@/lib/page-copy";
 import { extractText } from "@/lib/page-text";
 import { audit } from "@/lib/audit";
-import { copyPageGrants, refreshAccessRoots } from "@/lib/page-access";
+import { BestaetigungNoetig, schutzwechselToken } from "@/lib/confirmation";
+import {
+  copyPageGrants,
+  refreshAccessRoots,
+  seesEverything,
+} from "@/lib/page-access";
 import {
   findLivePage,
   livePageWhere,
@@ -84,15 +89,42 @@ export async function createTemplateAction(form: FormData) {
   redirect(`/s/${space.slug}/p/${page.id}`);
 }
 
-/** Kopie einer Seite als Vorlage dieses Space speichern. */
+/**
+ * Kopie einer Seite als Vorlage dieses Space speichern.
+ *
+ * Eine Vorlage ist offen: eine geschützte Vorlage wäre für den Space
+ * nutzlos. Aus einem geschützten Ast legt sie deshalb nur die
+ * Space-Verwaltung an, und nur bestätigt (Feld `confirmProtection` mit
+ * dem Token aus `schutzwechselToken`); das steht im Audit. Für alle
+ * anderen trüge dieser Weg den Inhalt einer geschützten Seite an jeden,
+ * der Vorlagen nutzt.
+ */
 export async function saveAsTemplateAction(form: FormData) {
   const access = await authorizeAction(form, "managePages");
   const { space, user } = access;
   const source = await selectLivePage(scopeOf(access), str(form, "pageId"), {
+    id: true,
     title: true,
     content: true,
+    accessRootId: true,
   });
   if (!source) throw new Error("Seite nicht gefunden");
+
+  if (source.accessRootId) {
+    if (!seesEverything(access.role)) {
+      throw new Error(
+        "Geschützte Seiten kann nur die Space-Verwaltung als Vorlage speichern.",
+      );
+    }
+    const token = schutzwechselToken(source.accessRootId, null);
+    if (str(form, "confirmProtection") !== token) {
+      throw new BestaetigungNoetig(
+        "Die Vorlage wäre für alle im Space sichtbar, die Vorlagen nutzen. " +
+          "Bitte im Menü bestätigen.",
+        token,
+      );
+    }
+  }
 
   const content = stripCommentMarks(source.content);
   const template = await prisma.page.create({
@@ -106,6 +138,22 @@ export async function saveAsTemplateAction(form: FormData) {
     },
     select: { id: true },
   });
+  if (source.accessRootId) {
+    await audit({
+      action: "page.protection_changed",
+      actorId: user.id,
+      spaceId: space.id,
+      targetId: template.id,
+      metadata: {
+        via: "template",
+        sourcePageId: source.id,
+        fromRootId: source.accessRootId,
+        toRootId: null,
+        confirmed: true,
+        title: source.title,
+      },
+    });
+  }
   revalidatePath(`/s/${space.slug}`, "layout");
   redirect(`/s/${space.slug}/p/${template.id}`);
 }

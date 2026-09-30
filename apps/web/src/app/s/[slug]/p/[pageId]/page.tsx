@@ -302,6 +302,7 @@ export default async function PageView({
         breadcrumbs={{ spaceName: space.name, ancestors }}
         restoreEpoch={restoreEpoch}
         hasChildren={childCount > 0}
+        protectedRootId={page.accessRootId}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">

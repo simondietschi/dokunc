@@ -50,6 +50,7 @@ export type AuditAction =
   | "page.shared"
   | "page.share_revoked"
   | "page.protection_carried"
+  | "page.protection_changed"
   | "upload.created"
   | "admin.user_activated"
   | "admin.user_deactivated"
@@ -153,6 +154,7 @@ export const AUDIT_LABELS: Record<AuditAction, string> = {
   "page.shared": "Seite freigegeben",
   "page.share_revoked": "Freigabe zurückgezogen",
   "page.protection_carried": "Seitenschutz übernommen",
+  "page.protection_changed": "Seitenschutz geändert",
   "upload.created": "Datei hochgeladen",
   "admin.user_activated": "Konto aktiviert",
   "admin.user_deactivated": "Konto deaktiviert",

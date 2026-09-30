@@ -225,6 +225,7 @@ export function CollaborativeEditor({
   breadcrumbs,
   hasChildren = false,
   restoreEpoch,
+  protectedRootId = null,
 }: {
   slug: string;
   spaceId: string;
@@ -264,6 +265,8 @@ export function CollaborativeEditor({
   hasChildren?: boolean;
   /** Restore-Epoche der Instanz (InstanceState). Benennt die lokale Kopie. */
   restoreEpoch: string | null;
+  /** Wirksame Schutzwurzel der Seite, null = offen ("Als Vorlage speichern"). */
+  protectedRootId?: string | null;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
   // "connected" heisst hier: authentifiziert UND erstmalig synchronisiert.
@@ -949,6 +952,8 @@ export function CollaborativeEditor({
                     pageId={pageId}
                     isTemplate={isTemplate}
                     hasChildren={hasChildren}
+                    protectedRootId={protectedRootId}
+                    canAdminister={canAdminister}
                   />
                 </>
               )}

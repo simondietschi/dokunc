@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Copy, FilePlus2, LayoutTemplate } from "lucide-react";
 import { MenuItem } from "@/components/space/PageActions";
 import { Button } from "@/components/ui/Button";
+import { ConfirmButton } from "@/components/ui/ConfirmButton";
+import { schutzwechselToken } from "@/lib/confirmation";
 import {
   createFromTemplateAction,
   duplicatePageAction,
@@ -15,17 +17,28 @@ import {
  *  - Vorlage: "Seite aus dieser Vorlage erstellen"
  *  - normale Seite: "Duplizieren" (mit Unterseiten-Option, falls es
  *    welche gibt) und "Als Vorlage speichern"
+ *
+ * Eine Vorlage ist für den ganzen Space offen. Aus einer geschützten
+ * Seite legt sie deshalb nur die Space-Verwaltung an, nach einer
+ * Rückfrage; alle anderen sehen statt des Eintrags einen Hinweis. Der
+ * Server prüft dasselbe (saveAsTemplateAction).
  */
 export function PageMenuTemplates({
   slug,
   pageId,
   isTemplate,
   hasChildren,
+  protectedRootId = null,
+  canAdminister = false,
 }: {
   slug: string;
   pageId: string;
   isTemplate: boolean;
   hasChildren: boolean;
+  /** Wirksame Schutzwurzel der Seite, null = offen. */
+  protectedRootId?: string | null;
+  /** Ab ADMIN: darf eine geschützte Seite als Vorlage freigeben. */
+  canAdminister?: boolean;
 }) {
   const [duplicateOpen, setDuplicateOpen] = useState(false);
 
@@ -84,13 +97,42 @@ export function PageMenuTemplates({
           </MenuItem>
         </form>
       )}
-      <form action={saveAsTemplateAction}>
-        <input type="hidden" name="slug" value={slug} />
-        <input type="hidden" name="pageId" value={pageId} />
-        <MenuItem type="submit" icon={<LayoutTemplate className="h-4 w-4" />}>
-          Als Vorlage speichern
-        </MenuItem>
-      </form>
+      {!protectedRootId ? (
+        <form action={saveAsTemplateAction}>
+          <input type="hidden" name="slug" value={slug} />
+          <input type="hidden" name="pageId" value={pageId} />
+          <MenuItem type="submit" icon={<LayoutTemplate className="h-4 w-4" />}>
+            Als Vorlage speichern
+          </MenuItem>
+        </form>
+      ) : canAdminister ? (
+        <form action={saveAsTemplateAction}>
+          <input type="hidden" name="slug" value={slug} />
+          <input type="hidden" name="pageId" value={pageId} />
+          <input
+            type="hidden"
+            name="confirmProtection"
+            value={schutzwechselToken(protectedRootId, null)}
+          />
+          <ConfirmButton
+            title="Vorlage aus geschützter Seite"
+            message={
+              "Diese Seite ist geschützt. Die Vorlage ist für alle im Space " +
+              "sichtbar, die Vorlagen nutzen. Der Vorgang wird protokolliert."
+            }
+            confirmLabel="Vorlage speichern"
+            destructive={false}
+            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[13px] text-muted transition-colors hover:bg-subtle hover:text-ink"
+          >
+            <LayoutTemplate className="h-4 w-4" />
+            Als Vorlage speichern…
+          </ConfirmButton>
+        </form>
+      ) : (
+        <p className="px-2.5 py-2 text-[12px] text-faint">
+          Geschützte Seiten kann nur die Space-Verwaltung als Vorlage speichern.
+        </p>
+      )}
       <div className="my-1 border-t border-line" />
     </>
   );

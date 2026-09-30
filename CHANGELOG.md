@@ -53,6 +53,14 @@ differently on an existing installation, and what to do about it.
   It should list no pages; a space admin fixes a listed page by moving it
   once in the page tree.
 
+- **Templates from protected pages:** saving a protected page, or a page
+  below a protected page, as a template now requires a space admin or
+  owner, who confirms it in a dialog; other roles see a note instead of
+  the menu entry. The template is visible to everyone in the space who
+  uses templates. The action is recorded as `page.protection_changed` in
+  the audit log; SIEM or log filters that list audit events explicitly
+  should add it. Nothing else to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -66,6 +74,9 @@ differently on an existing installation, and what to do about it.
 - Duplicating a protected page, or a page with protected sub-pages, no
   longer creates copies that the whole space can read. Pages created from
   a protected template keep the template's protection.
+- Members with access to a protected page could publish its content to
+  the whole space by saving it as a template; this now requires a
+  confirmed action by a space admin or owner.
 
 ### Added
 
