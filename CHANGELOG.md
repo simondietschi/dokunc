@@ -21,8 +21,9 @@ differently on an existing installation, and what to do about it.
   their configuration at startup. When a checked setting is invalid, the
   server stops with exit code 78 and one `fatal` log line that lists every
   problem (field `errors`). The first checked setting is `LOG_LEVEL`: an
-  invalid value used to crash both servers with a stack trace, and the
-  value is no longer case-sensitive. On success the log shows one line
+  invalid value used to crash both servers with a stack trace. Surrounding
+  spaces and an empty value, which crashed them as well, are now accepted
+  (empty means `info`). On success the log shows one line
   "Konfiguration geprueft" with the values of the declared settings
   (secrets masked) and the names of the other settings that are set.
   Nothing to do for a working installation. If the container keeps
@@ -35,9 +36,9 @@ differently on an existing installation, and what to do about it.
   `.gitleaksignore`, `CONTRIBUTING.md` or the test helpers in
   `apps/web/test`, also in subdirectories. If you relied on a file such as
   `.env.production` or `apps/web/.env.local` being read during the image
-  build, set the values in `.env` instead: Docker Compose passes them to
-  the container, and `NEXT_PUBLIC_COLLAB_URL` to the build. Otherwise
-  nothing to do.
+  build or when the web app starts, set the values in `.env` instead:
+  Docker Compose passes them to the container, and
+  `NEXT_PUBLIC_COLLAB_URL` to the build. Otherwise nothing to do.
 
 ### Security
 

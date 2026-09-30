@@ -6,8 +6,10 @@ import type { Umgebung, Variable } from "./variable";
 
 /**
  * Exit-Code bei ungueltiger Konfiguration (EX_CONFIG aus sysexits.h).
- * Unterscheidet den Fall von einem Absturz (1) und von SIGKILL (137);
- * `docker inspect` zeigt ihn.
+ * Unterscheidet beim Server-Prozess den Fall von einem Absturz (1) und
+ * von SIGKILL (137). Der Container endet nur dann mit 78, wenn der
+ * Startprozess den Code weitergibt; `pnpm start` (concurrently) endet
+ * bei jedem Fehler mit 1.
  */
 export const EXIT_KONFIGURATION = 78;
 
