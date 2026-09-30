@@ -504,12 +504,13 @@ getrennt gesichert; sie enthält auch `POSTGRES_PASSWORD` und die übrigen
 Zugangsdaten.
 
 **Aufbewahrung:** Mit `BACKUP_KEEP_DAYS` (in der Umgebung des Aufrufs
-oder in der `.env`, die Umgebung hat Vorrang) löscht jede erfolgreiche
+oder in der `.env`, die Umgebung hat Vorrang) löscht eine erfolgreiche
 Sicherung danach die Sätze in `backups/`, deren Zeitstempel älter als so
-viele Tage ist. Die drei jüngsten Sätze bleiben immer, auch nach einer
-langen Pause. Vorgabe `0`: nie löschen. Gelöscht wird nur, was dem
-Namensmuster entspricht; ein ungültiger Wert löscht nichts und erzeugt
-eine Warnung. `restore.sh` löscht bei seiner Vorsicherung nie.
+viele Tage ist (→ `docs/admin/compose-project.md`). Die drei jüngsten
+Sätze bleiben immer, auch nach einer langen Pause. Vorgabe `0`: nie
+löschen. Gelöscht wird nur, was dem Namensmuster entspricht; ein
+ungültiger Wert löscht nichts und erzeugt eine Warnung. `restore.sh`
+löscht bei seiner Vorsicherung nie.
 
 **Zeitplan:** mit cron (Konto, dem das Repository gehört und das Docker
 bedienen darf):
