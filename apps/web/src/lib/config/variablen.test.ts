@@ -100,3 +100,38 @@ describe("SETUP_TOKEN_FILE", () => {
     expect(WEB_VARIABLEN.find((v) => v.name === "SETUP_TOKEN_FILE")?.inCompose).toBe(false);
   });
 });
+
+describe("Bremsen je Adresse", () => {
+  it("nimmt leere Werte als Vorgabe und zeigt sie im Startlog lesbar", () => {
+    const r = pruefe({});
+    expect(r.ok).toBe(true);
+    expect(r.werte).toMatchObject({
+      RATE_LIMIT_LOGIN_PER_IP: null,
+      RATE_LIMIT_SSO_START_PER_IP: null,
+    });
+    const v = WEB_VARIABLEN.find((x) => x.name === "RATE_LIMIT_SSO_START_PER_IP");
+    expect(v?.vorgabe).toBe("600/1h");
+    expect(v?.anzeige?.(null, {})).toBe("600/1h");
+    expect(v?.anzeige?.({ versuche: 30, fenster: 300 }, {})).toBe("30/5m");
+  });
+
+  it("bricht bei ungueltigen Werten ab und nennt jede Variable", () => {
+    const r = pruefe({
+      RATE_LIMIT_LOGIN_PER_IP: "30",
+      RATE_LIMIT_REGISTER_PER_IP: "0/5m",
+      RATE_LIMIT_RESET_REQUEST_PER_IP: "10/25h",
+      RATE_LIMIT_RESET_SUBMIT_PER_IP: "10/1d",
+      RATE_LIMIT_SSO_START_PER_IP: "600/1h",
+    });
+    expect(r.ok).toBe(false);
+    expect(r.fehler.map((f) => f.variable).sort()).toEqual([
+      "RATE_LIMIT_LOGIN_PER_IP",
+      "RATE_LIMIT_REGISTER_PER_IP",
+      "RATE_LIMIT_RESET_REQUEST_PER_IP",
+      "RATE_LIMIT_RESET_SUBMIT_PER_IP",
+    ]);
+    expect(meldungen(r.fehler, "RATE_LIMIT_LOGIN_PER_IP")).toEqual([
+      expect.stringMatching(/^RATE_LIMIT_LOGIN_PER_IP: erwartet Versuche\/Fenster wie "30\/5m"/),
+    ]);
+  });
+});

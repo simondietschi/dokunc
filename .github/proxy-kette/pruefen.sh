@@ -82,6 +82,7 @@ bereit() {
 }
 
 # Teil A: verschiedene Client-Adressen in Bremse, Audit und Collab-Grenze.
+# Aufruf: pruefen.sh a b ... (Vorgabe: a)
 teil_a() {
   # Ein vom Client gefaelschter Anfang zaehlt nicht. Vor der Serie von A
   # und von einer eigenen Adresse: ist eine Adresse gebremst, entsteht
@@ -110,6 +111,13 @@ teil_a() {
     exit 1
   fi
   echo "ok Warnung header_too_short im Log der App"
+}
+
+# Teil B: die Bremse je Adresse ist per Umgebung einstellbar
+# (RATE_LIMIT_SSO_START_PER_IP=3/10m in compose.yml) und zaehlt je Adresse.
+teil_b() {
+  erwarte "SSO-Start A" "error error error throttled" "$(sonde "$A" sso-start 4)"
+  erwarte "SSO-Start B" "error" "$(sonde "$B" sso-start 1)"
 }
 
 bereit

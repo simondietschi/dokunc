@@ -2,6 +2,7 @@ import "server-only";
 import type { Redis } from "ioredis";
 import { clientIp } from "./client-ip";
 import { log } from "./log";
+import type { Bremse } from "./rate-limits";
 import { sharedRedis } from "./redis";
 
 /**
@@ -81,8 +82,17 @@ function bumpMem(key: string, windowSec: number): number {
   return entry.n;
 }
 
+/** Ergebnis eines gezaehlten Versuchs. */
+export type Versuch = {
+  allowed: boolean;
+  /** Genau der erste abgewiesene Versuch im Fenster (fuer einmalige Meldungen). */
+  firstRejection: boolean;
+  /** Stand des Zaehlers nach diesem Versuch. */
+  count: number;
+};
+
 /**
- * Fixed-Window-Limiter. Gibt true zurück, wenn die Aktion erlaubt ist.
+ * Fixed-Window-Limiter: zaehlt einen Versuch und sagt, ob er erlaubt ist.
  * Bei Redis-Ausfall greift ein In-Memory-Fallback (fail-open nur,
  * wenn beides nicht verfügbar ist).
  *
@@ -93,20 +103,31 @@ function bumpMem(key: string, windowSec: number): number {
  * Erfolgsfall mit `resetLimit` — sonst sperrte sich aus, wer sich an
  * mehreren Geräten anmeldet.
  */
+export async function attempt(key: string, b: Bremse): Promise<Versuch> {
+  const r = client();
+  let count: number | undefined;
+  if (r) {
+    try {
+      count = await bump(r, `dokunc:rl:${key}`, b.fenster);
+    } catch (e) {
+      redisFailed("rateLimit", e);
+    }
+  }
+  count ??= bumpMem(key, b.fenster);
+  return {
+    allowed: count <= b.versuche,
+    firstRejection: count === b.versuche + 1,
+    count,
+  };
+}
+
+/** Wie `attempt`, nur mit der Antwort, ob der Versuch erlaubt ist. */
 export async function rateLimit(
   key: string,
   limit: number,
   windowSec: number,
 ): Promise<boolean> {
-  const r = client();
-  if (r) {
-    try {
-      return (await bump(r, `dokunc:rl:${key}`, windowSec)) <= limit;
-    } catch (e) {
-      redisFailed("rateLimit", e);
-    }
-  }
-  return bumpMem(key, windowSec) <= limit;
+  return (await attempt(key, { versuche: limit, fenster: windowSec })).allowed;
 }
 
 /**
@@ -169,12 +190,29 @@ export async function releaseLimit(key: string): Promise<void> {
 }
 
 /**
- * Stabiler Schlüssel aus der Client-IP (für anonyme Endpunkte).
+ * Bremse je Client-Adresse (Schluessel `<prefix>:<adresse>`), fuer
+ * Endpunkte ohne Konto oder vor der Anmeldung: Anmeldung, Registrierung,
+ * Passwort-Reset, SSO-Start. Gibt true zurueck, wenn der Versuch erlaubt
+ * ist.
  *
- * Ist keine vertrauenswürdige IP ableitbar (kein Proxy konfiguriert
- * oder Header fehlt), fallen alle Anfragen in einen gemeinsamen
- * Topf. Das begrenzt bewusst konservativ statt auf einen fälschbaren
- * Header zu vertrauen; siehe TRUSTED_PROXY_HOPS in .env.example.
+ * Ist keine vertrauenswuerdige Adresse ableitbar (kein Proxy
+ * konfiguriert, Header fehlt oder passt nicht zur Kette), fallen alle
+ * Anfragen in den gemeinsamen Topf `unknown`: das bremst zu streng statt
+ * gar nicht, statt einem faelschbaren Header zu glauben (siehe
+ * TRUSTED_PROXY_HOPS in .env.example). Bremsen je Konto gehoeren nicht
+ * hierher, sondern zu `rateLimit` mit eigenem Schluessel.
+ */
+export async function rateLimitByAddress(prefix: string, b: Bremse): Promise<boolean> {
+  return rateLimit(`${prefix}:${(await clientIp()) ?? "unknown"}`, b.versuche, b.fenster);
+}
+
+/**
+ * Stabiler Schlüssel aus Konto und Client-Adresse zusammen (Import:
+ * `import:<konto>:<adresse>`). Fuer Bremsen nur je Adresse
+ * `rateLimitByAddress`.
+ *
+ * Ist keine vertrauenswürdige IP ableitbar, fallen alle Anfragen des
+ * Kontos in einen gemeinsamen Topf.
  */
 export async function clientKey(prefix: string): Promise<string> {
   return `${prefix}:${(await clientIp()) ?? "unknown"}`;

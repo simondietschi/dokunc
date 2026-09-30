@@ -68,6 +68,7 @@ vi.mock("@/lib/session", () => ({
 }));
 vi.mock("@/lib/rate-limit", () => ({
   rateLimit: vi.fn(async () => true),
+  rateLimitByAddress: vi.fn(async () => true),
   resetLimit: vi.fn(),
   releaseLimit: vi.fn(),
   clientKey: vi.fn(async (prefix: string) => `${prefix}:ersteinrichtung`),

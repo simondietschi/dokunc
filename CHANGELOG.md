@@ -295,6 +295,20 @@ differently on an existing installation, and what to do about it.
   `TRUSTED_PROXY_HOPS=0`, and both servers warn when `TRUSTED_PROXIES` is
   set but `TRUSTED_PROXY_HOPS` is below 2.
 
+- **Single sign-on limit per address:** starting a single sign-on is now
+  limited to 600 per hour per client address instead of 20 per 5 minutes,
+  so that a site behind one NAT address can sign in at the start of the
+  day. To keep a lower limit, set `RATE_LIMIT_SSO_START_PER_IP`, for
+  example `20/5m`. Nothing to do otherwise.
+
+- **Per-address rate limits in the environment:** the new optional
+  settings `RATE_LIMIT_LOGIN_PER_IP`, `RATE_LIMIT_REGISTER_PER_IP`,
+  `RATE_LIMIT_RESET_REQUEST_PER_IP`, `RATE_LIMIT_RESET_SUBMIT_PER_IP` and
+  `RATE_LIMIT_SSO_START_PER_IP` (format `30/5m`) set the web app's limits
+  per client address; `docker-compose.yml` passes them through, and an
+  invalid value stops the start. Use the same values on every instance.
+  Nothing to do if the defaults fit; see `docs/admin/network.md`.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -399,6 +413,10 @@ differently on an existing installation, and what to do about it.
   `X-Forwarded-For` it keeps. The web app and the collaboration server
   check its format at startup and warn (reason `address_is_proxy`) when
   the client address they find is one of these proxies.
+- Settings for the web app's rate limits per client address
+  (`RATE_LIMIT_LOGIN_PER_IP`, `RATE_LIMIT_REGISTER_PER_IP`,
+  `RATE_LIMIT_RESET_REQUEST_PER_IP`, `RATE_LIMIT_RESET_SUBMIT_PER_IP`,
+  `RATE_LIMIT_SSO_START_PER_IP`), checked at startup.
 
 ### Changed
 
@@ -438,6 +456,8 @@ differently on an existing installation, and what to do about it.
 - The web app and the collaboration server share one implementation of the
   client address; the web app now normalizes IPv4-mapped IPv6 addresses
   like the collaboration server.
+- The default limit for single sign-on starts per client address is 600
+  per hour (was 20 per 5 minutes).
 
 ### Removed
 

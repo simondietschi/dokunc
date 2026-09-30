@@ -14,7 +14,7 @@ import {
   parseInviteFromNext,
   verifyToken,
 } from "@/lib/invitations";
-import { rateLimit, resetLimit, clientKey } from "@/lib/rate-limit";
+import { rateLimit, rateLimitByAddress, resetLimit } from "@/lib/rate-limit";
 import { audit } from "@/lib/audit";
 import { log } from "@/lib/log";
 import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
@@ -128,11 +128,7 @@ function einrichtungsTokenFehler(status: {
 }
 
 async function registerBremse(): Promise<boolean> {
-  return rateLimit(
-    await clientKey("register"),
-    RATE_LIMITS.register.versuche,
-    RATE_LIMITS.register.fenster,
-  );
+  return rateLimitByAddress("register", RATE_LIMITS.register);
 }
 
 export async function registerAction(
@@ -315,13 +311,7 @@ export async function loginAction(
 
   // Zwei Bremsen: pro IP (ein Angreifer, viele Konten) UND pro Konto
   // (viele IPs, ein Konto — Passwort-Raten aus einem Botnetz).
-  if (
-    !(await rateLimit(
-      await clientKey("login"),
-      RATE_LIMITS.loginIp.versuche,
-      RATE_LIMITS.loginIp.fenster,
-    ))
-  ) {
+  if (!(await rateLimitByAddress("login", RATE_LIMITS.loginIp))) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }
 

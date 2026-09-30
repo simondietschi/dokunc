@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { safeNext } from "@/lib/safe-redirect";
-import { rateLimit, clientKey } from "@/lib/rate-limit";
+import { rateLimitByAddress } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
 import { oidcConfig } from "@/lib/oidc";
 import { beginOidcFlow } from "@/lib/oidc-flow";
@@ -17,11 +17,8 @@ export async function GET(req: Request) {
   if (!config) {
     return NextResponse.redirect(new URL("/login?sso=disabled", req.url));
   }
-  if (!(await rateLimit(
-      await clientKey("oidc-start"),
-      RATE_LIMITS.oidcStart.versuche,
-      RATE_LIMITS.oidcStart.fenster,
-    ))) {
+  // Je Client-Adresse, einstellbar mit RATE_LIMIT_SSO_START_PER_IP.
+  if (!(await rateLimitByAddress("oidc-start", RATE_LIMITS.oidcStart))) {
     return NextResponse.redirect(new URL("/login?sso=throttled", req.url));
   }
 

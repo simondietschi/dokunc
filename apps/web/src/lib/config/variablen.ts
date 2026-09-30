@@ -10,8 +10,37 @@ import {
   parseTrustedDomains,
   type SubjectClaim,
 } from "@/lib/oidc-claims";
+import {
+  BREMSEN_AUS_DER_UMGEBUNG,
+  RATE_LIMIT_VORGABEN,
+  parseRateLimitSpec,
+  type Bremse,
+  type BremsName,
+} from "@/lib/rate-limits";
 import { parseSetupTokenFile } from "@/lib/setup-token";
 import { parseSsoEnforcement, type SsoEnforcement } from "@/lib/sso-policy";
+
+/** "600/1h" statt 600/3600, wie man es in die Umgebung schreibt. */
+function alsText(b: Bremse): string {
+  const f = b.fenster;
+  const fenster = f % 3600 === 0 ? `${f / 3600}h` : f % 60 === 0 ? `${f / 60}m` : `${f}s`;
+  return `${b.versuche}/${fenster}`;
+}
+
+/** Eine einstellbare Bremse (lib/rate-limits, BREMSEN_AUS_DER_UMGEBUNG). */
+function bremse(
+  schluessel: keyof typeof BREMSEN_AUS_DER_UMGEBUNG & BremsName,
+  beschreibung: string,
+): Variable<Bremse | null> {
+  return defineVariable<Bremse | null>({
+    name: BREMSEN_AUS_DER_UMGEBUNG[schluessel],
+    dienste: ["web"],
+    beschreibung: `${beschreibung} Format \`<attempts>/<window>\`, window in s, m or h (at most 24h), for example \`30/5m\`. Empty means the default. See docs/admin/network.md.`,
+    vorgabe: alsText(RATE_LIMIT_VORGABEN[schluessel]),
+    parse: (roh) => parseRateLimitSpec(roh),
+    anzeige: (wert) => alsText(wert ?? RATE_LIMIT_VORGABEN[schluessel]),
+  });
+}
 
 /**
  * Variablen, die nur die Web-App liest. Nach `name` sortiert
@@ -87,6 +116,17 @@ export const NUR_WEB_VARIABLEN: readonly Variable[] = [
       "Email domains whose addresses count as verified when the identity provider sends neither `email_verified` nor `xms_edov`, separated by commas or spaces (at most 100). List only domains your organisation controls, never public mail domains.",
     parse: (roh) => parseTrustedDomains(roh),
   }),
+  bremse(
+    "loginIp",
+    "Password sign-in attempts per client address. The limit per account (8 per 15 minutes) is fixed.",
+  ),
+  bremse("register", "Registrations per client address."),
+  bremse(
+    "resetRequest",
+    "Password reset requests per client address. The limit per email address (3 per hour) is fixed.",
+  ),
+  bremse("resetSubmit", "Password reset submissions (new password with the link) per client address."),
+  bremse("oidcStart", "Single sign-on starts per client address."),
   defineVariable<string>({
     name: "SETUP_TOKEN_FILE",
     dienste: ["web"],

@@ -14,7 +14,7 @@ import {
   isTransientMailError,
   sendPasswordResetEmail,
 } from "@/lib/mail";
-import { rateLimit, releaseLimit, clientKey } from "@/lib/rate-limit";
+import { rateLimit, rateLimitByAddress, releaseLimit } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
 import { audit } from "@/lib/audit";
 import { BCRYPT_COST, PASSWORD_MIN_LENGTH } from "@/lib/password-policy";
@@ -77,13 +77,7 @@ export async function requestResetAction(
   if (!z.email().safeParse(email).success) {
     return { error: "Ungültige E-Mail" };
   }
-  if (
-    !(await rateLimit(
-      await clientKey("reset-req"),
-      RATE_LIMITS.resetRequest.versuche,
-      RATE_LIMITS.resetRequest.fenster,
-    ))
-  ) {
+  if (!(await rateLimitByAddress("reset-req", RATE_LIMITS.resetRequest))) {
     return { error: "Zu viele Anfragen. Bitte später erneut." };
   }
 
@@ -273,13 +267,7 @@ export async function performResetAction(
 
   // Auch das Einlösen drosseln: sonst lässt sich zu einer bekannten
   // Reset-ID unbegrenzt oft ein Token raten.
-  if (
-    !(await rateLimit(
-      await clientKey("reset-do"),
-      RATE_LIMITS.resetSubmit.versuche,
-      RATE_LIMITS.resetSubmit.fenster,
-    ))
-  ) {
+  if (!(await rateLimitByAddress("reset-do", RATE_LIMITS.resetSubmit))) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }
 

@@ -39,6 +39,12 @@ services:
       TRUSTED_PROXY_HOPS: "2"
       TRUSTED_PROXIES: "198.18.250.2"
       COLLAB_MAX_ATTEMPTS_PER_IP: "3"
+      # Bremse je Adresse fuer den SSO-Start, per Umgebung eingestellt. Der
+      # Start zaehlt vor dem Abruf beim Anbieter; den gibt es nicht, also
+      # endet jeder gezaehlte Start mit sso=error.
+      RATE_LIMIT_SSO_START_PER_IP: "3/10m"
+      OIDC_ISSUER: https://idp.invalid
+      OIDC_CLIENT_ID: kette
 networks:
   kette:
     ipam:

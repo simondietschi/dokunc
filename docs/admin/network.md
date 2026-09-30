@@ -195,3 +195,30 @@ must not keep a header the client sent in a way that shifts the count:
 appending is fine, because the app counts from the right. `TRUSTED_PROXIES`
 is only read by the bundled Caddy; the app uses it only for the warnings
 above.
+
+## Rate limit settings
+
+The web app limits sign-in, registration, password reset and single
+sign-on per client address. These limits can be set in `.env`; all others
+(per account, per email address, two-factor codes, password confirmation)
+are fixed on purpose, because many people behind one address do not
+affect them.
+
+| Variable | Default | Counts |
+|---|---|---|
+| `RATE_LIMIT_LOGIN_PER_IP` | `30/5m` | password sign-in attempts per address (the limit of 8 per 15 minutes per account stays) |
+| `RATE_LIMIT_REGISTER_PER_IP` | `10/10m` | registrations per address |
+| `RATE_LIMIT_RESET_REQUEST_PER_IP` | `5/15m` | password reset requests per address (the limit of 3 per hour per email address stays) |
+| `RATE_LIMIT_RESET_SUBMIT_PER_IP` | `10/15m` | new passwords set through a reset link, per address |
+| `RATE_LIMIT_SSO_START_PER_IP` | `600/1h` | single sign-on starts per address |
+
+- **Format:** `<attempts>/<window>`, for example `30/5m`. The window is in
+  seconds, or with the unit `s`, `m` or `h`; at most `24h`. Attempts from 1
+  to 100000. Empty means the default. An invalid value stops the start
+  with a log line that names the variable.
+- **Same value on every instance:** the counters live in Redis and are
+  shared; with different values, each instance applies its own limit to
+  the shared counter.
+- The limits apply per address as the app sees it (see "Client
+  addresses"). If the address cannot be determined, all such requests
+  share the counter `unknown`, and the limits hit everybody at once.
