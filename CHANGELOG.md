@@ -430,6 +430,13 @@ differently on an existing installation, and what to do about it.
   `Wiki <wiki@your-company.example>` in that case. Otherwise nothing to
   do.
 
+- **PDF export:** the app now waits at most 35 seconds for Gotenberg,
+  for the answer and for the whole PDF. The bundled service already
+  stops a conversion after 30 seconds. If you run your own Gotenberg
+  (`GOTENBERG_URL`) with a longer `--api-timeout`, conversions that take
+  more than 35 seconds now fail with "PDF-Dienst (Gotenberg) nicht
+  erreichbar."; the print view still works. Otherwise nothing to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -741,3 +748,6 @@ differently on an existing installation, and what to do about it.
   warns about it.
 - Failed invitation and password reset mails are logged with the error's
   type, stack and SMTP code instead of only its message.
+- PDF export no longer hangs for up to five minutes, with the page's
+  HTML in memory, when Gotenberg does not answer or stops in the middle
+  of a PDF.

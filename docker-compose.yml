@@ -322,6 +322,8 @@ services:
       - gotenberg
       - --chromium-disable-javascript=true
       - "--chromium-allow-list=^(file:///tmp/|data:)"
+      # Die App wartet hoechstens 35 s auf eine Umwandlung (PDF_TIMEOUT_MS in
+      # apps/web/src/lib/pdf.ts, knapp darueber); pdf.test.ts prueft das.
       - --api-timeout=30s
       # Zwei Umwandlungen zugleich (Vorgabe von Gotenberg: 6), weitere
       # warten, höchstens bis --api-timeout. Mit 6 zugleich sprengen schon
