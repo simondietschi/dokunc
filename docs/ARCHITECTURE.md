@@ -528,7 +528,7 @@ aus genau diesen bei. Im Anfragepfad wird nichts nachgebettet.
       geändert), /spaces mit Einstiegen über alle Spaces
 - [x] Seitenvorlagen und Duplizieren: Vorlagen sind Seiten mit
       `isTemplate` (gleicher Editor/Collab, nicht im Seitenbaum, nicht als
-      Wiki-Link-Ziel, Badge in Suche/Palette/Papierkorb), Verwaltung unter
+      Wiki-Link-Ziel, Badge im Papierkorb), Verwaltung unter
       /s/[slug]/templates, Standardvorlagen als ProseMirror-JSON
       (`lib/builtin-templates.ts`), Picker in der Sidebar; Duplizieren als
       tiefe Kopie in einer Transaktion (Kommentar-Marks entfernt, Kopie
