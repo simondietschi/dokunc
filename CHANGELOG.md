@@ -46,12 +46,15 @@ differently on an existing installation, and what to do about it.
   access list at that moment. Each such copy is recorded as
   `page.protection_carried` in the audit log; SIEM or log filters that
   list audit events explicitly should add it. Pages created before this
-  update keep their current visibility: review top-level pages whose title
-  ends in "(Kopie)" and pages created from protected templates. To check
-  that every page follows the protection of its parent page, run
-  `docker compose exec -T db psql -U dokunc -d dokunc -c 'SELECT c.id, c.title FROM "Page" c LEFT JOIN "Page" p ON p.id = c."parentId" WHERE c."accessRootId" IS DISTINCT FROM CASE WHEN c."isRestricted" THEN c.id ELSE p."accessRootId" END'`.
+  update keep their current visibility, and the query below does not find
+  them: review every page whose title ends in "(Kopie)", at any level of
+  the page tree, together with its sub-pages, and the pages created from
+  protected templates. To check that every live page follows the
+  protection of its parent page, run
+  `docker compose exec -T db psql -U dokunc -d dokunc -c 'SELECT c.id, c.title FROM "Page" c LEFT JOIN "Page" p ON p.id = c."parentId" WHERE c."deletedAt" IS NULL AND NOT c."isTemplate" AND c."accessRootId" IS DISTINCT FROM CASE WHEN c."isRestricted" THEN c.id ELSE p."accessRootId" END'`.
   It should list no pages; a space admin fixes a listed page by moving it
-  once in the page tree.
+  to another place in the page tree and back. Pages in the trash are
+  corrected when they are restored.
 
 - **Templates from protected pages:** saving a protected page, or a page
   below a protected page, as a template now requires a space admin or
@@ -59,7 +62,8 @@ differently on an existing installation, and what to do about it.
   the menu entry. The template is visible to everyone in the space who
   uses templates. The action is recorded as `page.protection_changed` in
   the audit log; SIEM or log filters that list audit events explicitly
-  should add it. Nothing else to do.
+  should add it. Templates saved from protected pages before this update
+  are visible the same way: review the existing templates of each space.
 
 - **Moving protected pages:** moving a page out of a protected area, or
   from one protected area into another, now requires a space admin or
@@ -78,7 +82,9 @@ differently on an existing installation, and what to do about it.
   `page.protection_carried`; entries of the retention job have no actor
   and `automatisch: true`. Pages restored or detached before this update
   keep their current visibility: check the top-level pages named in
-  earlier `page.restored` and `page.purged` audit entries.
+  earlier `page.restored` audit entries. Sub-pages detached by an earlier
+  permanent deletion or import rollback cannot be traced from the audit
+  log: review the open top-level pages of each space.
 
 - **Permanent deletion:** only space admins and owners can permanently
   delete pages from the trash. Members no longer see the delete button
