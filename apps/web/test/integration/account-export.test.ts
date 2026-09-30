@@ -10,7 +10,9 @@ import { setPageRestricted } from "@/lib/page-access";
  * eine davon inzwischen vor der Person geschuetzt, geloescht oder hat sie
  * den Space verlassen, lieferte die Auskunft trotzdem den aktuellen Titel,
  * auch nach einer Umbenennung durch andere. Fuer solche Seiten stehen nur
- * die ID und der Hinweis "Seite ohne Zugriff" darin.
+ * die ID und der Hinweis "Seite ohne Zugriff" darin. Ebenso die eigenen
+ * Audit-Eintraege: Loeschen, Wiederherstellen und Schuetzen einer Seite
+ * halten ihren Titel von damals fest (metadata.title).
  *
  * Echte Route und Datenbank; ersetzt sind Anmeldung und Anfrage-Header
  * (fuer die Adresse im Audit-Eintrag).
@@ -99,6 +101,29 @@ beforeAll(async () => {
   }
   // Danach: geschuetzt ohne Freigabe fuer mich und umbenannt, und ich
   // verlasse den zweiten Space.
+  // Eigene Handlungen an den Seiten, wie die Actions sie festhalten.
+  await prisma.auditLog.createMany({
+    data: [
+      { actorId: ich.id, action: "page.deleted", spaceId: space, targetId: offen, metadata: { title: OFFEN } },
+      { actorId: ich.id, action: "page.deleted", spaceId: space, targetId: geschuetzt, metadata: { title: GEHEIM } },
+      { actorId: ich.id, action: "page.restored", spaceId: space, targetId: geschuetzt, metadata: { title: GEHEIM } },
+      {
+        actorId: ich.id,
+        action: "page.restricted",
+        spaceId: fremderSpace,
+        targetId: imVerlassenen,
+        metadata: { title: VERLASSEN },
+      },
+      // Vorlage aus einer Seite: der Titel ist der der Quelle.
+      {
+        actorId: ich.id,
+        action: "page.protection_changed",
+        spaceId: space,
+        targetId: offen,
+        metadata: { via: "template", sourcePageId: geschuetzt, confirmed: true, title: GEHEIM },
+      },
+    ],
+  });
   await setPageRestricted(geschuetzt, true, andere.id);
   await prisma.page.update({ where: { id: geschuetzt }, data: { title: UMBENANNT } });
   await prisma.spaceMember.deleteMany({ where: { userId: ich.id, spaceId: fremderSpace } });
@@ -146,6 +171,25 @@ describe("GET /api/account/export: Titel nur fuer sichtbare Seiten", () => {
     const zuGeschuetzt = versionen.find((v) => v.page.id === geschuetzt);
     expect(zuGeschuetzt?.title).toBeNull();
     expect(zuGeschuetzt?.page).toEqual({ id: geschuetzt, title: null, note: "Seite ohne Zugriff" });
+  });
+
+  it("eigene Audit-Eintraege: Titel nur fuer Seiten, die die Person oeffnen darf", async () => {
+    const { daten } = await auskunft();
+    type Eintrag = { action: string; targetId: string | null; metadata: Record<string, unknown> | null };
+    const eintraege = (daten.auditEvents as Eintrag[]).filter((e) => e.action.startsWith("page."));
+    const zu = (action: string, targetId: string) =>
+      eintraege.find((e) => e.action === action && e.targetId === targetId)?.metadata;
+    expect(zu("page.deleted", offen)).toEqual({ title: OFFEN });
+    expect(zu("page.deleted", geschuetzt)).toEqual({ title: null });
+    expect(zu("page.restored", geschuetzt)).toEqual({ title: null });
+    expect(zu("page.restricted", imVerlassenen)).toEqual({ title: null });
+    // Der Rest des Eintrags bleibt; nur der Titel der Quelle faellt weg.
+    expect(zu("page.protection_changed", offen)).toEqual({
+      via: "template",
+      sourcePageId: geschuetzt,
+      confirmed: true,
+      title: null,
+    });
   });
 
   it("die eigenen Texte bleiben vollstaendig", async () => {

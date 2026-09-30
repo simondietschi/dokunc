@@ -504,7 +504,9 @@ differently on an existing installation, and what to do about it.
   version of, also after losing access to them (page protected, deleted,
   space left) and after others renamed them. For such pages it now
   contains only the page ID with `"title": null` and
-  `"note": "Seite ohne Zugriff"`.
+  `"note": "Seite ohne Zugriff"`. The person's own audit events (for
+  example deleting or protecting a page) keep their other details but
+  show `"title": null` for such pages.
 
 ### Added
 

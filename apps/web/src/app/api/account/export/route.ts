@@ -7,6 +7,20 @@ import { titlesForUser } from "@/lib/link-titles";
 
 export const runtime = "nodejs";
 
+type AuditEintrag = { targetId: string | null; metadata: unknown };
+
+/**
+ * Die Seite, deren Titel ein Audit-Eintrag festhaelt (metadata.title),
+ * sonst null. Bei einer Vorlage aus einer Seite ist es die Quelle
+ * (sourcePageId), sonst das Ziel des Eintrags.
+ */
+function titelSeite(e: AuditEintrag): string | null {
+  const m = e.metadata;
+  if (m === null || typeof m !== "object" || Array.isArray(m) || !("title" in m)) return null;
+  const quelle = (m as { sourcePageId?: unknown }).sourcePageId;
+  return typeof quelle === "string" ? quelle : e.targetId;
+}
+
 /**
  * Datenauskunft: alles, was die Instanz über die anfragende Person
  * gespeichert hat, als JSON zum Herunterladen.
@@ -20,6 +34,9 @@ export const runtime = "nodejs";
  * geschuetzt, geloescht oder in einem verlassenen Space sind; ihr
  * aktueller Titel, auch nach einer Umbenennung durch andere, gehoert
  * nicht zu den eigenen Daten. Dort stehen nur die ID und der Hinweis.
+ * Ebenso die eigenen Audit-Eintraege: Loeschen, Wiederherstellen und
+ * Schuetzen halten den Titel von damals fest (metadata.title); fuer eine
+ * Seite ohne Zugriff steht dort null, der Rest des Eintrags bleibt.
  */
 export async function GET() {
   const user = await requireUser();
@@ -130,10 +147,16 @@ export async function GET() {
     ...versions.map((v) => v.page.id),
     ...favorites.map((f) => f.page.id),
     ...subscriptions.map((s) => s.page.id),
+    ...auditEvents.flatMap((e) => titelSeite(e) ?? []),
   ]);
   const offen = (id: string) => sichtbar.get(id) != null;
   const seite = <T extends { id: string }>(p: T) =>
     offen(p.id) ? p : { id: p.id, title: null, note: LABEL_OHNE_ZUGRIFF };
+  const eintrag = <T extends AuditEintrag>(e: T): T => {
+    const id = titelSeite(e);
+    if (id === null || offen(id)) return e;
+    return { ...e, metadata: { ...(e.metadata as Record<string, unknown>), title: null } };
+  };
 
   await audit({ action: "account.exported", actorId: user.id });
 
@@ -153,7 +176,7 @@ export async function GET() {
       favorites: favorites.map((f) => ({ ...f, page: seite(f.page) })),
       subscriptions: subscriptions.map((s) => ({ ...s, page: seite(s.page) })),
       attachments,
-      auditEvents,
+      auditEvents: auditEvents.map(eintrag),
     },
     null,
     2,
