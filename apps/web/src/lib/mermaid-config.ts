@@ -12,6 +12,17 @@ import type { MermaidConfig } from "mermaid";
  * verschiebt. `startOnLoad: false`: mermaid soll nicht selbst das DOM nach
  * `.mermaid`-Elementen absuchen, gerendert wird nur ueber `render()`.
  *
+ * Fehler: `suppressErrorRendering: true`. mermaid baut jedes Bild in
+ * einem Hilfselement am Ende von <body> (`d` und die id des Laufs). Bei
+ * einem Syntax- oder Zeichenfehler zeichnet es dort sonst sein Fehlerbild
+ * ("Syntax error in text") und laesst das Element stehen; weg kommt es, wenn
+ * ein Lauf mit derselben id beginnt. Seit MermaidView jedem Lauf eine
+ * eigene id gibt, geschieht das nie, und jeder Fehler liess ein weiteres
+ * Fehlerbild unter der App zurueck. Die Ansicht zeigt den Fehler selbst
+ * (`.dk-mermaid-error`) und raeumt nach jedem Lauf auf. Der Schluessel
+ * steht wie `securityLevel` in `secure`, ein Diagramm kann ihn per Front
+ * Matter oder Direktive nicht abschalten.
+ *
  * Darstellung: mermaid 12 hat die Vorgaben geaendert, bestehende
  * Diagramme saehen nach dem Update anders aus. Hier steht, was das Bild
  * von mermaid 11 haelt. Ein Diagramm kann jeden dieser Werte im Front
@@ -24,8 +35,9 @@ import type { MermaidConfig } from "mermaid";
  *   ein global gesetztes `layout` nimmt mermaid bei Mindmaps als
  *   ausdruecklichen Wunsch und setzte sie dann mit dagre statt wie bisher
  *   mit cose-bilkent. Die Liste enthaelt jeden Typ, dessen Renderer in
- *   mermaid 12.0.0 ohne eigene Angabe auf die globale Vorgabe `elk`
- *   faellt. Mindmap (cose-bilkent) und Swimlane (eigenes Layout) bringen
+ *   mermaid 12.0.0 ohne eigene Angabe auf eine Vorgabe `elk` faellt
+ *   (die globale oder, bei Zustandsdiagrammen, die ihres Abschnitts).
+ *   Mindmap (cose-bilkent) und Swimlane (eigenes Layout) bringen
  *   ihre eigene mit, alle anderen (Sequenz, Gantt, C4, Block u. a.)
  *   waehlen gar kein Layout. Use-Case und Agentflow sind in 12 neu und
  *   haetten kein altes Bild zu halten, sie stehen trotzdem hier: ohne
@@ -47,6 +59,7 @@ export function mermaidConfig(dark: boolean): MermaidConfig {
   return {
     startOnLoad: false,
     securityLevel: "strict",
+    suppressErrorRendering: true,
     theme: dark ? "dark" : "default",
     look: "classic",
     flowchart: { layout: "dagre", wrappingWidth: 200, minNodeWidth: 0 },

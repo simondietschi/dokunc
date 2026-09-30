@@ -19,6 +19,14 @@ import { mermaidConfig } from "@/lib/mermaid-config";
  * mermaid zeichnet hinein, und das zurueckgegebene SVG blieb ohne
  * Knoten (so in mermaid 11.16.1 wie in 12.0.0). Eine eigene id je Lauf
  * faellt nie mit dem angezeigten Bild zusammen.
+ *
+ * Die Kehrseite: mermaid entfernt sein Hilfselement (`d` und die id) am
+ * Anfang eines Laufs mit derselben id und am Ende eines gelungenen. Ein
+ * gescheiterter Lauf liess es stehen, mit fester id nur bis zum naechsten
+ * Lauf des Blocks, mit einer id je Lauf fuer immer: jeder Syntaxfehler
+ * haengte ein Fehlerbild unter die App. Deshalb zeichnet mermaid kein
+ * Fehlerbild (`suppressErrorRendering` in mermaidConfig), und die Ansicht
+ * raeumt das Hilfselement nach jedem Lauf selbst weg.
  */
 let renderLauf = 0;
 
@@ -46,6 +54,12 @@ export function MermaidView({ node, updateAttributes, editor }: NodeViewProps) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Diagrammfehler");
         }
+      } finally {
+        // Mit suppressErrorRendering raeumt mermaid bei Syntax- und
+        // Zeichenfehlern selbst auf; wirft es an anderer Stelle (Stile,
+        // Serialisieren), bliebe das Hilfselement stehen. mermaid arbeitet
+        // render()-Aufrufe der Reihe nach ab, hier ist es mit der id fertig.
+        document.getElementById(`d${id}`)?.remove();
       }
     })();
     return () => {

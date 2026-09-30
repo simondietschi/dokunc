@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, expect, it } from "vitest";
 import mermaid, { type MermaidConfig } from "mermaid";
 import { mermaidConfig } from "./mermaid-config";
@@ -62,6 +63,28 @@ describe("mermaidConfig", () => {
         expect(layoutFuer(typ, mermaidConfig(dunkel)), typ).toBe("dagre");
       }
     }
+  });
+
+  it("laesst nach einem Syntaxfehler nichts in <body> zurueck", async () => {
+    // mermaid baut das Bild in `d<id>` am Ende von <body>. Ohne
+    // suppressErrorRendering zeichnet es bei einem Syntaxfehler dort sein
+    // Fehlerbild und laesst das Element stehen. Die zweite und dritte
+    // Quelle versuchen, den Schluessel per Direktive und per Front Matter
+    // wieder abzuschalten; mermaid fuehrt ihn in `secure` und ueberhoert
+    // das.
+    const quellen = [
+      "graph TD\n  A-->",
+      '%%{init: {"suppressErrorRendering": false}}%%\ngraph TD\n  A-->',
+      "---\nconfig:\n  suppressErrorRendering: false\n---\ngraph TD\n  A-->",
+    ];
+    for (const [i, quelle] of quellen.entries()) {
+      mermaid.initialize(mermaidConfig(false));
+      await expect(mermaid.render(`fehler${i}`, quelle)).rejects.toThrow(
+        /Parse error/,
+      );
+      expect(document.getElementById(`dfehler${i}`), quelle).toBeNull();
+    }
+    expect(document.body.children).toHaveLength(0);
   });
 
   it("setzt kein globales layout (Mindmaps bleiben bei cose-bilkent)", () => {

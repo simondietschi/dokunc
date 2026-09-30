@@ -7,9 +7,11 @@ import { resetLoginRateLimit, waitForLive } from "./helpers";
  * mermaid 12 hat die Vorgaben fuer Aussehen (`neo`), Layout (ELK) und
  * Umbruch (120 px, Mindestbreite 120 px) geaendert; lib/mermaid-config.ts
  * stellt das Bild von mermaid 11 wieder her und haelt ELK auf Wunsch.
- * Ein Unit-Test sieht nur das Objekt, das an `mermaid.initialize` geht.
- * Ob es im Bundle ankommt, ob das Diagramm unter der CSP rendert und ob
- * der ELK-Chunk nur bei `layout: elk` nachlaedt, zeigt erst der Browser.
+ * Die Unit-Tests sehen das Objekt, das an `mermaid.initialize` geht, und
+ * mermaid in happy-dom, also ohne Layout. Ob es im Bundle ankommt, ob
+ * das Diagramm unter der CSP rendert, ob der ELK-Chunk nur bei
+ * `layout: elk` nachlaedt und ob ein Syntaxfehler nur im Block steht,
+ * zeigt erst der Browser.
  *
  * Gemessen wird am gerenderten SVG, nicht an Pixeln eines Screenshots:
  * - `data-look` an jedem Knoten nennt das Aussehen, das mermaid gewaehlt
@@ -45,9 +47,10 @@ async function beobachten(page: Page) {
   // Das Ereignis erreicht das Fenster fuer Elemente wie fuer Verstoesse
   // ohne Element (etwa ein blockiertes Skript). Die Konsole meldet
   // dieselben Faelle ein zweites Mal und steht als Rueckfall da, falls
-  // das Ereignis einmal nicht ankommt.
-  await page.exposeFunction("__cspVerstoss", (text: string) => {
-    verstoesse.push(text);
+  // das Ereignis einmal nicht ankommt. `null` ist die Marke von
+  // `verstoesseNachRuhe` und zaehlt nicht.
+  await page.exposeFunction("__cspVerstoss", (text: string | null) => {
+    if (text !== null) verstoesse.push(text);
   });
   await page.addInitScript(() => {
     window.addEventListener("securitypolicyviolation", (e) => {
@@ -67,7 +70,27 @@ async function beobachten(page: Page) {
   const mitElk = new Map<string, boolean>();
 
   return {
-    verstoesse,
+    /**
+     * Die Verstoesse bis jetzt, einschliesslich spaet gemeldeter.
+     *
+     * Der Browser feuert `securitypolicyviolation` nicht im Moment des
+     * Verstosses, sondern in einer spaeteren Aufgabe, und die Meldung
+     * braucht dann noch den Weg ueber exposeFunction (CDP). Direkt nach
+     * dem Rendern gefragt, fehlte ein Verstoss aus den letzten Schritten
+     * womoeglich noch. Deshalb laesst die Seite erst eine kurze Weile
+     * verstreichen und schickt dann eine Marke ueber denselben Weg. Die
+     * Meldungen kommen in der Reihenfolge an, in der die Seite sie
+     * abschickt; ist die Marke verarbeitet, sind es alle frueheren auch.
+     */
+    async verstoesseNachRuhe(): Promise<string[]> {
+      await page.evaluate(async () => {
+        await new Promise((r) => setTimeout(r, 500));
+        await (
+          window as unknown as { __cspVerstoss(t: null): Promise<void> }
+        ).__cspVerstoss(null);
+      });
+      return [...verstoesse];
+    },
     /** Ob unter den bisher geladenen Skripten der ELK-Chunk war. */
     async elkGeladen(): Promise<boolean> {
       for (const url of skripte) {
@@ -129,37 +152,61 @@ async function mermaidEinfuegen(page: Page): Promise<Locator> {
   return block;
 }
 
+/** Setzt den Quelltext ueber "Bearbeiten" und "Vorschau". */
+async function quelltextSetzen(block: Locator, code: string) {
+  await block.getByRole("button", { name: "Bearbeiten" }).click();
+  await block.locator("textarea.dk-mermaid-editor").fill(code);
+  // Der Klick nimmt dem Feld den Fokus, onBlur schreibt den Quelltext.
+  await block.getByRole("button", { name: "Vorschau" }).click();
+}
+
 /**
- * Setzt den Quelltext ueber "Bearbeiten" und wartet auf das neue SVG
- * (erkannt an einer Beschriftung) oder eine Fehlermeldung. Ein Fehler
- * scheitert mit dem Text von mermaid.
+ * mermaids Hilfselemente am Ende von <body> (id "d" und die id eines
+ * Laufs). Nach einem fertigen Lauf darf keines mehr stehen, auch keines
+ * aus einem frueheren, gescheiterten Lauf.
+ */
+function hilfselemente(page: Page): Locator {
+  return page.locator('body > div[id^="dmmd-"]');
+}
+
+/**
+ * Setzt den Quelltext und wartet auf das SVG dieses Laufs. Scheitert der
+ * Lauf, scheitert der Test mit dem Text von mermaid.
  *
- * Geprueft wird erst, wenn mermaid fertig ist: es zeichnet in einem
- * Hilfselement am Ende von <body> (id "d" und die id des Laufs) und
- * entfernt es danach. Vorher kann kurz ein Zwischenstand zu sehen sein;
- * so zeichnete mermaid frueher in das noch angezeigte alte SVG gleicher
- * id und lieferte dann ein SVG ohne Knoten (siehe MermaidView).
+ * Das neue SVG erkennt der Test an seiner id: MermaidView vergibt jedem
+ * Lauf eine eigene, und bis der Lauf fertig ist, zeigt der Block das
+ * alte Bild oder den alten Fehler. Erst das neue SVG wird geprueft. Mit
+ * einer festen id je Block zeichnete mermaid in das noch angezeigte alte
+ * SVG und lieferte ein SVG ohne Knoten; kurz stand dann das alte Bild
+ * mit der gesuchten Beschriftung da, und eine Pruefung nur auf die
+ * Beschriftung konnte in diesem Moment bestehen. Die Pruefung auf eine
+ * neue id schlaegt dann immer an.
  */
 async function darstellen(
   block: Locator,
   code: string,
   beschriftung: string,
 ): Promise<Locator> {
-  await block.getByRole("button", { name: "Bearbeiten" }).click();
-  await block.locator("textarea.dk-mermaid-editor").fill(code);
-  // Der Klick nimmt dem Feld den Fokus, onBlur schreibt den Quelltext.
-  await block.getByRole("button", { name: "Vorschau" }).click();
-  const svg = block.locator(".dk-mermaid-render svg", {
-    hasText: beschriftung,
-  });
-  const fehler = block.locator(".dk-mermaid-error");
-  await expect(svg.or(fehler)).toBeVisible({ timeout: 30_000 });
-  await expect(block.page().locator('body > div[id^="dmmd-"]')).toHaveCount(0, {
-    timeout: 30_000,
-  });
-  expect(await fehler.allTextContents(), "Diagrammfehler").toEqual([]);
-  await expect(svg, "fertiges SVG ohne die Beschriftung").toBeVisible();
-  return svg;
+  const bild = block.locator(".dk-mermaid-render svg");
+  const vorher = (await bild.count()) ? await bild.getAttribute("id") : null;
+  await quelltextSetzen(block, code);
+  const neu = vorher
+    ? block.locator(`.dk-mermaid-render svg:not([id="${vorher}"])`)
+    : bild;
+  try {
+    await expect(neu, "neues SVG").toBeVisible({ timeout: 30_000 });
+  } catch (e) {
+    const fehler = await block.locator(".dk-mermaid-error").allTextContents();
+    if (fehler.length) {
+      throw new Error(`Diagrammfehler: ${fehler.join()}`, { cause: e });
+    }
+    throw e;
+  }
+  await expect(neu, "fertiges SVG ohne die Beschriftung").toContainText(
+    beschriftung,
+  );
+  await expect(hilfselemente(block.page())).toHaveCount(0);
+  return neu;
 }
 
 type Knoten = { id: string; look: string | null; w: number; h: number };
@@ -217,7 +264,7 @@ test("Flussdiagramm rendert mit dem Bild von mermaid 11 und ohne ELK", async ({
   expect.soft(kurz.w, "Mindestbreite").toBeLessThan(120);
   // layout dagre: der ELK-Chunk bleibt ungeladen.
   expect.soft(await b.elkGeladen(), "ELK-Chunk geladen").toBe(false);
-  expect(b.verstoesse).toEqual([]);
+  expect(await b.verstoesseNachRuhe(), "CSP-Verstoesse").toEqual([]);
 });
 
 test("layout: elk im Front Matter laedt ELK unter der Nonce-CSP", async ({
@@ -243,7 +290,7 @@ test("layout: elk im Front Matter laedt ELK unter der Nonce-CSP", async ({
   // blockiertes Laden stuende unten als Verstoss und liesse render()
   // scheitern.
   expect(await b.elkGeladen(), "ELK-Chunk geladen").toBe(true);
-  expect(b.verstoesse).toEqual([]);
+  expect(await b.verstoesseNachRuhe(), "CSP-Verstoesse").toEqual([]);
 });
 
 test("Use-Case und Agentflow laden ohne eigene Angabe kein ELK", async ({
@@ -279,5 +326,43 @@ test("Use-Case und Agentflow laden ohne eigene Angabe kein ELK", async ({
   await expect(agentflow).toHaveAttribute("aria-roledescription", "agentflow");
 
   expect(await b.elkGeladen(), "ELK-Chunk geladen").toBe(false);
-  expect(b.verstoesse).toEqual([]);
+  expect(await b.verstoesseNachRuhe(), "CSP-Verstoesse").toEqual([]);
+});
+
+test("Syntaxfehler steht im Block und hinterlaesst kein Fehlerbild", async ({
+  page,
+}) => {
+  // mermaid zeichnete bei einem Syntaxfehler sein Fehlerbild ("Syntax
+  // error in text") in das Hilfselement am Ende von <body> und liess es
+  // stehen. Seit jeder Lauf eine eigene id hat, raeumte es niemand mehr
+  // weg, und jeder Fehler haengte ein weiteres Bild unter die App (siehe
+  // lib/mermaid-config.ts und MermaidView).
+  const b = await beobachten(page);
+  await login(page);
+  await neueSeite(page);
+  const block = await mermaidEinfuegen(page);
+  const fehler = block.locator(".dk-mermaid-error");
+  const fehlerbild = page.getByText("Syntax error in text");
+
+  // Die Meldung von mermaid zeigt die Stelle im Quelltext. Steht sie da,
+  // ist der Lauf dieses Quelltexts fertig und nicht noch der vorige zu
+  // sehen.
+  for (const [code, stelle] of [
+    ["graph TD\n  eins-->", "eins-->"],
+    ["graph TD\n  zwei --> drei -->", "drei -->"],
+    ["flowchart TD\n  vier[[", "vier[["],
+  ] as const) {
+    await quelltextSetzen(block, code);
+    await expect(fehler).toContainText(stelle);
+    await expect(fehler).toContainText("Parse error");
+    await expect(hilfselemente(page), stelle).toHaveCount(0);
+    await expect(fehlerbild, stelle).toHaveCount(0);
+  }
+
+  // Danach wieder ein gueltiges Diagramm: der Fehler ist weg, und nichts
+  // von den Fehlerlaeufen steht noch im Dokument (prueft darstellen).
+  await darstellen(block, FLUSS, "Seite im Wiki anlegen");
+  await expect(fehler).toHaveCount(0);
+  await expect(fehlerbild).toHaveCount(0);
+  expect(await b.verstoesseNachRuhe(), "CSP-Verstoesse").toEqual([]);
 });
