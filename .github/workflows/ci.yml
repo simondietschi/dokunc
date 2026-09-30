@@ -390,7 +390,8 @@ jobs:
               --label "com.docker.compose.volume=$2" "$1_$2" >/dev/null
           }
           aufraeumen() {
-            docker volume rm wikialt_db_data wikialt_app_data dokunc_db_data dokunc_app_data >/dev/null 2>&1 || true
+            docker volume rm wikialt_db_data wikialt_app_data wikialt_uploads \
+              dokunc_db_data dokunc_app_data dokunc_uploads >/dev/null 2>&1 || true
           }
           trap aufraeumen EXIT
           pruefe() {
@@ -402,10 +403,12 @@ jobs:
           }
           volume wikialt db_data
           volume wikialt app_data
+          volume wikialt uploads
           pruefe 1 'Vermutlich hiess das Projekt bisher wikialt'
           sleep 2
           volume dokunc db_data
           volume dokunc app_data
+          volume dokunc uploads
           pruefe 2 'Rückweg: docker compose -p dokunc down (ohne -v)'
           printf 'APP_URL=http://localhost:7891' > "$ALT/.env"
           # Ohne Zugriff auf Docker: Abbruch, die .env bleibt, wie sie war.

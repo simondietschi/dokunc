@@ -116,8 +116,8 @@ tag() { if [ -n "$1" ]; then printf '%s' "${1:0:10}"; else printf 'unbekannt'; f
 # Sekunden seit 1970 oder leer, wenn das Datum nicht lesbar ist.
 sekunden() { date -d "$1" +%s 2>/dev/null || true; }
 
-# Compose-Projekte mit einem Volume der Art $1 (app_data, db_data),
-# sortiert, eines je Zeile.
+# Compose-Projekte mit einem Volume der Art $1 (app_data, db_data,
+# uploads), sortiert, eines je Zeile.
 projekte_mit() {
   docker volume ls --filter "label=com.docker.compose.volume=$1" \
     --format '{{.Label "com.docker.compose.project"}}' 2>"$FEHLER" | sed '/^$/d' | LC_ALL=C sort -u
@@ -212,14 +212,18 @@ fi
 # ---- Pruefen ----
 
 echo "Compose-Projekt: $AKTUELL ($QUELLE)"
-# dokunc-Projekte des Hosts: Projekte mit einem Compose-Volume app_data
-# UND db_data. db_data allein haben auch fremde Projekte.
+# dokunc-Projekte des Hosts: Projekte mit den Compose-Volumes app_data,
+# db_data UND uploads. db_data allein oder mit app_data haben auch fremde
+# Anwendungen; sie hier mitzuzaehlen, liesse die Pruefung auf solchen
+# Hosts dauernd anschlagen und die Aufbewahrung in backup.sh ruhen.
 MIT_APP=$(projekte_mit app_data) || docker_gescheitert "docker volume ls"
 MIT_DB=$(projekte_mit db_data) || docker_gescheitert "docker volume ls"
+MIT_UPLOADS=$(projekte_mit uploads) || docker_gescheitert "docker volume ls"
 ANDERE=()
 while IFS= read -r p; do
   [ -n "$p" ] && [ "$p" != "$AKTUELL" ] && ANDERE+=("$p")
-done < <(LC_ALL=C comm -12 <(printf '%s\n' "$MIT_APP") <(printf '%s\n' "$MIT_DB"))
+done < <(LC_ALL=C comm -12 <(printf '%s\n' "$MIT_APP") <(printf '%s\n' "$MIT_DB") \
+  | LC_ALL=C comm -12 - <(printf '%s\n' "$MIT_UPLOADS"))
 
 # Der Name, den dieses Verzeichnis vor "name: dokunc" hatte, und ob er
 # Daten hat. Zaehlt auch ohne die Labels von Compose (Volumes, die jemand

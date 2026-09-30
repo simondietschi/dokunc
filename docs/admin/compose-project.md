@@ -22,8 +22,8 @@ An empty value counts as not set. Show the name and check the data with:
     ./scripts/projektname.sh
 
 It prints the project, whether its data volumes exist and which other
-dokunc projects (projects with both a `db_data` and an `app_data` volume)
-exist on this host.
+dokunc projects (projects with `db_data`, `app_data` and `uploads`
+volumes) exist on this host.
 
 ## Installations from before the fixed name
 

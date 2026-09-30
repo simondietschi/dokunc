@@ -243,7 +243,7 @@ describe("scripts/backup.sh: Compose-Projekt", () => {
   // guten alten Saetze nicht loeschen.
   const ALT = "2026-05-19T08:00:00Z";
   const NEU = "2026-09-30T10:00:00Z";
-  const vol = (p: string, d: string) => `${p}_db_data=${d} ${p}_app_data=${d}`;
+  const vol = (p: string, d: string) => `${p}_db_data=${d} ${p}_app_data=${d} ${p}_uploads=${d}`;
 
   it("nennt das Projekt als erste Zeile und im Abschluss", () => {
     const r = run([], { env: { FAKE_VOLUMES: vol("dokunc", ALT) } });

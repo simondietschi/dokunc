@@ -46,7 +46,9 @@ function repoIn(name: string): string {
 
 function volumes(...paare: [string, string][]): string {
   return paare
-    .flatMap(([projekt, datum]) => [`${projekt}_db_data=${datum}`, `${projekt}_app_data=${datum}`])
+    .flatMap(([projekt, datum]) =>
+      ["db_data", "app_data", "uploads"].map((art) => `${projekt}_${art}=${datum}`),
+    )
     .join(" ");
 }
 
@@ -190,6 +192,20 @@ describe("scripts/projektname.sh: Pruefen", () => {
     const r = run(dir, [], { FAKE_VOLUMES: `ci_db_data=${ALT} g6probe_db_data=${ALT}` });
     expect(r.status).toBe(0);
     expect(r.stdout).not.toContain("Weitere");
+  });
+
+  it("zaehlt fremde Compose-Apps mit app_data und db_data, aber ohne uploads, nicht mit", () => {
+    // app_data und db_data sind uebliche Namen; erst uploads dazu macht
+    // ein Projekt zu einer dokunc-Installation.
+    const fremd = `nextcloud_app_data=${ALT} nextcloud_db_data=${ALT}`;
+    const neu = run(repoIn("dokunc"), [], { FAKE_VOLUMES: fremd });
+    expect(neu.status).toBe(0);
+    expect(neu.stderr).toBe("");
+    expect(neu.stdout).toBe("Compose-Projekt: dokunc (aus docker-compose.yml)\nNoch keine Daten (neue Installation).\n");
+    const bestand = run(repoIn("dokunc"), [], { FAKE_VOLUMES: `${fremd} ${volumes(["dokunc", NEU])}` });
+    expect(bestand.status).toBe(0);
+    expect(bestand.stderr).toBe("");
+    expect(bestand.stdout).not.toContain("Weitere");
   });
 
   it("schlaegt den Namen von Hand vor, wenn er nicht der des Verzeichnisses ist", () => {
