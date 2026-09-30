@@ -4,8 +4,8 @@ import { reloadUntil } from "./wait";
 
 /**
  * E2E fuer Favoriten, "Zuletzt besucht" und das Space-Dashboard.
- * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf,
- * die Datei laeuft alphabetisch nach features.spec.ts).
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller
+ * Lauf).
  */
 
 const EMAIL = "e2e@dokunc.dev";

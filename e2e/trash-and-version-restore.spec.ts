@@ -13,8 +13,8 @@ import { pageTree, resetLoginRateLimit } from "./helpers";
  *     Yjs-Dokument liegt im Speicher des Collab-Servers und ueberschriebe
  *     den wiederhergestellten Stand beim naechsten Speichern.
  *
- * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf,
- * die Datei laeuft alphabetisch nach den stage1-Dateien).
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller
+ * Lauf).
  */
 
 const EMAIL = "e2e@dokunc.dev";

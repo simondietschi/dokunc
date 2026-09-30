@@ -457,7 +457,7 @@ test("Code-Block hebt hervor, Tabelle laesst sich bearbeiten", async ({
  * Nur noch das Seitensymbol. Der frueher hier gepruefte Schalter "Als
  * Vorlage markieren" ist entfallen: eine Vorlage ist ein eigenes Objekt,
  * das ueber "Als Vorlage speichern" entsteht, und nicht eine Seite, die
- * ihre Rolle wechselt. Diesen Weg deckt stage1-templates.spec.ts ab.
+ * ihre Rolle wechselt. Diesen Weg deckt templates.spec.ts ab.
  */
 test("Seitensymbol setzen", async ({ page }) => {
   await login(page);
@@ -542,7 +542,7 @@ test("Space-Einstellungen: umbenennen und oeffnen", async ({ page }) => {
   // Sichtbarkeit auf offen stellen und speichern. Auf die Bestaetigung
   // warten, bevor neu geladen wird: click() gibt zurueck, sobald der
   // Klick zugestellt ist, nicht wenn die Server-Action durch ist — ein
-  // sofortiges goto bricht sie ab. Genauso haelt es stage1-import.
+  // sofortiges goto bricht sie ab. Genauso haelt es space-import.spec.ts.
   await page.getByLabel("Sichtbarkeit").selectOption("OPEN");
   await page.getByRole("button", { name: "Speichern" }).click();
   await expect(page.getByText("Einstellungen gespeichert.")).toBeVisible({
@@ -567,8 +567,9 @@ test("Space-Einstellungen: umbenennen und oeffnen", async ({ page }) => {
 
 /**
  * Nur noch das Folgen einer Seite. Die Mail-Einstellungen prueft
- * stage1-mail-diff gegen die heutige Oberflaeche: mains Zustellmodus
- * (sofort, taeglich, aus) hat die Checkbox des Branches abgeloest.
+ * mail-settings-diff.spec.ts gegen die heutige Oberflaeche: mains
+ * Zustellmodus (sofort, taeglich, aus) hat die Checkbox des Branches
+ * abgeloest.
  */
 test("Einer Seite folgen und wieder loesen", async ({ page }) => {
   await login(page);

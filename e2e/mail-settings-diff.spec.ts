@@ -3,9 +3,9 @@ import { pageTree, resetLoginRateLimit } from "./helpers";
 
 /**
  * E2E für Mail-Einstellungen im Konto und den Versionsvergleich.
- * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller Lauf). Der
- * Mail-Versand selbst ist ohne SMTP nicht prüfbar; getestet wird die
- * Einstellung (Speichern, nach Reload gesetzt).
+ * Nutzt das in first-account.setup.ts angelegte erste Konto (serieller
+ * Lauf). Der Mail-Versand selbst ist ohne SMTP nicht prüfbar; getestet
+ * wird die Einstellung (Speichern, nach Reload gesetzt).
  */
 
 const EMAIL = "e2e@dokunc.dev";
@@ -83,9 +83,13 @@ test("Versionsvergleich: Diff und Vorschau einer Version", async ({
   await login(page);
   const slug = await openFirstSpace(page);
 
-  // Eigene Seite anlegen und warten, bis der frische Editor steht.
+  // Eigene Seite anlegen und warten, bis der frische Editor steht. Auf
+  // eine andere Adresse warten: openFirstSpace steht schon auf einer
+  // Seite, und heisst die ebenfalls "Untitled", passten Adresse und Titel
+  // sofort, und der Test laese die ID der alten Seite.
+  const vorher = page.url();
   await page.click("text=Neue Seite");
-  await page.waitForURL("**/p/**");
+  await page.waitForURL((u) => u.pathname.includes("/p/") && u.href !== vorher);
   await expect(page.locator('input[name="title"]')).toHaveValue("Untitled", {
     timeout: 15_000,
   });

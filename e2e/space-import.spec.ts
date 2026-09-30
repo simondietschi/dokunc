@@ -4,9 +4,9 @@ import { resetLoginRateLimit } from "./helpers";
 /**
  * E2E fuer Space-Einstellungen (Name/Icon) und den Import
  * (Markdown-Zip mit Ordnerstruktur, Links und Aufgabenliste).
- * Nutzt das in first-account.setup.ts angelegte erste Konto; legt einen eigenen
- * Space an, damit andere Specs (die den ersten Space nutzen) unberuehrt
- * bleiben. Laeuft seriell nach features.spec.ts.
+ * Nutzt das in first-account.setup.ts angelegte erste Konto; legt einen
+ * eigenen Space an, damit andere Specs (die den ersten Space nutzen)
+ * unberuehrt bleiben.
  */
 
 const EMAIL = "e2e@dokunc.dev";

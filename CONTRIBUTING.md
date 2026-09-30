@@ -76,7 +76,7 @@ A newer push to a pull request cancels the CI run that is still going for its pr
 
 ## End-to-end tests
 
-`pnpm test:e2e` empties the database that `DATABASE_URL` points to; only local hosts are accepted. `e2e/first-account.setup.ts` registers the first account and creates the first space with its page "Willkommen". It runs as the Playwright project `erstes-konto` before every other file, also when you run a single file; the other files log in with that account.
+`pnpm test:e2e` empties the database that `DATABASE_URL` points to; only local hosts are accepted. `e2e/first-account.setup.ts` registers the first account and creates the first space with its page "Willkommen". It runs as the Playwright project `erstes-konto` before every other file, also when you run a single file; the other files log in with that account. Name a new file after the behaviour it covers, such as `trash-and-version-restore.spec.ts`.
 
 ## Maintainers
 
