@@ -194,8 +194,16 @@ export function visibleStatus(
   return online ? status : "offline";
 }
 
-/** Beschriftung und Erklaerung (Tooltip) eines angezeigten Status. */
-export function statusLabel(status: EditorStatus): {
+/**
+ * Beschriftung und Erklaerung (Tooltip) eines angezeigten Status.
+ * `ohneKopie`: dieser Tab hat keine lokale Kopie (kein IndexedDB, oder
+ * ein anderer Tab hat sie geloescht, lib/local-copy guardLocalCopy).
+ * Dann liegt Ungesendetes nur im Speicher des Tabs.
+ */
+export function statusLabel(
+  status: EditorStatus,
+  o: { ohneKopie?: boolean } = {},
+): {
   text: string;
   title?: string;
 } {
@@ -215,10 +223,15 @@ export function statusLabel(status: EditorStatus): {
           "Der Server hat diese Verbindung abgewiesen, weil gerade zu viele Verbindungen von dir offen sind oder in kurzer Zeit aufgebaut wurden. Schließe andere Tabs mit dokunc-Seiten; die Verbindung wird von selbst neu versucht. Bis dahin werden Änderungen nicht übertragen.",
       };
     case "offline":
+      // Bearbeiten ohne Verbindung ist gesperrt (editorEditable). Wahr ist
+      // nur: was vor dem Abbruch noch nicht beim Server war, liegt in der
+      // lokalen Kopie und geht beim naechsten Verbinden mit, bis die
+      // Sitzung endet (dann werden alle Kopien geloescht).
       return {
         text: "Offline",
-        title:
-          "Ohne Verbindung. Änderungen werden auf diesem Gerät gesichert und später übertragen.",
+        title: o.ohneKopie
+          ? "Ohne Verbindung. Bearbeiten ist erst wieder möglich, wenn die Verbindung steht. Dieser Tab hat keine lokale Kopie der Seite: Was vor dem Abbruch noch nicht beim Server angekommen war, geht verloren, wenn der Tab geschlossen oder neu geladen wird."
+          : "Ohne Verbindung. Bearbeiten ist erst wieder möglich, wenn die Verbindung steht. Was vor dem Abbruch noch nicht beim Server angekommen war, bleibt bis zur Abmeldung auf diesem Gerät und wird beim nächsten Verbinden übertragen.",
       };
     case "connecting":
       return { text: "Verbinde…" };

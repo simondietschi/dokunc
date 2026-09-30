@@ -112,6 +112,32 @@ async function idbNames(page: Page): Promise<string[]> {
   );
 }
 
+/** ID des ersten Kontos (Teil des Namens jeder lokalen Kopie). */
+async function kontoId(): Promise<string> {
+  const client = await db();
+  try {
+    return (
+      await client.query<{ id: string }>(`SELECT id FROM "User" WHERE email = $1`, [EMAIL])
+    ).rows[0].id;
+  } finally {
+    await client.end();
+  }
+}
+
+/**
+ * Hat der Browser eine Kopie dieser Seite fuer dieses Konto und diese
+ * Epoche (null = keine)? Die Schemaversion am Ende ist beliebig.
+ */
+function hatKopie(
+  namen: string[],
+  userId: string,
+  epoch: string | null,
+  pageId: string,
+): boolean {
+  const praefix = `dokunc:v2:${userId}:${epoch ?? "-"}:${pageId}:`;
+  return namen.some((n) => n.startsWith(praefix) && /^\d+$/.test(n.slice(praefix.length)));
+}
+
 function redis(): Redis {
   return new Redis(process.env.REDIS_URL ?? "redis://127.0.0.1:6379", {
     maxRetriesPerRequest: 1,
@@ -190,7 +216,8 @@ test("Nach einem Restore bringt der Browser seine alte Kopie nicht zurück", asy
   await expect
     .poll(() => textContent(pageId), { timeout: 30_000 })
     .toContain("und spaeter");
-  expect(await idbNames(page)).toContain(`dokunc:${pageId}`);
+  const ich = await kontoId();
+  expect(hatKopie(await idbNames(page), ich, null, pageId)).toBe(true);
 
   await page.goto(`/s/${slug}`);
   await warteBisEntladen(pageId);
@@ -221,11 +248,11 @@ test("Nach einem Restore bringt der Browser seine alte Kopie nicht zurück", asy
 
   // Die neue Kopie traegt die Epoche, die alte ist aufgeraeumt.
   await expect
-    .poll(() => idbNames(page), { timeout: 15_000 })
-    .toContain(`dokunc:${E}:${pageId}`);
+    .poll(async () => hatKopie(await idbNames(page), ich, E, pageId), { timeout: 15_000 })
+    .toBe(true);
   await expect
-    .poll(() => idbNames(page), { timeout: 15_000 })
-    .not.toContain(`dokunc:${pageId}`);
+    .poll(async () => hatKopie(await idbNames(page), ich, null, pageId), { timeout: 15_000 })
+    .toBe(false);
 });
 
 test("Ein offener Tab überträgt nach einem Restore nichts mehr", async ({
@@ -297,6 +324,8 @@ test("Ein offener Tab überträgt nach einem Restore nichts mehr", async ({
   await page.goto(`/s/${slug}/p/${pageId}`);
   await waitForLive(page);
   await expect
-    .poll(() => idbNames(page), { timeout: 15_000 })
-    .toContain(`dokunc:${E2}:${pageId}`);
+    .poll(async () => hatKopie(await idbNames(page), userId, E2, pageId), {
+      timeout: 15_000,
+    })
+    .toBe(true);
 });

@@ -81,8 +81,7 @@ Architektur & Designentscheidungen: siehe [`docs/ARCHITECTURE.md`](docs/ARCHITEC
   Sprungziele in der Palette), **Zuletzt besucht** und ein
   **Space-Dashboard** (Kennzahlen, zuletzt besuchte, favorisierte und
   zuletzt geänderte Seiten)
-- **Offline-Puffer**: Änderungen ohne Netz bleiben auf dem Gerät und
-  gehen beim Neuladen nicht verloren
+- **Offline-Puffer** → `docs/admin/local-copies.md`
 - **Space-Einstellungen**: umbenennen, verlassen, offene Spaces zum
   Beitreten
 - **Audit-Log** über sicherheitsrelevante Ereignisse (Anmeldungen,

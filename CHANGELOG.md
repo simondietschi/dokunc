@@ -97,9 +97,11 @@ differently on an existing installation, and what to do about it.
   to do.
 
 - **Open editor tabs:** editor tabs that were opened before this update
-  stop syncing and show "Kein Zugriff"; reload them. From now on, after an
-  update that changes the editor, open tabs show "Neue Version" with a
-  reload button instead and stay read-only until they are reloaded.
+  stop syncing and show "Kein Zugriff"; reload them. Changes those tabs
+  had not sent are lost, because local copies from earlier versions are
+  deleted. From now on, after an update that changes the editor, open
+  tabs show "Neue Version" with a reload button instead and stay
+  read-only until they are reloaded.
 
 - **Collab ticket requests:** `POST /api/collab/ticket` now requires the
   field `schema` (the editor's schema hash). Requests without it or with
@@ -362,6 +364,28 @@ differently on an existing installation, and what to do about it.
   listed paths, add this path, otherwise links that others add while a
   page is open show "Verknüpfte Seite" there.
 
+- **Local page copies:** the browser keeps a copy of each page it opens
+  (IndexedDB). It shows the page quickly and holds changes that had not
+  reached the server when the connection dropped; editing without a
+  connection is still not possible. Copies now belong to one account:
+  their name includes the account ID and the editor version. Copies made
+  by earlier versions are deleted the first time a page is opened after
+  the update, with any changes in them that never reached the server;
+  that only happens if the connection dropped while someone was typing
+  and the tab was closed afterwards. When the server refuses a page for
+  good (access removed, page deleted), the editor deletes that page's
+  copy; when the session is no longer valid, it deletes all copies in the
+  browser. A network error, a rate limit or a server error deletes
+  nothing. If another account signs in in the same browser, open editor
+  tabs of the previous account show "Kein Zugriff" at their next
+  connection instead of sending their changes under the other account;
+  reload them after signing in again. A browser keeps at most 50 copies
+  of the signed-in account and none that was unused for 30 days. After a
+  rollback to an earlier version, copies made by this version stay in the
+  browsers until the next update, and the earlier version again keeps
+  copies without an account. See `docs/admin/local-copies.md`. Nothing
+  to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -443,6 +467,13 @@ differently on an existing installation, and what to do about it.
   access to a protected page. Removing a member from a group now also
   disconnects them in spaces where the group only had access to a
   protected page.
+- Local page copies in the browser were not bound to the account and were
+  never deleted. On a shared browser, the next person's editor loaded the
+  copy of the previous person, also for pages protected from the next
+  person, and sent the previous person's unconfirmed changes under the
+  next person's account. Copies now belong to one account; copies of
+  other accounts, copies of pages the server refuses and, without a valid
+  session, all copies are deleted, and their number and age are limited.
 
 ### Added
 
@@ -506,6 +537,8 @@ differently on an existing installation, and what to do about it.
 - Audit event `auth.reauth_failed` ("Passwortbestätigung fehlgeschlagen").
 - `GET /api/pages/titles`: the current titles of pages the signed-in user
   can open, used by wiki links in the editor.
+- `docs/admin/local-copies.md`: what the browser keeps of opened pages,
+  and when it is deleted.
 
 ### Changed
 
@@ -548,6 +581,11 @@ differently on an existing installation, and what to do about it.
 - The default limit for single sign-on starts per client address is 600
   per hour (was 20 per 5 minutes).
 - The upload rate limit counts per account instead of per client address.
+- `POST /api/collab/ticket` answers final refusals with a code
+  (`no-session` with 401, `no-access` with 403, `not-found` with 404) and
+  names the account in a successful answer (`userId`).
+- The "Offline" status tooltip no longer promises that changes made
+  without a connection are sent later; editing needs a connection.
 
 ### Removed
 

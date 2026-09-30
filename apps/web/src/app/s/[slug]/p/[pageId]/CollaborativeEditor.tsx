@@ -82,8 +82,21 @@ import {
   type EditorStatus,
 } from "@/lib/editor-status";
 import { requestCollabTicket } from "@/lib/collab-ticket-client";
-import { localDocName, removeForeignLocalDocs } from "@/lib/local-doc";
-import { afterLocalCopy } from "@/lib/local-copy";
+import {
+  LOCAL_DOC_TOUCH_INTERVAL_MS,
+  forgetLocalDoc,
+  localDocName,
+  pruneLocalDocs,
+  removeAllLocalDocs,
+  removeForeignLocalDocs,
+  touchLocalDoc,
+} from "@/lib/local-doc";
+import {
+  adoptOlderLocalDocs,
+  afterLocalCopy,
+  guardLocalCopy,
+} from "@/lib/local-copy";
+import { ticketFolge } from "@/lib/ticket-folge";
 import {
   TOO_LARGE_DISCARD_LABEL,
   TOO_LARGE_NOTICE,
@@ -148,12 +161,6 @@ function pickAndImportMarkdown(
   };
   input.click();
 }
-
-/**
- * Fuer welche Restore-Epoche dieser Tab die lokalen Kopien schon
- * aufgeraeumt hat (einmal je Tab und Epoche). undefined: noch nie.
- */
-let cleanedEpoch: string | null | undefined;
 
 type Peer = { name: string; color: string };
 type Conn = {
@@ -250,6 +257,10 @@ export function CollaborativeEditor({
   // wer da schon tippt, schreibt in ein Dokument, dessen Inhalt gleich
   // erst eintrifft, und der Text landet an der falschen Stelle.
   const [status, setStatus] = useState<EditorStatus>("connecting");
+  // Hat dieser Tab keine lokale Kopie (mehr)? Ohne IndexedDB, nach einer
+  // endgueltigen Ablehnung oder wenn ein anderer Tab sie geloescht hat.
+  // Dann liegt Ungesendetes nur im Speicher des Tabs (Tooltip "Offline").
+  const [ohneKopie, setOhneKopie] = useState(false);
   // Symbol und Titelbild liegen nicht im Yjs-Dokument. Nach einem Restore
   // sperrt sie der Tab trotzdem: er zeigt einen Stand von vorher. Ebenso
   // mit altem Editor nach einem Update: die Aktionen dieses Bundles
@@ -429,18 +440,49 @@ export function CollaborativeEditor({
     setStatus("connecting");
     setSizeNotice(null);
     /**
-     * Lokaler Puffer. Ohne ihn lebte das Yjs-Dokument nur im Speicher des
-     * Tabs: wer bei Netzausfall weiterschrieb und dann neu lud, verlor
-     * alles.
+     * Lokale Kopie der Seite (IndexedDB). Sie zeigt die Seite schneller
+     * an und haelt, was beim Abbruch der Verbindung noch nicht beim Server
+     * war: ohne sie ginge das beim Neuladen verloren. Bearbeiten ohne
+     * Verbindung ist trotzdem gesperrt (editorEditable).
      *
-     * Der Name traegt die Restore-Epoche (lib/local-doc): eine Kopie aus
-     * der Zeit vor einem Restore wird so nie geladen und bringt ihre
-     * spaeteren Updates nicht in den zurueckgespielten Stand zurueck.
+     * Der Name traegt Konto, Restore-Epoche und Schemaversion
+     * (lib/local-doc): die Kopie gehoert nur diesem Konto, eine Kopie von
+     * vor einem Restore wird nie geladen, und eine aus einer neueren
+     * Fassung des Editors bleibt unberuehrt. Loescht ein anderer Tab sie,
+     * koppelt guardLocalCopy sie ab, und der Editor bleibt verbunden.
      */
+    const kopieRef = {
+      userId,
+      epoch: restoreEpoch,
+      pageId,
+      schemaVersion: editorSchema().version,
+    };
+    const kopie = localDocName(kopieRef);
     const persistence =
-      typeof indexedDB === "undefined"
-        ? null
-        : new IndexeddbPersistence(localDocName(pageId, restoreEpoch), ydoc);
+      typeof indexedDB === "undefined" ? null : new IndexeddbPersistence(kopie, ydoc);
+    let kopieAktiv = persistence !== null;
+    setOhneKopie(!kopieAktiv);
+    const ohneLokaleKopie = () => {
+      kopieAktiv = false;
+      setOhneKopie(true);
+    };
+    if (persistence) {
+      guardLocalCopy(persistence, ohneLokaleKopie);
+      touchLocalDoc(kopie);
+    }
+    // Solange der Editor offen ist, bleibt seine Kopie im Register frisch:
+    // pruneLocalDocs kuerzt kuerzlich genutzte Kopien nie (anderer Tab).
+    const auffrischen = () => {
+      if (kopieAktiv) touchLocalDoc(kopie);
+    };
+    const takt = setInterval(auffrischen, LOCAL_DOC_TOUCH_INTERVAL_MS);
+    /** Kopie dieser Seite verwerfen, ueber die Instanz dieses Effekts. */
+    const verwirfKopie = () => {
+      if (!persistence) return;
+      ohneLokaleKopie();
+      forgetLocalDoc(kopie);
+      void persistence.clearData().catch(() => {});
+    };
     // Die Status-Callbacks gehoeren in den Konstruktor: der Provider
     // verbindet sofort, ein spaeter registrierter Listener koennte den
     // ersten Sync oder eine Ablehnung verpassen. Was sie mit dem Status tun
@@ -449,10 +491,22 @@ export function CollaborativeEditor({
     // getestet).
     let provider: HocuspocusProvider | null = null;
     let cancelled = false;
+    const handlers = statusHandlers(setStatus, {
+      // Nach 1009 endgueltig trennen: jeder weitere Versuch schickte
+      // dieselbe zu grosse Aenderung wieder.
+      onMessageTooLarge: () => provider?.disconnect(),
+    });
     // Erst die lokale Kopie laden, dann verbinden (lib/local-copy): so
     // gleicht der Provider ueber SyncStep1/2 ab und schickt nur, was dem
-    // Server fehlt, statt die ganze Kopie als ein Update.
-    void afterLocalCopy(persistence).then(() => {
+    // Server fehlt, statt die ganze Kopie als ein Update. Kopien dieser
+    // Seite aus einer aelteren Fassung des Editors kommen dabei mit und
+    // werden danach geloescht.
+    void Promise.all([
+      afterLocalCopy(persistence),
+      persistence
+        ? adoptOlderLocalDocs(kopieRef, (name) => new IndexeddbPersistence(name, ydoc))
+        : Promise.resolve([]),
+    ]).then(() => {
       if (cancelled) return;
       provider = new HocuspocusProvider({
         url: collabUrl,
@@ -464,36 +518,36 @@ export function CollaborativeEditor({
         // mit: weicht sie ab, wurde die Instanz inzwischen zurueckgespielt.
         // Der Schema-Hash ebenso: weicht er ab, laeuft der Tab mit einem
         // Editor von vor dem letzten Update.
+        //
+        // Was aus der Antwort folgt, entscheidet lib/ticket-folge (dort je
+        // Fall getestet): nach einem Restore, mit altem Editor und wenn in
+        // einem anderen Tab ein anderes Konto angemeldet ist, endgueltig
+        // trennen; der Microtask laeuft noch vor dem catch in sendToken,
+        // danach gesendete Nachrichten gehen an einen geschlossenen
+        // Socket. Nach einer endgueltigen Ablehnung der Route die Kopie
+        // dieser Seite verwerfen, ohne Sitzung alle Kopien.
         token: async () => {
           const result = await requestCollabTicket(
             pageId,
             restoreEpoch,
             editorSchema().hash,
           );
-          if (result.kind === "stale") {
-            setStatus("stale");
-            // Endgueltig trennen wie nach einem Restore: dieser Editor
-            // loeschte beim Abgleich, was er nicht kennt. Die lokale Kopie
-            // bleibt liegen.
-            queueMicrotask(() => provider?.disconnect());
-            throw new Error("Neue Version verfügbar");
+          const folge = ticketFolge(result, userId);
+          if (folge.status) setStatus(folge.status);
+          if (folge.kopieLoeschen) verwirfKopie();
+          if (folge.alleLoeschen) void removeAllLocalDocs();
+          if (folge.endgueltig) queueMicrotask(() => provider?.disconnect());
+          if (folge.fehler !== null || result.kind !== "ticket") {
+            throw new Error(folge.fehler ?? "Kein Ticket");
           }
-          if (result.kind === "restored") {
-            setStatus("restored");
-            // Endgueltig trennen: jede weitere Verbindung spielte den Stand
-            // dieses Tabs in den zurueckgespielten hoch. Der Microtask laeuft
-            // noch vor dem catch in sendToken; danach gesendete Nachrichten
-            // gehen an einen geschlossenen Socket.
-            queueMicrotask(() => provider?.disconnect());
-            throw new Error("Instanz wurde zurückgespielt");
-          }
-          // Die Epoche ist jetzt vom Server bestaetigt: Kopien einer anderen
-          // Epoche stammen aus der Zeit vor einem Restore. Erst jetzt, weil ein
-          // veralteter Tab (Prop aus dem Router-Cache) sonst die Kopien der
-          // aktuellen Epoche loeschte.
-          if (cleanedEpoch !== restoreEpoch) {
-            cleanedEpoch = restoreEpoch;
-            void removeForeignLocalDocs(restoreEpoch);
+          // Konto und Epoche sind jetzt vom Server bestaetigt: Kopien
+          // anderer Konten und Epochen loeschen, die Grenzen durchsetzen.
+          // Erst jetzt, weil ein veralteter Tab (Prop aus dem Router-Cache)
+          // sonst die richtigen Kopien loeschte. Bei jedem Ticket, damit
+          // auch ein lange offener Tab die Grenzen durchsetzt.
+          if (folge.aufraeumen) {
+            void removeForeignLocalDocs({ userId, epoch: restoreEpoch });
+            pruneLocalDocs(kopieRef, { keep: kopie });
           }
           return result.ticket;
         },
@@ -502,22 +556,23 @@ export function CollaborativeEditor({
           const notice = parseDocSizeNotice(payload);
           if (notice) setSizeNotice(notice);
         },
-        ...statusHandlers(setStatus, {
-          // Nach 1009 endgueltig trennen: jeder weitere Versuch schickte
-          // dieselbe zu grosse Aenderung wieder.
-          onMessageTooLarge: () => provider?.disconnect(),
-        }),
+        ...handlers,
+        onSynced: () => {
+          handlers.onSynced();
+          auffrischen();
+        },
       });
       setConn({ ydoc, provider, persistence });
     });
     return () => {
       cancelled = true;
+      clearInterval(takt);
       setConn(null);
       provider?.destroy();
       void persistence?.destroy();
       ydoc.destroy();
     };
-  }, [collabUrl, pageId, restoreEpoch]);
+  }, [collabUrl, pageId, restoreEpoch, userId]);
 
   const color = useMemo(() => caretColorFor(userId), [userId]);
 
@@ -847,7 +902,8 @@ export function CollaborativeEditor({
 
   // Was angezeigt wird, entscheidet lib/editor-status (dort getestet):
   // ohne Netz "Offline" statt "Verbinde…", eine Ablehnung bleibt stehen.
-  // Der lokale Puffer traegt offline weiter.
+  // Bearbeiten ist ohne Verbindung gesperrt; die lokale Kopie haelt nur,
+  // was vor dem Abbruch noch nicht beim Server war.
   const effectiveStatus = visibleStatus(status, online);
   // Gelb fuer alles Voruebergehende, das von selbst weitergeht.
   const dot =
@@ -856,7 +912,9 @@ export function CollaborativeEditor({
       : effectiveStatus === "connecting" || effectiveStatus === "updating"
         ? "bg-amber-500"
         : "bg-danger";
-  const { text: statusText, title: statusTitle } = statusLabel(effectiveStatus);
+  const { text: statusText, title: statusTitle } = statusLabel(effectiveStatus, {
+    ohneKopie,
+  });
 
   return (
     <div>

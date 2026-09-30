@@ -374,8 +374,8 @@ an. Browser halten Kopien (y-indexeddb), offene Tabs einen Stand im
 Speicher; beide liegen auf derselben Yjs-Linie und brächten beim
 Verbinden alle späteren Updates mit. Dagegen steht die Restore-Epoche in
 `InstanceState`: `restore.sh` vergibt sie nach dem Einspielen neu; die
-Seite gibt sie dem Editor, der seine Kopie `dokunc:<epoche>:<pageId>`
-nennt (ohne Epoche wie bisher `dokunc:<pageId>`), sie beim Ticket-Abruf
+Seite gibt sie dem Editor, der sie im Namen seiner Kopie trägt
+(→ `docs/admin/local-copies.md`), sie beim Ticket-Abruf
 mitschickt und bei 409 `restore-epoch` endgültig trennt. Die Ticket-Route
 antwortet so auch ohne Sitzung, weil `restore.sh` alle Sitzungen
 widerruft. Das Ticket trägt die Epoche als `ep`, der Collab-Server prüft

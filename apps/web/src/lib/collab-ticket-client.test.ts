@@ -41,12 +41,68 @@ describe("requestCollabTicket()", () => {
     expect(body).toHaveProperty("epoch", null);
   });
 
-  it("gibt bei 200 das Ticket zurueck", async () => {
-    const f = fakeFetch(200, { ticket: "t1", expiresIn: 120 });
+  it("gibt bei 200 das Ticket und das Konto zurueck", async () => {
+    const f = fakeFetch(200, { ticket: "t1", expiresIn: 120, userId: "u1" });
     await expect(requestCollabTicket("p1", null, H, f.impl)).resolves.toEqual({
       kind: "ticket",
       ticket: "t1",
+      userId: "u1",
     });
+    // Eine Antwort ohne Konto (aeltere Web-App) prueft der Editor nicht.
+    const ohne = fakeFetch(200, { ticket: "t2", expiresIn: 120 });
+    await expect(requestCollabTicket("p1", null, H, ohne.impl)).resolves.toEqual({
+      kind: "ticket",
+      ticket: "t2",
+      userId: null,
+    });
+  });
+
+  // Nur eine endgueltige Ablehnung der Route verwirft die lokale Kopie.
+  // Ein Netzfehler, eine Grenze oder ein Serverfehler duerfen das nie:
+  // sonst loeschte ein kurzer Ausfall ungesendete Aenderungen.
+  it("meldet 401, 403 und 404 mit bekanntem Code als denied", async () => {
+    const faelle: Array<[number, string]> = [
+      [401, "no-session"],
+      [403, "no-access"],
+      [404, "not-found"],
+    ];
+    for (const [status, code] of faelle) {
+      const f = fakeFetch(status, { error: "x", code });
+      await expect(requestCollabTicket("p1", null, H, f.impl)).resolves.toEqual({
+        kind: "denied",
+        grund: code,
+      });
+    }
+  });
+
+  it("wirft bei 403 ohne Code (Ungueltige Herkunft) und bei unbekanntem Code", async () => {
+    const herkunft = fakeFetch(403, { error: "Ungültige Herkunft" });
+    await expect(requestCollabTicket("p1", null, H, herkunft.impl)).rejects.toThrow(
+      "Ticket abgelehnt (403)",
+    );
+    const fremd = fakeFetch(403, { error: "x", code: "etwas-neues" });
+    await expect(requestCollabTicket("p1", null, H, fremd.impl)).rejects.toThrow(
+      "Ticket abgelehnt (403)",
+    );
+    // Ein Code gehoert zu seinem Status: no-session mit 403 ist kein
+    // "abgemeldet".
+    const falsch = fakeFetch(403, { error: "x", code: "no-session" });
+    await expect(requestCollabTicket("p1", null, H, falsch.impl)).rejects.toThrow(
+      "Ticket abgelehnt (403)",
+    );
+    for (const status of [400, 429, 500, 502]) {
+      const f = fakeFetch(status, { error: "x", code: "no-access" });
+      await expect(requestCollabTicket("p1", null, H, f.impl)).rejects.toThrow(
+        `Ticket abgelehnt (${status})`,
+      );
+    }
+  });
+
+  it("ein Netzfehler wirft weiter (keine endgueltige Ablehnung)", async () => {
+    const netz = (async () => {
+      throw new TypeError("Failed to fetch");
+    }) as unknown as typeof fetch;
+    await expect(requestCollabTicket("p1", null, H, netz)).rejects.toThrow("Failed to fetch");
   });
 
   it("meldet 409 mit restore-epoch als restored", async () => {

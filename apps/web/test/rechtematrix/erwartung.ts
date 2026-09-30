@@ -508,7 +508,15 @@ export const ERWARTUNG: Record<string, Eintrag> = {
     grund:
       "Anmeldung ohne Space-Rolle: Einstieg in die SSO-Anmeldung gegen den Test-IdP",
   },
-  "route:app/api/collab/ticket/route.ts#POST": OFFEN,
+  "route:app/api/collab/ticket/route.ts#POST": {
+    stand: "extern",
+    tests: [
+      "apps/web/test/integration/collab-ticket-codes.test.ts",
+      "apps/web/test/integration/restore-epoch.test.ts",
+    ],
+    grund:
+      "Ticket für den Collab-Server: ohne Sitzung, ohne Rolle im Space, auf geschützten Seiten ohne Freigabe und für Seiten im Papierkorb abgelehnt, jeweils mit dem Code, an dem der Editor die lokale Kopie verwirft",
+  },
   "route:app/api/favorites/route.ts#GET": OFFEN,
   "route:app/api/files/[name]/route.ts#GET": OFFEN,
   "route:app/api/health/route.ts#GET": OFFEN,
@@ -616,7 +624,6 @@ export const OFFEN_BESTAND: readonly string[] = [
   "action:app/spaces/actions.ts#joinSpaceAction",
   "route:app/api/account/export/route.ts#GET",
   "route:app/api/ai/assist/route.ts#POST",
-  "route:app/api/collab/ticket/route.ts#POST",
   "route:app/api/favorites/route.ts#GET",
   "route:app/api/files/[name]/route.ts#GET",
   "route:app/api/health/route.ts#GET",

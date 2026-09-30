@@ -8,6 +8,7 @@ import { isSameOrigin, originRejectionHint } from "@/lib/origin";
 import { rateLimit } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
 import { RATE_LIMITS } from "@/lib/rate-limits";
+import { COLLAB_TICKET_DENIAL } from "@/lib/collab-ticket-client";
 import {
   issueCollabTicket,
   COLLAB_TICKET_TTL_SEC,
@@ -50,9 +51,26 @@ function staleResponse() {
 }
 
 /**
+ * Endgueltige Ablehnung mit Code (lib/collab-ticket-client): daran
+ * verwirft der Editor die lokale Kopie der Seite, ohne Sitzung alle
+ * Kopien. Fremde Herkunft, fehlende pageId, Grenze und Serverfehler
+ * bekommen bewusst keinen Code: sie sagen nichts ueber Sitzung oder
+ * Zugriff, und ein voruebergehender Fehler darf nichts loeschen.
+ */
+function denied(status: 401 | 403 | 404, error: string, code: string) {
+  return NextResponse.json(
+    { error, code },
+    { status, headers: { "Cache-Control": "no-store" } },
+  );
+}
+
+/**
  * Stellt ein kurzlebiges Ticket für den Collab-WebSocket aus.
  * Der Client ruft die Route vor jedem Verbindungsversuch auf; die
  * Sitzung selbst bleibt im httpOnly-Cookie und verlässt den Server nie.
+ * Die Antwort nennt das Konto: meldet sich in einem anderen Tab jemand
+ * anderes an, gilt dessen Cookie auch hier, und der Editor bricht ab,
+ * statt ungesendete Aenderungen unter diesem Konto abzugleichen.
  */
 export async function POST(req: Request) {
   if (
@@ -100,7 +118,7 @@ export async function POST(req: Request) {
     // Ebenso ein Tab mit altem Editor: "neu laden" statt "kein Zugriff".
     // Ohne Datenbank; der Hash steht ohnehin in jedem ausgelieferten Editor.
     if (staleSchema) return staleResponse();
-    return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
+    return denied(401, "Nicht angemeldet", COLLAB_TICKET_DENIAL.noSession);
   }
 
   // Reconnects sind normal, massenhaftes Abholen nicht.
@@ -147,7 +165,7 @@ export async function POST(req: Request) {
     select: { id: true, spaceId: true },
   });
   if (!page) {
-    return NextResponse.json({ error: "Seite nicht gefunden" }, { status: 404 });
+    return denied(404, "Seite nicht gefunden", COLLAB_TICKET_DENIAL.notFound);
   }
 
   // Rolle aus Mitgliedschaft und Gruppen; geschützte Seiten zusätzlich
@@ -155,7 +173,7 @@ export async function POST(req: Request) {
   // Space-Mitglied ein Ticket für eine Seite, die es nicht sehen darf.
   const role = await effectiveRole(user.id, page.spaceId);
   if (!role || !(await canSeePage(page.id, user.id, role))) {
-    return NextResponse.json({ error: "Kein Zugriff" }, { status: 403 });
+    return denied(403, "Kein Zugriff", COLLAB_TICKET_DENIAL.noAccess);
   }
 
   const ticket = await issueCollabTicket({
@@ -166,7 +184,7 @@ export async function POST(req: Request) {
     restoreEpoch: epoch,
   });
   return NextResponse.json(
-    { ticket, expiresIn: COLLAB_TICKET_TTL_SEC },
+    { ticket, expiresIn: COLLAB_TICKET_TTL_SEC, userId: user.id },
     { headers: { "Cache-Control": "no-store" } },
   );
 }

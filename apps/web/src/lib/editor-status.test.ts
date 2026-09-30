@@ -331,6 +331,26 @@ describe("statusLabel()", () => {
     expect(title).not.toMatch(/anmelden/);
   });
 
+  // Bearbeiten ohne Verbindung ist gesperrt (editorEditable verlangt
+  // "connected"); der alte Text versprach, Aenderungen wuerden offline
+  // gesichert und spaeter uebertragen.
+  it("offline: verspricht kein Bearbeiten ohne Verbindung", () => {
+    const { text, title } = statusLabel("offline");
+    expect(text).toBe("Offline");
+    expect(title).toMatch(/Bearbeiten ist erst wieder möglich, wenn die Verbindung steht/);
+    expect(title).toMatch(/bis zur Abmeldung auf diesem Gerät/);
+    expect(title).not.toMatch(/später übertragen/);
+  });
+
+  it("offline ohne lokale Kopie: sagt, dass Ungesendetes nur im Tab liegt", () => {
+    const { text, title } = statusLabel("offline", { ohneKopie: true });
+    expect(text).toBe("Offline");
+    expect(title).toMatch(/keine lokale Kopie/);
+    expect(title).not.toMatch(/bis zur Abmeldung auf diesem Gerät/);
+    // Fuer andere Status aendert die Angabe nichts.
+    expect(statusLabel("connected", { ohneKopie: true })).toEqual({ text: "Live" });
+  });
+
   it("bittet nach einem Restore um Neuladen", () => {
     const { text, title } = statusLabel("restored");
     expect(text).toBe("Neu laden nötig");
