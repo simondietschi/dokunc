@@ -158,11 +158,12 @@ export async function registerAction(
    * Ersteinrichtung: noch kein Konto. Das erste wird Instanz-Admin, aber
    * nur mit dem Einrichtungs-Token (lib/setup-token), ausser APP_URL und
    * alle Namen dieser Anfrage (Host, X-Forwarded-Host, Forwarded, Origin)
-   * zeigen auf diesen Rechner. Angelegt wird
-   * unter der Sperre der Ersteinrichtung (lib/first-admin), damit zwei
-   * gleichzeitige erste Registrierungen nicht beide Admin werden.
+   * zeigen auf diesen Rechner; ohne Origin gilt eine Action nie als
+   * lokal. Angelegt wird unter der Sperre der Ersteinrichtung
+   * (lib/first-admin), damit zwei gleichzeitige erste Registrierungen
+   * nicht beide Admin werden.
    */
-  const status = await setupStatus(await headers());
+  const status = await setupStatus(await headers(), { aktion: true });
   if (status.offen) {
     const setupTokenOk =
       !status.tokenNoetig ||
@@ -269,7 +270,7 @@ async function ersteinrichtungUeberSso(formData: FormData): Promise<ActionState>
   if (!(await registerBremse())) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }
-  const status = await setupStatus(await headers());
+  const status = await setupStatus(await headers(), { aktion: true });
   if (!status.offen) return { error: NUR_MIT_EINLADUNG };
   const config = oidcConfig();
   if (!config) {

@@ -26,6 +26,9 @@ import { log } from "./log";
  * Host vergleicht. Der Host allein genügte auch nicht: ein Proxy, der
  * `Host` auf localhost umschreibt und den öffentlichen Namen in
  * X-Forwarded-Host weitergibt, sieht für ihn wie dieser Rechner aus.
+ * Gibt er gar keinen Namen weiter, bleibt in einer Server Action das
+ * Origin des Browsers; eine Action ohne Origin gilt darum nie als lokal
+ * (NamenOptionen.aktion).
  */
 
 export const SETUP_TOKEN_DATEI_VORGABE = "/app/data/setup_token";
@@ -72,6 +75,19 @@ function hostnameAus(host: string): string | null {
 /** Die Header einer Anfrage: `headers()` in Actions und Seiten, `Request.headers` in Routen. */
 export type AnfrageKopf = { get(name: string): string | null };
 
+export type NamenOptionen = {
+  /**
+   * Die Anfrage ist eine Server Action (POST): ohne Origin gilt sie nicht
+   * als lokal. Browser schicken bei jedem POST einer Action ein Origin;
+   * fehlt es, ist die Anfrage von Hand gebaut, und Next lässt sie mit
+   * einer Warnung durch. Hinter einem Proxy, der `Host` auf localhost
+   * umschreibt und keinen Namen weitergibt, wäre sie sonst nicht von
+   * einer lokalen zu unterscheiden. Seiten und der Rücksprung vom
+   * Anbieter sind GET-Navigationen ohne Origin und bleiben aussen vor.
+   */
+  aktion?: boolean;
+};
+
 /** Liste in einem Header: an Kommas getrennt, leere Einträge fallen weg. */
 function liste(wert: string | null): string[] {
   return (wert ?? "")
@@ -104,12 +120,16 @@ function forwardedHosts(wert: string | null): string[] {
  * Server Actions; ein späterer kann von einem weiteren Proxy stammen),
  * jedes `host=` in Forwarded und der Host aus `Origin`. `null` steht
  * für einen fehlenden `Host` oder einen Eintrag, der sich nicht lesen
- * lässt (auch `Origin: null`).
+ * lässt (auch `Origin: null`), in einer Server Action auch für ein
+ * fehlendes Origin.
  *
  * Next setzt X-Forwarded-Host selbst auf den `Host`, wenn kein Proxy
  * ihn schickt; auf diesem Rechner ist er darum ebenfalls Loopback.
  */
-export function anfrageNamen(kopf: AnfrageKopf | null | undefined): (string | null)[] {
+export function anfrageNamen(
+  kopf: AnfrageKopf | null | undefined,
+  o: NamenOptionen = {},
+): (string | null)[] {
   if (!kopf) return [null];
   const host = kopf.get("host");
   const namen: (string | null)[] = [host ? hostnameAus(host) : null];
@@ -122,6 +142,8 @@ export function anfrageNamen(kopf: AnfrageKopf | null | undefined): (string | nu
     } catch {
       namen.push(null);
     }
+  } else if (o.aktion) {
+    namen.push(null);
   }
   return namen;
 }
@@ -130,11 +152,13 @@ export function anfrageNamen(kopf: AnfrageKopf | null | undefined): (string | nu
  * Braucht das erste Konto das Token? Nein nur, wenn APP_URL gesetzt ist
  * und auf Loopback zeigt und jeder Name der Anfrage (anfrageNamen)
  * Loopback ist. Eine ungültige APP_URL, ein fehlender Host oder ein
- * unlesbarer Eintrag gelten als nicht Loopback.
+ * unlesbarer Eintrag gelten als nicht Loopback, in einer Server Action
+ * auch ein fehlendes Origin.
  */
 export function tokenNoetig(
   appUrl: string | undefined,
   kopf: AnfrageKopf | null | undefined,
+  o: NamenOptionen = {},
 ): boolean {
   const roh = appUrl?.trim();
   if (!roh) return true;
@@ -145,7 +169,7 @@ export function tokenNoetig(
     return true;
   }
   if (!istLoopback(url.hostname)) return true;
-  return anfrageNamen(kopf).some((n) => n === null || !istLoopback(n));
+  return anfrageNamen(kopf, o).some((n) => n === null || !istLoopback(n));
 }
 
 /** Gibt es noch kein Konto? */
@@ -285,17 +309,19 @@ export type SetupStatus =
 
 /**
  * Zustand der Ersteinrichtung für Seiten und Actions, zu den Headern der
- * Anfrage. Legt das Token bei Bedarf an: so entsteht es auch, wenn beim
- * Start die Datenbank noch nicht erreichbar war.
+ * Anfrage (Actions mit `{ aktion: true }`). Legt das Token bei Bedarf
+ * an: so entsteht es auch, wenn beim Start die Datenbank noch nicht
+ * erreichbar war.
  */
 export async function setupStatus(
   kopf: AnfrageKopf | null | undefined,
+  o: NamenOptionen = {},
 ): Promise<SetupStatus> {
   if (!(await ersteinrichtungOffen())) return { offen: false };
   const zustand = await ensureSetupToken({ offen: true });
   return {
     offen: true,
-    tokenNoetig: tokenNoetig(process.env.APP_URL, kopf),
+    tokenNoetig: tokenNoetig(process.env.APP_URL, kopf, o),
     tokenBereit: zustand.tokenBereit,
     tokenDatei: zustand.datei,
   };

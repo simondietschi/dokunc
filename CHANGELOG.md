@@ -231,7 +231,10 @@ differently on an existing installation, and what to do about it.
   which becomes instance admin, is created only with this token, for a
   password registration and for the first sign-in through single sign-on.
   No token is needed when `APP_URL` points to `localhost` and the site is
-  opened as `localhost`, as in the quick start. Installations that already
+  opened as `localhost`, as in the quick start. Set `APP_URL` to the public
+  address before the instance is reachable from outside: behind a proxy
+  that rewrites the host name to `localhost`, the return from a single
+  sign-on provider would otherwise count as local. Installations that already
   have an account are not affected. An instance that is deployed but has
   no account yet, also after its database volume was emptied, needs the
   token: read it with `docker compose exec app cat /app/data/setup_token`

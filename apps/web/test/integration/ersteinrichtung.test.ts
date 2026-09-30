@@ -16,9 +16,10 @@ import { frischeDatenbank, type FrischeDatenbank } from "./frische-datenbank";
 /**
  * Ersteinrichtung: das erste Konto wird Instanz-Admin, und zwar nur mit
  * dem Einrichtungs-Token aus der Datei (lib/setup-token), ausser APP_URL
- * und der Host der Anfrage zeigen beide auf diesen Rechner. Das gilt für
- * die Registrierung mit Passwort und für das erste Konto über SSO; zwei
- * gleichzeitige erste Konten gibt es nicht (Advisory-Sperre).
+ * und alle Namen der Anfrage zeigen auf diesen Rechner (eine Server
+ * Action braucht dafür ein Origin). Das gilt für die Registrierung mit
+ * Passwort und für das erste Konto über SSO; zwei gleichzeitige erste
+ * Konten gibt es nicht (Advisory-Sperre).
  *
  * Gegen eine eigene, leere Datenbank (frische-datenbank.ts): die
  * gemeinsame hat immer Konten. Ersetzt sind Sitzung, Bremsen, Anfrage-
@@ -286,9 +287,10 @@ describe("erstes Konto mit Passwort", () => {
     expect(await konten()).toHaveLength(1);
   });
 
-  it("auf diesem Rechner (APP_URL und Host localhost) ohne Token", async () => {
+  it("auf diesem Rechner (APP_URL, Host und Origin localhost) ohne Token", async () => {
     vi.stubEnv("APP_URL", "http://localhost:3000");
     mocks.host = "localhost:3000";
+    mocks.kopf = { origin: "http://localhost:3000" };
     expect(await registrieren()).toBe("umgeleitet nach /spaces");
     expect(await audits("auth.first_admin_created")).toEqual([
       { via: "password", setupToken: "not_required", verifiedBy: null },
@@ -307,6 +309,7 @@ describe("erstes Konto mit Passwort", () => {
   it("ohne APP_URL: Token nötig, auch auf localhost", async () => {
     vi.stubEnv("APP_URL", "");
     mocks.host = "localhost:3000";
+    mocks.kopf = { origin: "http://localhost:3000" };
     expect(await registrieren()).toMatchObject({
       error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
     });
@@ -399,13 +402,16 @@ describe("hinter einem Proxy, der den Host auf localhost umschreibt", () => {
   // nennt den öffentlichen Namen in X-Forwarded-Host (Apache mod_proxy
   // mit ProxyPreserveHost Off) oder Forwarded. Next nimmt die Action an,
   // weil X-Forwarded-Host zum Origin passt.
+  // Origin steht auf localhost, damit jeder Fall nur an seinem Header
+  // scheitert (von Hand gebaut; ein Browser nennt die Domain).
   beforeEach(() => {
     vi.stubEnv("APP_URL", "http://localhost:3000");
     mocks.host = "localhost:3000";
+    mocks.kopf = { origin: "http://localhost:3000" };
   });
 
   it("öffentlicher Name in X-Forwarded-Host: Token nötig", async () => {
-    mocks.kopf = { "x-forwarded-host": "wiki.example.com" };
+    mocks.kopf = { ...mocks.kopf, "x-forwarded-host": "wiki.example.com" };
     expect(await registrieren()).toMatchObject({
       error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
     });
@@ -413,7 +419,7 @@ describe("hinter einem Proxy, der den Host auf localhost umschreibt", () => {
   });
 
   it("auch ein späterer Eintrag in X-Forwarded-Host zählt", async () => {
-    mocks.kopf = { "x-forwarded-host": "localhost:3000, wiki.example.com" };
+    mocks.kopf = { ...mocks.kopf, "x-forwarded-host": "localhost:3000, wiki.example.com" };
     expect(await registrieren()).toMatchObject({
       error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
     });
@@ -422,6 +428,7 @@ describe("hinter einem Proxy, der den Host auf localhost umschreibt", () => {
 
   it("öffentlicher Name als host= in Forwarded: Token nötig", async () => {
     mocks.kopf = {
+      ...mocks.kopf,
       forwarded: 'for=192.0.2.60;proto=https;host="wiki.example.com"',
     };
     expect(await registrieren()).toMatchObject({
@@ -439,7 +446,7 @@ describe("hinter einem Proxy, der den Host auf localhost umschreibt", () => {
   });
 
   it("ohne Token geht es auch über SSO nicht zum Anbieter", async () => {
-    mocks.kopf = { "x-forwarded-host": "wiki.example.com" };
+    mocks.kopf = { ...mocks.kopf, "x-forwarded-host": "wiki.example.com" };
     expect(await ssoBeginnen("")).toMatchObject({
       error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
     });
@@ -463,6 +470,58 @@ describe("hinter einem Proxy, der den Host auf localhost umschreibt", () => {
     expect(await audits("auth.first_admin_created")).toEqual([
       { via: "password", setupToken: "not_required", verifiedBy: null },
     ]);
+  });
+});
+
+describe("Server Action ohne Origin", () => {
+  // Ein Proxy, der `Host` auf localhost umschreibt und keinen öffentlichen
+  // Namen weitergibt (nginx `proxy_pass http://localhost:3000` ohne
+  // Header), bei APP_URL auf localhost. Browser schicken bei jedem POST
+  // einer Server Action ein Origin; eine Anfrage ohne ist von Hand gebaut,
+  // und Next lässt sie mit einer Warnung durch. X-Forwarded-Host setzt
+  // Next selbst auf den Host.
+  beforeEach(() => {
+    vi.stubEnv("APP_URL", "http://localhost:3000");
+    mocks.host = "localhost:3000";
+    mocks.kopf = { "x-forwarded-host": "localhost:3000" };
+  });
+
+  it("Registrierung mit Passwort: Token nötig, kein Konto", async () => {
+    expect(await registrieren()).toMatchObject({
+      error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
+    });
+    expect(await konten()).toEqual([]);
+    expect(await audits("auth.login_failed")).toEqual([
+      { reason: "setup_token", via: "register" },
+    ]);
+  });
+
+  it("mit dem Token: Instanz-Admin", async () => {
+    expect(await registrieren({ setup_token: TOKEN })).toBe("umgeleitet nach /spaces");
+    expect(await audits("auth.first_admin_created")).toEqual([
+      { via: "password", setupToken: "required", verifiedBy: null },
+    ]);
+  });
+
+  it("Ersteinrichtung über SSO: ohne Token nicht zum Anbieter", async () => {
+    expect(await ssoBeginnen("")).toMatchObject({
+      error: expect.stringContaining("Einrichtungs-Token stimmt nicht"),
+    });
+    expect(mocks.beginOidcFlow).not.toHaveBeenCalled();
+    expect(await audits("auth.login_failed")).toEqual([
+      { reason: "setup_token", via: "register_sso" },
+    ]);
+  });
+
+  it("mit Origin auf diesem Rechner: ohne Token zum Anbieter, ohne Fingerabdruck", async () => {
+    mocks.kopf = { ...mocks.kopf, origin: "http://localhost:3000" };
+    expect(await ssoBeginnen("")).toBe(
+      "umgeleitet nach https://idp.ersteinrichtung.test/authorize?x=1",
+    );
+    expect(mocks.beginOidcFlow).toHaveBeenCalledWith(
+      expect.objectContaining({ issuer: ISSUER }),
+      { next: "/spaces" },
+    );
   });
 });
 

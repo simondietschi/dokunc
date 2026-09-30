@@ -94,6 +94,38 @@ describe("tokenNoetig", () => {
       expect(noetig({ forwarded: 'host="a b"' })).toBe(true);
     });
   });
+
+  describe("Server Action: nur mit Origin auf diesem Rechner", () => {
+    const lokaleUrl = "http://localhost:3000";
+    const aktion = (weitere: Record<string, string>) =>
+      tokenNoetig(lokaleUrl, kopf("localhost:3000", weitere), { aktion: true });
+
+    it("ohne Origin verlangt eine Action das Token, Seite und Rücksprung nicht", () => {
+      const nurNext = { "x-forwarded-host": "localhost:3000" };
+      expect(aktion(nurNext)).toBe(true);
+      expect(aktion({})).toBe(true);
+      expect(tokenNoetig(lokaleUrl, kopf("localhost:3000", nurNext))).toBe(false);
+    });
+
+    it("Origin auf diesem Rechner genügt, fremd, unlesbar oder null nicht", () => {
+      expect(aktion({ origin: "http://localhost:3000" })).toBe(false);
+      expect(aktion({ origin: " http://127.0.0.1:3000 " })).toBe(false);
+      expect(aktion({ origin: "https://wiki.example.com" })).toBe(true);
+      expect(aktion({ origin: "null" })).toBe(true);
+      expect(aktion({ origin: "kein url" })).toBe(true);
+      expect(aktion({ origin: "" })).toBe(true);
+    });
+
+    it("die übrigen Namen gelten weiter", () => {
+      const origin = "http://localhost:3000";
+      expect(aktion({ origin, "x-forwarded-host": "wiki.example.com" })).toBe(true);
+      expect(
+        tokenNoetig("https://wiki.example.com", kopf("localhost:3000", { origin }), {
+          aktion: true,
+        }),
+      ).toBe(true);
+    });
+  });
 });
 
 describe("Prüfen", () => {
