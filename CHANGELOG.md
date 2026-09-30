@@ -77,3 +77,11 @@ differently on an existing installation, and what to do about it.
   connection before its greeting counted as a permanent failure, so the
   attempt stayed on the account's hourly limit. It now counts as a
   temporary connection error, like a refused or timed-out connection.
+- When the SMTP server offered only XOAUTH2 login and `SMTP_USERNAME` was
+  set, sending a notification mail crashed the collaboration server, and
+  with it the web app when both run through `pnpm start`, as in the Docker
+  image; password reset and invitation mails hung until the 30-second
+  timeout. Mail now tries a password login there; if the server refuses
+  it, the send fails right away with an authentication error in the log.
+  dokunc logs in with a password only, so the server has to accept PLAIN,
+  LOGIN or CRAM-MD5.
