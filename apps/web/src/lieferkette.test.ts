@@ -225,7 +225,7 @@ describe("Lieferkette", () => {
     );
   });
 
-  it("CI: jeder Job hat eine Zeitgrenze, Playwright eine kuerzere", () => {
+  it("CI: jeder Job hat eine Zeitgrenze, Playwright ein Budget darunter", () => {
     // Ohne timeout-minutes laeuft ein Haenger bis zur Grenze von GitHub
     // (360 min), wie der e2e-Job von PR #12.
     const wf = ci();
@@ -235,21 +235,33 @@ describe("Lieferkette", () => {
       expect(grenze, name).toBeGreaterThan(0);
       expect(grenze, name).toBeLessThan(360);
     }
-    // Laeuft die Grenze eines Schritts ab, gilt er als gescheitert, und
-    // der Upload mit failure() laeuft noch. Die Grenze des Jobs bricht ab
-    // (cancelled); dann faellt der Upload weg.
+    // Playwright bricht mit seinem Budget (--global-timeout) selbst ab,
+    // mit Zusammenfassung und Annotationen, und endet binnen 30 s danach.
+    // Die Grenze des Schritts liegt mindestens 3 min darueber und faengt
+    // nur Haenger ab; laeuft sie ab, gilt der Schritt als gescheitert, und
+    // der Upload mit failure() laeuft noch. Die Grenze des Jobs bricht
+    // dagegen ab (cancelled), dann faellt der Upload weg. Deshalb braucht
+    // sie Abstand zur Grenze des Schritts: fuer die Schritte davor (bis
+    // 6 min Ende September 2026) und den Upload. Nur "Schritt < Job"
+    // liesse 29 zu 30 durch.
     const e2e = wf.jobs.e2e;
     const playwright = e2e?.steps?.find((s) =>
-      runZeilen(s).includes("pnpm test:e2e"),
+      runZeilen(s).some((z) => /^pnpm test:e2e(\s|$)/.test(z)),
     );
     const upload = e2e?.steps?.find((s) =>
       s.uses?.startsWith("actions/upload-artifact@"),
     );
     expect(String(upload?.if ?? "")).toMatch(/failure\(\)/);
-    expect(Number.isInteger(playwright?.["timeout-minutes"])).toBe(true);
-    expect(playwright?.["timeout-minutes"]).toBeLessThan(
-      e2e?.["timeout-minutes"] ?? 0,
+    const budget = /--global-timeout[= ](\d+)\b/.exec(
+      runZeilen(playwright).join("\n"),
     );
+    const budgetMin = Number(budget?.[1]) / 60_000;
+    const schritt = playwright?.["timeout-minutes"] ?? 0;
+    const job = e2e?.["timeout-minutes"] ?? 0;
+    expect(budgetMin).toBeGreaterThan(0);
+    expect(Number.isInteger(schritt)).toBe(true);
+    expect(schritt - budgetMin).toBeGreaterThanOrEqual(3);
+    expect(job - schritt).toBeGreaterThanOrEqual(15);
   });
 
   it("Dependabot: Oekosysteme, Karenzzeit, exakte Overrides und Hauptversionen", () => {

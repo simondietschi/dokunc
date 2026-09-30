@@ -131,7 +131,8 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Abstand zur Grenze des Schritts "E2E tests": siehe dort
+    timeout-minutes: 55
     services:
       # Images wie in docker-compose.yml (db, redis); lieferkette.test.ts
       # haelt beide gleich, Dependabot pflegt nur die Compose-Datei.
@@ -202,14 +203,27 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install chromium --with-deps
 
-      # Eigene, kuerzere Grenze: laeuft sie ab, gilt der Schritt als
-      # gescheitert, und "Upload traces on failure" laeuft noch. Die Grenze
-      # des Jobs bricht dagegen ab (cancelled), dann entfallen Schritte mit
-      # failure(). Laengster Lauf 7 min, rot mit Wiederholungen 19; die
-      # Schritte davor brauchen zusammen bis 7.
+      # Drei Stufen, jede ueber der vorigen.
+      # 1. Budget von Playwright fuer den ganzen Lauf, Start und Beenden der
+      # Server eingeschlossen (--global-timeout, in ms: 30 min). Ist es
+      # aufgebraucht, bricht Playwright selbst ab, auch wenn es nach dem
+      # letzten Test beim Beenden der Server haengt (PR #12), schreibt
+      # Zusammenfassung und Annotationen und endet binnen 30 s. 30 min
+      # reichen fuer den laengsten gruenen Lauf (gut 6 min bis Ende
+      # September 2026) und drei Tests, die beide Versuche bis an ihre
+      # 180 s laufen (je 6 min), mit Reserve.
+      # 2. Grenze des Schritts, nur fuer das, was danach noch haengt. Laeuft
+      # sie ab, beendet der Runner nur die Shell des Schritts: Playwright
+      # liefe verwaist weiter, ohne Zusammenfassung und Annotationen im Log,
+      # und der Upload unten kaeme, waehrend es noch in test-results/
+      # schreibt. Der Schritt gilt aber als gescheitert, der Upload laeuft.
+      # 3. Grenze des Jobs, 20 min ueber der des Schritts: fuer die Schritte
+      # davor (bis 6 min, die Integrationstests wachsen) und den Upload.
+      # Laeuft sie zuerst ab, bricht GitHub den Job ab (cancelled), und der
+      # Upload mit failure() entfaellt, wie in PR #12.
       - name: E2E tests
-        timeout-minutes: 20
-        run: pnpm test:e2e
+        timeout-minutes: 35
+        run: pnpm test:e2e --global-timeout 1800000
 
       - name: Upload traces on failure
         if: failure()
