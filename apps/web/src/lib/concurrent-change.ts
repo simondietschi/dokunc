@@ -13,6 +13,14 @@ import { Prisma } from "@dokunc/db";
  *
  * Verliert eine Transaktion dabei gegen eine parallele, bricht Postgres
  * sie ab (SQLSTATE 40001). Ein neuer Versuch sieht den aktuellen Stand.
+ * Seit @prisma/adapter-pg 7.10 kommt ein Deadlock (40P01) auf demselben
+ * Weg an: der Adapter meldet beide als "TransactionWriteConflict", Prisma
+ * macht daraus P2034 (in meta.driverAdapterError steht der urspruengliche
+ * Code). Auch dann hat Postgres die ganze Transaktion zurueckgerollt, und
+ * die Meldung "gleichzeitig geaendert" samt neuem Versuch passt. Mit 7.8
+ * kannte der Adapter nur 40001; ein Deadlock kam als allgemeiner
+ * Postgres-Fehler an und wurde hier nicht erkannt. Die Pruefung unten
+ * schaut nur auf die Art, nicht auf den SQLSTATE, und deckt beide ab.
  *
  * Der Fehler kommt in zwei Formen an. Faellt der Konflikt bei einer
  * Abfrage auf, uebersetzt Prisma ihn in P2034. Faellt er erst beim

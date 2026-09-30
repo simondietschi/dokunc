@@ -5,13 +5,9 @@ import { Loader2, Trash2 } from "lucide-react";
 import type { SpaceRole, SpaceVisibility } from "@dokunc/db";
 import { Button } from "@/components/ui/Button";
 import { FIELD_LABEL_CLASS, Field, Input } from "@/components/ui/Input";
+import { SpaceNameInput } from "@/components/space/SpaceNameInput";
 import { cn } from "@/lib/cn";
-import {
-  QUICK_ICONS,
-  SPACE_DESCRIPTION_MAX,
-  SPACE_NAME_MAX,
-  SPACE_NAME_MIN,
-} from "@/lib/space-settings";
+import { QUICK_ICONS, SPACE_DESCRIPTION_MAX } from "@/lib/space-settings";
 import {
   deleteSpaceAction,
   updateSpaceAction,
@@ -88,13 +84,9 @@ export function GeneralForm({
         </span>
         <div className="min-w-0 flex-1 space-y-4">
           <Field label="Name">
-            <Input
-              name="name"
+            <SpaceNameInput
               value={nameValue}
               onChange={(e) => setNameValue(e.target.value)}
-              required
-              minLength={SPACE_NAME_MIN}
-              maxLength={SPACE_NAME_MAX}
             />
           </Field>
           <Field label="Icon (Emoji, optional)">

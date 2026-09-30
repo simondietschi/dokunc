@@ -6,15 +6,26 @@ import { Redis } from "ioredis";
  *
  * Vorher baute jeder Nutzer seine eigene: dieselbe Auswertung von
  * REDIS_URL, dasselbe "ohne Variable eben kein Redis", derselbe
- * Fehler-Handler. Der Handler ist dabei kein Beiwerk — ioredis wirft
- * einen Verbindungsfehler ohne Zuhoerer als unbehandeltes Ereignis, was
- * den Prozess beendet. Wer die Fabrik hier benutzt, kann ihn nicht
- * vergessen.
+ * Fehler-Handler. Der Handler ist dabei kein Beiwerk: ohne Zuhoerer
+ * schreibt ioredis jeden Verbindungsfehler unstrukturiert als
+ * "[ioredis] Unhandled error event" samt Stack auf stderr, bei einem
+ * Ausfall alle zwei Sekunden einen, vorbei am strukturierten Log. Einige
+ * wenige andere Fehler (etwa eine aus dem Tritt geratene Befehlsschlange)
+ * gibt es dagegen als echtes unbehandeltes Ereignis weiter, und das
+ * beendet den Prozess. Wer die Fabrik hier benutzt, kann den Handler
+ * nicht vergessen.
  *
  * Bewusst KEIN gemeinsamer Client fuer alle Aufrufer: die Nutzer
- * unterscheiden sich in der Zahl der Versuche je Befehl, und ein
- * Abonnent schaltet seine Verbindung dauerhaft in den Abo-Modus, kann
- * also keine Befehle mehr fuer andere ausfuehren.
+ * unterscheiden sich in der Zahl der Versuche je Befehl, und manche
+ * brauchen eine Verbindung fuer sich allein. Redis arbeitet die Befehle
+ * einer Verbindung der Reihe nach ab; ein BLPOP, das auf die Quittung
+ * des Collab-Servers wartet (collab-sync), hielte alles dahinter
+ * sekundenlang auf. Ein Abonnent (notify-bus) lebt so lange wie der
+ * Datenstrom seiner Person und wird mit ihm per disconnect() beendet,
+ * was auf einer geteilten Verbindung auch die Befehle der anderen
+ * abbraeche. Dass ein Abonnent gar keine anderen Befehle mehr annimmt,
+ * gilt dagegen nur unter RESP2; ioredis 6 spricht RESP3, und das kann
+ * jedes Redis ab Version 6 (dokunc verlangt 7, siehe .env.example).
  */
 type RedisOptionen = {
   /**
@@ -32,13 +43,42 @@ type RedisOptionen = {
   lazy: boolean;
   /**
    * Wird beim ERSTEN Verbindungsfehler dieser Verbindung gerufen, danach
-   * nie wieder. ioredis probiert im Sekundentakt endlos weiter; ohne die
-   * Sperre stuende dieselbe Meldung dauerhaft mehrmals pro Minute im
-   * Log. Ohne Rueckruf bleibt der Ausfall hier still — dann meldet ihn
-   * der Aufrufer an der Stelle, an der ein Befehl scheitert.
+   * nie wieder. ioredis probiert endlos weiter, spaetestens alle zwei
+   * Sekunden (siehe `reconnectDelay`); ohne die Sperre stuende dieselbe
+   * Meldung dauerhaft mehrmals pro Minute im Log. Ohne Rueckruf bleibt
+   * der Ausfall hier still — dann meldet ihn der Aufrufer an der Stelle,
+   * an der ein Befehl scheitert.
    */
   onFirstError?: (e: Error) => void;
 };
+
+/**
+ * Wartezeit vor dem n-ten Versuch, eine abgerissene Verbindung wieder
+ * aufzubauen: je Versuch 50 ms mehr, hoechstens zwei Sekunden. Das war
+ * die Vorgabe von ioredis 5; ioredis 6 verdoppelt stattdessen bis fuenf
+ * Sekunden (plus Zufall).
+ *
+ * Der Abstand bestimmt nicht nur, wie schnell die Verbindung nach einem
+ * Ausfall zurueck ist, sondern auch, wie lange ein Befehl waehrenddessen
+ * haengt: ioredis lehnt wartende Befehle erst ab, wenn seit dem letzten
+ * Ablehnen `retries` + 1 Verbindungsversuche gescheitert sind. Mit der
+ * Vorgabe von ioredis 6 wartete jeder Befehl bei einem laengeren Ausfall
+ * etwa 10 s (ein Versuch) bzw. 15 s (zwei), bevor der Aufrufer seinen
+ * Ausweg nehmen kann (Bremse im Speicher, stilles Auslassen) — hier
+ * hoechstens etwa 4 bzw. 6 s.
+ *
+ * Diese Grenze gilt, wenn jeder Verbindungsversuch sofort abgewiesen
+ * wird (Redis-Prozess weg, Port zu). Ist der Host gar nicht erreichbar
+ * (Netz getrennt, Pakete verworfen), wartet jeder Versuch zusaetzlich
+ * das connectTimeout von ioredis ab, 10 s: dann haengt ein Befehl bis
+ * etwa 24 bzw. 36 s (gemessen mit frischem Client: 20 bzw. 30 s). Das
+ * war mit ioredis 5 genauso; retryStrategy aendert daran nichts.
+ *
+ * Dieselbe Rechnung steht in apps/collab/src/redis-client.ts.
+ */
+export function reconnectDelay(times: number): number {
+  return Math.min(times * 50, 2000);
+}
 
 /**
  * Neue Verbindung — oder null, wenn REDIS_URL fehlt. Das null ist kein
@@ -51,9 +91,11 @@ type RedisOptionen = {
 export function createRedis(opts: RedisOptionen): Redis | null {
   const url = process.env.REDIS_URL;
   if (!url) return null;
+  // duplicate() uebernimmt alle Optionen, auch retryStrategy.
   const client = new Redis(url, {
     maxRetriesPerRequest: opts.retries,
     lazyConnect: opts.lazy,
+    retryStrategy: reconnectDelay,
   });
   let gemeldet = false;
   client.on("error", (e: Error) => {

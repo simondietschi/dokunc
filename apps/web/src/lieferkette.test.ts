@@ -12,9 +12,10 @@ import { parse } from "yaml";
  * gegen den CI-Schritt, der ihn ausfuehrt; exakt gepinnte Overrides
  * gegen die Ausnahmen von Dependabot; die pnpm-Version an jeder Stelle;
  * die Ausnahmen fuer pnpm audit und Trivy (eng und befristet); die
- * Service-Images des e2e-Jobs gegen docker-compose.yml. Das Geruest des
- * Workflows steht in einem Test. Ob die Befehle wirklich laufen, prueft
- * der CI-Job docker, ob die Gates greifen, die Jobs audit und docker.
+ * Zeitgrenzen der CI-Jobs; die Service-Images des e2e-Jobs gegen
+ * docker-compose.yml. Das Geruest des Workflows steht in einem Test. Ob
+ * die Befehle wirklich laufen, prueft der CI-Job docker, ob die Gates
+ * greifen, die Jobs audit und docker.
  */
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -31,12 +32,14 @@ type Schritt = {
   run?: string;
   if?: unknown;
   "continue-on-error"?: unknown;
+  "timeout-minutes"?: number;
   with?: Obj;
 };
 
 type Job = {
   if?: unknown;
   "continue-on-error"?: unknown;
+  "timeout-minutes"?: number;
   permissions?: unknown;
   services?: Record<string, { image?: string }>;
   steps?: Schritt[];
@@ -220,6 +223,45 @@ describe("Lieferkette", () => {
     expect(trivy.some((s) => typeof s.with?.["image-ref"] === "string")).toBe(
       true,
     );
+  });
+
+  it("CI: jeder Job hat eine Zeitgrenze, Playwright ein Budget darunter", () => {
+    // Ohne timeout-minutes laeuft ein Haenger bis zur Grenze von GitHub
+    // (360 min), wie der e2e-Job von PR #12.
+    const wf = ci();
+    for (const [name, job] of Object.entries(wf.jobs)) {
+      const grenze = job["timeout-minutes"];
+      expect(Number.isInteger(grenze), name).toBe(true);
+      expect(grenze, name).toBeGreaterThan(0);
+      expect(grenze, name).toBeLessThan(360);
+    }
+    // Playwright bricht mit seinem Budget (--global-timeout) selbst ab,
+    // mit Zusammenfassung und Annotationen, und endet binnen 30 s danach.
+    // Die Grenze des Schritts liegt mindestens 3 min darueber und faengt
+    // nur Haenger ab; laeuft sie ab, gilt der Schritt als gescheitert, und
+    // der Upload mit failure() laeuft noch. Die Grenze des Jobs bricht
+    // dagegen ab (cancelled), dann faellt der Upload weg. Deshalb braucht
+    // sie Abstand zur Grenze des Schritts: fuer die Schritte davor (bis
+    // 6 min Ende September 2026) und den Upload. Nur "Schritt < Job"
+    // liesse 29 zu 30 durch.
+    const e2e = wf.jobs.e2e;
+    const playwright = e2e?.steps?.find((s) =>
+      runZeilen(s).some((z) => /^pnpm test:e2e(\s|$)/.test(z)),
+    );
+    const upload = e2e?.steps?.find((s) =>
+      s.uses?.startsWith("actions/upload-artifact@"),
+    );
+    expect(String(upload?.if ?? "")).toMatch(/failure\(\)/);
+    const budget = /--global-timeout[= ](\d+)\b/.exec(
+      runZeilen(playwright).join("\n"),
+    );
+    const budgetMin = Number(budget?.[1]) / 60_000;
+    const schritt = playwright?.["timeout-minutes"] ?? 0;
+    const job = e2e?.["timeout-minutes"] ?? 0;
+    expect(budgetMin).toBeGreaterThan(0);
+    expect(Number.isInteger(schritt)).toBe(true);
+    expect(schritt - budgetMin).toBeGreaterThanOrEqual(3);
+    expect(job - schritt).toBeGreaterThanOrEqual(15);
   });
 
   it("Dependabot: Oekosysteme, Karenzzeit, exakte Overrides und Hauptversionen", () => {

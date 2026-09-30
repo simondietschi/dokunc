@@ -1,3 +1,4 @@
+import { textLength, truncateText } from "@/lib/text-length";
 import { isExternalUrl } from "./paths";
 import type { JsonNode } from "./types";
 
@@ -28,8 +29,14 @@ function isAnchor(href: string): boolean {
   return href.trim().startsWith("#");
 }
 
+/**
+ * Linkziel fuer einen Hinweis, auf 80 Zeichen gekuerzt. In Codepoints wie
+ * jede Grenze auf Nutzertext (lib/text-length): `slice(0, 77)` zaehlte
+ * UTF-16-Einheiten und liess bei einem Emoji an der Grenze dessen
+ * vordere Haelfte stehen, im Hinweis stand dann das Ersatzzeichen.
+ */
 function shortHref(href: string): string {
-  const s = href.length > 80 ? `${href.slice(0, 77)}...` : href;
+  const s = textLength(href) > 80 ? `${truncateText(href, 77)}...` : href;
   return s.startsWith("data:") ? "data:-Bild" : s;
 }
 

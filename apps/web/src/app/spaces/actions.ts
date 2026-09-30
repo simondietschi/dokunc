@@ -7,15 +7,20 @@ import { requireUser } from "@/lib/current-user";
 import { slugify } from "@/lib/slug";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
-import { SPACE_NAME_MAX, SPACE_NAME_MIN } from "@/lib/space-settings";
+import { spaceSettingsSchema } from "@/lib/space-settings";
 
 export async function createSpaceAction(formData: FormData) {
   const user = await requireUser();
-  const name = str(formData, "name");
-  // Dieselbe Grenze wie beim Umbenennen: Space.name ist in der Datenbank
-  // unbegrenzt, ohne Obergrenze liesse sich hier ein megabytelanger Name
-  // anlegen, der danach in jeder Uebersicht und in der Seitenleiste steht.
-  if (name.length < SPACE_NAME_MIN || name.length > SPACE_NAME_MAX) return;
+  // Dieselbe Regel wie beim Umbenennen, und zwar dasselbe Schema: Space.name
+  // ist in der Datenbank unbegrenzt, ohne Obergrenze liesse sich hier ein
+  // megabytelanger Name anlegen, der danach in jeder Uebersicht und in der
+  // Seitenleiste steht. Hier stand eine eigene Pruefung mit `name.length`;
+  // die zaehlte UTF-16-Einheiten, zod zaehlt Codepoints. Ein Space mit
+  // einem einzelnen Emoji als Namen liess sich so anlegen, aber in den
+  // Einstellungen nicht mehr speichern.
+  const parsed = spaceSettingsSchema.shape.name.safeParse(str(formData, "name"));
+  if (!parsed.success) return;
+  const name = parsed.data;
 
   // Der Slug ist unique. Ein Vorab-Check allein reicht nicht: zwei
   // gleichzeitige Anlagen sehen beide "frei" und die zweite scheitert am

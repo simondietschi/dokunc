@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { isValidIcon, spaceSettingsSchema, QUICK_ICONS } from "./space-settings";
+import {
+  isValidIcon,
+  spaceSettingsSchema,
+  QUICK_ICONS,
+  SPACE_DESCRIPTION_MAX,
+  SPACE_NAME_MAX,
+} from "./space-settings";
 
 describe("isValidIcon()", () => {
   it("akzeptiert Emojis inklusive Modifier und Schnellauswahl", () => {
@@ -48,5 +54,17 @@ describe("spaceSettingsSchema", () => {
     expect(spaceSettingsSchema.safeParse({ name: "Ok", description: "", icon: "🚀" }).success).toBe(
       true,
     );
+  });
+  it("zaehlt Namen und Beschreibung in Codepoints, nicht in UTF-16-Einheiten", () => {
+    // createSpaceAction prueft mit demselben Schema; zaehlte eine Seite
+    // anders, liesse sich ein Space anlegen, aber nicht mehr speichern.
+    const ok = (name: string, description = "") =>
+      spaceSettingsSchema.safeParse({ name, description, icon: "" }).success;
+    expect(ok("🚀")).toBe(false);
+    expect(ok("🚀🚀")).toBe(true);
+    expect(ok("🚀".repeat(SPACE_NAME_MAX))).toBe(true);
+    expect(ok("🚀".repeat(SPACE_NAME_MAX + 1))).toBe(false);
+    expect(ok("Ok", "🚀".repeat(SPACE_DESCRIPTION_MAX))).toBe(true);
+    expect(ok("Ok", "🚀".repeat(SPACE_DESCRIPTION_MAX + 1))).toBe(false);
   });
 });

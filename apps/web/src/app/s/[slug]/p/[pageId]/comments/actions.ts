@@ -8,6 +8,8 @@ import { str } from "@/lib/form";
 import { publishNotification } from "@/lib/notify-bus";
 import { filterByPageAccess } from "@/lib/page-access";
 import { findLivePage, scopeOf, scopeWhere } from "@/lib/page-guards";
+import { COMMENT_ANCHOR_MAX, MAX_COMMENT_LENGTH } from "@/lib/comment-limits";
+import { textLength, truncateText } from "@/lib/text-length";
 
 /** Client-generierte Thread-IDs (crypto.randomUUID) validieren. */
 function isValidThreadId(id: string): boolean {
@@ -15,12 +17,14 @@ function isValidThreadId(id: string): boolean {
 }
 
 /**
- * Obergrenze fuer Kommentartexte. Comment.body ist ein unbegrenztes
- * Textfeld: ohne diese Pruefung landet alles bis zum 5-MB-Limit der
- * Server Action in der Datenbank und wird danach jedem Leser der Seite
- * ungekuerzt ausgeliefert.
+ * Kommentartext innerhalb der Grenze aus lib/comment-limits? Dieselbe
+ * Konstante wie am Textfeld (hier stand bisher eine eigene Kopie der
+ * Zahl), gezaehlt in Codepoints wie jede Grenze auf Nutzertext
+ * (lib/text-length).
  */
-const MAX_COMMENT_LENGTH = 10_000;
+function isValidBody(body: string): boolean {
+  return body !== "" && textLength(body) <= MAX_COMMENT_LENGTH;
+}
 
 export async function createThreadAction(form: FormData) {
   const access = await authorizeAction(form, "comment");
@@ -28,8 +32,9 @@ export async function createThreadAction(form: FormData) {
   const pageId = str(form, "pageId");
   const threadId = str(form, "threadId");
   const body = str(form, "body");
-  const anchorText = str(form, "anchorText").slice(0, 300) || null;
-  if (!body || body.length > MAX_COMMENT_LENGTH) return;
+  const anchorText =
+    truncateText(str(form, "anchorText"), COMMENT_ANCHOR_MAX) || null;
+  if (!isValidBody(body)) return;
   if (!isValidThreadId(threadId)) return;
 
   const page = await findLivePage(scopeOf(access), pageId);
@@ -176,7 +181,7 @@ export async function replyAction(form: FormData) {
   const { space, user } = access;
   const threadId = str(form, "threadId");
   const body = str(form, "body");
-  if (!body || body.length > MAX_COMMENT_LENGTH) return;
+  if (!isValidBody(body)) return;
 
   const thread = await prisma.comment.findFirst({
     where: {
@@ -291,7 +296,7 @@ export async function editCommentAction(form: FormData) {
   const access = await authorizeAction(form, "comment");
   const { space, user } = access;
   const body = str(form, "body");
-  if (!body || body.length > MAX_COMMENT_LENGTH) return;
+  if (!isValidBody(body)) return;
 
   const comment = await prisma.comment.findFirst({
     where: {

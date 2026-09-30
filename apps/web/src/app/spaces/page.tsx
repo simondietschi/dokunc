@@ -13,7 +13,7 @@ import { requireUser } from "@/lib/current-user";
 import { accessibleSpaceWhere } from "@/lib/space-access";
 import { Logo } from "@/components/ui/Logo";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { SpaceNameInput } from "@/components/space/SpaceNameInput";
 import { Avatar, gradientFor } from "@/components/ui/Avatar";
 import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { logoutAction } from "../(auth)/actions";
@@ -234,13 +234,7 @@ export default async function SpacesPage() {
               <Plus className="h-5 w-5" />
             </span>
             <div className="mt-4 space-y-2.5">
-              <Input
-                name="name"
-                placeholder="Neuer Space…"
-                required
-                minLength={2}
-                className="h-10"
-              />
+              <SpaceNameInput placeholder="Neuer Space…" className="h-10" />
               <Button type="submit" size="sm" className="w-full">
                 Space erstellen
               </Button>

@@ -7,6 +7,7 @@ import { aiAvailable, askWiki } from "@/lib/ai";
 import { retrieveChunks } from "@/lib/retrieval";
 import { log } from "@/lib/log";
 import { RATE_LIMITS } from "@/lib/rate-limits";
+import { textLength } from "@/lib/text-length";
 
 export type AskState =
   | {
@@ -25,12 +26,13 @@ export async function askAction(
   // str() statt String(): ein als Datei gesendetes Feld "question" wuerde
   // sonst zu "[object File]" und passierte die Laengenpruefung.
   const question = str(form, "question");
-  if (question.length < 3) return { error: "Bitte eine Frage eingeben." };
+  // Laengen in Codepoints wie ueberall bei Nutzertext (lib/text-length).
+  if (textLength(question) < 3) return { error: "Bitte eine Frage eingeben." };
   // Obergrenze wie in /api/ai/assist: die Frage geht unveraendert an
   // Voyage, in plainto_tsquery und an die Anthropic-API. Ohne sie liesse
   // sich pro Anfrage der ganze erlaubte Server-Action-Koerper (5 MB, s.
   // next.config.ts) an beide externen Dienste weiterreichen.
-  if (question.length > 20_000) {
+  if (textLength(question) > 20_000) {
     return { error: "Frage zu lang (max. 20.000 Zeichen)." };
   }
   if (!aiAvailable()) {

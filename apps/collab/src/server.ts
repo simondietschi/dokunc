@@ -6,8 +6,6 @@ import type { Duplex } from "node:stream";
 import { Server, type Connection, type Document } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
 import { jwtVerify, type JWTPayload } from "jose";
-import { Redis } from "ioredis";
-import { Redis as HocuspocusRedis } from "@hocuspocus/extension-redis";
 import pino from "pino";
 import * as Y from "yjs";
 import {
@@ -72,13 +70,15 @@ import {
   trustedProxyHops,
 } from "./limits";
 import { createAttemptLimiter, createTicketLedger } from "./redis-guards";
+import { createHaRedis, createRedisClient } from "./redis-client";
 
 const log = pino({
   level: process.env.LOG_LEVEL ?? "info",
   base: { app: "dokunc-collab" },
-  // ioredis haengt an Fehler den Befehl samt Argumenten an; bei einem
-  // gescheiterten AUTH steht dort das Passwort aus REDIS_URL. jose haengt
-  // an Claim-Fehler den Inhalt des Tokens an. Dieselbe Schwaerzung wie in
+  // ioredis haengt an Fehler den Befehl samt Argumenten an; bei einer
+  // gescheiterten Anmeldung (HELLO 3 AUTH <user> <passwort>) steht dort
+  // das Passwort aus REDIS_URL. jose haengt an Claim-Fehler den Inhalt
+  // des Tokens an. Dieselbe Schwaerzung wie in
   // apps/web/src/lib/log.ts (dort mit Begruendung und Test); dazu die
   // Ursache, weil verifyTicket den Fehler von jose als `cause` weiterreicht.
   // Der heutige Serializer faltet sie nur in Meldung und Stack; der
@@ -105,10 +105,11 @@ const extensions = richExtensions();
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
 const VERSION_INTERVAL_MS = 2 * 60 * 1000;
 
-const redis = new Redis(process.env.REDIS_URL ?? "redis://localhost:6379", {
-  maxRetriesPerRequest: 2,
-  lazyConnect: true,
-});
+// Zwei Versuche je Befehl, Abstaende beim Wiederverbinden wie in
+// ioredis 5 (Begruendung in ./redis-client).
+const redis = createRedisClient(
+  process.env.REDIS_URL ?? "redis://localhost:6379",
+);
 redis.on("error", (e: Error) => log.warn({ err: e }, "redis"));
 
 /*
@@ -546,22 +547,29 @@ let lastAddressFullLogAt = 0;
 // `<prefix>:<pageId>`; die Instanzen gleichen ihre Stände darüber ab.
 // Der Doc-Reset stützt sich darauf (siehe ./doc-reset).
 //
-// Die Extension dupliziert den bestehenden Client, statt REDIS_URL ein
-// zweites Mal auszuwerten. Würden hier nur Host und Port übergeben,
-// fielen Benutzer, Passwort, Datenbanknummer und TLS aus derselben
-// Variable weg: bei `redis://:geheim@host` wiese Redis die Anmeldung ab,
-// bei `rediss://` verschwände still die Verschlüsselung — und die
-// Koordination der Instanzen liefe nicht, während alle übrigen
-// Redis-Zugriffe desselben Prozesses funktionieren.
+// Ihre beiden Verbindungen sind Duplikate des bestehenden Clients;
+// REDIS_URL wird dafür nicht ein zweites Mal ausgewertet. Würden hier
+// nur Host und Port übergeben, fielen Benutzer, Passwort,
+// Datenbanknummer und TLS aus derselben Variable weg: bei
+// `redis://:geheim@host` wiese Redis die Anmeldung ab, bei `rediss://`
+// verschwände still die Verschlüsselung — und die Koordination der
+// Instanzen liefe nicht, während alle übrigen Redis-Zugriffe desselben
+// Prozesses funktionieren.
 //
-// Der Cast überbrückt nur, dass die Extension eine eigene, ältere
-// ioredis-Typfassung mitbringt — zur Laufzeit ist es dieselbe Klasse.
-type HaRedisInstance = NonNullable<
-  ConstructorParameters<typeof HocuspocusRedis>[0]["redis"]
->;
-const haExtension = new HocuspocusRedis({
-  redis: redis as unknown as HaRedisInstance,
-});
+// Die Extension bringt ein eigenes, älteres ioredis mit (5.6), dieser
+// Prozess nutzt ioredis 6. Sie bekommt die Duplikate aber über
+// `createClient` und baut selbst keine Verbindung: Pub/Sub und die
+// Sperre vor dem Speichern (Redlock) laufen also über ioredis 6 aus
+// diesem Prozess, mit RESP3 und denselben Antwortformen wie unter RESP2
+// (Vorgabe replyMapping "legacy"). Ihr eigenes ioredis braucht sie nur,
+// wenn sie selbst aus Host und Port verbindet, was hier nie geschieht.
+//
+// Der Abonnent hat keine Grenze für Versuche je Befehl, sonst bliebe
+// der Prozess nach einem kurzen Redis-Ausfall beim Start dauerhaft
+// unfähig, Dokumente zu laden (Begründung in ./redis-client).
+const { extension: haExtension } = createHaRedis(redis, (e, rolle) =>
+  log.warn({ err: e, rolle }, "redis-ha"),
+);
 
 const server = new Server({
   port: PORT,

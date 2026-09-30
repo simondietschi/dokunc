@@ -18,6 +18,22 @@ on:
 permissions:
   contents: read
 
+# Jeder Job hat eine Zeitgrenze. Ohne sie lief ein Haenger bis zur Grenze
+# von GitHub (6 h): der e2e-Job von PR #12 hing nach dem letzten
+# Playwright-Test. Die laengsten Laeufe bis Ende September 2026, auf ganze
+# Minuten aufgerundet: audit 1, build-test 3, e2e 13 (rot mit
+# Wiederholungen 20), docker 7. Die Grenzen lassen mindestens die Haelfte
+# mehr, meist ein Mehrfaches.
+# Laeuft die Grenze eines Jobs ab, bricht GitHub ihn ab (cancelled):
+# Schritte mit failure() oder !cancelled() entfallen, nur always() laeuft
+# noch. Im Job e2e ginge so der Upload der Traces verloren; dort enden
+# Playwright und sein Schritt deshalb vorher (siehe dort). Im Job docker
+# fehlten "Zustand und Logs bei Fehlschlag" und der Trivy-Scan des Images.
+# Er hat trotzdem keine Schrittgrenzen: wo seine Schritte auf den Stack
+# warten, zaehlen sie Versuche oder warten mit up --wait auf die
+# Healthchecks (meist mit --wait-timeout 600). Was dann noch haengen
+# kann, ist vor allem Build oder Pull am Netz, und dafuer zeigt das Log
+# des Schritts mehr als die Logs der Container.
 jobs:
   # Eigener Job: eine neue Advisory soll Lint, Tests und Build nicht
   # verdecken. Ausnahmen mit Begruendung: pnpm-workspace.yaml
@@ -25,6 +41,7 @@ jobs:
   audit:
     name: Bekannte Luecken (pnpm audit, Trivy)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
       - name: pnpm installieren
@@ -54,6 +71,7 @@ jobs:
 
   build-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     env:
       # prisma.config.ts löst DATABASE_URL strikt auf — für generate/build
       # reicht ein Platzhalter (es wird keine Verbindung aufgebaut).
@@ -123,6 +141,8 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    # Abstand zur Grenze des Schritts "E2E tests": siehe dort
+    timeout-minutes: 55
     services:
       # Images wie in docker-compose.yml (db, redis); lieferkette.test.ts
       # haelt beide gleich, Dependabot pflegt nur die Compose-Datei.
@@ -193,8 +213,27 @@ jobs:
       - name: Install Playwright browsers
         run: pnpm exec playwright install chromium --with-deps
 
+      # Drei Stufen, jede ueber der vorigen.
+      # 1. Budget von Playwright fuer den ganzen Lauf, Start und Beenden der
+      # Server eingeschlossen (--global-timeout, in ms: 30 min). Ist es
+      # aufgebraucht, bricht Playwright selbst ab, auch wenn es nach dem
+      # letzten Test beim Beenden der Server haengt (PR #12), schreibt
+      # Zusammenfassung und Annotationen und endet binnen 30 s. 30 min
+      # reichen fuer den laengsten gruenen Lauf (gut 6 min bis Ende
+      # September 2026) und drei Tests, die beide Versuche bis an ihre
+      # 180 s laufen (je 6 min), mit Reserve.
+      # 2. Grenze des Schritts, nur fuer das, was danach noch haengt. Laeuft
+      # sie ab, beendet der Runner nur die Shell des Schritts: Playwright
+      # liefe verwaist weiter, ohne Zusammenfassung und Annotationen im Log,
+      # und der Upload unten kaeme, waehrend es noch in test-results/
+      # schreibt. Der Schritt gilt aber als gescheitert, der Upload laeuft.
+      # 3. Grenze des Jobs, 20 min ueber der des Schritts: fuer die Schritte
+      # davor (bis 6 min, die Integrationstests wachsen) und den Upload.
+      # Laeuft sie zuerst ab, bricht GitHub den Job ab (cancelled), und der
+      # Upload mit failure() entfaellt, wie in PR #12.
       - name: E2E tests
-        run: pnpm test:e2e
+        timeout-minutes: 35
+        run: pnpm test:e2e --global-timeout 1800000
 
       - name: Upload traces on failure
         if: failure()
@@ -210,6 +249,7 @@ jobs:
   docker:
     name: Docker-Stack (ohne .env)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
 

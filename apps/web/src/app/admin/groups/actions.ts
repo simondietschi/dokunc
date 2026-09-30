@@ -9,6 +9,7 @@ import { audit } from "@/lib/audit";
 import { revokeCollabAccess } from "@/lib/collab-sync";
 import { RENAME_REFUSAL_PARAM, type RenameRefusal } from "@/lib/group-rename";
 import { log } from "@/lib/log";
+import { textLength, truncateText } from "@/lib/text-length";
 
 /**
  * Gruppenverwaltung.
@@ -20,15 +21,23 @@ import { log } from "@/lib/log";
  */
 export type GroupState = { error?: string; success?: string } | undefined;
 
+/**
+ * Obergrenzen, in Codepoints gekappt (lib/text-length). Mit `slice()`
+ * nach UTF-16-Einheiten zerschnitt das Kappen ein Emoji an der Grenze,
+ * und in der Datenbank stand statt seiner das Ersatzzeichen U+FFFD; die
+ * Pruefung auf zwei Zeichen liess ein einzelnes Emoji durch, das die
+ * Registrierung und die Space-Einstellungen (zod) als ein Zeichen zaehlen.
+ */
 const MAX_NAME = 60;
+const MAX_DESCRIPTION = 200;
 
 export async function createGroupAction(
   _prev: GroupState,
   form: FormData,
 ): Promise<GroupState> {
   const admin = await requireAdmin();
-  const name = str(form, "name").slice(0, MAX_NAME);
-  if (name.length < 2) return { error: "Name zu kurz." };
+  const name = truncateText(str(form, "name"), MAX_NAME);
+  if (textLength(name) < 2) return { error: "Name zu kurz." };
 
   if (await prisma.group.findUnique({ where: { name }, select: { id: true } })) {
     return { error: "Diese Gruppe gibt es schon." };
@@ -44,7 +53,8 @@ export async function createGroupAction(
     group = await prisma.group.create({
       data: {
         name,
-        description: str(form, "description").slice(0, 200) || null,
+        description:
+          truncateText(str(form, "description"), MAX_DESCRIPTION) || null,
       },
       select: { id: true },
     });
@@ -104,8 +114,8 @@ function refuseRename(
 export async function renameGroupAction(form: FormData) {
   const admin = await requireAdmin();
   const groupId = str(form, "groupId");
-  const name = str(form, "name").slice(0, MAX_NAME);
-  if (name.length < 2) refuseRename("zu-kurz", groupId, admin.id);
+  const name = truncateText(str(form, "name"), MAX_NAME);
+  if (textLength(name) < 2) refuseRename("zu-kurz", groupId, admin.id);
   // Der eindeutige Name kann kollidieren; das ist kein Fehlerfall, der
   // die Seite kippen soll.
   const taken = await prisma.group.findFirst({
@@ -131,7 +141,8 @@ export async function renameGroupAction(form: FormData) {
       where: { id: groupId },
       data: {
         name,
-        description: str(form, "description").slice(0, 200) || null,
+        description:
+          truncateText(str(form, "description"), MAX_DESCRIPTION) || null,
       },
     }));
   } catch (e) {

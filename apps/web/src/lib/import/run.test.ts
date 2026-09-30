@@ -443,3 +443,16 @@ describe("runImport: Speicher und Abbruch", () => {
     expect(db.prisma.$transaction).not.toHaveBeenCalled();
   });
 });
+
+describe("runImport: Titel kappen", () => {
+  it("in Codepoints, ohne ein Emoji an der Grenze zu zerschneiden", async () => {
+    const rakete = "\u{1F680}";
+    // 199 Buchstaben und ein Emoji sind 200 Zeichen, aber 201 Einheiten:
+    // slice(0, 200) liess die vordere Haelfte des Emoji stehen.
+    const titel = `${"t".repeat(199)}${rakete}xyz`;
+    const result = await importOf([{ path: `${titel}.md`, data: text("Inhalt\n") }]);
+    expect(result.roots).toHaveLength(1);
+    expect(result.roots[0].title).toBe(`${"t".repeat(199)}${rakete}`);
+    expect(result.roots[0].title.isWellFormed()).toBe(true);
+  });
+});

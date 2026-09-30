@@ -28,6 +28,10 @@ overrides:
   "@tiptap/*": "3.31.3"
   # GHSA-55q2-fjhq-7xh7: IN_PLACE-Hook lässt einen abgetrennten Teilbaum
   # ausführbar zurück. Kommt aus mermaid, das Diagramme damit säubert.
+  # Betroffen bis 3.4.12. mermaid 12 verlangt ^3.4.12, mermaid 11 (über
+  # @excalidraw/mermaid-to-excalidraw) ^3.3.3; beide Bereiche schliessen
+  # eine betroffene Version ein. Ohne den Eintrag bliebe pnpm audit heute
+  # nur sauber, weil das Lockfile zufällig 3.4.15 hält.
   dompurify: "^3.4.13"
   # GHSA-r5fr-rjxr-66jc (Code Injection über _.template) und zwei
   # Prototype-Pollution-Fälle. Kommt aus Excalidraw.
