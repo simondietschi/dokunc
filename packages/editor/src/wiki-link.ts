@@ -34,7 +34,13 @@ export const WikiLink = Node.create({
   },
 
   parseHTML() {
-    return [{ tag: "a[data-page-id]" }];
+    // Vor der Link-Marke (a[href], Vorrang 50): in der Zwischenablage
+    // steht ein Wiki-Link als <a data-page-id href="/p/…">. Ohne Vorrang
+    // wurde er beim Einfuegen ein gewoehnlicher Link mit dem gespeicherten
+    // Titel als sichtbarem Text. Der Schema-Hash bleibt gleich: Regeln
+    // zum Einlesen stehen nicht darin (schema-hash.ts). Der Import
+    // entfernt data-page-id vorher (lib/import/html).
+    return [{ tag: "a[data-page-id]", priority: 60 }];
   },
 
   renderHTML({ node, HTMLAttributes }) {
