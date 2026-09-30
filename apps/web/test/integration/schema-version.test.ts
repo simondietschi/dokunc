@@ -284,6 +284,10 @@ describe("Collab-Server und Editor-Schema", () => {
       where: { id: pageId },
       select: { content: true },
     });
+    // Normales Bearbeiten loest keine der beiden Meldungen der
+    // Speicherpruefung aus.
+    expect(collab!.log()).not.toContain("Seiteninhalt nicht uebernommen");
+    expect(collab!.log()).not.toContain("weicht vom Editor-Schema ab");
     for (const stand of [
       inhalt(a.doc),
       await gespeichert(pageId),
@@ -334,6 +338,104 @@ describe("Collab-Server und Editor-Schema", () => {
     expect(gruende[0]).toBe(COLLAB_REJECT_REASON.schemaMismatch);
     b.provider.destroy();
   }, 30_000);
+});
+
+describe("Speicherpruefung gegen das Editor-Schema", () => {
+  async function seite(pageId: string) {
+    return prisma.page.findUnique({
+      where: { id: pageId },
+      select: { content: true, textContent: true },
+    });
+  }
+
+  /** Logzeilen des Servers mit dieser Meldung und Seite. */
+  function zeilen(meldung: string, pageId: string): string[] {
+    return (collab?.log() ?? "")
+      .split("\n")
+      .filter((z) => z.includes(meldung) && z.includes(pageId));
+  }
+
+  it("speichert Unbekanntes nur im Yjs-Stand, Abweichendes mit Warnung", async () => {
+    const pageId = await neueSeite("speichern");
+    const c = await verbinde({ url: collab!.url, pageId, ticket: ticket(pageId) });
+    providers.push(c.provider);
+    const vorher = await seite(pageId);
+    const versionenVorher = await prisma.pageVersion.count({ where: { pageId } });
+
+    // 1. Ein Knoten, den das Schema nicht kennt (ein manipulierter oder
+    //    neuerer Editor): bleibt im Yjs-Stand, erreicht Page.content nicht.
+    const fragment = c.doc.getXmlFragment(COLLAB_FIELD);
+    const fremd = new Y.XmlElement("zauberknoten");
+    const text = new Y.XmlText();
+    text.insert(0, "Hokuspokus");
+    fremd.insert(0, [text]);
+    fragment.push([fremd]);
+    await warteBis(
+      async () =>
+        (await gespeichert(pageId)).includes("zauberknoten") &&
+        zeilen("Seiteninhalt nicht uebernommen", pageId).length > 0,
+      "Yjs-Stand gespeichert, Page.content abgelehnt",
+      { log: () => collab?.log() ?? "" },
+    );
+    expect(zeilen("Seiteninhalt nicht uebernommen", pageId)[0]).toContain(
+      '"unknownNodes":["zauberknoten"]',
+    );
+    const danach = await seite(pageId);
+    expect(danach?.content).toEqual(vorher?.content);
+    expect(danach?.textContent).toBe(vorher?.textContent);
+    const versionen = await prisma.pageVersion.findMany({
+      where: { pageId },
+      select: { content: true },
+    });
+    expect(versionen.length).toBeGreaterThanOrEqual(versionenVorher);
+    for (const v of versionen) {
+      expect(JSON.stringify(v.content)).not.toContain("zauberknoten");
+    }
+
+    // 2. Ohne den fremden Knoten wird wieder alles gespeichert.
+    c.doc.transact(() => {
+      const i = fragment.toArray().indexOf(fremd);
+      fragment.delete(i, 1);
+    });
+    tippe(c.doc, "wieder gut");
+    await warteBis(
+      async () => (await seite(pageId))?.textContent?.includes("wieder gut") ?? false,
+      "Page.content mit 'wieder gut'",
+      { log: () => collab?.log() ?? "" },
+    );
+    expect(JSON.stringify((await seite(pageId))?.content)).not.toContain(
+      "zauberknoten",
+    );
+
+    // 3. Ein unbekanntes Attribut und eine leere Liste: dargestellt wird
+    //    trotzdem, also speichern und warnen, hoechstens einmal je Stunde.
+    c.doc.transact(() => {
+      (fragment.get(0) as Y.XmlElement).setAttribute("farbe", "rot");
+      fragment.push([new Y.XmlElement("bulletList")]);
+    });
+    tippe(c.doc, "abweichend");
+    await warteBis(
+      async () => (await seite(pageId))?.textContent?.includes("abweichend") ?? false,
+      "Page.content mit 'abweichend'",
+      { log: () => collab?.log() ?? "" },
+    );
+    await warteBis(
+      () => zeilen("weicht vom Editor-Schema ab", pageId).length > 0,
+      "Warnung im Log",
+      { log: () => collab?.log() ?? "" },
+    );
+    const warnung = zeilen("weicht vom Editor-Schema ab", pageId)[0];
+    expect(warnung).toContain('"unknownAttrs":["paragraph.farbe"]');
+    expect(warnung).toContain("bulletList");
+    tippe(c.doc, "noch einmal");
+    await warteBis(
+      async () => (await seite(pageId))?.textContent?.includes("noch einmal") ?? false,
+      "Page.content mit 'noch einmal'",
+      { log: () => collab?.log() ?? "" },
+    );
+    expect(zeilen("weicht vom Editor-Schema ab", pageId)).toHaveLength(1);
+    c.provider.destroy();
+  }, 90_000);
 });
 
 describe("Ticket-Route und Editor-Schema", () => {

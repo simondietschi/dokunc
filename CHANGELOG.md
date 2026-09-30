@@ -119,6 +119,15 @@ differently on an existing installation, and what to do about it.
   before the update, as the README describes. Nothing to do for this
   update.
 
+- **Stored page content:** the collaboration server now stores page
+  content only if the editor can display it. If the log shows
+  "Seiteninhalt nicht uebernommen" for a page after the update, the
+  page's search text, export, share link and version history keep its
+  last displayable state until the element named in `unknownNodes` or
+  `unknownMarks` is removed from the page; the page itself keeps
+  everything. Existing pages are expected to pass. Nothing to do
+  otherwise.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -182,6 +191,16 @@ differently on an existing installation, and what to do about it.
   hash before any other check, with the reason `schema-mismatch` and the
   log line "Collab-Verbindung abgewiesen" (at most one line per ten
   seconds, with the number of skipped rejections in `sinceLast`).
+- The collaboration server checks page content against the editor schema
+  before it stores it. Content that cannot be displayed (unknown block
+  types or marks, or attribute values the editor rejects) stays in the
+  collaborative state but no longer replaces the stored page content used
+  by search, export, sharing, printing and page history; the error line
+  "Seiteninhalt nicht uebernommen: Elemente ausserhalb des
+  Editor-Schemas" names the types. Unknown attributes and structural
+  deviations are stored as before, with the warning "Seiteninhalt weicht
+  vom Editor-Schema ab, trotzdem uebernommen" at most once per hour and
+  page.
 
 ### Removed
 

@@ -5,6 +5,7 @@ import { STATUS_CODES } from "node:http";
 import type { Duplex } from "node:stream";
 import { Server, type Connection, type Document } from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
+import { getSchema } from "@tiptap/core";
 import { jwtVerify, type JWTPayload } from "jose";
 import pino from "pino";
 import * as Y from "yjs";
@@ -57,6 +58,7 @@ import { startMailDispatcher } from "./mail-dispatcher";
 import { startAiIndexer } from "./ai-indexer";
 import { createDocResetHandler, type ResetContent } from "./doc-reset";
 import { SchemaWaechter, type SchemaMarke } from "./schema-marke";
+import { pruefeGegenSchema, type SchemaBefund } from "./schema-check";
 import { resolveAppSecret } from "./secret";
 import { StoreWatch } from "./store-watch";
 import { DocSizeTracker, roleNeedsReconnect } from "./doc-size";
@@ -108,6 +110,8 @@ const SECRET = new TextEncoder().encode(
   resolveAppSecret(process.env.APP_SECRET, process.env.NODE_ENV),
 );
 const extensions = richExtensions();
+/** ProseMirror-Schema dieser Fassung, fuer die Speicherpruefung (./schema-check). */
+const schema = getSchema(extensions);
 /**
  * Editor-Schema dieser Fassung (Hash und Version, @dokunc/editor). Ein
  * Editor mit anderem Schema loescht beim Anzeigen aus dem gemeinsamen
@@ -429,6 +433,36 @@ function refuseUpgrade(
       `Retry-After: ${retryAfterSec}\r\n` +
       "\r\n" +
       message,
+  );
+}
+
+/**
+ * Abweichungen vom Editor-Schema, die trotzdem gespeichert werden
+ * (./schema-check), hoechstens einmal je Stunde und Seite melden: ein
+ * altes Attribut bleibt im Yjs-Stand, bis jemand den Knoten bearbeitet,
+ * und jeder Speicherlauf faende es wieder. Die Liste ist begrenzt; ist
+ * sie voll, beginnt sie von vorn.
+ */
+const ABWEICHUNG_MELDEN_MS = 60 * 60 * 1000;
+const letzteAbweichung = new Map<string, number>();
+function meldeAbweichung(
+  pageId: string,
+  editorId: string | undefined,
+  befund: SchemaBefund,
+): void {
+  const jetzt = Date.now();
+  const zuletzt = letzteAbweichung.get(pageId);
+  if (zuletzt !== undefined && jetzt - zuletzt < ABWEICHUNG_MELDEN_MS) return;
+  if (letzteAbweichung.size >= 1000) letzteAbweichung.clear();
+  letzteAbweichung.set(pageId, jetzt);
+  log.warn(
+    {
+      pageId,
+      editorId,
+      unknownAttrs: befund.unknownAttrs,
+      checkError: befund.checkError,
+    },
+    "Seiteninhalt weicht vom Editor-Schema ab, trotzdem uebernommen",
   );
 }
 
@@ -1054,9 +1088,36 @@ const server = new Server({
     storeWatch.stored(data.document, marke);
 
     const json = TiptapTransformer.fromYdoc(data.document, COLLAB_FIELD);
-    const textContent = extractText(json);
     const editorId =
       (data.lastContext?.userId as string | undefined) ?? undefined;
+
+    // Der Inhalt gegen das Editor-Schema (./schema-check). Liesse er sich
+    // nicht darstellen (ein Knoten oder eine Marke, die das Schema nicht
+    // kennt, etwa aus einem manipulierten Editor), bleibt er nur im
+    // Yjs-Stand oben: Page.content, Suche, Erwaehnungen, Backlinks,
+    // KI-Index und Versionen behalten den letzten darstellbaren Stand,
+    // sonst gaeben Freigabe, Export und Druck eine leere Seite aus. Der
+    // naechste Lauf mit gueltigem Inhalt schreibt alles nach. Kein Fehler
+    // an Hocuspocus: der Yjs-Stand ist gespeichert, ein erneuter Versuch
+    // aenderte nichts.
+    const befund = pruefeGegenSchema(schema, json);
+    if (befund && !befund.darstellbar) {
+      log.error(
+        {
+          pageId,
+          editorId,
+          unknownNodes: befund.unknownNodes,
+          unknownMarks: befund.unknownMarks,
+          checkError: befund.checkError,
+        },
+        "Seiteninhalt nicht uebernommen: Elemente ausserhalb des Editor-Schemas",
+      );
+      return;
+    }
+    // Abweichend, aber darstellbar (unbekannte Attribute, Inhalt, den
+    // check() ablehnt): speichern wie bisher und melden.
+    if (befund) meldeAbweichung(pageId, editorId, befund);
+    const textContent = extractText(json);
 
     // Alten Inhalt VOR dem Update lesen (für den Mention-Diff).
     const before = await prisma.page.findUnique({
