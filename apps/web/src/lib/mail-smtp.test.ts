@@ -11,7 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
  * und Antwortcode entscheiden in isTransientMailError (Reset) und im
  * Dispatcher des Collab-Prozesses (nur 5xx ist dauerhaft), ob ein
  * Versand wiederholt wird. Dazu der Absender mit Anzeigename, den
- * fromAddress() baut: den zerlegt der Adressparser von nodemailer. Und
+ * effectiveSender() baut: den zerlegt der Adressparser von nodemailer. Und
  * die Anmeldung mit SMTP_USERNAME an einem Server, der nur XOAUTH2
  * anbietet: bis nodemailer 10.0.10 warf sie einen TypeError, den kein
  * Aufrufer fangen konnte und der den Collab-Prozess beendete.
