@@ -1,3 +1,4 @@
+import * as Y from "yjs";
 import {
   classifyLocalDoc,
   forgetLocalDoc,
@@ -116,12 +117,19 @@ export function guardLocalCopy(p: GuardablePersistence, onDetach?: () => void): 
   );
 }
 
-/** Eine geoeffnete Kopie, wie new IndexeddbPersistence(name, ydoc) sie liefert. */
+/** Eine geoeffnete Kopie, wie new IndexeddbPersistence(name, doc) sie liefert. */
 type GeoeffneteKopie = {
   whenSynced: Promise<unknown>;
   clearData(): Promise<void>;
   destroy(): Promise<unknown>;
 };
+
+/**
+ * Herkunft der uebernommenen Updates im Y.Doc des Editors. Die eigene
+ * Kopie speichert sie (sie stammen nicht von ihr), der Provider schickt
+ * sie beim Abgleich mit.
+ */
+export const ADOPTED_LOCAL_COPY = Symbol("aeltere lokale Kopie");
 
 /**
  * Uebernimmt eigene Kopien dieser Seite aus aelteren Fassungen des
@@ -131,13 +139,20 @@ type GeoeffneteKopie = {
  * eigene Kopie (sie haengt schon am Y.Doc) speichert sie unter dem neuen
  * Namen. Neuere Fassungen bleiben unberuehrt (lib/local-doc).
  *
- * `open(name)` oeffnet eine Kopie am Y.Doc (IndexeddbPersistence). Eine
- * Kopie, die nicht binnen `waitMs` laedt, wird abgekoppelt und bleibt
- * liegen. Gibt die uebernommenen Namen zurueck, lehnt nie ab.
+ * Jede aeltere Kopie laedt in ein eigenes Zwischen-Dokument
+ * (`open(name, zwischen)`, IndexeddbPersistence); erst der fertige Stand
+ * geht mit einem einzigen Update ins Y.Doc des Editors. Keine fremde
+ * Persistenz haengt so je am Y.Doc des Editors: loescht ein anderer Tab
+ * die aeltere Kopie waehrend des Ladens (dieselbe Uebernahme, Abmelden,
+ * `Clear-Site-Data`), wirft kein Update des Editors (siehe
+ * guardLocalCopy). Eine Kopie, die nicht binnen `waitMs` laedt, wird
+ * abgekoppelt und bleibt liegen. Gibt die uebernommenen Namen zurueck,
+ * lehnt nie ab.
  */
 export async function adoptOlderLocalDocs(
   ref: LocalDocRef,
-  open: (name: string) => GeoeffneteKopie,
+  ydoc: Y.Doc,
+  open: (name: string, zwischen: Y.Doc) => GeoeffneteKopie,
   o: { list?: () => Promise<string[]>; waitMs?: number; timers?: Timers } = {},
 ): Promise<string[]> {
   const uebernommen: string[] = [];
@@ -149,10 +164,12 @@ export async function adoptOlderLocalDocs(
         parseLocalDocName(n)?.pageId === ref.pageId,
     );
     for (const name of aeltere) {
+      const zwischen = new Y.Doc();
       try {
-        const kopie = open(name);
+        const kopie = open(name, zwischen);
         const ergebnis = await afterLocalCopy(kopie, o.waitMs, o.timers);
         if (ergebnis === "geladen") {
+          Y.applyUpdate(ydoc, Y.encodeStateAsUpdate(zwischen), ADOPTED_LOCAL_COPY);
           await kopie.clearData();
           forgetLocalDoc(name);
           uebernommen.push(name);
@@ -161,6 +178,8 @@ export async function adoptOlderLocalDocs(
         }
       } catch {
         /* diese Kopie bleibt liegen */
+      } finally {
+        zwischen.destroy();
       }
     }
   } catch {

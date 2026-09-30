@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 import {
+  ADOPTED_LOCAL_COPY,
   LOCAL_COPY_WAIT_MS,
   adoptOlderLocalDocs,
   afterLocalCopy,
@@ -234,12 +235,12 @@ describe("adoptOlderLocalDocs()", () => {
   const ref: LocalDocRef = { userId: A, epoch: null, pageId: P, schemaVersion: 3 };
   const name = (o: Partial<typeof ref>) => localDocName({ ...ref, ...o });
 
-  /** open() wie new IndexeddbPersistence(name, ydoc), mit Mitschrift. */
+  /** open() wie new IndexeddbPersistence(name, doc), mit Mitschrift. */
   function oeffner(o: { haengt?: string[] } = {}) {
     const geoeffnet: string[] = [];
     const geloescht: string[] = [];
     const zerstoert: string[] = [];
-    const open = (n: string) => {
+    const open = (n: string, _doc: Y.Doc) => {
       geoeffnet.push(n);
       return {
         whenSynced: o.haengt?.includes(n) ? new Promise<unknown>(() => {}) : Promise.resolve(),
@@ -266,7 +267,7 @@ describe("adoptOlderLocalDocs()", () => {
       `dokunc:${P}`,
     ];
     const o = oeffner();
-    const res = await adoptOlderLocalDocs(ref, o.open, { list: async () => namen });
+    const res = await adoptOlderLocalDocs(ref, new Y.Doc(), o.open, { list: async () => namen });
     expect(o.geoeffnet.sort()).toEqual([name({ schemaVersion: 1 }), name({ schemaVersion: 2 })].sort());
     expect(o.geloescht.sort()).toEqual(o.geoeffnet.sort());
     expect(res.sort()).toEqual(o.geoeffnet.sort());
@@ -276,7 +277,10 @@ describe("adoptOlderLocalDocs()", () => {
     vi.useFakeTimers();
     const alt = name({ schemaVersion: 1 });
     const o = oeffner({ haengt: [alt] });
-    const p = adoptOlderLocalDocs(ref, o.open, { list: async () => [alt], waitMs: 1000 });
+    const p = adoptOlderLocalDocs(ref, new Y.Doc(), o.open, {
+      list: async () => [alt],
+      waitMs: 1000,
+    });
     await vi.advanceTimersByTimeAsync(1000);
     await expect(p).resolves.toEqual([]);
     expect(o.geloescht).toEqual([]);
@@ -289,18 +293,59 @@ describe("adoptOlderLocalDocs()", () => {
     quelle.getText("t").insert(0, "aus der alten Kopie");
     const gespeichert = Y.encodeStateAsUpdate(quelle);
     const ydoc = new Y.Doc();
-    const open = () => {
-      Y.applyUpdate(ydoc, gespeichert);
+    const herkunft: unknown[] = [];
+    ydoc.on("update", (_u: Uint8Array, origin: unknown) => herkunft.push(origin));
+    const open = (_n: string, doc: Y.Doc) => {
+      Y.applyUpdate(doc, gespeichert, "persistenz");
       return { whenSynced: Promise.resolve(), clearData: async () => {}, destroy: async () => {} };
     };
-    await adoptOlderLocalDocs(ref, open, { list: async () => [alt] });
+    await adoptOlderLocalDocs(ref, ydoc, open, { list: async () => [alt] });
     expect(ydoc.getText("t").toString()).toBe("aus der alten Kopie");
+    // Ein Update mit eigener Herkunft: die eigene Kopie speichert es, der
+    // Provider schickt es.
+    expect(herkunft).toEqual([ADOPTED_LOCAL_COPY]);
+  });
+
+  // Ein anderer Tab loescht die aeltere Kopie, waehrend sie laedt (etwa
+  // dieselbe Uebernahme nach einer Sitzungswiederherstellung, Abmelden
+  // oder Clear-Site-Data): der Browser schliesst dann ihre Verbindung.
+  // Hinge ihre Persistenz am Y.Doc des Editors, wuerfe das naechste
+  // Getippte dort InvalidStateError, und Yjs gaebe keine Updates mehr an
+  // den Provider (guardLocalCopy).
+  it("wird die aeltere Kopie beim Laden geschlossen, bekommt der Editor weiter jede Aenderung", async () => {
+    vi.useFakeTimers();
+    const alt = name({ schemaVersion: 2 });
+    const ydoc = new Y.Doc();
+    const anDenProvider: Uint8Array[] = [];
+    ydoc.on("update", (u: Uint8Array) => anDenProvider.push(u));
+    let attrappe: ReturnType<typeof attrappenPersistenz> | null = null;
+    const open = (_n: string, doc: Y.Doc) => {
+      attrappe = attrappenPersistenz(doc);
+      return {
+        whenSynced: new Promise<unknown>(() => {}),
+        clearData: async () => {},
+        destroy: () => attrappe!.destroy(),
+      };
+    };
+    const p = adoptOlderLocalDocs(ref, ydoc, open, { list: async () => [alt], waitMs: 1000 });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(attrappe).not.toBeNull();
+    // Waehrend des Ladens: ein anderer Tab loescht die Datenbank.
+    attrappe!.db.close();
+    expect(() => tippe(ydoc, "a")).not.toThrow();
+    tippe(ydoc, "b");
+    expect(anDenProvider).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1000);
+    await expect(p).resolves.toEqual([]);
+    tippe(ydoc, "c");
+    expect(anDenProvider).toHaveLength(3);
+    expect(ydoc.getText("t").toString()).toBe("abc");
   });
 
   it("lehnt nie ab", async () => {
     const o = oeffner();
     await expect(
-      adoptOlderLocalDocs(ref, o.open, {
+      adoptOlderLocalDocs(ref, new Y.Doc(), o.open, {
         list: async () => {
           throw new Error("kaputt");
         },
@@ -310,7 +355,9 @@ describe("adoptOlderLocalDocs()", () => {
       throw new Error("IndexedDB gesperrt");
     };
     await expect(
-      adoptOlderLocalDocs(ref, wirft, { list: async () => [name({ schemaVersion: 1 })] }),
+      adoptOlderLocalDocs(ref, new Y.Doc(), wirft, {
+        list: async () => [name({ schemaVersion: 1 })],
+      }),
     ).resolves.toEqual([]);
   });
 });

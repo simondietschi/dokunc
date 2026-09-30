@@ -501,11 +501,16 @@ export function CollaborativeEditor({
     // gleicht der Provider ueber SyncStep1/2 ab und schickt nur, was dem
     // Server fehlt, statt die ganze Kopie als ein Update. Kopien dieser
     // Seite aus einer aelteren Fassung des Editors kommen dabei mit und
-    // werden danach geloescht.
+    // werden danach geloescht; sie laden in ein eigenes Zwischen-Dokument,
+    // nie an diesem Y.Doc (lib/local-copy).
     void Promise.all([
       afterLocalCopy(persistence),
       persistence
-        ? adoptOlderLocalDocs(kopieRef, (name) => new IndexeddbPersistence(name, ydoc))
+        ? adoptOlderLocalDocs(
+            kopieRef,
+            ydoc,
+            (name, zwischen) => new IndexeddbPersistence(name, zwischen),
+          )
         : Promise.resolve([]),
     ]).then(() => {
       if (cancelled) return;
