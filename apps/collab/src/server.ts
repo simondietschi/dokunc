@@ -725,11 +725,11 @@ function markeAus(zustand: {
 
 /**
  * Diese Instanz ist gerade veraltet geworden: eine neuere Fassung hat die
- * Marke gehoben. Alle Editoren trennen; beim
- * Wiederverbinden weist onAuthenticate sie mit "schema-mismatch" ab, und
- * ihr Editor zeigt "Aktualisierung läuft", bis eine aktuelle Instanz sie
- * annimmt. Mail-Versand, KI-Index und Rechteprüfung laufen weiter, sie
- * haengen nicht am Schema.
+ * Marke gehoben. Alle Editoren trennen; beim Wiederverbinden weist
+ * onAuthenticate sie mit "schema-mismatch" ab, und ihr Editor zeigt
+ * "Aktualisierung läuft", bis eine aktuelle Instanz sie annimmt.
+ * Mail-Versand, KI-Index und Rechteprüfung laufen weiter, sie haengen
+ * nicht am Schema.
  */
 function trenneVeraltet(marke: SchemaMarke): void {
   let closed = 0;
