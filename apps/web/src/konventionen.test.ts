@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -47,9 +48,9 @@ const PLANBEZUEGE: { art: string; muster: RegExp; nur?: RegExp }[] = [
   // Kennungen von Luecken, wie man sie zitiert: in Backticks, mit einem
   // der haeufigen Praefixe. Bei Praefixen, die auch gewoehnliche Woerter
   // sind (editor, ui, api, ki, int), erst ab zwei Bindestrichen, damit
-  // `editor-content` oder `api-key` nicht anschlagen. Einteilige
-  // Kennungen mit diesen Praefixen und Kennungen ohne gemeinsames Praefix
-  // erkennt das Muster nicht; die bleiben Sache der Durchsicht.
+  // `editor-content` oder `api-key` nicht anschlagen. Das Muster faengt
+  // auch Kennungen, die spaeter hinzukommen; die heutigen erkennt
+  // PLAN_KENNUNGEN alle, auch einteilige und solche ohne Praefix.
   {
     art: "plan id",
     muster:
@@ -63,6 +64,76 @@ const PLANBEZUEGE: { art: string; muster: RegExp; nur?: RegExp }[] = [
     muster: /(?:[(`[]|\b(?:Entscheidung|[Dd]ecision) )D(?:[1-9]|[1-9]\d)[a-z]?(?![\w.:])/,
   },
 ];
+
+/**
+ * Kennungen aller Luecken des Arbeitsplans, nur als Pruefsumme, damit sie
+ * selbst nicht im Repository stehen: die ersten 12 Hexziffern von
+ * SHA-256 ueber die Kennung, sortiert. Neue Kennung:
+ *   printf %s <kennung> | sha256sum | cut -c1-12
+ * Geprueft wird jedes Wort mit Bindestrich in Pfad und Zeilen (getrennt
+ * an allem ausser Buchstaben, Ziffern und "-"), genau so geschrieben wie
+ * im Plan, und jedes Wort in Backticks: einteilige Kennungen sind auch
+ * gewoehnliche Woerter.
+ */
+const PLAN_KENNUNGEN_LISTE = `
+  0002f6ae5f30 006dd6528484 00eddc6598a3 02c2cbdebd9a 02cb8ebe92e4 03b91bf21bbc 0410e62e7e8c 055a29ee27a8 059b8f829b4d
+  07c3b7e80cd0 083cdb307e10 086a8e553c82 08b121bc0749 08fa6f19a4b4 090bc7bcedf6 0a29efb3b1f4 0a748ace387b 0bd9f297bd2d
+  0c1c98532322 0c417ceed976 0ce9d9695fe7 0d75dcc29df3 0da880f64dbc 0e48f0da953b 0ed24aecbd33 0fceb9d5e330 0ff5f27c6c88
+  106006c7dd40 10ca2acd929e 1154d471530a 12f51873fa85 13565cedcaa9 13fdd3a02593 1669a3658529 17e4b0038fa2 18f6473d61c3
+  18f9120a4b87 193ff026b6b9 1a007ae9bda2 1ade6c8ea47e 1b2b88753df7 1c04b4aa1a33 1c80cae9b51d 1d5ffaef16dc 1dee052f2248
+  1ef835f97b8c 1fb0741d8874 20aa5c78950a 23f7e222d70b 26a40f65ed75 2753f7905385 28a2f083c04d 29987daaf224 29e6d467ef54
+  2a90b5221dd0 2ac7a978f7ad 2b20fe9f0575 2b83c236fb13 2c4b9da327ab 2c7dd320ffd8 2cb847cfa90b 2d000858c5b6 2d8cc1320a91
+  2e19ca0b6816 2edb87984558 2f4b52d7bd2f 2f56d2183aa0 30bbd918b9dc 30bd6021e277 3210ffc8422b 3295bd02f217 32c18d29ce78
+  333148cf3e34 374e64a9eac8 3806c9c6a96e 39d81dba6d5a 3af3f374c407 3b517fca8d1c 3b55ec4ea364 3caa22c35359 3f4d0cf99f17
+  426b93d1912e 4367a3d42916 44a153ee99d6 44b9ab63c76e 4550b257abc0 4593c4a8b755 45ac39667c7c 46893bb5850a 4709fe629637
+  479e6e5405b9 4a2e145c3bd6 4ad01c14741e 4c8ccdea8b8a 4d94962ea995 4ef6cd5d2f68 4f18eb4e4339 503aa39c3759 516a24688c57
+  51fba85fc541 5254674a39a2 5254f78b2f37 530a40cb9887 543b4e56b78e 54d9104e2059 56009929bcb1 574327a81b5e 58c4c6c79ec3
+  58e6195e5f7a 59339df1aa2a 5a51a1dd2fb5 5c21d6f68f32 5d55b078a71e 5da92817c115 5e1d3b1c86e8 5e3ad9b7bee7 5e3dfc1d23d2
+  5e56dd6915b6 5e7dd2017159 5e9dae91a42f 5ed60cfa3acf 5f1d532bde4f 5f4f80cb4247 603af7f0c4ed 60974fa96f28 61e74b014684
+  620750671695 64e5f68359db 665c2518a0c0 675e0d82c3ae 679cd02ed2aa 6853a82fa943 6864fabc74b6 68d9ecbbfe11 691fb261c438
+  6a7bb5e8cf37 6b0de90a37c4 6b41cb76f4e7 6b586df98e95 6c6dbde4069b 6e6ae674a4b7 6fd6b23c89ce 71e994971efc 72c6d735d569
+  734f1823c37d 73acd5aee7e1 74f887bb9f48 7675c68c57e1 77176700afff 7838dbdd7427 7bc89226b2a7 7c2ef8d1dd3c 7c8fc3c4d155
+  7ced532b8cba 7eefe718c505 7f5fd54b84b7 7f91035bcb82 8071f6fbb174 812b4a23bbb0 812bbd3dfb52 8168e09fa540 82bb1f4ecc13
+  82fbed34afa3 8390f1a3b35e 84c7ddbc1463 85f007b6d9ea 880c1071607f 88e55a936714 8a811e313644 8aea5a7459c6 8b8819ffe9a1
+  8cdf9b63926d 8ce8fa6aa9df 8d34f638853e 8e13de38dcea 8e37abf51198 8e93710020fe 8f30f26aafb6 8ffad482b760 91177ab3ed29
+  91bbbf9f23b9 92a9a7f8e272 92ca644ebfeb 958db4cd00c9 963d72af8a82 98197fe2d571 981dab076dae 993bcf9b1927 9a413f327717
+  9a4c6f3fbb36 9ab92249c4c8 9bbaea80cd5b 9d18906ee5fe 9d27c9605e2b 9e082b89d218 9e86516be67d 9fbb67cf3ea8 a282bd401ea7
+  a2c6a3cce33b a302676c888a a3a8d61cd194 a44fbc2d7906 a457e6e27cab a5a1aa70316a a61eda83949e a62684029fb5 a644db6d60d2
+  a6774626ef36 a6999a12d40f a6b8485e5ee7 a87be3d0ac4b a8907f77dc13 a90c4f0b9e19 a93c67da2a78 a9d3d172a23e a9eb0de3a289
+  aa4215d635c4 aa4e5ddfc3cc aac2e42a181e ac5affae7bb6 acf00a684ed9 af3be8112aa6 af56df009b1b afbe006d90f0 affa5bb9c805
+  b0bf52a153cb b13e0518f2cf b2a071aa35bf b3eaca8c4ce8 b4c24272cbdf b73535553c49 b790160ed9ab b7a0841a6643 b7f185652a49
+  b983c862ba14 bacc5c5b4f4f bc8f299a2336 be5e5620150c be64e4a19976 bf3acc46c065 c00241dcf946 c24872bbe3d2 c2d3d71b4f01
+  c2e0cdfff155 c3dcd61c2242 c529a2da2b64 c56ceaa1b43c c96af5902c22 ca39c7258598 cdd5b69ac48b ce03ba95ea14 ce7b73bfc7bf
+  ce89a6ab6ff5 cf5b821a0d6a cff68c26d193 d14b6a881ac5 d1862a56f36a d2ef566b17a0 d31ba45dc148 d3af6288df05 d58039179b9b
+  d59499bcbe45 d5b0c64a6579 d6b3adeac8a7 d75eacfb10f0 d7c242d7915e d7cb660bc378 d9cc50d773ce dbbf78bd12d8 dc0523cb40c0
+  dcd8f433ac17 ddb9f7f29389 dddc53c0ea5a de73470881da de8ecd4ff476 deaddcd7ca3b df558c5df7bc df790ee22338 e0a3491e778d
+  e1c1f92da8e0 e38f272f4317 e461f757005f e46990fc1913 e5f29e40e8ed e6db917beac3 e7f8c019b57f e8469ca2008d e96fd5969d93
+  e9747d29c3bd e9d360eb83dd ea0178426fae ea940bbbb85f ec3eb3f2e41c ee62e9e2c8aa ef94fbb51f2c f014b86846df f0f70dc94418
+  f114f9e88ade f2a65717bd07 f3028758f343 f3f5cc47ec41 f5da2989f5d4 f726a9d57dbc f7ddaf16351d fba8b55aa788 fc0a659aa829
+  fc35773af197 fe92c618f634 fede8bed9a22 ffb172e4c694
+`;
+const PLAN_KENNUNGEN: ReadonlySet<string> = new Set(PLAN_KENNUNGEN_LISTE.trim().split(/\s+/));
+
+const PRUEFSUMMEN = new Map<string, string>();
+function pruefsumme(wort: string): string {
+  let p = PRUEFSUMMEN.get(wort);
+  if (p === undefined) {
+    p = createHash("sha256").update(wort).digest("hex").slice(0, 12);
+    PRUEFSUMMEN.set(wort, p);
+  }
+  return p;
+}
+
+/** Woerter, die eine Kennung sein koennen: mit Bindestrich oder in Backticks. */
+function kennungsWoerter(zeile: string): Set<string> {
+  const woerter = new Set<string>();
+  for (const teil of zeile.split(/[^A-Za-z0-9-]+/)) {
+    const wort = teil.replace(/^-+|-+$/g, "");
+    if (wort.includes("-")) woerter.add(wort);
+  }
+  for (const m of zeile.matchAll(/`([a-z0-9]+)`/g)) woerter.add(m[1]);
+  return woerter;
+}
 
 /**
  * Angewendete Migrationen bleiben bytegleich: Prisma speichert je
@@ -101,17 +172,24 @@ function ausgenommen(datei: string): boolean {
 }
 
 /** Alle Planbezuege eines Textes; ueber einen Zeilenumbruch nur, wenn er ihn trennt. */
-function planbezuege(datei: string, text: string): string[] {
+function planbezuege(datei: string, text: string, kennungen = PLAN_KENNUNGEN): string[] {
   const funde: string[] = [];
   const regeln = PLANBEZUEGE.filter((r) => !r.nur || r.nur.test(datei));
   const melde = (wo: string, art: string, treffer: string) =>
     funde.push(`${wo}: ${art} "${treffer}": name it after what it does (CONTRIBUTING.md)`);
+  const kennung = (wo: string, zeile: string) => {
+    for (const wort of kennungsWoerter(zeile)) {
+      if (kennungen.has(pruefsumme(wort))) melde(wo, "plan id", wort);
+    }
+  };
   for (const r of regeln) {
     const m = r.muster.exec(datei);
     if (m) melde(datei, r.art, m[0]);
   }
+  kennung(datei, datei);
   const zeilen = text.split("\n");
   zeilen.forEach((zeile, i) => {
+    kennung(`${datei}:${i + 1}`, zeile);
     for (const r of regeln) {
       const m = r.muster.exec(zeile);
       if (m) melde(`${datei}:${i + 1}`, r.art, m[0]);
@@ -361,6 +439,23 @@ describe("Konventionen", () => {
     expect(planbezuege("a.ts", "// siehe `editor-muster-kennung-zwei`")).toHaveLength(1);
     expect(planbezuege("a.mjs", "// Meldungen englisch (D42)")).toHaveLength(1);
     expect(planbezuege("a.md", "as agreed in decision D17b")).toHaveLength(1);
+    // Jede Kennung einer Luecke ueber ihre Pruefsumme, auch ohne Backticks
+    // und ohne gemeinsames Praefix (ausgedachte Kennungen, deren
+    // Pruefsummen nur dieser Test in die Liste aufnimmt)
+    const probe = new Set([...PLAN_KENNUNGEN, pruefsumme("muster-kennung-probe"), pruefsumme("musterwort")]);
+    expect(planbezuege("a.md", "See muster-kennung-probe for details.", probe)).toEqual([
+      'a.md:1: plan id "muster-kennung-probe": name it after what it does (CONTRIBUTING.md)',
+    ]);
+    expect(planbezuege("a.ts", "// wie gefordert (muster-kennung-probe)", probe)).toHaveLength(1);
+    expect(planbezuege("e2e/muster-kennung-probe.spec.ts", "", probe)).toHaveLength(1);
+    expect(planbezuege("a.md", "See `musterwort`.", probe)).toHaveLength(1);
+    // Nur ganze Woerter wie im Plan geschrieben; ein Wort ohne Bindestrich
+    // nur in Backticks, sonst waere es gewoehnlicher Text
+    for (const text of ["muster-kennung-probe-zwei", "Muster-Kennung-Probe", "musterwort"]) {
+      expect(planbezuege("a.md", text, probe), text).toEqual([]);
+    }
+    // Ohne ihre Pruefsumme schlaegt die Kennung nicht an
+    expect(planbezuege("a.md", "See muster-kennung-probe for details.")).toEqual([]);
     // Keine Fehltreffer
     for (const [datei, text] of [
       ["a.ts", "let E1: string; // E2E ohne Punkt, Punkt eins"],
@@ -373,6 +468,13 @@ describe("Konventionen", () => {
     }
     expect(ausgenommen("packages/db/prisma/migrations/20260925150000_aufbewahrung/migration.sql")).toBe(true);
     expect(ausgenommen("packages/db/prisma/migrations/20261001000000_neu/migration.sql")).toBe(false);
+  });
+
+  it("Planbezuege: Pruefsummen aller Kennungen von Luecken", () => {
+    const liste = PLAN_KENNUNGEN_LISTE.trim().split(/\s+/);
+    expect(liste).toHaveLength(310);
+    expect(new Set(liste).size).toBe(liste.length);
+    for (const p of liste) expect(p).toMatch(/^[0-9a-f]{12}$/);
   });
 
   it("CONTRIBUTING: dieselben Typen und dieselbe Laenge wie die Pruefung", () => {
