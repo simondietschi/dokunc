@@ -983,6 +983,23 @@ jobs:
           echo "Nach dem Update von vor der Haertung antwortet der Proxy nicht"
           exit 1
 
+      # Kette vorgelagerter Proxy -> mitgelieferter Caddy -> App: Sonden in
+      # eigenen Containern mit festen Adressen zeigen verschiedene
+      # Client-Adressen in der Anmeldebremse, im Audit-Log und in der
+      # Collab-Grenze, ein gefaelschter Anfang von X-Forwarded-For zaehlt
+      # nicht, und der Weg am vorgelagerten Proxy vorbei steht als Warnung
+      # im Log (.github/proxy-kette). Danach wieder der Normalstapel.
+      - name: Proxy-Kette
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          KETTE="-f docker-compose.yml -f .github/proxy-kette/compose.yml"
+          docker compose $KETTE up -d --wait --wait-timeout 300
+          NETZ=$(docker compose $KETTE config --format json | jq -r .networks.kette.name)
+          BILD="$(docker compose config --format json | jq -r .name)-app"
+          NETZ="$NETZ" BILD="$BILD" bash .github/proxy-kette/pruefen.sh a
+          docker compose up -d --wait --wait-timeout 300 --remove-orphans
+
       # Nur das eigene Image: Postgres, Redis, Caddy und Gotenberg haben
       # fast immer offene Meldungen, die erst ein neues Upstream-Image behebt
       # (das holt der Update-Befehl). Laeuft auch, wenn der Rundlauf

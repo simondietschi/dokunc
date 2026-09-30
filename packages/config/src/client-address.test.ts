@@ -4,6 +4,7 @@ import {
   AdressMelder,
   adressMeldung,
   normalizeIp,
+  parseNetworkList,
   parseProxyHops,
   resolveClientAddress,
   type AdressMeldung,
@@ -215,5 +216,110 @@ describe("AdressMelder", () => {
       expect(ADRESS_HINWEIS[grund]).toContain("TRUSTED_PROXY_HOPS");
       expect(adressMeldung(grund)).toMatch(/^Client-Adresse /);
     }
+  });
+});
+
+describe("parseNetworkList", () => {
+  function liste(roh: string, o?: Parameters<typeof parseNetworkList>[1]) {
+    const r = parseNetworkList(roh, o);
+    if (!r.ok) throw new Error(r.fehler);
+    return r;
+  }
+  const fehler = (roh: string, o?: Parameters<typeof parseNetworkList>[1]) => {
+    const r = parseNetworkList(roh, o);
+    return r.ok ? null : r.fehler;
+  };
+
+  it("liest Adressen und Netze, getrennt durch Komma oder Leerraum", () => {
+    const r = liste("203.0.113.0/28, 2001:db8:42::/48 198.51.100.7");
+    expect(r.wert.eintraege).toEqual(["203.0.113.0/28", "2001:db8:42::/48", "198.51.100.7"]);
+    for (const ip of ["203.0.113.5", "::ffff:203.0.113.5", "2001:db8:42::1", "198.51.100.7"]) {
+      expect(r.wert.enthaelt(ip), ip).toBe(true);
+    }
+    for (const ip of ["203.0.113.16", "2001:db8:43::1", "198.51.100.8", "unknown", ""]) {
+      expect(r.wert.enthaelt(ip), ip).toBe(false);
+    }
+    expect(r.hinweise ?? []).toEqual([]);
+  });
+
+  it("gibt ohne Wert eine leere Liste", () => {
+    for (const roh of [undefined, "", "  "]) {
+      const r = parseNetworkList(roh);
+      expect(r.ok && r.wert.eintraege).toEqual([]);
+      expect(r.ok && r.wert.enthaelt("203.0.113.5")).toBe(false);
+    }
+  });
+
+  it("nennt ungueltige Eintraege mit Position", () => {
+    expect(fehler("10.0.0.1 10.0.0.0/33")).toBe(
+      'Eintrag 2 "10.0.0.0/33": Praefix muss zwischen 0 und 32 liegen',
+    );
+    expect(fehler("2001:db8::/129")).toBe(
+      'Eintrag 1 "2001:db8::/129": Praefix muss zwischen 0 und 128 liegen',
+    );
+    expect(fehler("nonsense")).toMatch(/^Eintrag 1 "nonsense": keine IP-Adresse/);
+    expect(fehler("1.2.3.4/")).toMatch(/^Eintrag 1 "1.2.3.4\/": keine IP-Adresse/);
+    expect(fehler("01.2.3.4")).toMatch(/^Eintrag 1 "01.2.3.4": keine IP-Adresse/);
+  });
+
+  it("nimmt hoechstens 256 Eintraege", () => {
+    const viele = Array.from({ length: 257 }, (_, i) => `10.0.${i >> 8}.${i & 255}`).join(" ");
+    expect(fehler(viele)).toBe("hoechstens 256 Eintraege, erhalten: 257");
+    expect(parseNetworkList(viele.split(" ").slice(0, 256).join(" ")).ok).toBe(true);
+  });
+
+  it("weist auf gesetzte Host-Bits und auf Praefix 0 hin", () => {
+    const r = liste("10.1.2.3/8, 2001:db8::1/32, 0.0.0.0/0, ::/0");
+    expect(r.wert.eintraege).toEqual(["10.0.0.0/8", "2001:db8::/32", "0.0.0.0/0", "::/0"]);
+    expect(r.hinweise).toEqual([
+      'Eintrag "10.1.2.3/8" gilt als 10.0.0.0/8',
+      'Eintrag "2001:db8::1/32" gilt als 2001:db8::/32',
+      'Eintrag "0.0.0.0/0" umfasst alle IPv4-Adressen',
+      'Eintrag "::/0" umfasst alle IPv6-Adressen',
+    ]);
+    expect(r.wert.enthaelt("10.200.0.1")).toBe(true);
+  });
+
+  it("trennt fuer Caddy nur mit Leerraum und kennt dann private_ranges", () => {
+    const caddy = { trenner: "nur-leerraum", privateRanges: true } as const;
+    expect(fehler("10.0.0.5,10.0.0.6", caddy)).toMatch(/Leerzeichen.*Komma/);
+    expect(fehler("10.0.0.5, 10.0.0.6", caddy)).toMatch(/Leerzeichen.*Komma/);
+    const r = liste("private_ranges 203.0.113.9", caddy);
+    expect(r.wert.enthaelt("192.168.1.1")).toBe(true);
+    expect(r.wert.enthaelt("fd12::1")).toBe(true);
+    expect(r.wert.enthaelt("203.0.113.9")).toBe(true);
+    expect(r.wert.enthaelt("203.0.113.10")).toBe(false);
+    expect(r.hinweise).toEqual([expect.stringContaining("private_ranges")]);
+    // Ohne die Option ist private_ranges kein gueltiger Eintrag.
+    expect(fehler("private_ranges")).toMatch(/keine IP-Adresse/);
+  });
+});
+
+describe("resolveClientAddress mit vertrauten Proxys", () => {
+  const proxys = (() => {
+    const r = parseNetworkList("10.0.0.5", { trenner: "nur-leerraum" });
+    if (!r.ok) throw new Error(r.fehler);
+    return r.wert;
+  })();
+
+  it("meldet, wenn die ermittelte Adresse ein vertrauter Proxy ist", () => {
+    // TRUSTED_PROXIES gesetzt, TRUSTED_PROXY_HOPS nicht erhoeht: Caddy
+    // behaelt den Header des Load Balancers, die App zaehlt aber nur
+    // Caddy und nimmt die Adresse des Load Balancers.
+    expect(resolveClientAddress("203.0.113.9, 10.0.0.5", undefined, 1, proxys)).toEqual({
+      adresse: "10.0.0.5",
+      problem: "address_is_proxy",
+      eintraege: 2,
+    });
+    expect(resolveClientAddress("203.0.113.9, 10.0.0.5", undefined, 2, proxys)).toEqual({
+      adresse: "203.0.113.9",
+      problem: null,
+      eintraege: 2,
+    });
+  });
+
+  it("hat dafuer einen eigenen Hinweis", () => {
+    expect(ADRESS_HINWEIS.address_is_proxy).toContain("TRUSTED_PROXY_HOPS erhoehen");
+    expect(adressMeldung("address_is_proxy")).toBe("Client-Adresse vermutlich die eines Proxys");
   });
 });

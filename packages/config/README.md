@@ -24,7 +24,7 @@ imports types only (`import type { Ergebnis } from "@dokunc/config"`).
 | `src/start.ts` | `checkConfigAtStartup()`, `EXIT_KONFIGURATION` (78) |
 | `src/log.ts` | `LOG_LEVELS`, `logLevelFrom()` (never throws), `LOG_REDACT` |
 | `src/altbestand.ts` | `NOCH_OHNE_SCHEMA`: existing variables without a declaration yet |
-| `src/client-address.ts` | the client address from `X-Forwarded-For` for both servers: `parseProxyHops()`, `normalizeIp()`, `resolveClientAddress()` and the throttled warning `AdressMelder` |
+| `src/client-address.ts` | the client address from `X-Forwarded-For` for both servers: `parseProxyHops()`, `normalizeIp()`, `resolveClientAddress()`, `parseNetworkList()` (for `TRUSTED_PROXIES` and similar lists) and the throttled warning `AdressMelder` |
 | `src/variablen/gemeinsam.ts` | variables read by the web app and the collaboration server |
 | `src/variablen/ausserhalb.ts` | variables read only by Docker Compose, the proxy or scripts |
 
@@ -45,10 +45,12 @@ collaboration server in `apps/collab/src/config-variablen.ts`.
    Warnings about a single value come from the parser (`hinweise`);
    checks against other variables go into `querpruefung`, with the names
    they read in `liest`. A cross-check is skipped only when one of those
-   variables has an error of its own. When the startup log should show
-   another value than the parsed one (for example a default derived from
-   another variable), add `anzeige`; if it throws, the log shows
-   "(Anzeige fehlgeschlagen)" for that variable.
+   variables has an error of its own. It also receives the service that
+   checks (`"web"` or `"collab"`), for warnings that concern only one of
+   them. When the startup log should show another value than the parsed
+   one (for example a default derived from another variable), add
+   `anzeige`; if it throws, the log shows "(Anzeige fehlgeschlagen)" for
+   that variable.
 3. Add a commented block to `.env.example` (German, like the rest of the
    file). For a variable of the web app or the collaboration server, also
    add `NAME: ${NAME:-}` under `services.app.environment` in

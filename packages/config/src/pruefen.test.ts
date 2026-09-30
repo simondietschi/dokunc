@@ -119,6 +119,24 @@ describe("checkEnvironment", () => {
     });
   });
 
+  it("nennt der Querpruefung den pruefenden Dienst", () => {
+    const beide = defineVariable<string>({
+      name: "BEIDE",
+      dienste: ["web", "collab"],
+      beschreibung: "Read by both.",
+      parse: () => ({ ok: true, wert: "x" }),
+      querpruefung: {
+        liest: [],
+        pruefe: (_w, _werte, _env, dienst) =>
+          dienst === "web" ? { hinweise: ["BEIDE betrifft nur die Web-App"] } : {},
+      },
+    });
+    expect(checkEnvironment([beide], {}, "web").hinweise).toEqual([
+      { variable: "BEIDE", meldung: "BEIDE betrifft nur die Web-App" },
+    ]);
+    expect(checkEnvironment([beide], {}, "collab").hinweise).toEqual([]);
+  });
+
   it("prueft nur die Variablen des Dienstes", () => {
     const bericht = checkEnvironment([passwort], { SMTP_PASSWORD: "kurz" }, "collab");
     expect(bericht).toEqual({ ok: true, werte: {}, fehler: [], hinweise: [] });

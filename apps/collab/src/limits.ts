@@ -12,7 +12,11 @@
  * sich fuer sich pruefen laesst. Die Verdrahtung steht in server.ts.
  */
 
-import { resolveClientAddress, type AdressMelder } from "@dokunc/config";
+import {
+  resolveClientAddress,
+  type AdressMelder,
+  type NetzListe,
+} from "@dokunc/config";
 import { readWholeNumber, type EnvWarn } from "@dokunc/editor";
 
 /** Fenster der Versuchsbremsen (s). */
@@ -299,15 +303,23 @@ export class UserSlots {
  * das hier also verlaesslich bestimmen. Mit Proxys zaehlt der Eintrag,
  * den der aeusserste eigene Proxy in X-Forwarded-For geschrieben hat.
  * Ergibt sich keine Adresse, faellt alles in einen gemeinsamen Topf: das
- * bremst zu streng statt gar nicht. Probleme meldet `melder` gedrosselt.
+ * bremst zu streng statt gar nicht. Probleme meldet `melder` gedrosselt,
+ * auch eine Adresse aus `vertrauteProxys` (TRUSTED_PROXIES): dann steht
+ * TRUSTED_PROXY_HOPS zu niedrig.
  */
 export function clientAddress(
   forwardedFor: string | string[] | undefined,
   remoteAddress: string | undefined,
   hops: number,
   melder?: AdressMelder,
+  vertrauteProxys?: NetzListe,
 ): string {
-  const aufloesung = resolveClientAddress(forwardedFor, remoteAddress, hops);
+  const aufloesung = resolveClientAddress(
+    forwardedFor,
+    remoteAddress,
+    hops,
+    vertrauteProxys,
+  );
   melder?.notiere(aufloesung, hops);
   return aufloesung.adresse ?? "unknown";
 }

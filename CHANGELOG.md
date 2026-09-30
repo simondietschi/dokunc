@@ -267,6 +267,34 @@ differently on an existing installation, and what to do about it.
   Anfragen zaehlen unter unknown" (at most one line per reason every ten
   minutes); see `docs/admin/network.md`. Nothing to do otherwise.
 
+- **Proxy in front of the bundled Caddy:** Caddy no longer
+  overwrites `X-Forwarded-For`. It keeps the header from the addresses in
+  the new setting `TRUSTED_PROXIES` and appends the address it saw; from
+  everybody else it still replaces it. If a load balancer, WAF or CDN sits
+  in front of Caddy, set `TRUSTED_PROXIES` in `.env` to its addresses,
+  separated by spaces (a comma stops the start), and `TRUSTED_PROXY_HOPS=2`
+  (one more for each further proxy). Until you do, everybody behind it
+  keeps sharing one rate-limit counter, and the audit log and session list
+  show no usable address. From trusted proxies Caddy also passes
+  `X-Forwarded-Proto` and `X-Forwarded-Host` on: the proxy must send
+  `X-Forwarded-Proto: https`, and `APP_URL` must be the public address,
+  otherwise the editor connection and form submissions fail. For a proxy
+  on the same host, list the gateway address of the Compose network `edge`,
+  not `127.0.0.1`. If you edited the `Caddyfile`, merge the new global
+  `servers` block and remove both `header_up X-Forwarded-For
+  {remote_host}` lines. Without a proxy in front of Caddy, nothing to do.
+  To go back to an older version, set `TRUSTED_PROXY_HOPS=1` again. See
+  `docs/admin/network.md`.
+
+- **Invalid `TRUSTED_PROXY_HOPS` stops the start:** only whole
+  numbers from 0 to 10 are accepted. Any other value used to count silently
+  as 0, so all per-address rate limits shared one counter. If the server
+  stops with "Konfiguration ungueltig" naming `TRUSTED_PROXY_HOPS`, set the
+  number of your own proxies (1 with the bundled Caddy). The web app now
+  also warns at startup when it runs in production with
+  `TRUSTED_PROXY_HOPS=0`, and both servers warn when `TRUSTED_PROXIES` is
+  set but `TRUSTED_PROXY_HOPS` is below 2.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -367,6 +395,10 @@ differently on an existing installation, and what to do about it.
   reason `setup_token`.
 - `docs/admin/network.md` on how the web app and the collaboration server
   determine client addresses.
+- `TRUSTED_PROXIES` for the bundled Caddy: upstream proxies whose
+  `X-Forwarded-For` it keeps. The web app and the collaboration server
+  check its format at startup and warn (reason `address_is_proxy`) when
+  the client address they find is one of these proxies.
 
 ### Changed
 
@@ -459,3 +491,11 @@ differently on an existing installation, and what to do about it.
   "OIDC-Aussteller stimmt nicht mit der Konfiguration" without naming the
   cause. The log now says that only the issuer of a single tenant is
   supported.
+- Behind a load balancer, WAF or CDN, the bundled Caddy replaced
+  `X-Forwarded-For` with the proxy's address. With the
+  `TRUSTED_PROXY_HOPS=2` that `.env.example` recommended for this case,
+  every request then counted as unknown: all users shared one rate-limit
+  counter, and the audit log and session list recorded no address.
+- Caddy's `{client_ip}` (access log, matchers) no longer takes the leftmost
+  `X-Forwarded-For` entry, which the client can write, from a trusted
+  proxy.

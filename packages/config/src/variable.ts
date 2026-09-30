@@ -27,7 +27,8 @@ export interface Variable<T = unknown> {
    * Prueft den Wert gegen andere Variablen. Laeuft je Variable nach dem
    * Parsen aller Felder; uebersprungen nur, wenn diese Variable oder eine
    * in `liest` genannte einen Feldfehler hat. `fehler` beenden den Start,
-   * `hinweise` warnen.
+   * `hinweise` warnen. `dienst` ist der Server, der gerade prueft, fuer
+   * Hinweise, die nur einen der beiden betreffen.
    */
   querpruefung?: {
     liest: readonly string[];
@@ -35,6 +36,7 @@ export interface Variable<T = unknown> {
       wert: T,
       werte: Readonly<Record<string, unknown>>,
       env: Umgebung,
+      dienst: "web" | "collab",
     ): { fehler?: string[]; hinweise?: string[] };
   };
   /** Wert fuer das Startlog, falls er vom geparsten abweicht. */

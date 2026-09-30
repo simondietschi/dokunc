@@ -63,6 +63,7 @@ import {
   adressMelderFuerLog,
   checkConfigAtStartup,
   logLevelFrom,
+  parseNetworkList,
   parseProxyHops,
 } from "@dokunc/config";
 import { COLLAB_VARIABLEN } from "./config-variablen";
@@ -186,9 +187,18 @@ const redisGestoert = () => redisZustand.gestoert(SCHNELLWEG_NACH_MS);
 const limits = readConnectionLimits(process.env, (detail, msg) =>
   log.warn(detail, msg),
 );
-// Unsinn gilt als 0 wie in der Web-App (@dokunc/config, parseProxyHops).
+// Ein ungueltiger Wert hat den Start schon oben beendet
+// (checkConfigAtStartup); die 0 ist nur der Rueckfall dahinter.
 const proxyHopsRoh = parseProxyHops(process.env.TRUSTED_PROXY_HOPS);
 const proxyHops = proxyHopsRoh.ok ? proxyHopsRoh.wert : 0;
+// Die Proxys vor dem mitgelieferten Caddy: nur um zu erkennen, dass die
+// ermittelte Adresse die eines Proxys ist (TRUSTED_PROXY_HOPS zu niedrig).
+// Ein ungueltiger Wert hat den Start schon oben beendet.
+const vertrauteProxysRoh = parseNetworkList(process.env.TRUSTED_PROXIES, {
+  trenner: "nur-leerraum",
+  privateRanges: true,
+});
+const vertrauteProxys = vertrauteProxysRoh.ok ? vertrauteProxysRoh.wert : undefined;
 /** Meldet gedrosselt, wenn die Client-Adresse nicht zur Kette passt. */
 const adressMelder = adressMelderFuerLog((felder, meldung) =>
   log.warn(felder, meldung),
@@ -839,6 +849,7 @@ const server = new Server({
         request.socket.remoteAddress,
         proxyHops,
         adressMelder,
+        vertrauteProxys,
       );
       const versuch = await attemptConnection(
         `collab-ip:${ip}`,

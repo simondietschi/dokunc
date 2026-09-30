@@ -2,8 +2,10 @@ import "server-only";
 import { headers } from "next/headers";
 import {
   adressMelderFuerLog,
+  parseNetworkList,
   parseProxyHops,
   resolveClientAddress,
+  type NetzListe,
 } from "@dokunc/config";
 import { log } from "./log";
 
@@ -21,10 +23,31 @@ function proxyHops(): number {
   return r.ok ? r.wert : 0;
 }
 
+const KEINE_PROXYS: NetzListe = { eintraege: [], enthaelt: () => false };
+let proxyListe: { roh: string | undefined; liste: NetzListe } | undefined;
+
+/**
+ * TRUSTED_PROXIES, die vorgelagerten Proxys vor dem mitgelieferten Caddy.
+ * Die App vertraut ihnen nicht selbst (das tut Caddy); sie erkennt daran
+ * nur, dass die ermittelte Adresse die eines Proxys ist und
+ * TRUSTED_PROXY_HOPS zu niedrig steht. Neu gebaut nur, wenn sich der Wert
+ * aendert; ein ungueltiger Wert (den die Pruefung beim Start abweist)
+ * gilt als leer.
+ */
+function vertrauteProxys(): NetzListe {
+  const roh = process.env.TRUSTED_PROXIES;
+  if (!proxyListe || proxyListe.roh !== roh) {
+    const r = parseNetworkList(roh, { trenner: "nur-leerraum", privateRanges: true });
+    proxyListe = { roh, liste: r.ok ? r.wert : KEINE_PROXYS };
+  }
+  return proxyListe.liste;
+}
+
 /**
  * Meldet gedrosselt, wenn sich aus X-Forwarded-For keine Adresse ergibt
- * (die Kette passt nicht zu TRUSTED_PROXY_HOPS). Ohne die Zeile fielen
- * alle Anfragen unbemerkt in den gemeinsamen Topf "unknown".
+ * oder die Adresse die eines Proxys ist (die Kette passt nicht zu
+ * TRUSTED_PROXY_HOPS). Ohne die Zeile fielen alle Anfragen unbemerkt in
+ * einen gemeinsamen Topf.
  */
 const melder = adressMelderFuerLog((felder, meldung) => log.warn(felder, meldung));
 
@@ -40,7 +63,12 @@ const melder = adressMelderFuerLog((felder, meldung) => log.warn(felder, meldung
 export async function clientIp(): Promise<string | null> {
   const h = await headers();
   const hops = proxyHops();
-  const aufloesung = resolveClientAddress(h.get("x-forwarded-for"), undefined, hops);
+  const aufloesung = resolveClientAddress(
+    h.get("x-forwarded-for"),
+    undefined,
+    hops,
+    vertrauteProxys(),
+  );
   melder.notiere(aufloesung, hops);
   return aufloesung.adresse;
 }

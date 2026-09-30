@@ -70,6 +70,176 @@ export function normalizeIp(value: string): string | null {
   return net.isIP(ip) === 0 ? null : ip;
 }
 
+/** Hoechstens so viele Eintraege in einer Liste von Netzen. */
+export const MAX_NETWORK_ENTRIES = 256;
+
+/** Eine Liste von Adressen und Netzen (TRUSTED_PROXIES, Ausnahmen). */
+export type NetzListe = {
+  /** Grundform der Eintraege: Adresse oder "netz/praefix". */
+  readonly eintraege: readonly string[];
+  /** Liegt die Adresse (beliebige Schreibweise) in einem Eintrag? */
+  enthaelt(ip: string): boolean;
+};
+
+/**
+ * Was Caddy unter `private_ranges` versteht (Caddy 2.11,
+ * `caddy adapt` mit TRUSTED_PROXIES=private_ranges). Caddy schreibt
+ * 127.0.0.1/8, gemeint ist dasselbe Netz.
+ */
+const PRIVATE_RANGES = [
+  "192.168.0.0/16",
+  "172.16.0.0/12",
+  "10.0.0.0/8",
+  "127.0.0.0/8",
+  "fd00::/8",
+  "::1",
+] as const;
+
+/** IPv4 oder IPv6 als Zahl, fuer das Maskieren eines Netzes. */
+function alsZahl(ip: string, v: 4 | 6): bigint {
+  if (v === 4) {
+    return ip.split(".").reduce((n, t) => (n << 8n) | BigInt(Number(t)), 0n);
+  }
+  // Eingebettetes IPv4 am Ende (::ffff:1.2.3.4) in zwei Gruppen wandeln.
+  let text = ip;
+  const v4 = /(\d+\.\d+\.\d+\.\d+)$/.exec(text);
+  if (v4) {
+    const z = alsZahl(v4[1], 4);
+    text = `${text.slice(0, -v4[1].length)}${(z >> 16n).toString(16)}:${(z & 0xffffn).toString(16)}`;
+  }
+  const [links, rechts] = text.includes("::") ? text.split("::") : [text, undefined];
+  const l = links ? links.split(":") : [];
+  const r = rechts ? rechts.split(":") : [];
+  const gruppen =
+    rechts === undefined ? l : [...l, ...Array<string>(8 - l.length - r.length).fill("0"), ...r];
+  return gruppen.reduce((n, g) => (n << 16n) | BigInt(parseInt(g, 16)), 0n);
+}
+
+/** Zahl zurueck in die kurze Schreibweise. */
+function alsText(n: bigint, v: 4 | 6): string {
+  if (v === 4) {
+    return [24n, 16n, 8n, 0n].map((s) => String((n >> s) & 255n)).join(".");
+  }
+  const gruppen = Array.from({ length: 8 }, (_, i) => (n >> BigInt(112 - 16 * i)) & 0xffffn);
+  // Laengste Folge von Nullgruppen (mindestens zwei) durch :: ersetzen.
+  let start = -1;
+  let laenge = 0;
+  for (let i = 0; i < 8; ) {
+    if (gruppen[i] !== 0n) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < 8 && gruppen[j] === 0n) j += 1;
+    if (j - i > laenge && j - i >= 2) {
+      start = i;
+      laenge = j - i;
+    }
+    i = j;
+  }
+  const hex = gruppen.map((g) => g.toString(16));
+  if (start < 0) return hex.join(":");
+  return `${hex.slice(0, start).join(":")}::${hex.slice(start + laenge).join(":")}`;
+}
+
+/** Text fuer Meldungen: gekuerzt, damit ein langer Wert das Log nicht fuellt. */
+function zitat(text: string): string {
+  return JSON.stringify(text.length > 40 ? `${text.slice(0, 40)}…` : text);
+}
+
+/**
+ * Eine Liste von IPv4-/IPv6-Adressen und Netzen (Adresse/Praefix).
+ *
+ * - `trenner`: "komma-oder-leerraum" (Vorgabe) oder "nur-leerraum" fuer
+ *   Listen, die auch Caddy liest (TRUSTED_PROXIES): Caddy trennt nur mit
+ *   Leerzeichen, und ein Komma haelt ihn beim Start an.
+ * - `privateRanges`: Caddys Kurzform `private_ranges` zulassen (mit
+ *   Hinweis, weil sie jedem Client aus einem privaten Netz vertraut).
+ *
+ * Fehler: ein Eintrag, der keine Adresse ist, ein Praefix ausserhalb von
+ * 0 bis 32 bzw. 128, mehr als 256 Eintraege. Hinweise: gesetzte Host-Bits
+ * (das Netz gilt maskiert) und Praefix 0 (alle Adressen der Familie).
+ * Nicht gesetzt oder leer ergibt eine leere Liste.
+ */
+export function parseNetworkList(
+  roh: string | undefined,
+  o: { trenner: "komma-oder-leerraum" | "nur-leerraum"; privateRanges?: boolean } = {
+    trenner: "komma-oder-leerraum",
+  },
+): Ergebnis<NetzListe> {
+  const text = (roh ?? "").trim();
+  if (o.trenner === "nur-leerraum" && text.includes(",")) {
+    return {
+      ok: false,
+      fehler: `Eintraege mit Leerzeichen trennen, nicht mit Komma (der mitgelieferte Caddy startet sonst nicht): ${zitat(text)}`,
+    };
+  }
+  const teile = text === "" ? [] : text.split(o.trenner === "nur-leerraum" ? /\s+/ : /[\s,]+/).filter(Boolean);
+  if (teile.length > MAX_NETWORK_ENTRIES) {
+    return {
+      ok: false,
+      fehler: `hoechstens ${MAX_NETWORK_ENTRIES} Eintraege, erhalten: ${teile.length}`,
+    };
+  }
+  const liste = new net.BlockList();
+  const eintraege: string[] = [];
+  const hinweise: string[] = [];
+  const hinzu = (eintrag: string, nr: number): string | null => {
+    const m = /^([0-9a-fA-F:.]{1,45})(?:\/(\d{1,3}))?$/.exec(eintrag);
+    const adresse = m?.[1].toLowerCase() ?? "";
+    const v = net.isIP(adresse);
+    if (!m || (v !== 4 && v !== 6)) {
+      return `Eintrag ${nr} ${zitat(eintrag)}: keine IP-Adresse und kein Netz (Adresse oder Adresse/Praefix)`;
+    }
+    const familie = v === 4 ? "ipv4" : "ipv6";
+    if (m[2] === undefined) {
+      liste.addAddress(adresse, familie);
+      eintraege.push(adresse);
+      return null;
+    }
+    const praefix = Number(m[2]);
+    const max = v === 4 ? 32 : 128;
+    if (praefix > max) {
+      return `Eintrag ${nr} ${zitat(eintrag)}: Praefix muss zwischen 0 und ${max} liegen`;
+    }
+    const bits = BigInt(max);
+    const maske = praefix === 0 ? 0n : ((1n << bits) - 1n) ^ ((1n << (bits - BigInt(praefix))) - 1n);
+    const netz = `${alsText(alsZahl(adresse, v) & maske, v)}/${praefix}`;
+    if (netz !== `${adresse}/${praefix}`) hinweise.push(`Eintrag ${zitat(eintrag)} gilt als ${netz}`);
+    if (praefix === 0) {
+      hinweise.push(`Eintrag ${zitat(eintrag)} umfasst alle ${v === 4 ? "IPv4" : "IPv6"}-Adressen`);
+    }
+    liste.addSubnet(adresse, praefix, familie);
+    eintraege.push(netz);
+    return null;
+  };
+  for (const [i, teil] of teile.entries()) {
+    if (o.privateRanges && teil === "private_ranges") {
+      hinweise.push(
+        '"private_ranges" vertraut allen privaten Netzen: wer den Proxy aus einem privaten Netz direkt erreicht, kann seine Adresse selbst waehlen',
+      );
+      for (const r of PRIVATE_RANGES) hinzu(r, i + 1);
+      continue;
+    }
+    const fehler = hinzu(teil, i + 1);
+    if (fehler) return { ok: false, fehler };
+  }
+  // Derselbe Hinweis (etwa zweimal private_ranges) nur einmal.
+  const einmal = [...new Set(hinweise)];
+  return {
+    ok: true,
+    wert: {
+      eintraege,
+      enthaelt(ip: string) {
+        const n = normalizeIp(ip);
+        if (n === null) return false;
+        return liste.check(n, net.isIPv4(n) ? "ipv4" : "ipv6");
+      },
+    },
+    ...(einmal.length > 0 ? { hinweise: einmal } : {}),
+  };
+}
+
 /**
  * Warum sich keine verlaessliche Client-Adresse ergab (Wert `reason` der
  * Logzeile; englisch, weil Log-Parser danach filtern).
@@ -82,7 +252,9 @@ export type AdressProblem =
   /** Der massgebliche Eintrag ist keine IP-Adresse. */
   | "not_an_ip"
   /** Nur mit Socket (Collab): TRUSTED_PROXY_HOPS 0, aber der Header ist da. */
-  | "hops_zero_with_header";
+  | "hops_zero_with_header"
+  /** Die ermittelte Adresse steht in TRUSTED_PROXIES: TRUSTED_PROXY_HOPS zu niedrig. */
+  | "address_is_proxy";
 
 export type Aufloesung = {
   /** Grundform der Client-Adresse, oder `null`. */
@@ -114,25 +286,35 @@ function eintraegeAus(forwardedFor: string | string[] | null | undefined): strin
  * nicht, und X-Forwarded-For fuellt Next selbst mit der Gegenstelle, wenn
  * der Header fehlt; ein Client kann ihn aber vorher selbst setzen. Dort
  * ergibt 0 also keine Adresse und kein Problem.
+ *
+ * `vertrauteProxys` (TRUSTED_PROXIES): liegt die ermittelte Adresse darin,
+ * ist sie die eines vorgelagerten Proxys, und TRUSTED_PROXY_HOPS ist zu
+ * niedrig. Die Adresse bleibt, das Problem `address_is_proxy` meldet es.
  */
 export function resolveClientAddress(
   forwardedFor: string | string[] | null | undefined,
   remoteAddress: string | undefined,
   hops: number,
+  vertrauteProxys?: NetzListe,
 ): Aufloesung {
   const eintraege = eintraegeAus(forwardedFor);
   const anzahl = eintraege.length;
+  const mitProxyPruefung = (a: Aufloesung): Aufloesung =>
+    a.adresse !== null && vertrauteProxys?.enthaelt(a.adresse)
+      ? { ...a, problem: "address_is_proxy" }
+      : a;
   if (hops <= 0) {
     const adresse = remoteAddress ? normalizeIp(remoteAddress) : null;
     const problem = adresse !== null && anzahl > 0 ? "hops_zero_with_header" : null;
-    return { adresse, problem, eintraege: anzahl };
+    return mitProxyPruefung({ adresse, problem, eintraege: anzahl });
   }
   if (anzahl === 0) return { adresse: null, problem: "header_missing", eintraege: 0 };
   if (anzahl < hops) {
     return { adresse: null, problem: "header_too_short", eintraege: anzahl };
   }
   const adresse = normalizeIp(eintraege[anzahl - hops]);
-  return { adresse, problem: adresse === null ? "not_an_ip" : null, eintraege: anzahl };
+  if (adresse === null) return { adresse, problem: "not_an_ip", eintraege: anzahl };
+  return mitProxyPruefung({ adresse, problem: null, eintraege: anzahl });
 }
 
 /** Was die Logzeile zu einem Problem als `hint` mitgibt (deutsch). */
@@ -140,16 +322,18 @@ export const ADRESS_HINWEIS: Record<AdressProblem, string> = {
   header_missing:
     "Anfrage ohne X-Forwarded-For bei TRUSTED_PROXY_HOPS groesser 0: erreicht jemand den Dienst am Proxy vorbei?",
   header_too_short:
-    "X-Forwarded-For hat weniger Eintraege als TRUSTED_PROXY_HOPS: TRUSTED_PROXY_HOPS auf die Zahl der eigenen Proxys senken (docs/admin/network.md).",
+    "X-Forwarded-For hat weniger Eintraege als TRUSTED_PROXY_HOPS. Mit dem mitgelieferten Caddy: die Adressen der vorgelagerten Proxys in TRUSTED_PROXIES eintragen (sonst verwirft Caddy ihren Header), sonst TRUSTED_PROXY_HOPS auf die Zahl der eigenen Proxys senken (docs/admin/network.md).",
   not_an_ip:
     "Der massgebliche Eintrag in X-Forwarded-For ist keine IP-Adresse; TRUSTED_PROXY_HOPS ist vermutlich zu hoch, dann liest die App einen vom Client geschriebenen Wert (docs/admin/network.md).",
   hops_zero_with_header:
     "X-Forwarded-For vorhanden, aber TRUSTED_PROXY_HOPS ist 0. Steht ein Proxy davor, zaehlen alle Verbindungen unter dessen Adresse (docs/admin/network.md).",
+  address_is_proxy:
+    "Die ermittelte Adresse steht in TRUSTED_PROXIES, gehoert also einem vorgelagerten Proxy: TRUSTED_PROXY_HOPS erhoehen (mit dem mitgelieferten Caddy 1 plus die Zahl der Proxys davor, docs/admin/network.md).",
 };
 
 /** Text der Logzeile zu einem Problem. */
 export function adressMeldung(problem: AdressProblem): string {
-  return problem === "hops_zero_with_header"
+  return problem === "hops_zero_with_header" || problem === "address_is_proxy"
     ? "Client-Adresse vermutlich die eines Proxys"
     : "Client-Adresse nicht bestimmbar, Anfragen zaehlen unter unknown";
 }

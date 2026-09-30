@@ -16,15 +16,18 @@ export { NOCH_OHNE_SCHEMA } from "./altbestand";
 export {
   ADRESS_HINWEIS,
   AdressMelder,
+  MAX_NETWORK_ENTRIES,
   MAX_PROXY_HOPS,
   adressMeldung,
   adressMelderFuerLog,
   normalizeIp,
+  parseNetworkList,
   parseProxyHops,
   resolveClientAddress,
   type AdressMeldung,
   type AdressProblem,
   type Aufloesung,
+  type NetzListe,
 } from "./client-address";
 export { GEMEINSAME_VARIABLEN } from "./variablen/gemeinsam";
 export { AUSSERHALB_VARIABLEN } from "./variablen/ausserhalb";

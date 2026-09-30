@@ -13,24 +13,36 @@
 # certificate". Browser vertrauen der CA so wenig wie vorher. (Keine
 # Leerzeile vor dem Block: caddy fmt verlangt es so und warnt sonst bei
 # jedem Start.)
+#
+# X-Forwarded-For: Caddy uebernimmt den Header nur von den Adressen in
+# TRUSTED_PROXIES (vorgelagerter Load Balancer, WAF, CDN) und haengt die
+# eigene Gegenstelle an. Von allen anderen verwirft er ihn und setzt die
+# Gegenstelle (Caddys Vorgabe seit 2.5, geprueft mit 2.11). Passend dazu
+# in der App: TRUSTED_PROXY_HOPS = 1 plus die Zahl der Proxys davor. Die
+# Liste wird mit Leerzeichen getrennt; ein Komma haelt Caddy beim Start
+# an (die App prueft das Format vorher und nennt den Fehler). Leer =
+# niemand ist vertraut, wie bisher. trusted_proxies_strict: auch
+# {client_ip} (Zugriffslog, Matcher) zaehlt von rechts; ohne nimmt Caddy
+# dort den linken Eintrag, also einen, den der Client geschrieben hat.
 {
 	skip_install_trust
+	servers {
+		trusted_proxies static {$TRUSTED_PROXIES}
+		trusted_proxies_strict
+	}
 }
 
 {$SITE_ADDRESS:localhost} {
 	encode zstd gzip
 
-	# X-Forwarded-For wird ueberschrieben statt angehaengt: Caddy wuerde
-	# sonst einen vom Client mitgeschickten Wert stehen lassen, und die
-	# App liest daraus die IP fuer ihre Rate-Limits. Nach dem Setzen
-	# steht dort genau ein Eintrag, und der stammt von Caddy.
-	# Passend dazu in der App: TRUSTED_PROXY_HOPS=1.
+	# X-Forwarded-For setzt Caddy hier nicht selbst (siehe globale
+	# Optionen oben): ein header_up ersetzte auch den Header eines
+	# vertrauten Proxys, und die Client-Adresse ginge verloren.
 
 	# Collab-WebSocket: /collab -> interner Hocuspocus-Port 3001
 	handle_path /collab* {
 		reverse_proxy app:3001 {
 			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
 		}
 	}
 
@@ -38,7 +50,6 @@
 	handle {
 		reverse_proxy app:3000 {
 			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
 		}
 	}
 

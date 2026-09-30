@@ -1,0 +1,46 @@
+# Kettentest im CI-Job docker (Schritt "Proxy-Kette"), zusammen mit
+# docker-compose.yml:
+#
+#   Sonde (feste Adresse) -> vorproxy -> proxy (mitgelieferter Caddy) -> app
+#
+# Jede Sonde laeuft in einem eigenen Container mit fester Adresse im Netz
+# kette, damit Bremse, Audit und Collab-Grenze verschiedene echte
+# Client-Adressen sehen. Feste Adressen auch fuer vorproxy und proxy:
+# sonst bekaeme proxy beim Neuerzeugen die erste freie Adresse, und
+# vorproxy scheiterte an "Address already in use".
+#
+#   198.18.250.2   vorproxy (in TRUSTED_PROXIES)
+#   198.18.250.3   proxy
+#   198.18.250.11  Sonde A
+#   198.18.250.12  Sonde B
+#   198.18.250.14  Sonde F (faelscht X-Forwarded-For)
+#
+# 198.18.0.0/15 ist der Bereich fuer Leistungstests (RFC 2544): kein
+# Standard-Pool von Docker und nicht das Netz der Runner.
+services:
+  vorproxy:
+    image: caddy:2
+    depends_on:
+      - proxy
+    volumes:
+      - ./.github/proxy-kette/Caddyfile.vorproxy:/etc/caddy/Caddyfile:ro
+    networks:
+      kette:
+        ipv4_address: 198.18.250.2
+  proxy:
+    environment:
+      TRUSTED_PROXIES: "198.18.250.2"
+    networks:
+      kette:
+        ipv4_address: 198.18.250.3
+  app:
+    environment:
+      # Caddy und der vorgelagerte Proxy.
+      TRUSTED_PROXY_HOPS: "2"
+      TRUSTED_PROXIES: "198.18.250.2"
+      COLLAB_MAX_ATTEMPTS_PER_IP: "3"
+networks:
+  kette:
+    ipam:
+      config:
+        - subnet: 198.18.250.0/24

@@ -66,7 +66,7 @@ export function checkEnvironment(
     if (!q || kaputt.has(v.name) || q.liest.some((n) => kaputt.has(n))) continue;
     let ausgang: { fehler?: string[]; hinweise?: string[] };
     try {
-      ausgang = q.pruefe(werte[v.name], werte, env);
+      ausgang = q.pruefe(werte[v.name], werte, env, dienst);
     } catch (e) {
       ausgang = { fehler: [`Pruefung fehlgeschlagen: ${alsText(e)}`] };
     }

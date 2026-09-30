@@ -13,6 +13,10 @@ services:
       # Mailadresse (ACME, Let's Encrypt). Leer zählt wie nicht gesetzt:
       # ein leerer Wert brächte die Caddyfile nicht durch den Parser.
       CADDY_TLS: ${CADDY_TLS:-internal}
+      # Vorgelagerte Proxys (Load Balancer, WAF, CDN), deren
+      # X-Forwarded-For Caddy behaelt; mit Leerzeichen getrennt, leer =
+      # keiner. Einzelheiten in .env.example und docs/admin/network.md.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -116,10 +120,13 @@ services:
       COLLAB_MAX_DOC_MB: ${COLLAB_MAX_DOC_MB:-}
       COLLAB_MAX_MESSAGE_MB: ${COLLAB_MAX_MESSAGE_MB:-}
       NODE_ENV: production
-      # Reverse-Proxys vor der App (hier: Caddy). Bestimmt, wie die
-      # Ratenbegrenzung die Client-IP aus X-Forwarded-For liest. Gilt auch
-      # für die Verbindungsgrenzen des Collab-Servers.
+      # Reverse-Proxys vor der App: Caddy plus je einer für jeden Proxy
+      # in TRUSTED_PROXIES. Bestimmt, welchen Eintrag in X-Forwarded-For
+      # die App und der Collab-Server als Client-Adresse nehmen.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+      # Dieselbe Liste wie beim Proxy: die App prüft das Format beim Start
+      # und warnt, wenn die Client-Adresse die eines dieser Proxys ist.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       # Anzeigename der Instanz (Aussteller im Authenticator)
       APP_NAME: ${APP_NAME:-dokunc}
       # Single Sign-on (OIDC) — optional, ohne OIDC_ISSUER abgeschaltet

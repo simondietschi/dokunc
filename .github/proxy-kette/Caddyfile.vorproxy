@@ -1,0 +1,26 @@
+# Vorgelagerter Proxy im Kettentest (CI-Job docker, Schritt "Proxy-Kette"):
+# steht fuer einen Load Balancer vor dem mitgelieferten Caddy.
+#
+# Wie nginx mit $proxy_add_x_forwarded_for oder HAProxy mit
+# "option forwardfor": den X-Forwarded-For der Sonden behalten und die
+# eigene Gegenstelle anhaengen. Dafuer gelten die Sonden hier als
+# vertraut. Ein gefaelschter Anfang erreicht so die App, und der Test
+# prueft, dass sie von rechts zaehlt.
+{
+	auto_https off
+	admin off
+	servers {
+		trusted_proxies static 198.18.250.0/24
+	}
+}
+
+:80 {
+	reverse_proxy https://proxy:443 {
+		header_up Host {host}
+		header_up X-Forwarded-Proto https
+		transport http {
+			tls_insecure_skip_verify
+			tls_server_name localhost
+		}
+	}
+}

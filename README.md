@@ -1255,8 +1255,8 @@ Kurz, was die App bewusst tut:
   100 MB), Seiten über `COLLAB_MAX_DOC_MB` nur noch lesbar (siehe
   „Collab-Server“, Absatz Grössengrenzen).
 - **Rate-Limits** pro Konto und pro IP. Die IP stammt aus
-  `X-Forwarded-For`, ausgewertet gemäss `TRUSTED_PROXY_HOPS` — hinter dem
-  mitgelieferten Caddy setzt der Proxy den Header selbst.
+  `X-Forwarded-For`, ausgewertet gemäss `TRUSTED_PROXY_HOPS`
+  (→ `docs/admin/network.md`).
 - **Single Sign-on** mit PKCE, `state` und `nonce`; das ID-Token wird
   gegen die JWKS des Anbieters, den Aussteller und den Empfänger
   geprüft. Verknüpft wird über den Subject-Claim; eine E-Mail-Adresse

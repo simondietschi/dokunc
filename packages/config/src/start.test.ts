@@ -90,7 +90,13 @@ describe("checkConfigAtStartup", () => {
       exit,
     });
     expect(exit).not.toHaveBeenCalled();
-    expect(werte).toEqual({ LOG_LEVEL: "debug", MAIL_FROM_ADDRESS: null, HINWEIS: "ja" });
+    expect(werte).toEqual({
+      LOG_LEVEL: "debug",
+      MAIL_FROM_ADDRESS: null,
+      TRUSTED_PROXIES: expect.objectContaining({ eintraege: [] }),
+      TRUSTED_PROXY_HOPS: 0,
+      HINWEIS: "ja",
+    });
     expect(zeilen.map((z) => [z.level, z.msg])).toEqual([
       [40, "HINWEIS ist gesetzt"],
       [30, "Konfiguration geprueft"],
@@ -99,6 +105,8 @@ describe("checkConfigAtStartup", () => {
     expect(zeilen[1].config).toEqual({
       LOG_LEVEL: "debug",
       MAIL_FROM_ADDRESS: "dokunc <no-reply@localhost>",
+      TRUSTED_PROXIES: [],
+      TRUSTED_PROXY_HOPS: 0,
       HINWEIS: "ja",
     });
     // Leer zaehlt nicht als gesetzt.
