@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -8,8 +8,9 @@ import { MAX_LAENGE, pruefeTitel, TYPEN } from "../../../.github/scripts/pr-titl
 
 /**
  * Konventionen fuer Beitraege (CONTRIBUTING.md): die Titelpruefung fuer
- * Pull-Requests (.github/scripts/pr-title.mjs), ihr Workflow und die
- * Titel, die Dependabot erzeugt.
+ * Pull-Requests (.github/scripts/pr-title.mjs), ihr Workflow, die Titel,
+ * die Dependabot erzeugt, und keine internen Planbezuege in versionierten
+ * Dateien.
  */
 
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
@@ -26,6 +27,91 @@ type Workflow = {
   permissions?: unknown;
   jobs: Record<string, { steps?: Schritt[] }>;
 };
+
+/**
+ * Interne Planbezuege: Kennungen aus Arbeitsplaenen und Pruefrunden, die
+ * ausserhalb nichts bedeuten ("Punkt 10", Befundnummern, Stufen,
+ * Etappen). Geprueft werden Pfad und Zeilen jeder versionierten Datei;
+ * `nur` beschraenkt eine Regel auf passende Pfade.
+ */
+const PLANBEZUEGE: { art: string; muster: RegExp; nur?: RegExp }[] = [
+  { art: "plan item", muster: /\b(?:Punkte?|Folgepunkte?) (?:\d+|[A-Z])\b/ },
+  { art: "finding number", muster: /\b[BKW]\d{1,3}\b|\bKritik \d+/ },
+  // Auch nach "_" oder "-" im Pfad ("..._stage1_...", "e2e/stage3-...")
+  { art: "plan stage", muster: /\bStufe \d\b|(?<![A-Za-z])stage ?\d/i },
+  { art: "plan stage", muster: /\bE(?:[1-9]|1[0-3])[ab]\b|\b(?:Etappe|Welle) \d+\b/ },
+  // In Fliesstext (Markdown, YAML) auch die blosse Etappe; im Code ist
+  // "E1" ein gewoehnlicher Bezeichner (Personen in Tests).
+  { art: "plan stage", muster: /\bE(?:[1-9]|1[0-3])\b/, nur: /\.(?:md|ya?ml)$/ },
+];
+
+/**
+ * Angewendete Migrationen bleiben bytegleich: Prisma speichert je
+ * Migration eine Pruefsumme, und schon eine geaenderte Kommentarzeile
+ * laesst "prisma migrate dev" jede bestehende Entwicklungsdatenbank
+ * zuruecksetzen; ein umbenanntes Verzeichnis liefe auf jeder Installation
+ * als neue Migration. Nur diese, namentlich; jede neue Migration wird
+ * geprueft.
+ */
+const MIGRATIONEN_VOR_DER_REGEL = [
+  "20260519132107_init",
+  "20260519135251_space_invitations",
+  "20260519140000_page_fulltext_index",
+  "20260519142800_admin_and_soft_delete",
+  "20260519160604_sessions_account_reset",
+  "20260717125329_links_comments_notifications_chunks",
+  "20260902200403_stage1_foundation",
+  "20260909070000_gruppen_zwei_faktor_sso",
+  "20260917120000_pagechunk_fulltext_index",
+  "20260922090000_recovery_code_pending",
+  "20260925100000_ai_index",
+  "20260925110000_search_german_trgm",
+  "20260925120000_page_updated_notification",
+  "20260925130000_restore_epoch",
+  "20260925150000_aufbewahrung",
+];
+
+function ausgenommen(datei: string): boolean {
+  return (
+    MIGRATIONEN_VOR_DER_REGEL.some((m) => datei.startsWith(`packages/db/prisma/migrations/${m}/`)) ||
+    // Fremde Paketnamen und Pruefsummen
+    datei === "pnpm-lock.yaml" ||
+    // Diese Datei nennt die Muster und alte Titel als Beispiele
+    datei === "apps/web/src/konventionen.test.ts"
+  );
+}
+
+/** Alle Planbezuege eines Textes; ueber einen Zeilenumbruch nur, wenn er ihn trennt. */
+function planbezuege(datei: string, text: string): string[] {
+  const funde: string[] = [];
+  const regeln = PLANBEZUEGE.filter((r) => !r.nur || r.nur.test(datei));
+  const melde = (wo: string, art: string, treffer: string) =>
+    funde.push(`${wo}: ${art} "${treffer}": name it after what it does (CONTRIBUTING.md)`);
+  for (const r of regeln) {
+    const m = r.muster.exec(datei);
+    if (m) melde(datei, r.art, m[0]);
+  }
+  const zeilen = text.split("\n");
+  zeilen.forEach((zeile, i) => {
+    for (const r of regeln) {
+      const m = r.muster.exec(zeile);
+      if (m) melde(`${datei}:${i + 1}`, r.art, m[0]);
+      // Umbrochen wie "(Commit 84a44cc, Punkte" / "# 1 bis 6)": die
+      // naechste Zeile ohne Einrueckung und Kommentarzeichen anhaengen
+      const naechste = zeilen[i + 1];
+      if (naechste === undefined) continue;
+      const links = zeile.trimEnd();
+      const paar = `${links} ${naechste.replace(/^\s*(?:#|\/\/|\*|--)?\s*/, "")}`;
+      for (const p of paar.matchAll(new RegExp(r.muster.source, `${r.muster.flags}g`))) {
+        const ende = (p.index ?? 0) + p[0].length;
+        if ((p.index ?? 0) < links.length && ende > links.length + 1) {
+          melde(`${datei}:${i + 1}-${i + 2}`, r.art, p[0]);
+        }
+      }
+    }
+  });
+  return funde;
+}
 
 /** Startet das Skript wie der Workflow: nur mit PATH, Titel und Autor. */
 function aufruf(titel: string, autor = "jemand") {
@@ -217,6 +303,49 @@ describe("Konventionen", () => {
         expect(pruefeTitel(t, { autor: DEPENDABOT }), t).toEqual([]);
       }
     }
+  });
+
+  it("Keine internen Planbezuege in versionierten Dateien und Pfaden", () => {
+    const r = spawnSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8" });
+    expect(r.status, "git ls-files braucht ein Git-Checkout").toBe(0);
+    const dateien = r.stdout.split("\0").filter((d) => d !== "");
+    expect(dateien.length).toBeGreaterThan(100);
+    const funde: string[] = [];
+    for (const datei of dateien) {
+      if (ausgenommen(datei)) continue;
+      const pfad = join(ROOT, datei);
+      // Geloescht, aber noch nicht aus dem Index: nur der Pfad zaehlt
+      const inhalt = existsSync(pfad) ? readFileSync(pfad) : Buffer.alloc(0);
+      // Binaerdateien (NUL-Byte wie bei git) nur mit ihrem Pfad
+      const text = inhalt.subarray(0, 8000).includes(0) ? "" : inhalt.toString("utf8");
+      funde.push(...planbezuege(datei, text));
+    }
+    expect(funde).toEqual([]);
+  });
+
+  it("Planbezuege: Muster und Ausnahmen", () => {
+    expect(planbezuege("a.ts", "// wie vor Punkt 10")).toHaveLength(1);
+    expect(planbezuege("a.ts", "// Folgepunkte A")).toHaveLength(1);
+    expect(planbezuege("a.ts", "// der Befund B148")).toHaveLength(1);
+    expect(planbezuege("a.ts", "// (Kritik 12/K11)")).toHaveLength(1);
+    expect(planbezuege("a.ts", "// siehe K7")).toHaveLength(1);
+    expect(planbezuege("e2e/stage3-size-lock.spec.ts", "")).toHaveLength(1);
+    expect(planbezuege("x/20260902200403_stage1_foundation/m.sql", "")).toHaveLength(1);
+    expect(planbezuege("a.ts", "// E2E fuer Navigation (Stufe 1)")).toHaveLength(1);
+    expect(planbezuege("CHANGELOG.md", "- Added in E1.")).toHaveLength(1);
+    expect(planbezuege("a.yml", "  # (Commit 84a44cc, Punkte\n  # 1 bis 6)")).toEqual([
+      'a.yml:1-2: plan item "Punkte 1": name it after what it does (CONTRIBUTING.md)',
+    ]);
+    // Keine Fehltreffer
+    for (const [datei, text] of [
+      ["a.ts", "let E1: string; // E2E ohne Punkt, Punkt eins"],
+      ["a.ts", "// W3C, B2B, K8s, E2E-Datei, stages, backstage 2"],
+      ["a.md", "E2E tests"],
+    ]) {
+      expect(planbezuege(datei, text), text).toEqual([]);
+    }
+    expect(ausgenommen("packages/db/prisma/migrations/20260925150000_aufbewahrung/migration.sql")).toBe(true);
+    expect(ausgenommen("packages/db/prisma/migrations/20261001000000_neu/migration.sql")).toBe(false);
   });
 
   it("CONTRIBUTING: dieselben Typen und dieselbe Laenge wie die Pruefung", () => {

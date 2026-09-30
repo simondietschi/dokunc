@@ -866,8 +866,8 @@ jobs:
           WARNUNG=$(./scripts/backup.sh 2>&1 >/dev/null)
           test -z "$WARNUNG" || { echo "$WARNUNG" >&2; false; }
 
-      # Eine Installation vom Stand vor der Haertung (Commit 84a44cc, Punkte
-      # 1 bis 6) mit Bestand in Datenbank, Uploads, Secret und Redis, dann
+      # Eine Installation vom Stand vor der Haertung (Commit 84a44cc) mit
+      # Bestand in Datenbank, Uploads, Secret und Redis, dann
       # die letzte Zeile des Update-Befehls aus dem README. Der Bestand muss
       # bleiben, die Sitzungen gelten weiter (gleiches Secret), Redis
       # verlangt danach ein Passwort, und der Proxy sieht die Datenbank

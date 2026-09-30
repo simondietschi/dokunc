@@ -106,8 +106,8 @@ function utc(d: Date): Prisma.Sql {
 
 /**
  * Seiten-IDs nach id, ab `after` (exklusiv, "" = von vorn). Keyset ueber den
- * Primaerschluessel von Page (Kritik 12/K6): linear, ohne GROUP BY ueber
- * PageVersion. Seiten ohne Versionen kosten in thinVersions nichts.
+ * Primaerschluessel von Page: linear, ohne GROUP BY ueber PageVersion.
+ * Seiten ohne Versionen kosten in thinVersions nichts.
  */
 export async function pageIdsForThinning(
   after: string,

@@ -16,7 +16,7 @@ import { contentSecurityPolicy } from "./lib/csp";
  * Die Grundhaertung prueft bisher kein Test, die CSP nur fuer Dokumente
  * und nur im E2E-Lauf gegen einen Build mit NODE_ENV=production — genau
  * der eine Fall, in dem schon die alte Bedingung stimmte. Hier laufen
- * alle Phasen gegen alle Werte von NODE_ENV, weil der Befund B148 in den
+ * alle Phasen gegen alle Werte von NODE_ENV, weil der Fehler in den
  * anderen lag: eine Build-Shell mit NODE_ENV=test oder ganz ohne schrieb
  * /api ohne CSP ins Manifest.
  */

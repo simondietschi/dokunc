@@ -73,7 +73,7 @@ describe("cspMode()", () => {
   });
 
   it("waehlt fuer alles andere die strenge Fassung", () => {
-    // Der Kern von B148: frueher hing die CSP an "production", und eine
+    // Der Kern des Fehlers: frueher hing die CSP an "production", und eine
     // Instanz mit test, staging oder ganz ohne NODE_ENV lief ohne. Jetzt
     // muss die Lockerung ausdruecklich verlangt werden; ein vergessener
     // oder vertippter Wert faellt auf die sichere Seite.

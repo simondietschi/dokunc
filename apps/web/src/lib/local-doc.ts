@@ -2,10 +2,10 @@
  * Namen der lokalen Dokumentkopien im Browser (y-indexeddb), ohne React
  * und ohne "server-only", damit testbar.
  *
- * Ohne Restore-Epoche heisst die Kopie wie vor Punkt 10 `dokunc:<pageId>`:
- * wer nie zurueckspielt, merkt nichts, und eine ungesicherte
- * Offline-Kopie geht bei einem Update nicht verloren. Nach einem Restore
- * (scripts/restore.sh vergibt eine neue Epoche) heisst sie
+ * Ohne Restore-Epoche heisst die Kopie wie vor Einfuehrung der Epoche
+ * `dokunc:<pageId>`: wer nie zurueckspielt, merkt nichts, und eine
+ * ungesicherte Offline-Kopie geht bei einem Update nicht verloren. Nach
+ * einem Restore (scripts/restore.sh vergibt eine neue Epoche) heisst sie
  * `dokunc:<epoche>:<pageId>`. Eine Kopie von vor dem Restore wird damit
  * nie mehr geladen und bringt ihre spaeteren Yjs-Updates nicht in den
  * zurueckgespielten Stand zurueck.

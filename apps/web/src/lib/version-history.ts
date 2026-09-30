@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@dokunc/db";
 
-/** Wie bisher 25 je Seite (history/page.tsx; Kritik 12/K11). */
+/** Wie bisher 25 je Seite (history/page.tsx). */
 export const HISTORY_PAGE_SIZE = 25;
 
 export type HistoryCursor = { at: Date; id: string };
@@ -15,7 +15,7 @@ export function encodeHistoryCursor(v: { createdAt: Date; id: string }): string 
  * Gegenstueck; alles Unlesbare (auch Arrays aus searchParams) -> null.
  * Am ERSTEN "_" getrennt: ms /^\d{1,15}$/ (hoechstens 15 Ziffern, also
  * unter der Grenze von Date bei 8.64e15), id /^[A-Za-z0-9_-]{1,64}$/
- * (cuid in Betrieb, Test-IDs mit Bindestrich; Kritik 12/K3).
+ * (cuid in Betrieb, Test-IDs mit Bindestrich).
  */
 export function parseHistoryCursor(raw: unknown): HistoryCursor | null {
   if (typeof raw !== "string") return null;

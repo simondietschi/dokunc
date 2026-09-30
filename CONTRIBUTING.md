@@ -78,6 +78,10 @@ A newer push to a pull request cancels the CI run that is still going for its pr
 
 `pnpm test:e2e` empties the database that `DATABASE_URL` points to; only local hosts are accepted. `e2e/first-account.setup.ts` registers the first account and creates the first space with its page "Willkommen". It runs as the Playwright project `erstes-konto` before every other file, also when you run a single file; the other files log in with that account. Name a new file after the behaviour it covers, such as `trash-and-version-restore.spec.ts`.
 
+## What is not rewritten
+
+Published Git history and applied database migrations stay as they are. Prisma stores a checksum of every applied migration: changing one, even a comment, makes `prisma migrate dev` ask to reset existing development databases, and a renamed migration directory would run again on every installation. Commits and migrations from before these rules therefore keep their German subjects and internal numbering; `apps/web/src/konventionen.test.ts` lists those migrations by name and checks every other tracked file and path for internal plan references.
+
 ## Maintainers
 
 These rules rely on repository settings that are not stored in the repository:
