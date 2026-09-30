@@ -202,8 +202,19 @@ if [ "$MODUS" = festschreiben ]; then
   # Endet die .env ohne Zeilenende, kaeme die neue Zeile sonst an die
   # letzte Variable: aus APP_SECRET=abc wuerde "APP_SECRET=abc# Compose…",
   # Compose laese einen anderen Wert, und alle waeren abgemeldet.
+  # Durch Symlinks hindurch Glied fuer Glied, ohne readlink -f (fehlt
+  # auf macOS vor 12.3); ein relatives Ziel gilt vom Ordner des Links aus.
   ZIEL=.env
-  if [ -L .env ]; then ZIEL=$(readlink -f .env); fi
+  GLIEDER=0
+  while [ -L "$ZIEL" ]; do
+    GLIEDER=$((GLIEDER + 1))
+    if [ "$GLIEDER" -gt 40 ]; then echo "✗ .env: zu viele Symlinks hintereinander." >&2; exit 3; fi
+    LINK=$(readlink "$ZIEL")
+    case "$LINK" in
+      /*) ZIEL=$LINK ;;
+      *) ZIEL=$(dirname "$ZIEL")/$LINK ;;
+    esac
+  done
   TEIL="$ZIEL.$$.teil"
   trap 'rm -f "$FEHLER" "$TEIL"' EXIT
   if [ -e "$ZIEL" ]; then
@@ -250,18 +261,18 @@ BISHER_HAT_DATEN=0
 if [ "$QUELLE" = "aus docker-compose.yml" ] && [ -n "$BISHER" ] && [ "$BISHER" != "$AKTUELL" ] \
   && hat_daten "$BISHER"; then
   BISHER_HAT_DATEN=1
-  if ! printf '%s\n' "${ANDERE[@]}" | grep -qxF -- "$BISHER"; then ANDERE+=("$BISHER"); fi
+  if ! printf '%s\n' ${ANDERE[@]+"${ANDERE[@]}"} | grep -qxF -- "$BISHER"; then ANDERE+=("$BISHER"); fi
 fi
 
 # "wiki (angelegt 2026-05-19)" je anderem Projekt, durch Komma getrennt.
 liste_andere() {
   local p a teile=()
-  for p in "${ANDERE[@]}"; do
+  for p in ${ANDERE[@]+"${ANDERE[@]}"}; do
     a=$(angelegt "$p")
     teile+=("$p (angelegt $(tag "$a"))")
   done
   local IFS=,
-  printf '%s' "${teile[*]}" | sed 's/,/, /g'
+  printf '%s' ${teile[*]+"${teile[*]}"} | sed 's/,/, /g'
 }
 
 if hat_daten "$AKTUELL"; then
@@ -298,7 +309,7 @@ if [ -n "$EIGENES" ] && [ "$QUELLE" = "aus docker-compose.yml" ]; then
   # Anlagedatum $1 liegt vor dem der eigenen Daten.
   aelter() { local s; s=$(sekunden "$1"); [ -n "$EIGEN_S" ] && [ -n "$s" ] && [ "$s" -lt "$EIGEN_S" ]; }
   AELTER=()
-  for p in "${ANDERE[@]}"; do
+  for p in ${ANDERE[@]+"${ANDERE[@]}"}; do
     a=$(angelegt "$p")
     if [ -n "$EIGEN_S" ] && [ -z "$(sekunden "$a")" ]; then unlesbar "$p" "$a"; fi
     if aelter "$a"; then AELTER+=("$p (angelegt $(tag "$a"))"); fi
@@ -327,7 +338,7 @@ if [ -n "$EIGENES" ] && [ "$QUELLE" = "aus docker-compose.yml" ]; then
     {
       if [ ${#AELTER[@]} -eq 1 ]; then WER="das dokunc-Projekt"; HAT="hat"; else WER="die dokunc-Projekte"; HAT="haben"; fi
       printf '✗ Das Compose-Projekt %s hat Daten (angelegt %s), %s %s %s aber ältere.' \
-        "$AKTUELL" "$(tag "$EIGENES")" "$WER" "$(IFS=,; printf '%s' "${AELTER[*]}" | sed 's/,/, /g')" "$HAT"
+        "$AKTUELL" "$(tag "$EIGENES")" "$WER" "$(IFS=,; printf '%s' ${AELTER[*]+"${AELTER[*]}"} | sed 's/,/, /g')" "$HAT"
       printf ' Lief das Update ohne ./scripts/projektname.sh --festschreiben, arbeitet hier eine neue, leere Instanz neben den bisherigen Daten.'
       printf ' Rückweg: docker compose -p %s down (ohne -v), ./scripts/projektname.sh --festschreiben' "$AKTUELL"
       if [ "$BISHER_HAT_DATEN" -eq 0 ]; then printf ' NAME'; fi

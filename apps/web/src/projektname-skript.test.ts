@@ -13,6 +13,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { legeSkriptbaumAn, skriptUmgebung } from "../test/docker-attrappe";
 
@@ -61,6 +62,8 @@ function run(dir: string, args: string[] = [], env: Record<string, string> = {})
     input: "",
     encoding: "utf8",
     env: umgebung,
+    // Eine Endlosschleife soll den Test scheitern lassen, nicht haengen.
+    timeout: 20_000,
   });
   return {
     status: res.status,
@@ -92,6 +95,22 @@ case "\${1:-}" in
     exit 1 ;;
 esac
 exec "$echt" "$@"
+`,
+  );
+  chmodSync(datei, 0o755);
+}
+
+/**
+ * bin/readlink wie auf macOS vor 12.3: ohne -f. Alles andere geht an das
+ * echte readlink.
+ */
+function readlinkOhneF(dir: string): void {
+  const datei = join(dir, "bin/readlink");
+  writeFileSync(
+    datei,
+    `#!/usr/bin/env bash
+case "\${1:-}" in -f|-e|-m|--canonicalize*) echo "readlink: illegal option -- \${1#-}" >&2; exit 1 ;; esac
+exec "$(PATH="\${PATH#*:}" command -v readlink)" "$@"
 `,
   );
   chmodSync(datei, 0o755);
@@ -270,6 +289,21 @@ describe("scripts/projektname.sh: Pruefen", () => {
     expect(r.stderr).toContain("./scripts/projektname.sh --festschreiben NAME");
   });
 
+  it("expandiert Arrays so, dass bash vor 4.4 (macOS) mit set -u nicht abbricht", () => {
+    // Bis bash 4.3 bricht "\${a[@]}" eines leeren Arrays unter set -u mit
+    // "unbound variable" ab; macOS bringt bash 3.2 mit. Die Tests laufen
+    // mit einer neueren bash und saehen das nicht, deshalb diese Regel:
+    // jede Expansion eines Arrays steht in der Form \${a[@]+"\${a[@]}"}.
+    const quelle = readFileSync(
+      fileURLToPath(new URL("../../../scripts/projektname.sh", import.meta.url)),
+      "utf8",
+    );
+    const ungeschuetzt = [...quelle.matchAll(/\$\{(\w+)\[([@*])\]\}/g)]
+      .filter((m) => !quelle.slice(0, m.index).endsWith(`\${${m[1]}[${m[2]}]+"`))
+      .map((m) => `Zeile ${quelle.slice(0, m.index).split("\n").length}: ${m[0]}`);
+    expect(ungeschuetzt).toEqual([]);
+  });
+
   it("gibt mit --name nur den Namen aus", () => {
     const dir = repoIn("x");
     expect(run(dir, ["--name"]).stdout).toBe("dokunc\n");
@@ -345,6 +379,35 @@ describe("scripts/projektname.sh: Festschreiben", () => {
     expect(r.status, r.stderr).toBe(0);
     expect(lstatSync(join(dir, ".env")).isSymbolicLink()).toBe(true);
     expect(lesen(ziel)).toContain("COMPOSE_PROJECT_NAME=wikialt\n");
+  });
+
+  it("folgt einer Kette relativer Symlinks auch ohne readlink -f (macOS vor 12.3)", () => {
+    const dir = repoIn("Wiki Alt");
+    readlinkOhneF(dir);
+    mkdirSync(join(tmp, "geheim/tief"), { recursive: true });
+    const ziel = join(tmp, "geheim/tief/wiki.env");
+    writeFileSync(ziel, "APP_SECRET=x\n");
+    chmodSync(ziel, 0o640);
+    symlinkSync("tief/wiki.env", join(tmp, "geheim/aktuell.env"));
+    symlinkSync("../geheim/aktuell.env", join(dir, ".env"));
+    const r = run(dir, ["--festschreiben"], { FAKE_VOLUMES: volumes(["wikialt", ALT]) });
+    expect(r.status, r.stderr).toBe(0);
+    expect(lstatSync(join(dir, ".env")).isSymbolicLink()).toBe(true);
+    expect(lstatSync(join(tmp, "geheim/aktuell.env")).isSymbolicLink()).toBe(true);
+    expect(lesen(ziel)).toBe(
+      "APP_SECRET=x\n# Compose-Projekt dieser Installation (scripts/projektname.sh)\nCOMPOSE_PROJECT_NAME=wikialt\n",
+    );
+    expect(modus(ziel)).toBe(0o640);
+
+    // Ein Kreis endet mit Exit 3, ohne etwas zu schreiben.
+    const kreis = repoIn("Wiki Kreis");
+    readlinkOhneF(kreis);
+    symlinkSync("b.env", join(kreis, ".env.a"));
+    symlinkSync(".env.a", join(kreis, "b.env"));
+    symlinkSync(".env.a", join(kreis, ".env"));
+    const k = run(kreis, ["--festschreiben"], { FAKE_VOLUMES: volumes(["wikikreis", ALT]) });
+    expect(k.status).toBe(3);
+    expect(k.stderr).toBe("✗ .env: zu viele Symlinks hintereinander.\n");
   });
 
   it("schreibt den aktuellen Namen, wenn es keinen bisherigen mit Daten gibt", () => {
