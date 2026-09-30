@@ -13,7 +13,11 @@
 #   198.18.250.3   proxy
 #   198.18.250.11  Sonde A
 #   198.18.250.12  Sonde B
+#   198.18.250.13  Sonde C (in RATE_LIMIT_EXEMPT_NETWORKS)
 #   198.18.250.14  Sonde F (faelscht X-Forwarded-For)
+#   198.18.250.15  Sonde D (geht am vorgelagerten Proxy vorbei)
+#   198.18.250.16  Sonde E (faelscht die ausgenommene Adresse)
+#   198.18.250.20  Aufwaermen
 #
 # 198.18.0.0/15 ist der Bereich fuer Leistungstests (RFC 2544): kein
 # Standard-Pool von Docker und nicht das Netz der Runner.
@@ -45,6 +49,8 @@ services:
       RATE_LIMIT_SSO_START_PER_IP: "3/10m"
       OIDC_ISSUER: https://idp.invalid
       OIDC_CLIENT_ID: kette
+      # Sonde C steht fuer eine Firmen-NAT-Adresse.
+      RATE_LIMIT_EXEMPT_NETWORKS: "198.18.250.13"
 networks:
   kette:
     ipam:

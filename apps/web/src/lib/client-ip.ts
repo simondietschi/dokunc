@@ -23,24 +23,47 @@ function proxyHops(): number {
   return r.ok ? r.wert : 0;
 }
 
-const KEINE_PROXYS: NetzListe = { eintraege: [], enthaelt: () => false };
-let proxyListe: { roh: string | undefined; liste: NetzListe } | undefined;
+const LEER: NetzListe = { eintraege: [], enthaelt: () => false };
+
+/**
+ * Eine Liste von Netzen aus der Umgebung, neu gebaut nur, wenn sich der
+ * Wert aendert (Tests stellen die Umgebung um). Ein ungueltiger Wert, den
+ * die Pruefung beim Start abweist, gilt als leer.
+ */
+function netzListeAus(o: Parameters<typeof parseNetworkList>[1]) {
+  let zuletzt: { roh: string | undefined; liste: NetzListe } | undefined;
+  return (roh: string | undefined): NetzListe => {
+    if (!zuletzt || zuletzt.roh !== roh) {
+      const r = parseNetworkList(roh, o);
+      zuletzt = { roh, liste: r.ok ? r.wert : LEER };
+    }
+    return zuletzt.liste;
+  };
+}
+
+const proxyListe = netzListeAus({ trenner: "nur-leerraum", privateRanges: true });
+const ausnahmeListe = netzListeAus({ trenner: "komma-oder-leerraum" });
 
 /**
  * TRUSTED_PROXIES, die vorgelagerten Proxys vor dem mitgelieferten Caddy.
  * Die App vertraut ihnen nicht selbst (das tut Caddy); sie erkennt daran
  * nur, dass die ermittelte Adresse die eines Proxys ist und
- * TRUSTED_PROXY_HOPS zu niedrig steht. Neu gebaut nur, wenn sich der Wert
- * aendert; ein ungueltiger Wert (den die Pruefung beim Start abweist)
- * gilt als leer.
+ * TRUSTED_PROXY_HOPS zu niedrig steht.
  */
 function vertrauteProxys(): NetzListe {
-  const roh = process.env.TRUSTED_PROXIES;
-  if (!proxyListe || proxyListe.roh !== roh) {
-    const r = parseNetworkList(roh, { trenner: "nur-leerraum", privateRanges: true });
-    proxyListe = { roh, liste: r.ok ? r.wert : KEINE_PROXYS };
-  }
-  return proxyListe.liste;
+  return proxyListe(process.env.TRUSTED_PROXIES);
+}
+
+/**
+ * Liegt die Adresse in RATE_LIMIT_EXEMPT_NETWORKS (Firmen-NAT, VPN)? Dann
+ * zaehlt sie nicht fuer die Bremsen je Adresse (lib/rate-limit,
+ * rateLimitByAddress); die Bremsen je Konto gelten weiter.
+ */
+export function isExemptAddress(
+  ip: string,
+  roh: string | undefined = process.env.RATE_LIMIT_EXEMPT_NETWORKS,
+): boolean {
+  return ausnahmeListe(roh).enthaelt(ip);
 }
 
 /**

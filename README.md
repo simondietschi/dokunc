@@ -906,11 +906,10 @@ Grenzen stehen in `COLLAB_MAX_CONNECTIONS`,
 `COLLAB_MAX_CONNECTIONS_PER_IP`, `COLLAB_MAX_CONNECTIONS_PER_USER`,
 `COLLAB_MAX_ATTEMPTS_PER_IP` und `COLLAB_MAX_ATTEMPTS_PER_USER`
 (Vorgaben 1000, 50, 50, 300/min, 120/min; 0 schaltet eine Grenze ab).
-Hinter einem Firmen-NAT teilen sich viele Menschen eine Adresse; dort
-`COLLAB_MAX_CONNECTIONS_PER_IP` und `COLLAB_MAX_ATTEMPTS_PER_IP`
-anheben. Die Adresse liest der Collab-Server wie die App nach
-`TRUSTED_PROXY_HOPS`. Ein Socket, der sich nicht binnen 15 Sekunden mit
-gültigem Ticket anmeldet, wird geschlossen. Abweisungen stehen mit Grund
+Firmen-NAT und VPN → `docs/admin/network.md`. Die Adresse liest der
+Collab-Server wie die App nach `TRUSTED_PROXY_HOPS`. Ein Socket, der sich
+nicht binnen 15 Sekunden mit gültigem Ticket anmeldet, wird geschlossen.
+Abweisungen stehen mit Grund
 im Log (`Collab-Verbindung abgewiesen`,
 `Collab-Verbindung vor dem Handshake abgewiesen`,
 `Collab-Server voll, Verbindung abgewiesen`). Ein Collab-Ticket gilt zwei

@@ -93,6 +93,7 @@ describe("checkConfigAtStartup", () => {
     expect(werte).toEqual({
       LOG_LEVEL: "debug",
       MAIL_FROM_ADDRESS: null,
+      RATE_LIMIT_EXEMPT_NETWORKS: expect.objectContaining({ eintraege: [] }),
       TRUSTED_PROXIES: expect.objectContaining({ eintraege: [] }),
       TRUSTED_PROXY_HOPS: 0,
       HINWEIS: "ja",
@@ -105,6 +106,7 @@ describe("checkConfigAtStartup", () => {
     expect(zeilen[1].config).toEqual({
       LOG_LEVEL: "debug",
       MAIL_FROM_ADDRESS: "dokunc <no-reply@localhost>",
+      RATE_LIMIT_EXEMPT_NETWORKS: [],
       TRUSTED_PROXIES: [],
       TRUSTED_PROXY_HOPS: 0,
       HINWEIS: "ja",

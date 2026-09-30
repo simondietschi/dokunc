@@ -315,6 +315,20 @@ differently on an existing installation, and what to do about it.
   `RATE_LIMIT_UPLOAD_PER_USER` (format `30/1m`) changes the limit.
   Nothing to do.
 
+- **Corporate NAT and VPN:** the new setting `RATE_LIMIT_EXEMPT_NETWORKS`
+  (IP addresses or CIDR ranges) exempts client networks from the
+  per-address limits: password sign-in, registration, password reset and
+  single sign-on start in the web app, and connection attempts and open
+  connections per address in the collaboration server. Limits per account
+  still apply. On the collaboration server, a single computer in an exempt
+  network can fill the whole instance (up to `COLLAB_MAX_CONNECTIONS`)
+  with connections that never sign in, so list only networks you trust.
+  If you raised `COLLAB_MAX_CONNECTIONS_PER_IP` or
+  `COLLAB_MAX_ATTEMPTS_PER_IP` for a NAT, list the NAT address here instead
+  and set those back to their defaults: raised limits apply to every
+  address. Use the same value on every web app and collaboration server.
+  Nothing to do otherwise; see `docs/admin/network.md`.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -424,6 +438,10 @@ differently on an existing installation, and what to do about it.
   `RATE_LIMIT_RESET_REQUEST_PER_IP`, `RATE_LIMIT_RESET_SUBMIT_PER_IP`,
   `RATE_LIMIT_SSO_START_PER_IP`), checked at startup.
 - `RATE_LIMIT_UPLOAD_PER_USER` for the upload limit per account.
+- `RATE_LIMIT_EXEMPT_NETWORKS` for the web app and the collaboration
+  server: client networks (corporate NAT, VPN) that do not count for the
+  per-address limits; see "Corporate NAT and VPN" in
+  `docs/admin/network.md`.
 
 ### Changed
 

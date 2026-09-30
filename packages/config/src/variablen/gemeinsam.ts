@@ -40,6 +40,14 @@ export const GEMEINSAME_VARIABLEN: readonly Variable[] = [
     anzeige: (wert, env) => wert ?? abgeleiteterAbsender(env),
   }),
   defineVariable<NetzListe>({
+    name: "RATE_LIMIT_EXEMPT_NETWORKS",
+    dienste: ["web", "collab"],
+    beschreibung:
+      "Client networks exempt from the per-address rate limits of the web app and the collaboration server (corporate NAT, VPN): IP addresses or CIDR ranges separated by commas or spaces, at most 256. Per-account limits still apply. Use the same value on every instance.",
+    parse: (roh) => parseNetworkList(roh, { trenner: "komma-oder-leerraum" }),
+    anzeige: (wert) => wert.eintraege,
+  }),
+  defineVariable<NetzListe>({
     name: "TRUSTED_PROXIES",
     // Liest vor allem der mitgelieferte Caddy (Caddyfile, trusted_proxies).
     // Web und Collab pruefen das Format beim Start, damit ein Komma die

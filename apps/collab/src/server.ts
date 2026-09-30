@@ -199,6 +199,10 @@ const vertrauteProxysRoh = parseNetworkList(process.env.TRUSTED_PROXIES, {
   privateRanges: true,
 });
 const vertrauteProxys = vertrauteProxysRoh.ok ? vertrauteProxysRoh.wert : undefined;
+// Ausgenommene Netze (Firmen-NAT, VPN): zaehlen nicht fuer die Grenzen je
+// Adresse vor dem Handshake. Ungueltig: siehe oben, der Start endete schon.
+const ausnahmenRoh = parseNetworkList(process.env.RATE_LIMIT_EXEMPT_NETWORKS);
+const ausnahmen = ausnahmenRoh.ok ? ausnahmenRoh.wert : undefined;
 /** Meldet gedrosselt, wenn die Client-Adresse nicht zur Kette passt. */
 const adressMelder = adressMelderFuerLog((felder, meldung) =>
   log.warn(felder, meldung),
@@ -851,11 +855,17 @@ const server = new Server({
         adressMelder,
         vertrauteProxys,
       );
-      const versuch = await attemptConnection(
-        `collab-ip:${ip}`,
-        limits.maxAttemptsPerIp,
-        ATTEMPT_WINDOW_SEC,
-      );
+      // Ausgenommene Netze (Firmen-NAT, VPN) zaehlen weder fuer die
+      // Versuche noch fuer die offenen Sockets je Adresse; die Grenzen je
+      // Person in onAuthenticate und die Instanzgrenze gelten weiter.
+      const befreit = ip !== "unknown" && ausnahmen?.enthaelt(ip) === true;
+      const versuch = befreit
+        ? { allowed: true, firstRejection: false }
+        : await attemptConnection(
+            `collab-ip:${ip}`,
+            limits.maxAttemptsPerIp,
+            ATTEMPT_WINDOW_SEC,
+          );
       if (!versuch.allowed) {
         if (versuch.firstRejection) {
           log.warn(
@@ -874,7 +884,7 @@ const server = new Server({
       // Belegen erst nach dem letzten await: zwischen Pruefen und
       // Belegen kaeme sonst eine gleichzeitige Anfrage am selben Platz
       // vorbei.
-      const platz = sockets.tryAcquire(ip);
+      const platz = sockets.tryAcquire(befreit ? null : ip);
       if (!platz.ok && platz.grund === "instanz") {
         if (Date.now() - lastFullLogAt > 10_000) {
           lastFullLogAt = Date.now();

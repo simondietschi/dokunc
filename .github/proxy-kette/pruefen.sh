@@ -15,13 +15,17 @@
 #         (Vorgabe: psql im Dienst db)
 #   LOGS  optional: Befehl, der das Log der App ausgibt
 #         (Vorgabe: docker compose logs app)
+#   REDIS optional: Befehl, dem ein redis-cli-Befehl folgt
+#         (Vorgabe: redis-cli im Dienst redis, mit dessen Passwort)
 set -euo pipefail
 
 HIER=$(cd "$(dirname "$0")" && pwd)
 A=198.18.250.11 # Sonde A
 B=198.18.250.12 # Sonde B
+C=198.18.250.13 # in RATE_LIMIT_EXEMPT_NETWORKS
 F=198.18.250.14 # faelscht X-Forwarded-For
 D=198.18.250.15 # geht am vorgelagerten Proxy vorbei
+E=198.18.250.16 # faelscht die ausgenommene Adresse
 
 # sonde <adresse> [--direkt] <befehl> ...
 sonde() {
@@ -40,6 +44,14 @@ sql() {
     $SQL "$1"
   else
     docker compose exec -T db psql -X -U dokunc -d dokunc -v ON_ERROR_STOP=1 -At -c "$1"
+  fi
+}
+
+redis_cmd() {
+  if [ -n "${REDIS:-}" ]; then
+    $REDIS "$@"
+  else
+    docker compose exec -T redis sh -c 'REDISCLI_AUTH="$(cat /run/redis-auth/password)" redis-cli "$@"' redis-cli "$@"
   fi
 }
 
@@ -118,6 +130,19 @@ teil_a() {
 teil_b() {
   erwarte "SSO-Start A" "error error error throttled" "$(sonde "$A" sso-start 4)"
   erwarte "SSO-Start B" "error" "$(sonde "$B" sso-start 1)"
+}
+
+# Teil C: eine ausgenommene Adresse (RATE_LIMIT_EXEMPT_NETWORKS in
+# compose.yml) wird hinter dem vorgelagerten Proxy weder in der App noch
+# im Collab-Server je Adresse gebremst; eine gefaelschte ausgenommene
+# Adresse im Header nimmt niemanden aus.
+teil_c() {
+  erwarte "SSO-Start ausgenommen" "$(mal 6 error)" "$(sonde "$C" sso-start 6)"
+  erwarte "Collab ausgenommen" "$(mal 5 101)" "$(sonde "$C" collab-upgrade 5)"
+  erwarte "Faelschung der Ausnahme" "error error error throttled" "$(sonde "$E" sso-start 4 "$C")"
+  local schluessel
+  schluessel=$(redis_cmd --scan --pattern "dokunc:rl:*$C*")
+  erwarte "Keine Zaehler fuer die ausgenommene Adresse" "" "$schluessel"
 }
 
 bereit

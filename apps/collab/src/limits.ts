@@ -74,18 +74,19 @@ export type ConnectionLimits = {
  *   hoehere Grenze mit angehoben werden.
  * - 50 je Adresse: dieselbe Zahl wie je Person — ein Tab mit einer Seite
  *   ist eine Verbindung. Hinter einem Firmen-NAT teilen sich viele
- *   Menschen eine Adresse; dort muss die Grenze hoeher stehen. Hinter
- *   einem Reverse-Proxy zaehlt die Adresse aus X-Forwarded-For nur mit
- *   passendem TRUSTED_PROXY_HOPS, sonst teilen sich alle die Adresse des
- *   Proxys.
+ *   Menschen eine Adresse; solche Adressen gehoeren in
+ *   RATE_LIMIT_EXEMPT_NETWORKS, statt die Grenze fuer alle Adressen
+ *   anzuheben. Hinter einem Reverse-Proxy zaehlt die Adresse aus
+ *   X-Forwarded-For nur mit passendem TRUSTED_PROXY_HOPS, sonst teilen
+ *   sich alle die Adresse des Proxys.
  * - 50 je Person: ein Tab mit einer Seite ist eine Verbindung. Nach dem
  *   Aufwachen eines Laptops zaehlen die alten, halb toten Sockets noch
  *   bis zu Hocuspocus' Timeout mit, waehrend die Tabs schon neu
  *   verbinden; 25 offene Seiten verdoppeln sich so kurzzeitig.
- * - 300 Versuche je IP und Minute: hinter einem Firmen-NAT teilen sich
- *   viele Menschen eine Adresse, und nach einem Neustart des
- *   Collab-Servers verbinden alle Tabs gleichzeitig neu. Wer abgewiesen
- *   wird, versucht es mit wachsendem Abstand erneut.
+ * - 300 Versuche je IP und Minute: nach einem Neustart des Collab-Servers
+ *   verbinden alle Tabs einer Adresse gleichzeitig neu. Wer abgewiesen
+ *   wird, versucht es mit wachsendem Abstand erneut. Firmen-NAT und VPN:
+ *   RATE_LIMIT_EXEMPT_NETWORKS.
  * - 120 Versuche je Person und Minute: dieselbe Zahl wie die Ticket-Route
  *   (RATE_LIMITS.collabTicket). Jeder ehrliche Versuch braucht ein
  *   frisches Ticket, diese Bremse greift also erst, wenn Tickets anders
@@ -165,16 +166,20 @@ export class SocketGate {
     return this.perAddress.get(address) ?? 0;
   }
 
-  tryAcquire(address: string): Admission {
+  /**
+   * `address` null: die Adresse liegt in einem ausgenommenen Netz
+   * (RATE_LIMIT_EXEMPT_NETWORKS). Dann zaehlt nur die Instanzgrenze.
+   */
+  tryAcquire(address: string | null): Admission {
     if (this.max > 0 && this.open >= this.max) {
       return { ok: false, grund: "instanz" };
     }
-    const fromAddress = this.sizeFor(address);
-    if (this.maxPerAddress > 0 && fromAddress >= this.maxPerAddress) {
+    const fromAddress = address === null ? 0 : this.sizeFor(address);
+    if (address !== null && this.maxPerAddress > 0 && fromAddress >= this.maxPerAddress) {
       return { ok: false, grund: "adresse" };
     }
     this.open += 1;
-    this.perAddress.set(address, fromAddress + 1);
+    if (address !== null) this.perAddress.set(address, fromAddress + 1);
     let released = false;
     return {
       ok: true,
@@ -182,6 +187,7 @@ export class SocketGate {
         if (released) return;
         released = true;
         this.open -= 1;
+        if (address === null) return;
         const rest = this.sizeFor(address) - 1;
         // Leere Eintraege entfernen: sonst waechst die Tabelle mit jeder
         // Adresse, die je verbunden war.

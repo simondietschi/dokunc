@@ -115,3 +115,44 @@ describe("TRUSTED_PROXY_HOPS und TRUSTED_PROXIES in der Pruefung beim Start", ()
     ]);
   });
 });
+
+describe("RATE_LIMIT_EXEMPT_NETWORKS in der Pruefung beim Start", () => {
+  const pruefe = (env: Umgebung, dienst: "web" | "collab" = "web") =>
+    checkEnvironment(GEMEINSAME_VARIABLEN, env, dienst);
+  const von = (befunde: { variable: string; meldung: string }[]) =>
+    befunde.filter((b) => b.variable === "RATE_LIMIT_EXEMPT_NETWORKS").map((b) => b.meldung);
+
+  it("gilt fuer Web und Collab und ist ohne Wert leer", () => {
+    const v = GEMEINSAME_VARIABLEN.find((x) => x.name === "RATE_LIMIT_EXEMPT_NETWORKS");
+    expect(v?.dienste).toEqual(["web", "collab"]);
+    for (const dienst of ["web", "collab"] as const) {
+      const r = pruefe({}, dienst);
+      expect(r.ok).toBe(true);
+      expect(maskedConfig([v!], r.werte, {}).RATE_LIMIT_EXEMPT_NETWORKS).toEqual([]);
+    }
+  });
+
+  it("nimmt Komma und Leerraum und zeigt die Netze im Startlog", () => {
+    const v = GEMEINSAME_VARIABLEN.find((x) => x.name === "RATE_LIMIT_EXEMPT_NETWORKS")!;
+    const env = { RATE_LIMIT_EXEMPT_NETWORKS: "203.0.113.0/28, 2001:db8:42::/48 198.51.100.7" };
+    const r = pruefe(env, "collab");
+    expect(r.ok).toBe(true);
+    expect(maskedConfig([v], r.werte, env).RATE_LIMIT_EXEMPT_NETWORKS).toEqual([
+      "203.0.113.0/28",
+      "2001:db8:42::/48",
+      "198.51.100.7",
+    ]);
+  });
+
+  it("bricht bei einem ungueltigen Eintrag ab und warnt bei Host-Bits und Praefix 0", () => {
+    expect(von(pruefe({ RATE_LIMIT_EXEMPT_NETWORKS: "10.0.0.0/33" }).fehler)).toEqual([
+      'RATE_LIMIT_EXEMPT_NETWORKS: Eintrag 1 "10.0.0.0/33": Praefix muss zwischen 0 und 32 liegen',
+    ]);
+    const r = pruefe({ RATE_LIMIT_EXEMPT_NETWORKS: "10.1.2.3/8, 0.0.0.0/0" });
+    expect(r.ok).toBe(true);
+    expect(von(r.hinweise)).toEqual([
+      'RATE_LIMIT_EXEMPT_NETWORKS: Eintrag "10.1.2.3/8" gilt als 10.0.0.0/8',
+      'RATE_LIMIT_EXEMPT_NETWORKS: Eintrag "0.0.0.0/0" umfasst alle IPv4-Adressen',
+    ]);
+  });
+});

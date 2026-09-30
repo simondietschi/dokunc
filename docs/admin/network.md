@@ -154,8 +154,9 @@ host, and possibly clients of the published port. In particular, with
 `docker-compose.ipv6.yml` the network `edge` has no IPv6, so connections to
 the published IPv6 port are probably relayed by `docker-proxy` and then all
 carry the gateway address as well (not verified). Listing the gateway in
-`TRUSTED_PROXIES` would then let every such client choose its own address.
-Only list the gateway when nothing but your own proxy can reach the
+`TRUSTED_PROXIES` would then let every such client choose its own address,
+and listing it in `RATE_LIMIT_EXEMPT_NETWORKS` would exempt all of them
+from the per-address limits. Only list the gateway when nothing but your own proxy can reach the
 published port.
 
 ### Load balancer that forwards TCP (layer 4)
@@ -196,6 +197,52 @@ appending is fine, because the app counts from the right. `TRUSTED_PROXIES`
 is only read by the bundled Caddy; the app uses it only for the warnings
 above.
 
+## Corporate NAT and VPN
+
+Behind a corporate NAT or a VPN, many people share one address, and the
+per-address limits hit all of them at once. List such addresses in
+`RATE_LIMIT_EXEMPT_NETWORKS` instead of raising the limits for every
+address:
+
+```sh
+RATE_LIMIT_EXEMPT_NETWORKS="203.0.113.0/28, 2001:db8:42::/48"
+```
+
+- **Format:** IP addresses or CIDR ranges, separated by commas or spaces,
+  at most 256 entries. Host bits are masked (`10.1.2.3/8` counts as
+  `10.0.0.0/8`, with a startup warning), and a prefix of 0 (every address
+  of the family) also warns at startup. An invalid entry stops the start.
+- **Exempt:** addresses from the list do not count for
+  - the web app's limits per address: password sign-in, registration,
+    password reset request and submission, single sign-on start;
+  - the collaboration server's limits per address before the handshake:
+    connection attempts (`COLLAB_MAX_ATTEMPTS_PER_IP`) and open
+    connections (`COLLAB_MAX_CONNECTIONS_PER_IP`).
+- **Still applies to them:**
+  - every limit per account: sign-in attempts per account (8 per 15
+    minutes), two-factor codes, password confirmation, password reset per
+    email address (3 per hour), uploads, imports and all others;
+  - on the collaboration server: attempts and connections per person, the
+    limit of the whole instance (`COLLAB_MAX_CONNECTIONS`, 1000 by
+    default) and the 15 seconds within which a connection must sign in.
+- **Trade-off:** inside an exempt network, only the per-account limits
+  slow down somebody who tries passwords across many accounts. On the
+  collaboration server, a single computer in an exempt network can open
+  connections without signing in up to the limit of the whole instance and
+  so fill it for everybody else; each such connection is closed after 15
+  seconds. List only networks whose computers you trust like your own
+  staff's. There is no separate limit for exempt addresses.
+- **Keep the collaboration server's per-address defaults** (50
+  connections, 300 attempts per minute): raising them weakens the
+  protection for every address. If you raised
+  `COLLAB_MAX_CONNECTIONS_PER_IP` or `COLLAB_MAX_ATTEMPTS_PER_IP` for a
+  NAT, list the NAT address here and set them back.
+- The list applies to the address the app determines (see "Client
+  addresses"), so it needs a correct proxy chain. It is for **client**
+  networks; proxies belong in `TRUSTED_PROXIES`. With a wrong chain, a
+  load balancer's address in this list would exempt everybody.
+- Use the same value on every web app and collaboration server.
+
 ## Rate limit settings
 
 The web app limits sign-in, registration, password reset and single
@@ -224,3 +271,21 @@ affect them.
 - The limits apply per address as the app sees it (see "Client
   addresses"). If the address cannot be determined, all such requests
   share the counter `unknown`, and the limits hit everybody at once.
+
+## Troubleshooting
+
+- **A whole site gets "Zu viele Anläufe. Bitte kurz warten." when signing
+  in through SSO, or "Zu viele Versuche" with a password:** look at the
+  addresses in the audit log (admin area). If they are all the same public
+  address of your organisation, list it in `RATE_LIMIT_EXEMPT_NETWORKS`.
+  If they are the address of your load balancer, see "Proxy chain". If
+  there is no address at all, see "Client addresses".
+- **The editor stays at "Verbinde…" for many people after the
+  collaboration server restarted:** all tabs behind one address reconnect
+  at once. The collaboration server logs "Collab-Verbindung vor dem
+  Handshake abgewiesen" with `grund` `rate-limited` or
+  `too-many-connections` and the address in `ip`. If it is a NAT or VPN
+  address, list it in `RATE_LIMIT_EXEMPT_NETWORKS`.
+- **The audit log shows the load balancer's address:** see "Proxy chain".
+- **Log line "Client-Adresse nicht bestimmbar" or "Client-Adresse
+  vermutlich die eines Proxys":** see "Client addresses".

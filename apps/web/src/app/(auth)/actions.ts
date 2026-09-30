@@ -94,13 +94,6 @@ const DUMMY_HASH = bcrypt.hashSync(
   BCRYPT_COST,
 );
 
-/**
- * Bremse pro IP. Bewusst grosszügiger als die pro Konto: hinter einer
- * Firmen-NAT teilen sich viele Menschen eine Adresse, und die präzise
- * Bremse ist inzwischen die pro Konto. Diese hier fängt nur das breite
- * Durchprobieren vieler Adressen ab.
- */
-
 /** Session anlegen und in die App leiten (gemeinsamer Abschluss von Login/Register). */
 async function startSession(
   userId: string,
@@ -310,7 +303,11 @@ export async function loginAction(
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   // Zwei Bremsen: pro IP (ein Angreifer, viele Konten) UND pro Konto
-  // (viele IPs, ein Konto — Passwort-Raten aus einem Botnetz).
+  // (viele IPs, ein Konto — Passwort-Raten aus einem Botnetz). Die pro IP
+  // ist bewusst grosszügiger: hinter einer Firmen-NAT teilen sich viele
+  // Menschen eine Adresse, und ausgenommene Netze
+  // (RATE_LIMIT_EXEMPT_NETWORKS) zählen gar nicht. Die präzise Bremse ist
+  // die pro Konto; sie gilt auch dort.
   if (!(await rateLimitByAddress("login", RATE_LIMITS.loginIp))) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }

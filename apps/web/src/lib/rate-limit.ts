@@ -1,6 +1,6 @@
 import "server-only";
 import type { Redis } from "ioredis";
-import { clientIp } from "./client-ip";
+import { clientIp, isExemptAddress } from "./client-ip";
 import { log } from "./log";
 import type { Bremse } from "./rate-limits";
 import { sharedRedis } from "./redis";
@@ -195,6 +195,10 @@ export async function releaseLimit(key: string): Promise<void> {
  * Passwort-Reset, SSO-Start. Gibt true zurueck, wenn der Versuch erlaubt
  * ist.
  *
+ * Adressen aus RATE_LIMIT_EXEMPT_NETWORKS (Firmen-NAT, VPN) zaehlen nicht:
+ * dort teilen sich viele Menschen eine Adresse. Die Bremsen je Konto, die
+ * neben dieser stehen, gelten fuer sie weiter.
+ *
  * Ist keine vertrauenswuerdige Adresse ableitbar (kein Proxy
  * konfiguriert, Header fehlt oder passt nicht zur Kette), fallen alle
  * Anfragen in den gemeinsamen Topf `unknown`: das bremst zu streng statt
@@ -203,13 +207,16 @@ export async function releaseLimit(key: string): Promise<void> {
  * hierher, sondern zu `rateLimit` mit eigenem Schluessel.
  */
 export async function rateLimitByAddress(prefix: string, b: Bremse): Promise<boolean> {
-  return rateLimit(`${prefix}:${(await clientIp()) ?? "unknown"}`, b.versuche, b.fenster);
+  const ip = await clientIp();
+  if (ip !== null && isExemptAddress(ip)) return true;
+  return rateLimit(`${prefix}:${ip ?? "unknown"}`, b.versuche, b.fenster);
 }
 
 /**
  * Stabiler Schlüssel aus Konto und Client-Adresse zusammen (Import:
- * `import:<konto>:<adresse>`). Fuer Bremsen nur je Adresse
- * `rateLimitByAddress`.
+ * `import:<konto>:<adresse>`). Keine Ausnahme fuer
+ * RATE_LIMIT_EXEMPT_NETWORKS: das ist eine Bremse je Konto. Fuer Bremsen
+ * nur je Adresse `rateLimitByAddress`.
  *
  * Ist keine vertrauenswürdige IP ableitbar, fallen alle Anfragen des
  * Kontos in einen gemeinsamen Topf.

@@ -127,6 +127,9 @@ services:
       # Dieselbe Liste wie beim Proxy: die App prüft das Format beim Start
       # und warnt, wenn die Client-Adresse die eines dieser Proxys ist.
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
+      # Client-Netze ohne Bremsen je Adresse (Firmen-NAT, VPN), siehe
+      # .env.example.
+      RATE_LIMIT_EXEMPT_NETWORKS: ${RATE_LIMIT_EXEMPT_NETWORKS:-}
       # Bremsen je Client-Adresse und die Upload-Bremse je Konto, etwa
       # "30/5m" (leer = Vorgabe, siehe .env.example).
       RATE_LIMIT_LOGIN_PER_IP: ${RATE_LIMIT_LOGIN_PER_IP:-}
