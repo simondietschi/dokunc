@@ -14,9 +14,10 @@ import { prisma } from "@dokunc/db";
  * verlassen die App und tragen keine internen IDs.
  *
  * Aufbau: Seite A verlinkt das Ziel B (Schnappschuss "Kündigung M.
- * Muster"), eine offene Seite O, ihre eigene Unterseite C und eine Seite
- * im Papierkorb, und erwähnt eine Person. Danach wird B geschützt (frei
- * nur für MF) und in "Vertrag 2026" umbenannt, O und C werden umbenannt.
+ * Muster"), eine offene Seite O, ihre eigenen Unterseiten C und P und
+ * eine Seite im Papierkorb, und erwähnt eine Person. Danach wird B
+ * geschützt (frei nur für MF) und in "Vertrag 2026" umbenannt, P wird
+ * geschützt (ohne Freigabe) und umbenannt, O und C werden umbenannt.
  */
 
 type Nutzer = { id: string; email: string; name: string; isAdmin: boolean };
@@ -65,7 +66,7 @@ const NEU = "Vertrag 2026";
 const n = {} as Record<"owner" | "me" | "mf" | "instanzAdmin", Nutzer>;
 let spaceId: string;
 let slug: string;
-const s = {} as Record<"a" | "b" | "o" | "c" | "weg", string>;
+const s = {} as Record<"a" | "b" | "o" | "c" | "p" | "weg", string>;
 let versionId: string;
 
 function inhaltVonA() {
@@ -87,6 +88,8 @@ function inhaltVonA() {
           link(s.c, "Kind alt"),
           { type: "text", text: " und " },
           link(s.weg, "Weg alt"),
+          { type: "text", text: " und geheim " },
+          link(s.p, "Geheim alt"),
           { type: "text", text: " von " },
           { type: "mention", attrs: { userId: n.mf.id, name: "Alex" } },
         ],
@@ -139,6 +142,7 @@ beforeAll(async () => {
   s.b = await seite(SCHNAPPSCHUSS);
   s.o = await seite("Offen alt");
   s.c = await seite("Kind alt", s.a);
+  s.p = await seite("Geheim alt", s.a);
   s.weg = await seite("Weg alt");
   await prisma.page.update({
     where: { id: s.a },
@@ -157,6 +161,9 @@ beforeAll(async () => {
   await prisma.page.update({ where: { id: s.b }, data: { title: NEU } });
   await prisma.page.update({ where: { id: s.o }, data: { title: "Offen neu" } });
   await prisma.page.update({ where: { id: s.c }, data: { title: "Kind neu" } });
+  // Eine Unterseite von A, also innerhalb einer Freigabe mit Unterseiten.
+  await setPageRestricted(s.p, true, n.owner.id);
+  await prisma.page.update({ where: { id: s.p }, data: { title: "Geheim neu" } });
   await prisma.page.update({ where: { id: s.weg }, data: { deletedAt: new Date() } });
 });
 
@@ -176,7 +183,14 @@ async function als<T>(u: Nutzer | null, fn: () => Promise<T>): Promise<T> {
 
 /** Kein Schnappschuss, kein alter Titel eines anderen Ziels. */
 function ohneSchnappschuesse(text: string) {
-  for (const alt of [SCHNAPPSCHUSS, "Kündigung", "Offen alt", "Kind alt", "Weg alt"]) {
+  for (const alt of [
+    SCHNAPPSCHUSS,
+    "Kündigung",
+    "Offen alt",
+    "Kind alt",
+    "Weg alt",
+    "Geheim alt",
+  ]) {
     expect(text).not.toContain(alt);
   }
 }
@@ -349,6 +363,18 @@ describe("Freigabe", () => {
     expect(html).not.toContain("Offen neu");
     expect(html).not.toContain(NEU);
     expect(html).not.toContain("/p/");
+  });
+
+  it("mit Unterseiten: eine geschützte Unterseite bleibt ohne Titel", async () => {
+    // P hängt unter der freigegebenen Seite, ist aber geschützt: der
+    // Link öffnet sie nicht, also nennt er auch ihren Titel nicht.
+    const { html, seite } = await geteilt(true);
+    for (const text of [html, seite]) {
+      ohneSchnappschuesse(text);
+      expect(text).not.toContain("Geheim neu");
+      expect(text).toMatch(/geheim <span[^>]*>Verknüpfte Seite<\/span>/);
+      expect(text).not.toContain(s.p);
+    }
   });
 });
 
