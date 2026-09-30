@@ -221,6 +221,34 @@ test("Ein anderes Konto im selben Browser bekommt nichts aus einem offenen Tab",
   await expect(page.getByText("Live", { exact: true })).toHaveCount(0);
 });
 
+// Ein offener Tab merkt das Ende der Sitzung, ohne dass jemand eine Seite
+// laedt: beim naechsten Verbinden meldet die Ticket-Route "keine Sitzung".
+test("Ohne Sitzung verwirft ein offener Editor alle Kopien im Browser", async ({ page }) => {
+  const a = await neuesMitglied("Offen beim Sitzungsende");
+  const p1 = await seite(`Sitzungsende offen ${ZEIT}`, "Offene Seite");
+  const p2 = await seite(`Sitzungsende vorher ${ZEIT}`, "Vorher geoeffnet");
+  await login(page, a);
+  await oeffne(page, p2);
+  await kopieVon(page, a.id, p2);
+  await oeffne(page, p1);
+  await kopieVon(page, a.id, p1);
+
+  await mitDatenbank((db) =>
+    db.query(`UPDATE "Session" SET "revokedAt" = now() WHERE "userId" = $1`, [a.id]),
+  );
+  await trenne(a.id);
+  await expect(page.getByText("Kein Zugriff", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  });
+  await expect
+    .poll(async () => (await idbNames(page)).filter((n) => n.startsWith("dokunc:")), {
+      timeout: 15_000,
+    })
+    .toEqual([]);
+  // Ohne Navigation: der Tab steht noch auf der Seite.
+  expect(new URL(page.url()).pathname).toBe(`/s/${space.slug}/p/${p1}`);
+});
+
 /** Registereintrag einer Kopie so setzen, als waere sie ewig ungenutzt. */
 async function alsUralt(page: Page, name: string) {
   await page.evaluate((n) => localStorage.setItem(`dokunc:lokale-kopie:${n}`, "0"), name);
