@@ -195,6 +195,38 @@ export async function filterByPageAccess<T extends { id: string }>(
 }
 
 /**
+ * Freigaben einer Schutzwurzel auf eine andere Seite kopieren.
+ *
+ * Für Seiten, die den Schutz einer Quelle übernehmen (Kopie, Seite aus
+ * geschützter Vorlage): die neue Seite wird selbst Schutzwurzel und
+ * bekommt die Freigaben, die die Quelle in diesem Moment hat. Eine
+ * Kopie, kein Verweis: spätere Änderungen an den Freigaben der Quelle
+ * wirken hier nicht mehr, denn für jede Seite zählt nur die nächste
+ * geschützte Seite über ihr.
+ *
+ * Im Client derselben Transaktion, die die Seite anlegt: dazwischen
+ * stünde sie geschützt da und ließe niemanden hinein (siehe
+ * `setPageRestricted`). Rückgabe: Zahl der übernommenen Freigaben.
+ */
+export async function copyPageGrants(
+  tx: Pick<typeof prisma, "pageGrant">,
+  pageId: string,
+  fromRootId: string,
+): Promise<number> {
+  const grants = await tx.pageGrant.findMany({
+    where: { pageId: fromRootId },
+    select: { userId: true, groupId: true },
+  });
+  if (grants.length === 0) return 0;
+  // Prisma statt Roh-SQL: die IDs der Freigaben erzeugt Prisma (cuid).
+  const { count } = await tx.pageGrant.createMany({
+    data: grants.map((g) => ({ pageId, userId: g.userId, groupId: g.groupId })),
+    skipDuplicates: true,
+  });
+  return count;
+}
+
+/**
  * Schutz einer Seite setzen oder aufheben.
  *
  * Wer schützt, wird selbst eingetragen: sonst verschwindet die Seite

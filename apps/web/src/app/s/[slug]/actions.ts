@@ -24,7 +24,6 @@ import {
   restorePageTree,
   scopeOf,
   scopeWhere,
-  selectLivePage,
   subtreeHasHiddenPages,
   trashPageTree,
 } from "@/lib/page-guards";
@@ -45,17 +44,12 @@ export async function createPageAction(form: FormData) {
     strOrNull(form, "parentId"),
   );
 
-  // Vorlage nur aus demselben Space: die ID kommt aus dem Formular.
-  const templateId = strOrNull(form, "templateId");
-  const template = templateId
-    ? await selectLivePage(
-        scopeOf(access),
-        templateId,
-        { title: true, icon: true, content: true, textContent: true },
-        { isTemplate: true },
-      )
-    : null;
-
+  // Immer eine leere Seite. Seiten aus einer Vorlage legt
+  // createFromTemplateAction an, samt dem Schutz der Vorlage; ein
+  // zweiter Weg hier (früher das Feld templateId, das die Oberfläche nie
+  // gesetzt hat) trug den Inhalt einer geschützten Vorlage offen in den
+  // Space.
+  //
   // Anlegen und Nachziehen der Zugriffswurzel in EINEM Zug. Getrennt
   // ausgeführt bleibt bei einem Abbruch dazwischen eine Seite unter
   // einer geschützten Elternseite mit accessRootId null stehen, und
@@ -71,10 +65,7 @@ export async function createPageAction(form: FormData) {
       data: {
         spaceId: space.id,
         parentId,
-        title: template?.title ?? DEFAULT_PAGE_TITLE,
-        icon: template?.icon ?? null,
-        content: template?.content ?? undefined,
-        textContent: template?.textContent ?? "",
+        title: DEFAULT_PAGE_TITLE,
         position,
       },
       select: { id: true },

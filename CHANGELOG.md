@@ -40,6 +40,19 @@ differently on an existing installation, and what to do about it.
   Docker Compose passes them to the container, and
   `NEXT_PUBLIC_COLLAB_URL` to the build. Otherwise nothing to do.
 
+- **Page protection on copies:** copies of protected pages, including
+  protected sub-pages in a copied subtree, and pages created from a
+  protected template are now protected themselves, with a copy of the
+  access list at that moment. Each such copy is recorded as
+  `page.protection_carried` in the audit log; SIEM or log filters that
+  list audit events explicitly should add it. Pages created before this
+  update keep their current visibility: review top-level pages whose title
+  ends in "(Kopie)" and pages created from protected templates. To check
+  that every page follows the protection of its parent page, run
+  `docker compose exec -T db psql -U dokunc -d dokunc -c 'SELECT c.id, c.title FROM "Page" c LEFT JOIN "Page" p ON p.id = c."parentId" WHERE c."accessRootId" IS DISTINCT FROM CASE WHEN c."isRestricted" THEN c.id ELSE p."accessRootId" END'`.
+  It should list no pages; a space admin fixes a listed page by moving it
+  once in the page tree.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -50,6 +63,9 @@ differently on an existing installation, and what to do about it.
   (GHSA-6vj9-mwq6-2f5v), a stack overflow on deeply nested recipient
   lists (GHSA-8vvx-rff5-p5rq) and a malformed envelope recipient built
   from a quoted local part with a comment (GHSA-g57g-f23g-4646).
+- Duplicating a protected page, or a page with protected sub-pages, no
+  longer creates copies that the whole space can read. Pages created from
+  a protected template keep the template's protection.
 
 ### Added
 

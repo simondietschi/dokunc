@@ -12,7 +12,8 @@ import {
   placeCopyAfter,
 } from "@/lib/page-copy";
 import { extractText } from "@/lib/page-text";
-import { refreshAccessRoots } from "@/lib/page-access";
+import { audit } from "@/lib/audit";
+import { copyPageGrants, refreshAccessRoots } from "@/lib/page-access";
 import {
   findLivePage,
   livePageWhere,
@@ -37,9 +38,16 @@ import { lockSiblingOrder, nextSiblingPosition } from "@/lib/page-position";
  * ausformuliert: eine eigene Fassung dieser Bedingung war genau die
  * Stelle, an der der Sichtbarkeitsteil gefehlt hat.
  *
- * Und jede neu angelegte Seite mit Elternteil zieht `refreshAccessRoots`
- * nach: ohne das steht die Kopie mit accessRootId null unter einer
- * geschützten Seite und ist damit für den ganzen Space sichtbar.
+ * Und jede neu angelegte Seite zieht `refreshAccessRoots` nach: ohne das
+ * steht die Kopie mit accessRootId null unter einer geschützten Seite und
+ * ist damit für den ganzen Space sichtbar.
+ *
+ * Kopie und Seite aus Vorlage übernehmen den Schutz ihrer Quelle: die
+ * Kopie einer geschützten Seite ist selbst geschützt, mit einer Kopie
+ * ihrer Freigaben (`copyPageGrants`), auch für geschützte Unterseiten im
+ * kopierten Ast; eine Seite aus einer geschützten Vorlage ebenso. Sonst
+ * läge der Inhalt nach einem Klick offen im Space. Jede Übernahme steht
+ * im Audit (`page.protection_carried`).
  */
 
 /** Prisma-taugliches JSON aus einem (bereinigten) Inhalt. */
@@ -115,14 +123,16 @@ export async function createFromTemplateAction(form: FormData) {
 
   let title: string;
   let content: unknown;
+  let sourceId: string | null = null;
   if (templateId) {
     const template = await selectLivePage(
       scope,
       templateId,
-      { title: true, content: true },
+      { id: true, title: true, content: true },
       { isTemplate: true },
     );
     if (!template) throw new Error("Vorlage nicht gefunden");
+    sourceId = template.id;
     title = template.title;
     content = stripCommentMarks(template.content);
   } else {
@@ -138,7 +148,18 @@ export async function createFromTemplateAction(form: FormData) {
   // getrennt nachgezogene Wurzel liesse bei einem Abbruch dazwischen
   // eine Seite unter geschuetztem Elternteil mit accessRootId null
   // stehen — was visiblePageWhere als offen wertet.
-  const page = await prisma.$transaction(async (tx) => {
+  const { page, carried } = await prisma.$transaction(async (tx) => {
+    // Den Schutz der Vorlage im selben Zug lesen, in dem die Seite
+    // entsteht: vorher gelesen, bliebe eine Vorlage, die inzwischen
+    // geschützt wurde, als offene Seite im Space stehen.
+    const fromRootId = sourceId
+      ? ((
+          await tx.page.findUnique({
+            where: { id: sourceId },
+            select: { accessRootId: true },
+          })
+        )?.accessRootId ?? null)
+      : null;
     const position = await nextSiblingPosition(tx, space.id, parentId);
     const created = await tx.page.create({
       data: {
@@ -149,13 +170,39 @@ export async function createFromTemplateAction(form: FormData) {
         textContent: extractText(content),
         position,
         lastEditedById: user.id,
+        // Aus einer geschützten Vorlage: eigene Wurzel mit deren
+        // Freigaben, auch unter einer geschützten Elternseite. Es zählt
+        // die nächste Wurzel, und der Inhalt bleibt bei denen, die ihn
+        // sehen durften.
+        isRestricted: fromRootId !== null,
       },
       select: { id: true },
     });
-    // Unter einer geschützten Seite ist auch die neue geschützt.
-    if (parentId) await refreshAccessRoots(created.id, tx);
-    return created;
+    const grants = fromRootId
+      ? await copyPageGrants(tx, created.id, fromRootId)
+      : 0;
+    // Immer nachziehen: unter einer geschützten Seite ist auch die neue
+    // geschützt, und eine geschützte ist ihre eigene Wurzel.
+    await refreshAccessRoots(created.id, tx);
+    return {
+      page: created,
+      carried: fromRootId ? { fromRootId, grants } : null,
+    };
   });
+  if (carried && sourceId) {
+    await audit({
+      action: "page.protection_carried",
+      actorId: user.id,
+      spaceId: space.id,
+      targetId: page.id,
+      metadata: {
+        via: "template",
+        fromRootId: carried.fromRootId,
+        grants: carried.grants,
+        sourcePageId: sourceId,
+      },
+    });
+  }
   revalidatePath(`/s/${space.slug}`, "layout");
   redirect(`/s/${space.slug}/p/${page.id}`);
 }
@@ -247,8 +294,22 @@ export async function duplicatePageAction(form: FormData) {
   });
   const contentById = new Map(contents.map((c) => [c.id, c.content]));
 
-  const rootId = await prisma.$transaction(
+  const { rootId, carried } = await prisma.$transaction(
     async (tx) => {
+      // Welche Quellen selbst geschützt sind, erst hier lesen, im selben
+      // Zug wie das Anlegen: eine Seite, die zwischen der Planung oben
+      // und jetzt geschützt wurde, soll nicht als offene Kopie entstehen.
+      const restricted = new Set(
+        (
+          await tx.page.findMany({
+            where: {
+              id: { in: steps.map((s) => s.sourceId) },
+              isRestricted: true,
+            },
+            select: { id: true },
+          })
+        ).map((p) => p.id),
+      );
       // Geschwister in Anzeige-Reihenfolge kompakt nummerieren und die
       // Kopie direkt hinter dem Original einreihen — robust auch bei
       // gleichen Positionen (Altbestand) und Lücken.
@@ -276,6 +337,8 @@ export async function duplicatePageAction(form: FormData) {
       }
 
       const newIds = new Map<string, string>();
+      const carried: { copyId: string; sourceId: string; grants: number }[] =
+        [];
       for (const step of steps) {
         const isRoot = step.parentSourceId === null;
         const content = stripCommentMarks(contentById.get(step.sourceId));
@@ -292,22 +355,50 @@ export async function duplicatePageAction(form: FormData) {
             position: isRoot ? copyPosition : step.position,
             isTemplate: original.isTemplate,
             lastEditedById: user.id,
+            // Die Kopie einer Schutzwurzel ist selbst Schutzwurzel, mit
+            // den Freigaben ihrer Quelle — auch eine verschachtelte im
+            // kopierten Ast. Ohne das erbte sie die äussere Wurzel, und
+            // wer dort freigegeben ist, läse ihren Inhalt mit.
+            isRestricted: restricted.has(step.sourceId),
           },
           select: { id: true },
         });
         newIds.set(step.sourceId, created.id);
+        if (restricted.has(step.sourceId)) {
+          carried.push({
+            copyId: created.id,
+            sourceId: step.sourceId,
+            grants: await copyPageGrants(tx, created.id, step.sourceId),
+          });
+        }
       }
       const root = newIds.get(original.id)!;
-      // Die Kopie landet neben dem Original, kann also unter derselben
-      // geschützten Seite hängen. Im selben Zug nachziehen: draussen
-      // bliebe bei einem Fehler die Kopie stehen und wäre über
-      // accessRootId null für den ganzen Space sichtbar.
-      if (original.parentId) await refreshAccessRoots(root, tx);
-      return root;
+      // Immer nachziehen, im selben Zug: die Kopie landet neben dem
+      // Original, kann also unter derselben geschützten Seite hängen, und
+      // kopierte Schutzwurzeln werden erst hier ihre eigene Wurzel. Auch
+      // auf oberster Ebene: sonst bliebe die Kopie einer geschützten
+      // Seite mit accessRootId null stehen, und die gilt als offen.
+      await refreshAccessRoots(root, tx);
+      return { rootId: root, carried };
     },
     // Grosse Unterbäume: mehr Zeit als die 5 s Standard-Timeout.
     { timeout: 30_000 },
   );
+
+  for (const c of carried) {
+    await audit({
+      action: "page.protection_carried",
+      actorId: user.id,
+      spaceId: space.id,
+      targetId: c.copyId,
+      metadata: {
+        via: "copy",
+        fromRootId: c.sourceId,
+        grants: c.grants,
+        sourcePageId: c.sourceId,
+      },
+    });
+  }
 
   revalidatePath(`/s/${space.slug}`, "layout");
   redirect(`/s/${space.slug}/p/${rootId}`);
