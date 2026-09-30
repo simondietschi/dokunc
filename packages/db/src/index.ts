@@ -6,6 +6,18 @@ const globalForPrisma = globalThis as unknown as {
 };
 
 /**
+ * Ein Client für eine bestimmte Datenbank, eingestellt wie der gemeinsame
+ * Client. Für Tests, die eine eigene Datenbank brauchen (etwa eine leere
+ * für die Ersteinrichtung).
+ */
+export function createPrismaClient(url: string): PrismaClient {
+  return new PrismaClient({
+    adapter: new PrismaPg({ connectionString: url }),
+    log: process.env.DEBUG_DB ? ["query", "error", "warn"] : ["error"],
+  });
+}
+
+/**
  * Lazy-Initialisierung: Der Client wird erst beim ersten Zugriff gebaut,
  * NICHT beim Import. Sonst bricht jeder Prozess, der .env nach dem
  * Import lädt (ESM hoisted Imports vor den Modul-Body).
@@ -17,10 +29,7 @@ function createClient(): PrismaClient {
       "DATABASE_URL ist nicht gesetzt. .env laden BEVOR @dokunc/db verwendet wird.",
     );
   }
-  return new PrismaClient({
-    adapter: new PrismaPg({ connectionString: url }),
-    log: process.env.DEBUG_DB ? ["query", "error", "warn"] : ["error"],
-  });
+  return createPrismaClient(url);
 }
 
 function getClient(): PrismaClient {

@@ -4,6 +4,8 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@dokunc/db";
 import { audit } from "./audit";
 import { decideRegistration } from "./registration";
+import { createFirstAdmin } from "./first-admin";
+import { checkSetupFingerprint, setupStatus } from "./setup-token";
 import { BCRYPT_COST } from "./password-policy";
 import { ssoUserName } from "./user-name";
 import type { OidcClaims } from "./oidc";
@@ -21,6 +23,13 @@ export type OidcOptions = {
   allowSignup: boolean;
   /** Darf eine bestaetigte Adresse ein bestehendes Konto verknuepfen? */
   autoLinkByEmail: boolean;
+  /**
+   * Fingerabdruck des Einrichtungs-Tokens aus dem Fluss (lib/oidc-state),
+   * fuer das erste Konto der Instanz.
+   */
+  setupProof?: string | null;
+  /** Host der Anfrage: ohne Token geht das erste Konto nur auf diesem Rechner. */
+  host?: string | null;
 };
 
 export type Resolved =
@@ -133,22 +142,53 @@ export async function resolveOidcUser(
 
   /**
    * Neues Konto: dieselbe Zugangsregel wie beim Passwortweg, aus
-   * derselben Funktion.
+   * derselben Funktion (lib/registration).
    *
-   * `decideRegistration` haelt fest, dass die allererste Person immer
-   * darf und Instanz-Admin wird und danach eine ausdrueckliche Erlaubnis
-   * noetig ist — dort die Einladung, hier `OIDC_ALLOW_SIGNUP`. Ein
-   * zweites Mal ausformuliert wuerde die Regel beim naechsten Mal nur
-   * auf einem der beiden Wege geaendert, und die Anmeldewege legten
-   * unterschiedlich berechtigte erste Konten an.
+   * Solange es gar kein Konto gibt (Ersteinrichtung), wird das erste
+   * Instanz-Admin, aber nur mit dem Fingerabdruck des Einrichtungs-Tokens
+   * aus dem Fluss (die Anmeldeseite hat das Token vor dem Sprung zum
+   * Anbieter geprüft), ausser APP_URL und Host zeigen auf diesen Rechner.
+   * `OIDC_ALLOW_SIGNUP` spielt dafür keine Rolle. Eine bestätigte Adresse
+   * braucht auch das erste Konto; früher wurde die allererste Person ohne
+   * sie Admin. Angelegt wird unter der Sperre der Ersteinrichtung; war
+   * jemand schneller, gilt der gewöhnliche Weg.
    */
-  const isFirstUser = (await prisma.user.count()) === 0;
+  const status = await setupStatus(options.host ?? null);
+  if (status.offen) {
+    const setupTokenOk =
+      !status.tokenNoetig ||
+      (await checkSetupFingerprint(options.setupProof ?? null));
+    const erste = decideRegistration({
+      isFirstUser: true,
+      hasValidInvite: allowSignup,
+      setupTokenOk,
+    });
+    if (!erste.allowed) return { reason: "setup_token" };
+    if (!claims.emailVerified) return { reason: "unverified" };
+    const erstes = await createFirstAdmin(
+      {
+        email: claims.email,
+        name: ssoUserName(claims.name, claims.email),
+        passwordHash: await zufallsHash(),
+        oidcSubject: claims.subject,
+        oidcIssuer: issuer,
+      },
+      {
+        via: "sso",
+        tokenNoetig: status.tokenNoetig,
+        verifiedBy: claims.verifiedBy ?? null,
+      },
+    );
+    if (erstes) return { user: erstes };
+  }
+
   const decision = decideRegistration({
-    isFirstUser,
+    isFirstUser: false,
     hasValidInvite: allowSignup,
+    setupTokenOk: true,
   });
   if (!decision.allowed) return { reason: "no_account" };
-  if (!claims.emailVerified && !isFirstUser) return { reason: "unverified" };
+  if (!claims.emailVerified) return { reason: "unverified" };
 
   const created = await prisma.user.create({
     data: {
@@ -157,16 +197,7 @@ export async function resolveOidcUser(
       // der Claim kommt ohne Grenze, und ein Name ausserhalb der Regel
       // sperrte spaeter das Profilformular.
       name: ssoUserName(claims.name, claims.email),
-      // Kein nutzbares Passwort: die Anmeldung läuft über den Anbieter,
-      // und für Konten mit SSO-Bindung gibt es weder Passwortanmeldung
-      // noch Reset (lib/sso-policy).
-      // Kostenfaktor trotzdem aus lib/password-policy und nicht nackt:
-      // sonst trüge ausgerechnet dieser Hash dauerhaft die alte Zahl in
-      // sich, falls BCRYPT_COST einmal angehoben wird.
-      passwordHash: await bcrypt.hash(
-        randomBytes(32).toString("hex"),
-        BCRYPT_COST,
-      ),
+      passwordHash: await zufallsHash(),
       isAdmin: decision.isAdmin,
       oidcSubject: claims.subject,
       oidcIssuer: issuer,
@@ -184,4 +215,15 @@ export async function resolveOidcUser(
     },
   });
   return { user: created };
+}
+
+/**
+ * Kein nutzbares Passwort: die Anmeldung läuft über den Anbieter, und
+ * für Konten mit SSO-Bindung gibt es weder Passwortanmeldung noch Reset
+ * (lib/sso-policy). Kostenfaktor trotzdem aus lib/password-policy und
+ * nicht nackt: sonst trüge ausgerechnet dieser Hash dauerhaft die alte
+ * Zahl in sich, falls BCRYPT_COST einmal angehoben wird.
+ */
+function zufallsHash(): Promise<string> {
+  return bcrypt.hash(randomBytes(32).toString("hex"), BCRYPT_COST);
 }

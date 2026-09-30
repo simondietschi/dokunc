@@ -10,6 +10,7 @@ import {
   parseTrustedDomains,
   type SubjectClaim,
 } from "@/lib/oidc-claims";
+import { parseSetupTokenFile } from "@/lib/setup-token";
 import { parseSsoEnforcement, type SsoEnforcement } from "@/lib/sso-policy";
 
 /**
@@ -85,6 +86,16 @@ export const NUR_WEB_VARIABLEN: readonly Variable[] = [
     beschreibung:
       "Email domains whose addresses count as verified when the identity provider sends neither `email_verified` nor `xms_edov`, separated by commas or spaces (at most 100). List only domains your organisation controls, never public mail domains.",
     parse: (roh) => parseTrustedDomains(roh),
+  }),
+  defineVariable<string>({
+    name: "SETUP_TOKEN_FILE",
+    dienste: ["web"],
+    beschreibung:
+      "File that holds the one-time setup token for the first account (absolute path). Only needed outside the Docker image, whose default is on the app_data volume.",
+    vorgabe: "/app/data/setup_token",
+    // Die Vorgabe passt zum Image; Compose reicht den Wert nicht durch.
+    inCompose: false,
+    parse: (roh) => parseSetupTokenFile(roh),
   }),
   defineVariable<SsoEnforcement>({
     name: "SSO_ENFORCEMENT",

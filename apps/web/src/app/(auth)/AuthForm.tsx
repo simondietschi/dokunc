@@ -68,19 +68,95 @@ const SSO_ERRORS: Record<string, string> = {
   no_account:
     "Für diese Person gibt es hier kein Konto. Diese Instanz legt " +
     "keine Konten über SSO an — bitte um eine Einladung bitten.",
+  setup_token:
+    "Für das erste Konto braucht es das Einrichtungs-Token. Gib es auf " +
+    "der Anmeldeseite ein und starte die Anmeldung neu.",
 };
+
+/** Zustand der Ersteinrichtung, wie ihn die Seite liefert (lib/setup-token). */
+export type Ersteinrichtung = { tokenNoetig: boolean; tokenDatei: string };
+
+/** Woher das Einrichtungs-Token kommt. */
+function TokenHilfe({ datei }: { datei: string }) {
+  return (
+    <p className="mt-1.5 text-[12.5px] leading-relaxed text-muted">
+      Das Einrichtungs-Token schützt die Ersteinrichtung vor Fremden. Es
+      liegt auf dem Server in <code>{datei}</code> und stand beim ersten
+      Start einmal im Server-Log. Mit Docker:{" "}
+      <code>docker compose exec app cat {datei}</code>
+    </p>
+  );
+}
+
+function TokenFeld({ datei }: { datei: string }) {
+  return (
+    <div>
+      <Field label="Einrichtungs-Token">
+        <Input name="setup_token" type="text" autoComplete="off" required />
+      </Field>
+      <TokenHilfe datei={datei} />
+    </div>
+  );
+}
+
+/**
+ * Erstes Konto über SSO, wenn es das Einrichtungs-Token braucht: das
+ * Token geht an registerAction, die es prüft, an den Fluss bindet und
+ * zum Anbieter weiterleitet.
+ */
+function ErstesKontoUeberSso({
+  sso,
+  next,
+  datei,
+}: {
+  sso: string;
+  next?: string;
+  datei: string;
+}) {
+  const [state, formAction, pending] = useActionState<ActionState, FormData>(
+    registerAction,
+    undefined,
+  );
+  return (
+    <form action={formAction} className="space-y-3">
+      <input type="hidden" name="via" value="sso" />
+      {next && <input type="hidden" name="next" value={next} />}
+      <TokenFeld datei={datei} />
+      {state?.error && (
+        <p className="dk-shake rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[13px] text-danger">
+          {state.error}
+        </p>
+      )}
+      <button
+        type="submit"
+        disabled={pending}
+        className="group inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-5 text-[15px] font-medium text-ink transition-colors hover:bg-subtle disabled:opacity-60"
+      >
+        {pending ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <KeyRound className="h-4 w-4 text-muted" />
+        )}
+        Erstes Konto über {sso} anlegen
+      </button>
+    </form>
+  );
+}
 
 export function AuthForm({
   mode,
   next,
   sso,
   ssoError,
+  ersteinrichtung,
 }: {
   mode: "login" | "register";
   next?: string;
   /** Beschriftung der SSO-Schaltfläche, null = nicht eingerichtet. */
   sso?: string | null;
   ssoError?: string;
+  /** Gesetzt, solange es noch kein Konto gibt. */
+  ersteinrichtung?: Ersteinrichtung | null;
 }) {
   const action = mode === "login" ? loginAction : registerAction;
   const [state, formAction, pending] = useActionState<ActionState, FormData>(
@@ -111,9 +187,29 @@ export function AuthForm({
         <p className="mt-1.5 text-sm text-muted">
           {isLogin
             ? "Melde dich an, um weiterzuschreiben."
-            : "Nur per Einladung — das erste Konto wird Admin."}
+            : ersteinrichtung
+              ? "Ersteinrichtung: Dieses Konto wird Instanz-Admin."
+              : "Nur per Einladung."}
         </p>
       </div>
+
+      {isLogin && ersteinrichtung && (
+        <div
+          style={stagger(1)}
+          className="mt-6 rounded-lg border border-accent/30 bg-accent-soft px-3 py-2.5 text-[13px] text-ink"
+        >
+          <p>
+            Ersteinrichtung: Auf dieser Instanz gibt es noch kein Konto. Das
+            erste Konto wird Instanz-Admin.
+          </p>
+          <Link
+            href="/register"
+            className="mt-1 inline-block font-medium text-accent hover:underline"
+          >
+            Konto mit E-Mail anlegen
+          </Link>
+        </div>
+      )}
 
       {/* Die Meldung steht ausserhalb der Schaltfläche: schlägt die
           Anmeldung fehl, weil gar kein Anbieter eingerichtet ist, gibt
@@ -129,15 +225,23 @@ export function AuthForm({
 
       {sso && isLogin && (
         <div className="mt-6" style={stagger(1)}>
-          <a
-            href={`/api/auth/oidc/start${
-              next ? `?next=${encodeURIComponent(next)}` : ""
-            }`}
-            className="group inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-5 text-[15px] font-medium text-ink transition-colors hover:bg-subtle"
-          >
-            <KeyRound className="h-4 w-4 text-muted" />
-            Weiter mit {sso}
-          </a>
+          {ersteinrichtung?.tokenNoetig ? (
+            <ErstesKontoUeberSso
+              sso={sso}
+              next={next}
+              datei={ersteinrichtung.tokenDatei}
+            />
+          ) : (
+            <a
+              href={`/api/auth/oidc/start${
+                next ? `?next=${encodeURIComponent(next)}` : ""
+              }`}
+              className="group inline-flex h-11 w-full items-center justify-center gap-2 rounded-lg border border-line-strong bg-surface px-5 text-[15px] font-medium text-ink transition-colors hover:bg-subtle"
+            >
+              <KeyRound className="h-4 w-4 text-muted" />
+              Weiter mit {sso}
+            </a>
+          )}
           <div className="mt-5 flex items-center gap-3 text-[12.5px] text-faint">
             <span className="h-px flex-1 bg-line" />
             oder mit E-Mail
@@ -192,6 +296,12 @@ export function AuthForm({
             autoComplete={isLogin ? "current-password" : "new-password"}
           />
         </div>
+
+        {!isLogin && ersteinrichtung?.tokenNoetig && (
+          <div style={stagger(3)}>
+            <TokenFeld datei={ersteinrichtung.tokenDatei} />
+          </div>
+        )}
 
         {isLogin && (
           <label

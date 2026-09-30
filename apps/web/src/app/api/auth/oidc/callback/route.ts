@@ -88,6 +88,11 @@ export async function GET(req: Request) {
     allowSignup: config.allowSignup,
     issuer: config.issuer,
     autoLinkByEmail,
+    // Für das erste Konto der Instanz: das Einrichtungs-Token, das die
+    // Anmeldeseite vor dem Sprung geprüft und an diesen state gebunden
+    // hat, und der Host dieses Rücksprungs.
+    setupProof: flow.setup ?? null,
+    host: req.headers.get("host"),
   });
   if ("reason" in outcome) {
     await audit({

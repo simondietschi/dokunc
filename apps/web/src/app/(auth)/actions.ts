@@ -1,5 +1,6 @@
 "use server";
 
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
@@ -27,6 +28,14 @@ import { verifyTotpStep } from "@/lib/totp";
 import { claimTotpStep, consumeRecoveryCode } from "@/lib/totp-store";
 import { RATE_LIMITS } from "@/lib/rate-limits";
 import { passwordBlockedBySso } from "@/lib/sso-policy";
+import { oidcConfig } from "@/lib/oidc";
+import { beginOidcFlow } from "@/lib/oidc-flow";
+import { createFirstAdmin } from "@/lib/first-admin";
+import {
+  checkSetupToken,
+  setupFingerprint,
+  setupStatus,
+} from "@/lib/setup-token";
 import { userNameSchema } from "@/lib/user-name";
 
 const registerSchema = z.object({
@@ -103,10 +112,35 @@ async function startSession(
   redirect(safeNext(next));
 }
 
+const NUR_MIT_EINLADUNG =
+  "Registrierung ist nur über einen gültigen Einladungslink möglich. " +
+  "Öffne den Einladungslink, den du per E-Mail oder direkt bekommen hast.";
+
+/** Antwort, wenn das Einrichtungs-Token fehlt oder nicht stimmt. */
+function einrichtungsTokenFehler(status: {
+  tokenBereit: boolean;
+  tokenDatei: string;
+}): string {
+  return status.tokenBereit
+    ? `Das Einrichtungs-Token stimmt nicht. Du findest es auf dem Server in ${status.tokenDatei}.`
+    : "Die Ersteinrichtung ist gesperrt, weil das Einrichtungs-Token nicht " +
+        "angelegt werden konnte. Die Ursache steht im Server-Log.";
+}
+
+async function registerBremse(): Promise<boolean> {
+  return rateLimit(
+    await clientKey("register"),
+    RATE_LIMITS.register.versuche,
+    RATE_LIMITS.register.fenster,
+  );
+}
+
 export async function registerAction(
   _prev: ActionState,
   formData: FormData,
 ): Promise<ActionState> {
+  if (formData.get("via") === "sso") return ersteinrichtungUeberSso(formData);
+
   const parsed = registerSchema.safeParse({
     name: formData.get("name"),
     email: formData.get("email"),
@@ -116,19 +150,49 @@ export async function registerAction(
   const { name, password } = parsed.data;
   const email = normalizeEmail(parsed.data.email);
 
-  if (
-    !(await rateLimit(
-      await clientKey("register"),
-      RATE_LIMITS.register.versuche,
-      RATE_LIMITS.register.fenster,
-    ))
-  ) {
+  if (!(await registerBremse())) {
     return { error: "Zu viele Versuche. Bitte später erneut." };
   }
 
-  const exists = !!(await prisma.user.findUnique({ where: { email } }));
+  /**
+   * Ersteinrichtung: noch kein Konto. Das erste wird Instanz-Admin, aber
+   * nur mit dem Einrichtungs-Token (lib/setup-token), ausser APP_URL und
+   * der Host dieser Anfrage zeigen auf diesen Rechner. Angelegt wird
+   * unter der Sperre der Ersteinrichtung (lib/first-admin), damit zwei
+   * gleichzeitige erste Registrierungen nicht beide Admin werden.
+   */
+  const status = await setupStatus((await headers()).get("host"));
+  if (status.offen) {
+    const setupTokenOk =
+      !status.tokenNoetig ||
+      (await checkSetupToken(formData.get("setup_token")));
+    const decision = decideRegistration({
+      isFirstUser: true,
+      hasValidInvite: false,
+      setupTokenOk,
+    });
+    if (!decision.allowed) {
+      await audit({
+        action: "auth.login_failed",
+        metadata: { reason: "setup_token", via: "register" },
+      });
+      return { error: einrichtungsTokenFehler(status) };
+    }
+    const erstes = await createFirstAdmin(
+      { name, email, passwordHash: await bcrypt.hash(password, BCRYPT_COST) },
+      { via: "password", tokenNoetig: status.tokenNoetig },
+    );
+    if (!erstes) {
+      return {
+        error:
+          "Die Ersteinrichtung ist schon abgeschlossen. Melde dich an oder " +
+          "lass dich einladen.",
+      };
+    }
+    return startSession(erstes.id, erstes.tokenVersion, formData.get("next"));
+  }
 
-  const isFirstUser = (await prisma.user.count()) === 0;
+  const exists = !!(await prisma.user.findUnique({ where: { email } }));
 
   /**
    * Der Einladungslink selbst ist der Nachweis, nicht die E-Mail-Adresse.
@@ -137,20 +201,19 @@ export async function registerAction(
    * dauerhaft aussperren.
    */
   const invite = parseInviteFromNext(formData.get("next"));
-  const invitation =
-    !isFirstUser && invite
-      ? await prisma.spaceInvitation.findUnique({
-          where: { id: invite.invitationId },
-          select: {
-            id: true,
-            email: true,
-            tokenHash: true,
-            expiresAt: true,
-            acceptedAt: true,
-            spaceId: true,
-          },
-        })
-      : null;
+  const invitation = invite
+    ? await prisma.spaceInvitation.findUnique({
+        where: { id: invite.invitationId },
+        select: {
+          id: true,
+          email: true,
+          tokenHash: true,
+          expiresAt: true,
+          acceptedAt: true,
+          spaceId: true,
+        },
+      })
+    : null;
   const hasValidInvite =
     !!invitation &&
     !invitation.acceptedAt &&
@@ -158,20 +221,18 @@ export async function registerAction(
     invitation.email === email &&
     verifyToken(invite!.token, invitation.tokenHash);
 
-  const decision = decideRegistration({ isFirstUser, hasValidInvite });
+  const decision = decideRegistration({
+    isFirstUser: false,
+    hasValidInvite,
+    setupTokenOk: true,
+  });
   // Reihenfolge ist Absicht: ohne gültige Einladung gibt es IMMER dieselbe
   // Antwort — auch für eine bereits registrierte Adresse. Sonst wäre
   // /register ein Orakel dafür, wer auf dieser Instanz ein Konto hat
   // (der Reset-Weg hält denselben Grundsatz bereits ein). Wer eine
   // gültige Einladung für die Adresse vorweist, weiss ohnehin Bescheid
   // und bekommt den hilfreichen Hinweis.
-  if (!decision.allowed) {
-    return {
-      error:
-        "Registrierung ist nur über einen gültigen Einladungslink möglich. " +
-        "Öffne den Einladungslink, den du per E-Mail oder direkt bekommen hast.",
-    };
-  }
+  if (!decision.allowed) return { error: NUR_MIT_EINLADUNG };
   if (exists) {
     return { error: "E-Mail bereits registriert. Bitte melde dich an." };
   }
@@ -191,6 +252,53 @@ export async function registerAction(
     metadata: { isAdmin: decision.isAdmin, viaInvite: hasValidInvite },
   });
   return startSession(user.id, user.tokenVersion, formData.get("next"));
+}
+
+/**
+ * Erstes Konto über SSO, vom Formular der Anmeldeseite.
+ *
+ * Das Token wird hier geprüft, vor dem Sprung zum Anbieter, und als
+ * Fingerabdruck an den `state` des Flusses gebunden; der Rücksprung
+ * prüft den Fingerabdruck (lib/oidc-account). Kein eigener Endpunkt:
+ * ein Formular an die Start-Route, die zum Anbieter weiterleitet,
+ * blockiert `form-action 'self'` der CSP in Chrome. Die Umleitung aus
+ * der Action ist dagegen eine Navigation.
+ */
+async function ersteinrichtungUeberSso(formData: FormData): Promise<ActionState> {
+  if (!(await registerBremse())) {
+    return { error: "Zu viele Versuche. Bitte später erneut." };
+  }
+  const status = await setupStatus((await headers()).get("host"));
+  if (!status.offen) return { error: NUR_MIT_EINLADUNG };
+  const config = oidcConfig();
+  if (!config) {
+    return { error: "Single Sign-on ist auf dieser Instanz nicht eingerichtet." };
+  }
+
+  let setup: string | undefined;
+  if (status.tokenNoetig) {
+    const eingabe = formData.get("setup_token");
+    if (!(await checkSetupToken(eingabe))) {
+      await audit({
+        action: "auth.login_failed",
+        metadata: { reason: "setup_token", via: "register_sso" },
+      });
+      return { error: einrichtungsTokenFehler(status) };
+    }
+    setup = setupFingerprint(String(eingabe));
+  }
+
+  let ziel: string;
+  try {
+    ziel = await beginOidcFlow(config, {
+      next: safeNext(formData.get("next")),
+      ...(setup ? { setup } : {}),
+    });
+  } catch (e) {
+    log.error({ err: e }, "OIDC-Start fehlgeschlagen");
+    return { error: "Die Anmeldung über den Anbieter hat nicht geklappt." };
+  }
+  redirect(ziel);
 }
 
 export async function loginAction(

@@ -15,6 +15,12 @@ const sweeper = vi.hoisted(() => ({ startUploadSweeper: vi.fn() }));
 vi.mock("@/lib/upload-sweeper", () => sweeper);
 const retention = vi.hoisted(() => ({ startRetentionJob: vi.fn() }));
 vi.mock("@/lib/retention", () => retention);
+const einrichtung = vi.hoisted(() => ({ ensureSetupToken: vi.fn(async () => undefined) }));
+vi.mock("@/lib/setup-token", async (importOriginal) => ({
+  // Der Parser von SETUP_TOKEN_FILE gehört zur Konfigurationsprüfung.
+  ...(await importOriginal<typeof import("@/lib/setup-token")>()),
+  ...einrichtung,
+}));
 const logger = vi.hoisted(() => ({
   log: { level: "info", fatal: vi.fn(), error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
@@ -39,6 +45,8 @@ function setEnv(name: "NEXT_RUNTIME" | "NEXT_PHASE" | "LOG_LEVEL", value: string
 beforeEach(() => {
   sweeper.startUploadSweeper.mockReset();
   retention.startRetentionJob.mockReset();
+  einrichtung.ensureSetupToken.mockReset();
+  einrichtung.ensureSetupToken.mockImplementation(async () => undefined);
   for (const f of [logger.log.fatal, logger.log.warn, logger.log.info]) f.mockReset();
   setEnv("NEXT_PHASE", undefined);
   setEnv("LOG_LEVEL", undefined);
@@ -112,6 +120,45 @@ describe("register prueft die Konfiguration", () => {
     );
     expect(sweeper.startUploadSweeper).toHaveBeenCalledTimes(1);
     expect(retention.startRetentionJob).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("register legt das Einrichtungs-Token an", () => {
+  it("nach der Konfiguration, ohne auf die Datenbank zu warten", async () => {
+    setEnv("NEXT_RUNTIME", "nodejs");
+    let fertig: () => void = () => undefined;
+    einrichtung.ensureSetupToken.mockImplementation(
+      () => new Promise<undefined>((r) => (fertig = () => r(undefined))),
+    );
+    // register() kehrt zurück, obwohl die Prüfung der Datenbank noch
+    // läuft, und startet die Jobs trotzdem.
+    await register();
+    expect(einrichtung.ensureSetupToken).toHaveBeenCalledTimes(1);
+    expect(sweeper.startUploadSweeper).toHaveBeenCalledTimes(1);
+    fertig();
+  });
+
+  it("ein Fehler dabei hält den Server nicht auf", async () => {
+    setEnv("NEXT_RUNTIME", "nodejs");
+    einrichtung.ensureSetupToken.mockImplementation(async () => {
+      throw new Error("Datenbank weg");
+    });
+    const konsole = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(register()).resolves.toBeUndefined();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(konsole).toHaveBeenCalledWith(
+      "Einrichtungs-Token beim Start nicht geprueft:",
+      expect.any(Error),
+    );
+    expect(retention.startRetentionJob).toHaveBeenCalledTimes(1);
+  });
+
+  it("nicht, wenn die Konfiguration ungültig ist", async () => {
+    setEnv("NEXT_RUNTIME", "nodejs");
+    setEnv("LOG_LEVEL", "gespraechig");
+    vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    await expect(register()).rejects.toThrow();
+    expect(einrichtung.ensureSetupToken).not.toHaveBeenCalled();
   });
 });
 

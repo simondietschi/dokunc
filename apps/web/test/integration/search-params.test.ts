@@ -39,6 +39,12 @@ vi.mock("@/lib/current-user", () => ({
     return mocks.actor;
   }),
 }));
+// Anmelde- und Registrierungsseite fragen den Host der Anfrage (die
+// Ersteinrichtung ohne Token gibt es nur auf localhost). Ausserhalb einer
+// Anfrage wirft headers(); die anderen Seiten hier lesen keine Header.
+vi.mock("next/headers", () => ({
+  headers: vi.fn(async () => new Headers({ host: "localhost:3000" })),
+}));
 vi.mock("next/navigation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("next/navigation")>()),
   redirect: vi.fn((url: string) => {

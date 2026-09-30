@@ -225,6 +225,25 @@ differently on an existing installation, and what to do about it.
   no reset link any more, and links issued before the deactivation no
   longer work. There is nothing to configure for this.
 
+- **Setup token for the first account:** as long as an instance has no
+  account, the web app writes a one-time token to `/app/data/setup_token`
+  (volume `app_data`) and prints it once in the log. The first account,
+  which becomes instance admin, is created only with this token, for a
+  password registration and for the first sign-in through single sign-on.
+  No token is needed when `APP_URL` points to `localhost` and the site is
+  opened as `localhost`, as in the quick start. Installations that already
+  have an account are not affected. An instance that is deployed but has
+  no account yet, also after its database volume was emptied, needs the
+  token: read it with `docker compose exec app cat /app/data/setup_token`
+  and enter it on `/register` or, for single sign-on, on the sign-in page.
+  Outside Docker, set `SETUP_TOKEN_FILE` to a writable absolute path. See
+  `docs/admin/first-account.md`.
+
+- **First account through single sign-on:** it now also needs an email
+  address the provider confirms, even on `localhost`; `OIDC_ALLOW_SIGNUP`
+  still does not apply to it. Creating the first account with a password
+  remains the recommended way.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -262,6 +281,12 @@ differently on an existing installation, and what to do about it.
   single sign-on now have neither password sign-in nor password reset.
 - Reset links of deactivated accounts stayed valid and set a password
   that applied again after a reactivation.
+- Takeover of a freshly deployed instance: anyone who reached a new
+  instance before its operator could register the first account and
+  become instance admin, through single sign-on even without a verified
+  address and without `OIDC_ALLOW_SIGNUP`. The first account now needs a
+  setup token unless the instance runs on `localhost`, and two
+  simultaneous first registrations can no longer both become admins.
 
 ### Added
 
@@ -302,6 +327,10 @@ differently on an existing installation, and what to do about it.
   accounts linked to single sign-on. Refused password sign-ins, reset
   requests and reset links record the reasons `sso_required` and
   `inactive` in the audit log (`auth.login_failed`).
+- Setup token for the first account (`SETUP_TOKEN_FILE`,
+  `docs/admin/first-account.md`) and the audit event
+  `auth.first_admin_created`; refused first registrations record the
+  reason `setup_token`.
 
 ### Changed
 
@@ -335,6 +364,9 @@ differently on an existing installation, and what to do about it.
   confirmation of "Passwort vergessen" says the same, for every address.
   The account page tells a linked account that its password only confirms
   actions on that page.
+- The registration page says "Nur per Einladung." once an instance has an
+  account. While it has none, the sign-in and registration pages explain
+  the first setup and ask for the setup token where it is needed.
 
 ### Removed
 

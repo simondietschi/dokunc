@@ -109,3 +109,30 @@ describe("addFlowToList()", () => {
     expect(nachher[0]?.begonnen).toBe(jetzt);
   });
 });
+
+describe("Fingerabdruck des Einrichtungs-Tokens im Fluss", () => {
+  const jetzt = 1_700_000_000;
+  const basis = { state: "s", nonce: "n", verifier: "v", next: "/x", begonnen: jetzt };
+
+  it("bleibt erhalten, auch über das Einfügen eines weiteren Flusses", () => {
+    const fp = "a".repeat(43);
+    expect(readFlowList({ flows: [{ ...basis, setup: fp }] }, jetzt)[0]?.setup).toBe(fp);
+    const liste = addFlowToList(
+      readFlowList({ flows: [{ ...basis, setup: fp }] }, jetzt),
+      { state: "t", nonce: "n", verifier: "v", next: "/" },
+      jetzt,
+    );
+    expect(readFlowList({ flows: liste }, jetzt).map((f) => f.setup)).toEqual([
+      undefined,
+      fp,
+    ]);
+  });
+
+  it("fällt weg, wenn er kein Text oder zu lang ist", () => {
+    for (const setup of [42, "", "a".repeat(65), { x: 1 }]) {
+      const [f] = readFlowList({ flows: [{ ...basis, setup }] }, jetzt);
+      expect(f.state).toBe("s");
+      expect(f).not.toHaveProperty("setup");
+    }
+  });
+});

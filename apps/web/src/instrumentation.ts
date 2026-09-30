@@ -41,6 +41,19 @@ export async function register(): Promise<void> {
     const { checkWebConfig } = await import("@/lib/config");
     checkWebConfig();
 
+    // 3. Einmalige Startaufgaben. Das Einrichtungs-Token entsteht, solange
+    // es kein Konto gibt (lib/setup-token). Ohne await: eine langsame oder
+    // noch nicht erreichbare Datenbank soll den Start nicht aufhalten; die
+    // Anmeldeseite legt das Token sonst bei ihrem ersten Aufruf an.
+    try {
+      const { ensureSetupToken } = await import("@/lib/setup-token");
+      ensureSetupToken().catch((e: unknown) => {
+        console.error("Einrichtungs-Token beim Start nicht geprueft:", e);
+      });
+    } catch (e) {
+      console.error("Einrichtungs-Token beim Start nicht geprueft:", e);
+    }
+
     // 4. Hintergrundjobs.
     try {
       const { startUploadSweeper } = await import("@/lib/upload-sweeper");

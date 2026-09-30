@@ -207,7 +207,8 @@ while your provider is down, after switching to another provider, or after
 turning SSO off; set it back afterwards.
 
 - Keep one local admin account with a password. Admin accounts are never
-  linked automatically, so create the first account with a password.
+  linked automatically, so create the first account with a password
+  (`docs/admin/first-account.md`).
 - Self-service actions that ask for the current password (change password,
   delete account, turn off two-factor authentication, new recovery codes)
   are not available to linked accounts that never set a password. Admins
@@ -215,6 +216,16 @@ turning SSO off; set it back afterwards.
   the admin area.
 - A person you block at the provider keeps the sessions they already have
   until those expire.
+
+## First admin through single sign-on
+
+On an instance without any account, the first SSO sign-in creates the
+instance admin. It needs the setup token, which the sign-in page asks for
+before it sends you to the provider (see `docs/admin/first-account.md`), and
+a verified email address, also on `localhost`. `OIDC_ALLOW_SIGNUP` does not
+matter for this first account. Prefer creating the first account with a
+password: admin accounts are never linked automatically, and that account
+keeps working while the provider is down.
 
 ## Changing `OIDC_SUBJECT_CLAIM`
 

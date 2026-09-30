@@ -113,7 +113,15 @@ export const ERWARTUNG: Record<string, Eintrag> = {
       "Anmeldung ohne Space-Rolle: Passwortweg für Konten mit SSO-Bindung und den Schalter SSO_ENFORCEMENT",
   },
   "action:app/(auth)/actions.ts#logoutAction": OFFEN,
-  "action:app/(auth)/actions.ts#registerAction": OFFEN,
+  "action:app/(auth)/actions.ts#registerAction": {
+    stand: "extern",
+    tests: [
+      "apps/web/test/integration/ersteinrichtung.test.ts",
+      "apps/web/test/integration/laengen.test.ts",
+    ],
+    grund:
+      "Anmeldung ohne Space-Rolle: erstes Konto nur mit Einrichtungs-Token (Passwort und SSO), danach nur mit Einladung",
+  },
   "action:app/(auth)/reset/actions.ts#performResetAction": {
     stand: "extern",
     tests: ["apps/web/test/integration/passwortweg.test.ts"],
@@ -497,7 +505,6 @@ export const ERWARTUNG: Record<string, Eintrag> = {
  */
 export const OFFEN_BESTAND: readonly string[] = [
   "action:app/(auth)/actions.ts#logoutAction",
-  "action:app/(auth)/actions.ts#registerAction",
   "action:app/account/actions.ts#changePasswordAction",
   "action:app/account/actions.ts#deleteAccountAction",
   "action:app/account/actions.ts#logoutEverywhereAction",

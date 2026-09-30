@@ -44,7 +44,16 @@ export type OidcFlow = {
   nonce: string;
   verifier: string;
   next: string;
+  /**
+   * Fingerabdruck des Einrichtungs-Tokens (lib/setup-token), wenn die
+   * Anmeldung das erste Konto anlegen soll. Das Token selbst steht nie
+   * im Cookie; der Fingerabdruck gilt nur mit genau diesem `state`.
+   */
+  setup?: string;
 };
+
+/** Länger ist kein Fingerabdruck (SHA-256 in base64url: 43 Zeichen). */
+const SETUP_MAX_LENGTH = 64;
 
 /** Ein Fluss samt Beginn (Sekunden seit Epoche). */
 export type StoredFlow = OidcFlow & { begonnen: number };
@@ -70,7 +79,7 @@ export function readFlowList(
   const out: StoredFlow[] = [];
   for (const entry of raw) {
     if (!entry || typeof entry !== "object") continue;
-    const { state, nonce, verifier, next, begonnen } = entry as Record<
+    const { state, nonce, verifier, next, begonnen, setup } = entry as Record<
       string,
       unknown
     >;
@@ -92,6 +101,9 @@ export function readFlowList(
       // Fehlt das Ziel, geht es zur Übersicht — wie vor der Liste auch.
       next: typeof next === "string" ? next : "/spaces",
       begonnen,
+      ...(typeof setup === "string" && setup && setup.length <= SETUP_MAX_LENGTH
+        ? { setup }
+        : {}),
     });
   }
   return out;

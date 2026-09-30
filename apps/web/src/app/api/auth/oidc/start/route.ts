@@ -2,15 +2,8 @@ import { NextResponse } from "next/server";
 import { safeNext } from "@/lib/safe-redirect";
 import { rateLimit, clientKey } from "@/lib/rate-limit";
 import { log } from "@/lib/log";
-import {
-  authorizationUrl,
-  discover,
-  oidcConfig,
-  pkceChallenge,
-  randomToken,
-} from "@/lib/oidc";
-import { startOidcFlow } from "@/lib/oidc-state";
-import { oidcRedirectUri } from "@/lib/oidc-redirect";
+import { oidcConfig } from "@/lib/oidc";
+import { beginOidcFlow } from "@/lib/oidc-flow";
 import { RATE_LIMITS } from "@/lib/rate-limits";
 
 /**
@@ -33,24 +26,11 @@ export async function GET(req: Request) {
   }
 
   const next = safeNext(new URL(req.url).searchParams.get("next"));
-  const state = randomToken();
-  const nonce = randomToken();
-  const verifier = randomToken(48);
 
   try {
-    const doc = await discover(config);
-    await startOidcFlow({ state, nonce, verifier, next });
-    return NextResponse.redirect(
-      authorizationUrl({
-        config,
-        endpoint: doc.authorization_endpoint,
-        redirectUri: oidcRedirectUri(),
-        state,
-        nonce,
-        codeChallenge: pkceChallenge(verifier),
-      }),
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    return NextResponse.redirect(await beginOidcFlow(config, { next }), {
+      headers: { "Cache-Control": "no-store" },
+    });
   } catch (e) {
     log.error({ err: e }, "OIDC-Start fehlgeschlagen");
     return NextResponse.redirect(new URL("/login?sso=error", req.url));

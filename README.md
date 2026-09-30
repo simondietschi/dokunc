@@ -170,8 +170,8 @@ erzeugt und im Volume `app_data` abgelegt (überlebt Neustarts und Updates).
 Danach:
 
 - App: <https://localhost:7891> (TLS über den Caddy-Proxy; Port über `APP_PORT` in `.env` änderbar)
-- Die erste Registrierung wird automatisch Instanz-Admin; danach ist die
-  Anmeldung nur noch per Einladung möglich.
+- Die erste Registrierung wird Instanz-Admin (→ `docs/admin/first-account.md`);
+  danach ist die Anmeldung nur noch per Einladung möglich.
 - Status: `docker compose ps` · Logs: `docker compose logs -f app`
 - Stoppen: `docker compose down` (Daten bleiben). Update und Rückweg:
   siehe „Update und Rückweg“ unten.

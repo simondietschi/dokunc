@@ -88,3 +88,15 @@ describe("SSO_ENFORCEMENT", () => {
     ]);
   });
 });
+
+describe("SETUP_TOKEN_FILE", () => {
+  it("verlangt einen absoluten Pfad und steht nicht in Compose", () => {
+    expect(pruefe({}).werte.SETUP_TOKEN_FILE).toBe("/app/data/setup_token");
+    const r = pruefe({ SETUP_TOKEN_FILE: "data/setup_token" });
+    expect(r.ok).toBe(false);
+    expect(meldungen(r.fehler, "SETUP_TOKEN_FILE")).toEqual([
+      expect.stringMatching(/^SETUP_TOKEN_FILE erwartet einen absoluten Pfad/),
+    ]);
+    expect(WEB_VARIABLEN.find((v) => v.name === "SETUP_TOKEN_FILE")?.inCompose).toBe(false);
+  });
+});

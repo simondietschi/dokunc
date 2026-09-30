@@ -408,6 +408,30 @@ jobs:
         run: |
           docker compose exec -T app sh -c 'test -s /app/data/app_secret'
 
+      # Der Stack ist hier frisch und ohne Konto: die App hat beim Start das
+      # Einrichtungs-Token angelegt (Vorgabe /app/data/setup_token im Volume
+      # app_data, schreibbar trotz read_only) und es genau einmal geloggt.
+      # Gezaehlt wird der Tokenwert selbst, nicht nur die Meldung: sonst
+      # bliebe der Schritt gruen, wenn nur der Pfad im Log stuende. Nach
+      # einem Neustart desselben Containers steht er weiter genau einmal
+      # dort (nicht bei jedem Start). Die Logs erst in eine Variable: grep
+      # in einer Pipe liesse `logs` an SIGPIPE sterben, und pipefail
+      # machte daraus einen Fehlschlag.
+      - name: Einrichtungs-Token beim ersten Start
+        timeout-minutes: 4
+        run: |
+          set -euo pipefail
+          docker compose exec -T app sh -c 'test -s /app/data/setup_token && test "$(stat -c %a /app/data/setup_token)" = 600'
+          TOKEN=$(docker compose exec -T app cat /app/data/setup_token | tr -d '\r\n')
+          test -n "$TOKEN"
+          LOGS=$(docker compose logs --no-log-prefix app)
+          test "$(grep -cF "$TOKEN" <<<"$LOGS")" -eq 1
+          docker compose restart app
+          docker compose up -d --wait --wait-timeout 180 app
+          LOGS=$(docker compose logs --no-log-prefix app)
+          test "$(grep -cF "$TOKEN" <<<"$LOGS")" -eq 1
+          grep -qF 'Einrichtungs-Token liegt in der Datei' <<<"$LOGS"
+
       # Die Update-Befehle aus dem README ("Update und Rueckweg") ohne
       # git pull, als Kette wie dort. Belegt, dass sie laufen und der Stack
       # danach gesund ist. "|| exit 1" ist noetig: set -e bricht in einer
