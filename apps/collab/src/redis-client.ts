@@ -117,11 +117,24 @@ type Interna = {
  *    laufen ueber die Hauptverbindung und bleiben, wie sie sind.
  *  - Der Listener fuer `messageBuffer` steckt in einer Huelle, die
  *    Ablehnungen gedrosselt meldet.
+ *
+ * Und ohne ihre Redlock-Sperre vor dem Speichern: die Erweiterung holte
+ * sie mit einem Versuch und einer Sekunde Gueltigkeit, und scheiterte
+ * das (Redis weg oder voll, eine andere Instanz speicherte gerade), warf
+ * sie SkipFurtherHooksError. Hocuspocus uebersprang dann den
+ * Speicherlauf von dokunc und entlud das Dokument: die Aenderungen
+ * fehlten in der Datenbank. Gesperrt wird jetzt in Postgres
+ * (./store-lock), fuer alle Instanzen gleich. `afterStoreDocument` der
+ * Erweiterung bleibt: es findet keine Sperre mehr und haelt wie bisher
+ * nach eigenen Aenderungen eine Sekunde vor dem Entladen an.
  */
 export class HaErweiterung extends HocuspocusRedis {
   private get interna(): Interna {
     return this as unknown as Interna;
   }
+
+  /** Keine Redlock-Sperre (siehe oben); die Sperre haelt ./store-lock. */
+  override async onStoreDocument(): Promise<void> {}
 
   /**
    * Huellen um Veroeffentlichen und Nachrichten legen. Aufzurufen einmal,
@@ -129,6 +142,19 @@ export class HaErweiterung extends HocuspocusRedis {
    * die Erweiterung als `pub` und `sub` haelt.
    */
   schuetze(pub: Redis, sub: Redis, log: HaLog): void {
+    // onDestroy der Erweiterung ruft redlock.quit(), also pub.quit(),
+    // bevor es beide Verbindungen trennt. Waehrend eines Ausfalls wartet
+    // das bis zur Versuchsgrenze oder lehnt ab, und das Herunterfahren
+    // von Hocuspocus kaeme nie bei process.exit an. Die Sperre wird nicht
+    // mehr gebraucht; getrennt wird weiter mit disconnect().
+    if (typeof this.redlock?.quit !== "function") {
+      throw new Error(
+        "@hocuspocus/extension-redis hat kein redlock.quit mehr " +
+          "(siehe HaErweiterung in apps/collab/src/redis-client.ts)",
+      );
+    }
+    this.redlock.quit = async () => undefined;
+
     const { handleIncomingMessage } = this.interna;
     if (
       typeof handleIncomingMessage !== "function" ||
@@ -189,7 +215,7 @@ export class HaErweiterung extends HocuspocusRedis {
 /** Die HA-Extension samt ihren beiden Verbindungen. */
 export type HaRedis = {
   extension: HaErweiterung;
-  /** Veroeffentlichen, NUMSUB und die Sperre vor dem Speichern. */
+  /** Veroeffentlichen und NUMSUB. */
   pub: Redis;
   /** Nur SUBSCRIBE/UNSUBSCRIBE: Antwortkanal und Dokumentkanaele. */
   sub: Redis;
@@ -214,9 +240,8 @@ export type HaRedis = {
  * einem Wiederaufbau abonniert ioredis die Kanaele von selbst neu.
  *
  * Die Veroeffentlichungsseite behaelt die zwei Versuche wie bisher:
- * Publish, NUMSUB und die Sperre vor dem Speichern scheitern bei einem
- * Ausfall nach wenigen Sekunden, statt sich ohne Grenze in der
- * Warteschlange von ioredis zu sammeln.
+ * Publish und NUMSUB scheitern bei einem Ausfall nach wenigen Sekunden,
+ * statt sich ohne Grenze in der Warteschlange von ioredis zu sammeln.
  *
  * Getrennte Optionen je Rolle sieht die Extension nicht vor:
  * `createClient` bekommt kein Argument, `redis` wird zweimal ohne

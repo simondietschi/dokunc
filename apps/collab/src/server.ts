@@ -3,10 +3,16 @@ import "./env";
 import { randomUUID } from "node:crypto";
 import { STATUS_CODES } from "node:http";
 import type { Duplex } from "node:stream";
-import { Server, type Connection, type Document } from "@hocuspocus/server";
+import {
+  Server,
+  type Connection,
+  type Document,
+  type onStoreDocumentPayload,
+} from "@hocuspocus/server";
 import { TiptapTransformer } from "@hocuspocus/transformer";
 import { getSchema } from "@tiptap/core";
 import { jwtVerify, type JWTPayload } from "jose";
+import pg from "pg";
 import pino from "pino";
 import * as Y from "yjs";
 import {
@@ -62,6 +68,7 @@ import { pruefeGegenSchema, type SchemaBefund } from "./schema-check";
 import { installProcessGuards } from "./process-guards";
 import { resolveAppSecret } from "./secret";
 import { StoreWatch } from "./store-watch";
+import { SPERR_VERBINDUNGEN, createStoreLock } from "./store-lock";
 import { DocSizeTracker, roleNeedsReconnect } from "./doc-size";
 import { PageEditors, redisEditorStore } from "./page-editors";
 import {
@@ -475,6 +482,41 @@ function meldeAbweichung(
 /** Wer auf das Speichern eines Doc-Resets wartet (siehe ./store-watch). */
 const storeWatch = new StoreWatch();
 
+/*
+ * Speichersperre je Seite in Postgres, fuer alle Instanzen (Begruendung
+ * in ./store-lock). Ein eigener kleiner Pool neben dem von Prisma: wer
+ * eine Sperre haelt oder auf sie wartet, nimmt keinem Lauf die
+ * Verbindung zum Schreiben. Ein Fehler einer ruhenden Verbindung (etwa
+ * ein Neustart der Datenbank) kaeme sonst als unbehandeltes "error".
+ */
+const sperrPool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: SPERR_VERBINDUNGEN,
+});
+sperrPool.on("error", (e: Error) =>
+  log.warn({ err: e }, "Speichersperre: Verbindung zur Datenbank abgerissen"),
+);
+const withStoreLock = createStoreLock(sperrPool);
+
+/**
+ * updatedAt der CollabDocument-Zeile nach dem letzten eigenen Laden oder
+ * Schreiben, je Dokument (siehe speichere). Weicht die Zeile davon ab,
+ * hat eine andere Instanz inzwischen gespeichert.
+ */
+const zuletztGesehen = new WeakMap<Document, number>();
+
+/**
+ * Herkunft fuer einen uebernommenen Stand: stoesst keinen weiteren
+ * Speicherlauf an (skipStoreHooks) und zaehlt fuer niemanden als
+ * Mitwirken (leerer Kontext). Offene Editoren und andere Instanzen
+ * bekommen ihn wie jede Aenderung.
+ */
+const UEBERNAHME = {
+  source: "local",
+  skipStoreHooks: true,
+  context: {},
+} as const;
+
 /**
  * Wer zuletzt an einer Seite mitgeschrieben hat, ueber alle Instanzen
  * (./page-editors). lastContext kennt nur die letzte Person dieser
@@ -653,13 +695,15 @@ function markeAus(zustand: {
 
 /**
  * Diese Instanz ist gerade veraltet geworden: eine neuere Fassung hat die
- * Marke gehoben. Alle Editoren trennen; beim Wiederverbinden weist
- * onAuthenticate sie mit "schema-mismatch" ab, und ihr Editor zeigt
- * "Aktualisierung läuft", bis eine aktuelle Instanz sie annimmt.
- * Mail-Versand, KI-Index und Rechteprüfung laufen weiter, sie haengen
- * nicht am Schema.
+ * Marke gehoben, oder ein Speicherlauf fand im gespeicherten Stand einer
+ * anderen Instanz Knoten, die dieses Schema nicht darstellen kann (dann
+ * ohne Marke, siehe speichere). Alle Editoren trennen; beim
+ * Wiederverbinden weist onAuthenticate sie mit "schema-mismatch" ab, und
+ * ihr Editor zeigt "Aktualisierung läuft", bis eine aktuelle Instanz sie
+ * annimmt. Mail-Versand, KI-Index und Rechteprüfung laufen weiter, sie
+ * haengen nicht am Schema.
  */
-function trenneVeraltet(marke: SchemaMarke): void {
+function trenneVeraltet(marke: SchemaMarke | null): void {
   let closed = 0;
   for (const doc of server.hocuspocus.documents.values()) {
     for (const connection of Array.from(doc.getConnections())) {
@@ -671,8 +715,8 @@ function trenneVeraltet(marke: SchemaMarke): void {
     {
       ownVersion: eigenesSchema.version,
       ownHash: eigenesSchema.hash,
-      markVersion: marke.version,
-      markHash: marke.hash,
+      markVersion: marke?.version ?? null,
+      markHash: marke?.hash ?? null,
       closed,
     },
     "Neuere Editor-Fassung in der Datenbank: Verbindungen getrennt, neue werden abgewiesen",
@@ -711,11 +755,13 @@ async function pruefeSchemaMarke(): Promise<void> {
 //
 // Die Extension bringt ein eigenes, älteres ioredis mit (5.6), dieser
 // Prozess nutzt ioredis 6. Sie bekommt die Duplikate aber über
-// `createClient` und baut selbst keine Verbindung: Pub/Sub und die
-// Sperre vor dem Speichern (Redlock) laufen also über ioredis 6 aus
-// diesem Prozess, mit RESP3 und denselben Antwortformen wie unter RESP2
-// (Vorgabe replyMapping "legacy"). Ihr eigenes ioredis braucht sie nur,
-// wenn sie selbst aus Host und Port verbindet, was hier nie geschieht.
+// `createClient` und baut selbst keine Verbindung: Pub/Sub läuft also
+// über ioredis 6 aus diesem Prozess, mit RESP3 und denselben
+// Antwortformen wie unter RESP2 (Vorgabe replyMapping "legacy"). Ihr
+// eigenes ioredis braucht sie nur, wenn sie selbst aus Host und Port
+// verbindet, was hier nie geschieht. Ihre Sperre vor dem Speichern
+// (Redlock) ist abgeschaltet; gesperrt wird in Postgres (siehe
+// withStoreLock).
 //
 // Der Abonnent hat keine Grenze für Versuche je Befehl, sonst bliebe
 // der Prozess nach einem kurzen Redis-Ausfall beim Start dauerhaft
@@ -1036,302 +1082,457 @@ const server = new Server({
   },
 
   async onLoadDocument(data) {
-    const pageId = data.documentName;
-    const existing = await prisma.collabDocument.findUnique({
-      where: { pageId },
-    });
-
-    if (existing) {
-      Y.applyUpdate(data.document, new Uint8Array(existing.state));
-      applyDocSize(data.document, existing.state.byteLength, "laden");
-      return data.document;
-    }
-
-    // Erstes Öffnen: aus gespeichertem Page-Content seeden.
-    const page = await prisma.page.findUnique({
-      where: { id: pageId },
-      select: { content: true },
-    });
-    if (page?.content) {
-      const seeded = TiptapTransformer.toYdoc(
-        page.content,
-        COLLAB_FIELD,
-        extensions,
-      );
-      // Den frisch geseedeten Stand SOFORT festschreiben — aber nur,
-      // wenn noch keiner da ist (upsert mit leerem update gewinnt den
-      // Wettlauf atomar und liefert den Sieger zurück). Ohne das seeden
-      // zwei gleichzeitig ladende Verbindungen (oder zwei Collab-
-      // Instanzen) unabhängig voneinander, und Yjs führt beide Fassungen
-      // zusammen: die Seite stünde doppelt im Dokument.
-      const row = await prisma.collabDocument.upsert({
-        where: { pageId },
-        create: {
-          pageId,
-          state: Buffer.from(Y.encodeStateAsUpdate(seeded)),
-        },
-        update: {},
-        select: { state: true },
-      });
-      Y.applyUpdate(data.document, new Uint8Array(row.state));
-      applyDocSize(data.document, row.state.byteLength, "laden");
-      return data.document;
-    }
-    measureDocSize(data.document, "laden");
-    return data.document;
-  },
-
-  async onStoreDocument(data) {
-    const pageId = data.documentName;
-    // Marke und Stand im selben synchronen Schritt: so weiss ein
-    // wartender Doc-Reset, ob dieser Lauf seinen Austausch traegt. Die
-    // Marke gehoert zu genau diesem Dokument, nicht zur Seite: ein nach
-    // dem Entladen neu geladenes Dokument traegt einen ungespeicherten
-    // Austausch nicht (siehe ./store-watch).
-    const marke = storeWatch.current(data.document);
-    const state = Buffer.from(Y.encodeStateAsUpdate(data.document));
-    // Groesse vor allem Weiteren (auch vor shouldSnapshot) uebernehmen.
-    // Der Lauf, der die Grenze ueberschreitet, speichert trotzdem ganz:
-    // die Sperre ist keine harte Obergrenze.
-    applyDocSize(data.document, state.byteLength, "speichern");
-
-    // Der Yjs-Zustand zuerst und für sich. Er ist das Einzige, woraus
-    // onLoadDocument das Dokument wieder aufbaut; alles Weitere (Inhalt
-    // für Suche und Export, Erwähnungen) lässt sich aus ihm neu ableiten.
-    // Hinge er an den Schritten danach, ginge bei deren Fehler der Text
-    // verloren: Hocuspocus behält das Dokument dann nur im Speicher, und
-    // war das der Lauf beim Trennen der letzten Verbindung, stösst nichts
-    // einen weiteren an — der nächste Neustart verwirft ihn.
     try {
-      await prisma.collabDocument.upsert({
-        where: { pageId },
-        create: { pageId, state },
-        update: { state },
-      });
+      return await ladeDokument(data.documentName, data.document);
     } catch (e) {
-      storeWatch.failed(data.document, marke, e);
+      log.error(
+        { err: e, pageId: data.documentName },
+        "Dokument nicht geladen",
+      );
       throw e;
     }
-    storeWatch.stored(data.document, marke);
+  },
 
-    const json = TiptapTransformer.fromYdoc(data.document, COLLAB_FIELD);
-    const editorId =
-      (data.lastContext?.userId as string | undefined) ?? undefined;
-
-    // Der Inhalt gegen das Editor-Schema (./schema-check). Liesse er sich
-    // nicht darstellen (ein Knoten oder eine Marke, die das Schema nicht
-    // kennt, etwa aus einem manipulierten Editor), bleibt er nur im
-    // Yjs-Stand oben: Page.content, Suche, Erwaehnungen, Backlinks,
-    // KI-Index und Versionen behalten den letzten darstellbaren Stand,
-    // sonst gaeben Freigabe, Export und Druck eine leere Seite aus. Der
-    // naechste Lauf mit gueltigem Inhalt schreibt alles nach. Kein Fehler
-    // an Hocuspocus: der Yjs-Stand ist gespeichert, ein erneuter Versuch
-    // aenderte nichts.
-    const befund = pruefeGegenSchema(schema, json);
-    if (befund && !befund.darstellbar) {
+  // Jeder Speicherlauf unter der Sperre seiner Seite (./store-lock), fuer
+  // alle Instanzen. Scheitert er, behaelt Hocuspocus das Dokument im
+  // Speicher, und die naechste Aenderung stoesst einen neuen an.
+  async onStoreDocument(data) {
+    const pageId = data.documentName;
+    let begonnen = false;
+    try {
+      await withStoreLock(pageId, () => {
+        begonnen = true;
+        return speichere(data);
+      });
+    } catch (e) {
+      // Ohne Sperre hat der Lauf nichts gelesen; wer auf ihn wartet (ein
+      // Doc-Reset), erfaehrt es gleich und kann es erneut versuchen.
+      if (!begonnen) {
+        storeWatch.failed(data.document, storeWatch.current(data.document), e);
+      }
       log.error(
-        {
-          pageId,
-          editorId,
-          unknownNodes: befund.unknownNodes,
-          unknownMarks: befund.unknownMarks,
-          checkError: befund.checkError,
-        },
-        "Seiteninhalt nicht uebernommen: Elemente ausserhalb des Editor-Schemas",
+        { err: e, pageId },
+        "Speicherlauf gescheitert, Dokument bleibt im Speicher",
       );
-      return;
+      throw e;
     }
-    // Abweichend, aber darstellbar (unbekannte Attribute, Inhalt, den
-    // check() ablehnt): speichern wie bisher und melden.
-    if (befund) meldeAbweichung(pageId, editorId, befund);
-    const textContent = extractText(json);
+  },
+});
 
-    // Alten Inhalt VOR dem Update lesen (für den Mention-Diff).
-    const before = await prisma.page.findUnique({
-      where: { id: pageId },
-      select: { content: true, spaceId: true, title: true, deletedAt: true },
+/**
+ * Dokument aus CollabDocument laden, beim ersten Oeffnen aus Page.content
+ * seeden, und updatedAt der Zeile fuer speichere merken.
+ */
+async function ladeDokument(
+  pageId: string,
+  document: Document,
+): Promise<Document> {
+  const existing = await prisma.collabDocument.findUnique({
+    where: { pageId },
+  });
+
+  if (existing) {
+    Y.applyUpdate(document, new Uint8Array(existing.state));
+    zuletztGesehen.set(document, existing.updatedAt.getTime());
+    applyDocSize(document, existing.state.byteLength, "laden");
+    return document;
+  }
+
+  // Erstes Öffnen: aus gespeichertem Page-Content seeden.
+  const page = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { content: true },
+  });
+  if (page?.content) {
+    const seeded = TiptapTransformer.toYdoc(
+      page.content,
+      COLLAB_FIELD,
+      extensions,
+    );
+    // Den frisch geseedeten Stand SOFORT festschreiben — aber nur,
+    // wenn noch keiner da ist (upsert mit leerem update gewinnt den
+    // Wettlauf atomar und liefert den Sieger zurück). Ohne das seeden
+    // zwei gleichzeitig ladende Verbindungen (oder zwei Collab-
+    // Instanzen) unabhängig voneinander, und Yjs führt beide Fassungen
+    // zusammen: die Seite stünde doppelt im Dokument.
+    const row = await prisma.collabDocument.upsert({
+      where: { pageId },
+      create: {
+        pageId,
+        state: Buffer.from(Y.encodeStateAsUpdate(seeded)),
+      },
+      update: {},
+      select: { state: true, updatedAt: true },
     });
+    Y.applyUpdate(document, new Uint8Array(row.state));
+    zuletztGesehen.set(document, row.updatedAt.getTime());
+    applyDocSize(document, row.state.byteLength, "laden");
+    return document;
+  }
+  measureDocSize(document, "laden");
+  return document;
+}
 
-    // Neue Erwähnungen werden gegen genau diesen alten Stand bestimmt, und
-    // ihre Zeilen entstehen in DERSELBEN Transaktion, die ihn überschreibt.
-    // Liefen sie erst danach, wäre die Grundlage des Diffs schon weg: endet
-    // der Prozess dazwischen oder scheitert die Ermittlung, fände der
-    // nächste Lauf dieselbe Erwähnung nicht mehr als neu, und die
-    // Erwähnten bekämen dauerhaft weder Glocke noch Mail. Deshalb darf die
-    // Ermittlung hier den Rest des Speicherlaufs kippen, wie es das Lesen
-    // von `before` schon tut: der Yjs-Zustand steht oben schon fest,
-    // Page.content bleibt auf dem alten Stand, und der nächste Lauf
-    // rechnet gegen genau diesen noch einmal. Die Mail verschickt der
-    // Dispatcher aus diesen Zeilen, also erst nach dem Commit und nur
-    // einmal.
-    const mentioned = before
-      ? await newMentionRecipients(
+/**
+ * Den Stand, den eine andere Instanz gespeichert hat, ins laufende
+ * Dokument uebernehmen, bevor dieser Lauf den ganzen Stand schreibt.
+ *
+ * Ohne das ueberschriebe die zuletzt speichernde Instanz, was eine andere
+ * gespeichert hat: Updates, die ueber Redis ankommen, stossen keinen
+ * Speicherlauf an, und waehrend eines Redis-Ausfalls tauschen die
+ * Instanzen gar nichts aus. Mit dem Uebernehmen verliert kein Lauf, was
+ * ein anderer gespeichert hat, und Page.content entsteht aus der
+ * Vereinigung. Kennt das Dokument schon alles, aendert Yjs nichts.
+ *
+ * Vorher wird der fremde Stand gegen das eigene Editor-Schema geprueft
+ * (./schema-check): enthaelt er Knoten, die diese Fassung nicht
+ * darstellen kann, hat ihn eine neuere Fassung geschrieben. Uebernommen
+ * loeschte ein Editor dieser Fassung sie beim naechsten Anzeigen fuer
+ * alle. Dann gilt diese Instanz als veraltet (keine Editoren mehr), und
+ * der Lauf wirft, ohne etwas zu schreiben.
+ *
+ * Ein unlesbarer gespeicherter Stand wird nicht uebernommen, sondern mit
+ * dem eigenen ueberschrieben (wie vor dem Zusammenfuehren): wuerfe der
+ * Lauf, scheiterte jeder weitere auch.
+ */
+async function uebernimmGespeichertenStand(
+  pageId: string,
+  document: Document,
+): Promise<void> {
+  const gespeichert = await prisma.collabDocument.findUnique({
+    where: { pageId },
+    select: { state: true },
+  });
+  if (!gespeichert) return;
+  const fremd = new Uint8Array(gespeichert.state);
+  const hilfe = new Y.Doc();
+  try {
+    Y.applyUpdate(hilfe, fremd);
+  } catch (e) {
+    log.error(
+      { err: e, pageId, bytes: fremd.byteLength },
+      "Gespeicherter Stand nicht lesbar, ohne Zusammenfuehren gespeichert",
+    );
+    return;
+  }
+  const befund = pruefeGegenSchema(
+    schema,
+    TiptapTransformer.fromYdoc(hilfe, COLLAB_FIELD),
+  );
+  hilfe.destroy();
+  if (befund && !befund.darstellbar) {
+    log.error(
+      {
+        pageId,
+        unknownNodes: befund.unknownNodes,
+        unknownMarks: befund.unknownMarks,
+        checkError: befund.checkError,
+      },
+      "Gespeicherter Stand ausserhalb des Editor-Schemas: nicht zusammengefuehrt, diese Instanz nimmt keine Editoren mehr an",
+    );
+    schemaWaechter.markiere();
+    throw new Error(
+      `Gespeicherter Stand der Seite ${pageId} ausserhalb des Editor-Schemas`,
+    );
+  }
+  Y.applyUpdate(document, fremd, UEBERNAHME);
+  log.debug(
+    { pageId, bytes: fremd.byteLength },
+    "Gespeicherten Stand einer anderen Instanz uebernommen",
+  );
+}
+
+/**
+ * Ein Speicherlauf, unter der Sperre der Seite (onStoreDocument).
+ *
+ * Reihenfolge:
+ *  1. updatedAt der Zeile lesen. Weicht es vom zuletzt gesehenen ab, hat
+ *     eine andere Instanz gespeichert: ihren Stand uebernehmen
+ *     (uebernimmGespeichertenStand). Nur dann wird der ganze Stand gelesen
+ *     und dekodiert; mit einer Instanz nie.
+ *  2. Erst danach Marke fuer den Doc-Reset und Stand, im selben
+ *     synchronen Schritt, und CollabDocument schreiben.
+ *  3. Den vereinigten Inhalt gegen das Schema pruefen, dann Page.content,
+ *     Erwaehnungen, Backlinks, Index, Version.
+ *
+ * Eine veraltete Instanz fuehrt nie zusammen. Sie hat keine Editoren
+ * mehr, kann aber noch einen ausstehenden Lauf haben: hat inzwischen eine
+ * andere Instanz gespeichert, schreibt sie nicht darueber (der Lauf
+ * wirft); sonst schreibt sie ihren Stand wie bisher.
+ *
+ * Gleiche updatedAt zweier Instanzen (Millisekunden, die Laeufe einer
+ * Seite laufen unter der Sperre nacheinander) sind praktisch
+ * ausgeschlossen; traefe es zu, fehlte der fremde Stand bis zum naechsten
+ * Lauf der anderen Instanz, die dann zusammenfuehrt.
+ */
+async function speichere(data: onStoreDocumentPayload): Promise<void> {
+  const pageId = data.documentName;
+  const zeile = await prisma.collabDocument.findUnique({
+    where: { pageId },
+    select: { updatedAt: true },
+  });
+  if (
+    zeile &&
+    zeile.updatedAt.getTime() !== zuletztGesehen.get(data.document)
+  ) {
+    if (schemaWaechter.veraltet) {
+      throw new Error(
+        `Veraltete Instanz: gespeicherter Stand der Seite ${pageId} weder zusammengefuehrt noch ueberschrieben`,
+      );
+    }
+    await uebernimmGespeichertenStand(pageId, data.document);
+  }
+
+  // Marke und Stand im selben synchronen Schritt, nach dem Uebernehmen:
+  // so weiss ein wartender Doc-Reset, ob dieser Lauf seinen Austausch
+  // traegt. Die Marke gehoert zu genau diesem Dokument, nicht zur
+  // Seite: ein nach dem Entladen neu geladenes Dokument traegt einen
+  // ungespeicherten Austausch nicht (siehe ./store-watch).
+  const marke = storeWatch.current(data.document);
+  const state = Buffer.from(Y.encodeStateAsUpdate(data.document));
+  // Groesse vor allem Weiteren (auch vor shouldSnapshot) uebernehmen.
+  // Der Lauf, der die Grenze ueberschreitet, speichert trotzdem ganz:
+  // die Sperre ist keine harte Obergrenze.
+  applyDocSize(data.document, state.byteLength, "speichern");
+
+  // Der Yjs-Zustand zuerst und für sich. Er ist das Einzige, woraus
+  // onLoadDocument das Dokument wieder aufbaut; alles Weitere (Inhalt
+  // für Suche und Export, Erwähnungen) lässt sich aus ihm neu ableiten.
+  // Hinge er an den Schritten danach, ginge bei deren Fehler der Text
+  // verloren: Hocuspocus behält das Dokument dann nur im Speicher, und
+  // war das der Lauf beim Trennen der letzten Verbindung, stösst nichts
+  // einen weiteren an — der nächste Neustart verwirft ihn.
+  try {
+    const geschrieben = await prisma.collabDocument.upsert({
+      where: { pageId },
+      create: { pageId, state },
+      update: { state },
+      select: { updatedAt: true },
+    });
+    zuletztGesehen.set(data.document, geschrieben.updatedAt.getTime());
+  } catch (e) {
+    storeWatch.failed(data.document, marke, e);
+    throw e;
+  }
+  storeWatch.stored(data.document, marke);
+
+  const json = TiptapTransformer.fromYdoc(data.document, COLLAB_FIELD);
+  const editorId =
+    (data.lastContext?.userId as string | undefined) ?? undefined;
+
+  // Der Inhalt gegen das Editor-Schema (./schema-check). Liesse er sich
+  // nicht darstellen (ein Knoten oder eine Marke, die das Schema nicht
+  // kennt, etwa aus einem manipulierten Editor), bleibt er nur im
+  // Yjs-Stand oben: Page.content, Suche, Erwaehnungen, Backlinks,
+  // KI-Index und Versionen behalten den letzten darstellbaren Stand,
+  // sonst gaeben Freigabe, Export und Druck eine leere Seite aus. Der
+  // naechste Lauf mit gueltigem Inhalt schreibt alles nach. Kein Fehler
+  // an Hocuspocus: der Yjs-Stand ist gespeichert, ein erneuter Versuch
+  // aenderte nichts.
+  const befund = pruefeGegenSchema(schema, json);
+  if (befund && !befund.darstellbar) {
+    log.error(
+      {
+        pageId,
+        editorId,
+        unknownNodes: befund.unknownNodes,
+        unknownMarks: befund.unknownMarks,
+        checkError: befund.checkError,
+      },
+      "Seiteninhalt nicht uebernommen: Elemente ausserhalb des Editor-Schemas",
+    );
+    return;
+  }
+  // Abweichend, aber darstellbar (unbekannte Attribute, Inhalt, den
+  // check() ablehnt): speichern wie bisher und melden.
+  if (befund) meldeAbweichung(pageId, editorId, befund);
+  const textContent = extractText(json);
+
+  // Alten Inhalt VOR dem Update lesen (für den Mention-Diff).
+  const before = await prisma.page.findUnique({
+    where: { id: pageId },
+    select: { content: true, spaceId: true, title: true, deletedAt: true },
+  });
+
+  // Neue Erwähnungen werden gegen genau diesen alten Stand bestimmt, und
+  // ihre Zeilen entstehen in DERSELBEN Transaktion, die ihn überschreibt.
+  // Liefen sie erst danach, wäre die Grundlage des Diffs schon weg: endet
+  // der Prozess dazwischen oder scheitert die Ermittlung, fände der
+  // nächste Lauf dieselbe Erwähnung nicht mehr als neu, und die
+  // Erwähnten bekämen dauerhaft weder Glocke noch Mail. Deshalb darf die
+  // Ermittlung hier den Rest des Speicherlaufs kippen, wie es das Lesen
+  // von `before` schon tut: der Yjs-Zustand steht oben schon fest,
+  // Page.content bleibt auf dem alten Stand, und der nächste Lauf
+  // rechnet gegen genau diesen noch einmal. Die Mail verschickt der
+  // Dispatcher aus diesen Zeilen, also erst nach dem Commit und nur
+  // einmal.
+  const mentioned = before
+    ? await newMentionRecipients(
+        pageId,
+        before.spaceId,
+        before.content,
+        json,
+        editorId,
+      )
+    : [];
+
+  await prisma.$transaction([
+    prisma.page.update({
+      where: { id: pageId },
+      data: {
+        content: json,
+        textContent,
+        ...(editorId ? { lastEditedById: editorId } : {}),
+      },
+    }),
+    ...(mentioned.length > 0
+      ? [
+          prisma.notification.createMany({
+            data: mentioned.map((userId) => ({
+              userId,
+              actorId: editorId,
+              type: "MENTION" as const,
+              pageId,
+            })),
+          }),
+        ]
+      : []),
+  ]);
+
+  // Glocke der erwähnten Personen sofort aktualisieren — erst nach dem
+  // Commit, sonst holte sie eine Zeile ab, die es noch nicht gibt.
+  await Promise.all(
+    mentioned.map((userId) =>
+      redis
+        .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
+        .catch(() => undefined),
+    ),
+  );
+
+  // Die beiden Folgeschritte dürfen den Speicherlauf nicht kippen, also
+  // wird ihr Fehler nur gemeldet. Dann muss die Meldung aber tragen:
+  // ohne pageId und editorId liesse sich nachträglich nicht sagen,
+  // welcher Seite die Suche oder die Backlinks fehlen, und `String(e)`
+  // warf den Stack weg — der Logger serialisiert einen Error unter
+  // `err` samt Stack selbst.
+  if (before) {
+    await syncWikiLinks(pageId, before.spaceId, json).catch((e) =>
+      log.warn({ err: e, pageId, editorId }, "wikiLink sync fehlgeschlagen"),
+    );
+    // Scheitert es, bleibt die Seite in AiIndexQueue, und der KI-Index
+    // (./ai-indexer) holt sie im naechsten Lauf nach. Ohne skipLocked:
+    // haelt der Job die Seite gerade, wartet der Speicherlauf kurz.
+    // textContent liest indexPageChunks selbst unter der Zeilensperre.
+    await indexPageChunks(pageId, { chunk: chunkForAiIndex }).catch((e) =>
+      log.warn({ err: e, pageId, editorId }, "chunk indexing fehlgeschlagen"),
+    );
+  }
+
+  if (await shouldSnapshot(pageId)) {
+    // Mitwirkende der laufenden Bearbeitung, dazu die Person dieses Laufs.
+    const recent = await pageEditors.recent(pageId);
+    const contributors = new Set(recent.map((r) => r.userId));
+    if (editorId) contributors.add(editorId);
+    const actorId = editorId ?? recent.at(-1)?.userId ?? null;
+
+    // Wer davon erfahren soll. Scheitert das, entsteht der Snapshot
+    // trotzdem: die Versionsgeschichte wiegt schwerer als eine Meldung.
+    // Ohne Mitwirkende (kein Mensch hat geschrieben) keine Meldung, fuer
+    // Seiten im Papierkorb ebenfalls nicht.
+    let candidates: string[] = [];
+    if (before && !before.deletedAt && contributors.size > 0) {
+      try {
+        candidates = await pageUpdateRecipients(
           pageId,
-          before.spaceId,
-          before.content,
-          json,
-          editorId,
-        )
-      : [];
+          contributors,
+          mentioned,
+        );
+      } catch (e) {
+        log.warn(
+          { err: e, pageId, editorId },
+          "Folgende nicht ermittelt, keine Aenderungsmeldung",
+        );
+      }
+    }
 
-    await prisma.$transaction([
-      prisma.page.update({
-        where: { id: pageId },
-        data: {
-          content: json,
-          textContent,
-          ...(editorId ? { lastEditedById: editorId } : {}),
-        },
-      }),
-      ...(mentioned.length > 0
-        ? [
-            prisma.notification.createMany({
-              data: mentioned.map((userId) => ({
-                userId,
-                actorId: editorId,
-                type: "MENTION" as const,
-                pageId,
-              })),
-            }),
-          ]
-        : []),
-    ]);
+    let notified: string[];
+    try {
+      notified = await prisma.$transaction(async (tx) => {
+        // Die neueste Version VOR dem Anlegen lesen, und nur, wenn es
+        // jemanden zu benachrichtigen gibt (spart das JSON bei Seiten
+        // ohne Folgende).
+        const previous =
+          candidates.length > 0
+            ? await tx.pageVersion.findFirst({
+                where: { pageId },
+                orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+                select: { content: true },
+              })
+            : null;
+        const version = await tx.pageVersion.create({
+          data: {
+            pageId,
+            title: before?.title ?? "Untitled",
+            content: json,
+            textContent,
+            authorId: editorId,
+          },
+          select: { id: true },
+        });
+        if (candidates.length === 0) return [];
+        // Nur bei echter Inhaltsaenderung: eine blosse Kommentar-Markierung
+        // meldet sich als COMMENT, nicht als Bearbeitung.
+        if (previous && !contentChanged(previous.content, json)) return [];
+        // Hoechstens eine ungelesene Meldung je Person und Seite: der Link
+        // zeigt beim Oeffnen ohnehin alles bis jetzt. Doppelte Laeufe fuer
+        // dieselbe Seite verhindert die Snapshot-Drossel (ein Snapshot je
+        // Fenster, instanzuebergreifend in Redis).
+        const open = await tx.notification.findMany({
+          where: {
+            userId: { in: candidates },
+            pageId,
+            type: "PAGE_UPDATED",
+            readAt: null,
+          },
+          select: { userId: true },
+        });
+        const recipients = withoutOpenUpdates(
+          candidates,
+          open.map((n) => n.userId),
+        );
+        if (recipients.length > 0) {
+          await tx.notification.createMany({
+            data: recipients.map((userId) => ({
+              userId,
+              actorId,
+              type: "PAGE_UPDATED" as const,
+              pageId,
+              versionId: version.id,
+            })),
+          });
+        }
+        return recipients;
+      });
+    } catch (e) {
+      // Die Drossel ist schon belegt, der Snapshot aber nicht
+      // geschrieben. Ohne diese Freigabe bliebe das Zeitfenster
+      // verbraucht: zwei Minuten lang lieferte shouldSnapshot für
+      // diese Seite false, und die Änderungen dieses Fensters
+      // fehlten dauerhaft in der Versionsgeschichte.
+      await releaseSnapshot(pageId);
+      throw e;
+    }
 
-    // Glocke der erwähnten Personen sofort aktualisieren — erst nach dem
-    // Commit, sonst holte sie eine Zeile ab, die es noch nicht gibt.
+    // Glocke erst nach dem Commit (wie bei den Erwaehnungen).
     await Promise.all(
-      mentioned.map((userId) =>
+      notified.map((userId) =>
         redis
           .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
           .catch(() => undefined),
       ),
     );
-
-    // Die beiden Folgeschritte dürfen den Speicherlauf nicht kippen, also
-    // wird ihr Fehler nur gemeldet. Dann muss die Meldung aber tragen:
-    // ohne pageId und editorId liesse sich nachträglich nicht sagen,
-    // welcher Seite die Suche oder die Backlinks fehlen, und `String(e)`
-    // warf den Stack weg — der Logger serialisiert einen Error unter
-    // `err` samt Stack selbst.
-    if (before) {
-      await syncWikiLinks(pageId, before.spaceId, json).catch((e) =>
-        log.warn({ err: e, pageId, editorId }, "wikiLink sync fehlgeschlagen"),
-      );
-      // Scheitert es, bleibt die Seite in AiIndexQueue, und der KI-Index
-      // (./ai-indexer) holt sie im naechsten Lauf nach. Ohne skipLocked:
-      // haelt der Job die Seite gerade, wartet der Speicherlauf kurz.
-      // textContent liest indexPageChunks selbst unter der Zeilensperre.
-      await indexPageChunks(pageId, { chunk: chunkForAiIndex }).catch((e) =>
-        log.warn({ err: e, pageId, editorId }, "chunk indexing fehlgeschlagen"),
-      );
-    }
-
-    if (await shouldSnapshot(pageId)) {
-      // Mitwirkende der laufenden Bearbeitung, dazu die Person dieses Laufs.
-      const recent = await pageEditors.recent(pageId);
-      const contributors = new Set(recent.map((r) => r.userId));
-      if (editorId) contributors.add(editorId);
-      const actorId = editorId ?? recent.at(-1)?.userId ?? null;
-
-      // Wer davon erfahren soll. Scheitert das, entsteht der Snapshot
-      // trotzdem: die Versionsgeschichte wiegt schwerer als eine Meldung.
-      // Ohne Mitwirkende (kein Mensch hat geschrieben) keine Meldung, fuer
-      // Seiten im Papierkorb ebenfalls nicht.
-      let candidates: string[] = [];
-      if (before && !before.deletedAt && contributors.size > 0) {
-        try {
-          candidates = await pageUpdateRecipients(
-            pageId,
-            contributors,
-            mentioned,
-          );
-        } catch (e) {
-          log.warn(
-            { err: e, pageId, editorId },
-            "Folgende nicht ermittelt, keine Aenderungsmeldung",
-          );
-        }
-      }
-
-      let notified: string[];
-      try {
-        notified = await prisma.$transaction(async (tx) => {
-          // Die neueste Version VOR dem Anlegen lesen, und nur, wenn es
-          // jemanden zu benachrichtigen gibt (spart das JSON bei Seiten
-          // ohne Folgende).
-          const previous =
-            candidates.length > 0
-              ? await tx.pageVersion.findFirst({
-                  where: { pageId },
-                  orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-                  select: { content: true },
-                })
-              : null;
-          const version = await tx.pageVersion.create({
-            data: {
-              pageId,
-              title: before?.title ?? "Untitled",
-              content: json,
-              textContent,
-              authorId: editorId,
-            },
-            select: { id: true },
-          });
-          if (candidates.length === 0) return [];
-          // Nur bei echter Inhaltsaenderung: eine blosse Kommentar-Markierung
-          // meldet sich als COMMENT, nicht als Bearbeitung.
-          if (previous && !contentChanged(previous.content, json)) return [];
-          // Hoechstens eine ungelesene Meldung je Person und Seite: der Link
-          // zeigt beim Oeffnen ohnehin alles bis jetzt. Doppelte Laeufe fuer
-          // dieselbe Seite verhindert die Snapshot-Drossel (ein Snapshot je
-          // Fenster, instanzuebergreifend in Redis).
-          const open = await tx.notification.findMany({
-            where: {
-              userId: { in: candidates },
-              pageId,
-              type: "PAGE_UPDATED",
-              readAt: null,
-            },
-            select: { userId: true },
-          });
-          const recipients = withoutOpenUpdates(
-            candidates,
-            open.map((n) => n.userId),
-          );
-          if (recipients.length > 0) {
-            await tx.notification.createMany({
-              data: recipients.map((userId) => ({
-                userId,
-                actorId,
-                type: "PAGE_UPDATED" as const,
-                pageId,
-                versionId: version.id,
-              })),
-            });
-          }
-          return recipients;
-        });
-      } catch (e) {
-        // Die Drossel ist schon belegt, der Snapshot aber nicht
-        // geschrieben. Ohne diese Freigabe bliebe das Zeitfenster
-        // verbraucht: zwei Minuten lang lieferte shouldSnapshot für
-        // diese Seite false, und die Änderungen dieses Fensters
-        // fehlten dauerhaft in der Versionsgeschichte.
-        await releaseSnapshot(pageId);
-        throw e;
-      }
-
-      // Glocke erst nach dem Commit (wie bei den Erwaehnungen).
-      await Promise.all(
-        notified.map((userId) =>
-          redis
-            .publish(`${NOTIFY_CHANNEL_PREFIX}${userId}`, "1")
-            .catch(() => undefined),
-        ),
-      );
-    }
-  },
-});
+  }
+}
 
 /**
  * Synchronisiert die PageLink-Tabelle (Backlinks) mit den Wiki-Links

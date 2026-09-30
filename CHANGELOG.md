@@ -137,6 +137,20 @@ differently on an existing installation, and what to do about it.
   before. Monitoring that relies on container restarts to notice such
   errors should alert on these two lines instead.
 
+- **Page saves and database connections:** the collaboration server no
+  longer takes a Redis lock before it saves a page. Each save runs under a
+  PostgreSQL advisory lock for that page, held on a separate pool of up to
+  four database connections per collaboration server, in addition to its
+  existing pool. If the database or a PgBouncer pool is close to its
+  connection limit, raise it by four per collaboration server. PgBouncer in
+  transaction mode works, and the lock transaction switches off
+  `idle_in_transaction_session_timeout` for itself. A save that waits more
+  than 30 seconds for the lock fails with "Speicherlauf gescheitert,
+  Dokument bleibt im Speicher" (cause "Speichersperre fuer Seite …
+  nicht erhalten"); the next edit of the page saves it again. Redis keys
+  `hocuspocus:<pageId>:lock` are no longer written; existing ones expire
+  within a second.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -247,3 +261,14 @@ differently on an existing installation, and what to do about it.
   app. Failed publishes and unreadable messages from other collaboration
   servers are now logged as warnings ("redis-ha: …", at most one line per
   ten seconds each).
+- Edits could be missing from the database after Redis was unreachable or
+  out of memory, or when two collaboration servers saved the same page
+  within a second: the Redis lock before saving failed, the save was
+  skipped, and the page was unloaded without it. Saving no longer depends
+  on Redis.
+- When two collaboration servers held edits the other did not have, for
+  example during a Redis outage, the server that saved last overwrote the
+  other's edits in the database. A save now takes over what another
+  server saved in the meantime. A saved state that cannot be read is
+  logged ("Gespeicherter Stand nicht lesbar, ohne Zusammenfuehren
+  gespeichert") and overwritten as before.

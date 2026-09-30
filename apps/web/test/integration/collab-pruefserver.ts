@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Redis } from "ioredis";
@@ -31,7 +32,8 @@ import { DOC_RESET_CHANNEL } from "@dokunc/editor";
  * | DB     | Nutzer                                                     |
  * |--------|------------------------------------------------------------|
  * | 0      | Entwicklung, E2E                                           |
- * | 1–3    | frei (Reserve)                                             |
+ * | 1–2    | frei (Reserve)                                             |
+ * | 3      | collab-zusammenfuehren.test.ts                             |
  * | 4      | collab-konfiguration.test.ts                               |
  * | 5      | collab-ausnahmen.test.ts (reserviert)                      |
  * | 6      | gruppe-loeschen.test.ts (reserviert, nur Abonnent)         |
@@ -123,6 +125,16 @@ export async function startePruefserver(opts: {
 }): Promise<Pruefserver> {
   const redisUrl = redisUrlMitDb(opts.redisDb);
   const redis = new Redis(redisUrl, { maxRetriesPerRequest: 1 });
+  // Ein eben beendeter Server kann noch einen Moment als Abonnent zaehlen,
+  // bis Redis das Ende seiner Verbindung verarbeitet hat.
+  const exklusivBis = Date.now() + 3_000;
+  while (
+    opts.exklusiv &&
+    (await resetZuhoerer(redis)) > 0 &&
+    Date.now() < exklusivBis
+  ) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
   if (opts.exklusiv && (await resetZuhoerer(redis)) > 0) {
     redis.disconnect();
     throw new Error(
@@ -133,7 +145,6 @@ export async function startePruefserver(opts: {
   }
   if (opts.exklusiv) await redis.flushdb();
   await redis.set("dokunc:mail-dispatch:lock", "pruefstand", "PX", 300_000);
-  const vorher = await resetZuhoerer(redis);
 
   let ausgabe = "";
   const child: ChildProcess = spawn(
@@ -151,17 +162,37 @@ export async function startePruefserver(opts: {
         ...opts.env,
       },
       stdio: ["ignore", "pipe", "pipe"],
+      // Eigene Prozessgruppe: tsx startet den Server als weiteren
+      // Prozess. Haengt er beim Beenden (Hocuspocus wartet, bis alle
+      // Dokumente entladen sind, und ein Dokument, das sich nicht
+      // speichern laesst, bleibt im Speicher), traefe ein SIGKILL nur tsx,
+      // und der Server liefe verwaist weiter, am Reset-Kanal desselben
+      // Redis. Deshalb geht SIGKILL an die ganze Gruppe.
+      detached: true,
     },
   );
   child.stdout?.on("data", (d: Buffer) => (ausgabe += d.toString()));
   child.stderr?.on("data", (d: Buffer) => (ausgabe += d.toString()));
 
+  const warteAufEnde = (ms: number) =>
+    Promise.race([
+      new Promise((r) => child.once("exit", r)),
+      new Promise((r) => setTimeout(r, ms)),
+    ]);
   const stop = async () => {
-    if (child.exitCode === null) {
-      const beendet = new Promise((r) => child.once("exit", r));
+    if (child.exitCode === null && child.signalCode === null) {
+      const beendet = warteAufEnde(5_000);
       child.kill("SIGTERM");
-      await Promise.race([beendet, new Promise((r) => setTimeout(r, 5_000))]);
-      if (child.exitCode === null) child.kill("SIGKILL");
+      await beendet;
+    }
+    try {
+      // Auch nach dem Ende von tsx: ein uebrig gebliebener Server.
+      process.kill(-child.pid!, "SIGKILL");
+    } catch {
+      /* Gruppe schon leer */
+    }
+    if (child.exitCode === null && child.signalCode === null) {
+      await warteAufEnde(5_000);
     }
     await redis.del("dokunc:mail-dispatch:lock").catch(() => undefined);
     redis.disconnect();
@@ -169,16 +200,22 @@ export async function startePruefserver(opts: {
 
   // Bereit ist er, wenn er selbst gemeldet hat, auf welchem Port er
   // lauscht, und auf dem Reset-Kanal hoert: das abonniert er erst nach
-  // dieser Zeile. Die Startzeile kommt nur von diesem Prozess; die Zahl
-  // der Abonnenten dagegen zaehlt jeden Collab-Server an diesem Redis
-  // (starten zwei zugleich, kann der Kanal des einen einen Moment nach
-  // dem des anderen abonniert sein; Pruefstaende mit Doc-Reset starten
-  // deshalb exklusiv).
+  // dieser Zeile. Ob gerade DIESER Server hoert, zeigt eine Probe auf
+  // dem Kanal: eine Nachricht, die er als "unerwartete Form" samt Inhalt
+  // ins eigene Log schreibt. Die Zahl der Abonnenten zaehlte dagegen
+  // jeden Collab-Server an diesem Redis, auch einen, der eben beendet
+  // wurde und noch einen Moment mitzaehlt. Andere Server an diesem Redis
+  // schreiben die Probe ebenso als Warnung ins Log.
+  const marke = `bereit-${randomUUID()}`;
+  const probe = JSON.stringify({ pruefstand: marke });
   const ende = Date.now() + 30_000;
   let port: number | null;
   for (;;) {
     port = gemeldeterPort(ausgabe);
-    if (port !== null && (await resetZuhoerer(redis)) > vorher) break;
+    if (port !== null && ausgabe.includes(marke)) break;
+    if (port !== null) {
+      await redis.publish(DOC_RESET_CHANNEL, probe).catch(() => undefined);
+    }
     if (child.exitCode !== null || Date.now() > ende) {
       await stop();
       throw new Error(`Collab-Server nicht gestartet:\n${ausgabe}`);

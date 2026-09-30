@@ -29,13 +29,15 @@ import type * as Y from "yjs";
  * Schluessel ist das Dokument selbst (die Instanz), nicht die Seite.
  * Hocuspocus kann eine Seite entladen und neu laden; das neue Dokument
  * entsteht aus CollabDocument und kennt einen Austausch, der nie
- * gespeichert wurde, nicht. So kommt es, wenn der Speicherlauf nach dem
- * Austausch uebersprungen wird (die HA-Erweiterung bekommt ihre Sperre
- * nicht, weil eine andere Instanz gerade speichert oder Redis hakt) und
- * das Dokument danach ungespeichert entladen wird. Nach der Seite
- * zugeordnet, erfuellte der erste Speicherlauf des neuen Dokuments das
- * Warten — positiv quittiert, und die Wiederherstellung waere still
- * verloren.
+ * gespeichert wurde, nicht. So kam es, solange die HA-Erweiterung vor dem
+ * Speichern in Redis sperrte: bekam sie die Sperre nicht, uebersprang
+ * Hocuspocus den Speicherlauf und entlud das Dokument ungespeichert.
+ * Heute sperrt Postgres (./store-lock), und ein gescheiterter Lauf laesst
+ * das Dokument im Speicher; die Bindung an das Dokument bleibt der Schutz
+ * fuer jeden Weg, auf dem ein Dokument ungespeichert entladen wird. Nach
+ * der Seite zugeordnet, erfuellte der erste Speicherlauf eines neu
+ * geladenen Dokuments das Warten — positiv quittiert, und die
+ * Wiederherstellung waere still verloren.
  *
  * Wird das Dokument zerstoert (entladen), lehnt das Warten sofort ab:
  * Hocuspocus entlaedt ein Dokument erst, wenn kein Speicherlauf mehr

@@ -224,6 +224,7 @@ describe("createHaRedis", () => {
         Redis: class {
           pub: unknown;
           sub: unknown;
+          redlock = { quit: async () => undefined };
           constructor(c: { createClient: () => unknown }) {
             this.pub = c.createClient();
             this.sub = c.createClient();
@@ -243,6 +244,35 @@ describe("createHaRedis", () => {
         redis.disconnect();
       }
     });
+  });
+});
+
+describe("HA-Erweiterung ohne Redlock", () => {
+  // Die Sperre vor dem Speichern haelt jetzt Postgres (store-lock.ts).
+  // Mit Redlock warf die Erweiterung SkipFurtherHooksError, sobald Redis
+  // weg oder voll war, und Hocuspocus verwarf den Speicherlauf.
+  it("sperrt vor dem Speichern nicht mehr in Redis", async () => {
+    const { extension, pubA } = haMitAttrappen();
+    // Die Attrappe kennt weder EVAL noch EVALSHA: Redlock scheiterte hier.
+    // Die Basisklasse erwartet { documentName }; die Unterklasse nimmt
+    // nichts mehr entgegen.
+    const speichern = extension.onStoreDocument as (
+      data: unknown,
+    ) => Promise<void>;
+    await expect(
+      speichern.call(extension, { documentName: "seite-s" }),
+    ).resolves.toBeUndefined();
+    expect(pubA.versuche).toBe(0);
+  });
+
+  // onDestroy rief redlock.quit(), also pub.quit(), vor dem Trennen; bei
+  // einem Ausfall hing das Herunterfahren daran.
+  it("trennt beim Beenden, ohne auf pub.quit zu warten", async () => {
+    const { extension, pubA, subA } = haMitAttrappen();
+    await extension.onDestroy();
+    expect(pubA.quit).not.toHaveBeenCalled();
+    expect(pubA.disconnect).toHaveBeenCalledWith(false);
+    expect(subA.disconnect).toHaveBeenCalledWith(false);
   });
 });
 

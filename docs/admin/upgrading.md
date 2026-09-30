@@ -56,6 +56,18 @@ servers behind a load balancer:
   collaboration server logs "Editor-Schema" at startup) on the way to a later
   release that changes the editor. Collaboration servers from before it do
   not know the recorded version and would keep serving old editors.
+- Before a collaboration server saves a page, it takes over the state that
+  another collaboration server saved in the meantime, under a lock in the
+  database, so no server overwrites edits it has not seen. Collaboration
+  servers from before this change overwrite the saved state instead. Update
+  all collaboration servers at the same time: while old and new ones run
+  side by side, an edit made on a new server can be missing from the
+  database until that server saves the page again.
+- If a collaboration server finds block types or marks its editor does not
+  know in the state another server saved, it does not take that state over,
+  saves nothing for that page and accepts no editors from then on, as if a
+  newer editor version had been recorded. It logs "Gespeicherter Stand
+  ausserhalb des Editor-Schemas".
 
 ## Rolling back
 
@@ -114,7 +126,8 @@ them. The messages are German; the field names are English.
 | info | `Editor-Schema` (at startup) | `schemaVersion`, `schemaHash`, `markVersion`, `markHash` |
 | error | `Editor-Schema dieser Instanz ist aelter als die Marke in der Datenbank: …` (at startup) | the same |
 | fatal | `Schema-Marke nicht in die Datenbank geschrieben, Start abgebrochen` | `err` |
-| warn | `Neuere Editor-Fassung in der Datenbank: Verbindungen getrennt, neue werden abgewiesen` | `ownVersion`, `ownHash`, `markVersion`, `markHash`, `closed` |
+| warn | `Neuere Editor-Fassung in der Datenbank: Verbindungen getrennt, neue werden abgewiesen` | `ownVersion`, `ownHash`, `markVersion`, `markHash` (both `null` when stored content triggered it), `closed` |
+| error | `Gespeicherter Stand ausserhalb des Editor-Schemas: nicht zusammengefuehrt, diese Instanz nimmt keine Editoren mehr an` | `pageId`, `unknownNodes`, `unknownMarks`, `checkError` |
 | warn | `Collab-Verbindung abgewiesen` with `reason: "schema-mismatch"` (at most once per 10 seconds) | `userId`, `pageId`, `schemaTicket`, `schemaServer`, `instanceOutdated`, `sinceLast` (rejections not logged since the previous line) |
 | info | `Doc-Reset uebergangen: Instanz hat eine veraltete Editor-Fassung` | `pageId` |
 | error | `Seiteninhalt nicht uebernommen: Elemente ausserhalb des Editor-Schemas` | `pageId`, `editorId`, `unknownNodes`, `unknownMarks`, `checkError` |

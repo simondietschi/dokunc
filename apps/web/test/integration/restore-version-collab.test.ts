@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { HocuspocusProvider } from "@hocuspocus/provider";
 import { Redis } from "ioredis";
+import pg from "pg";
 import * as Y from "yjs";
 import { prisma } from "@dokunc/db";
 import { COLLAB_FIELD } from "@dokunc/editor";
@@ -9,6 +10,7 @@ import {
   startePruefserver,
   type Pruefserver,
 } from "./collab-pruefserver";
+import { SPERR_PRAEFIX } from "../../../collab/src/store-lock";
 
 /**
  * Pruefstand: Wiederherstellen einer Version gegen einen echten
@@ -105,26 +107,32 @@ function tippe(doc: Y.Doc, text: string): void {
 }
 
 /**
- * Sperre, die die HA-Erweiterung vor jedem Speicherlauf nimmt, vom Test
- * aus halten. Sie liegt in Datenbank 0, gleich welche REDIS_URL nennt:
- * die Sperrbibliothek der Erweiterung waehlt ihre Datenbank im Skript
- * selbst (Vorgabe 0). Der Schluessel traegt die Seiten-ID und verfaellt
- * von allein.
+ * Die Speichersperre der Seite vom Test aus halten, wie eine andere
+ * Collab-Instanz, die gerade speichert (apps/collab/src/store-lock.ts:
+ * Advisory-Sperre in Postgres). Der Speicherlauf des Pruefservers wartet
+ * dann darauf; nach `ms` gibt der Test sie von selbst frei.
  */
 async function halteSperre(
   pageId: string,
   ms: number,
 ): Promise<{ freigeben(): Promise<void> }> {
-  const sperre = new Redis(
-    Object.assign(new URL(redisUrl), { pathname: "/0" }).toString(),
-    { maxRetriesPerRequest: 1 },
-  );
-  const schluessel = `hocuspocus:${pageId}:lock`;
-  await sperre.set(schluessel, "pruefstand", "PX", ms);
+  const sperre = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  await sperre.connect();
+  await sperre.query("BEGIN");
+  await sperre.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [
+    `${SPERR_PRAEFIX}${pageId}`,
+  ]);
+  let frei: Promise<void> | null = null;
+  const freigeben = () =>
+    (frei ??= sperre
+      .query("COMMIT")
+      .then(() => undefined)
+      .finally(() => sperre.end()));
+  const timer = setTimeout(() => void freigeben(), ms);
   return {
     async freigeben() {
-      await sperre.del(schluessel);
-      sperre.disconnect();
+      clearTimeout(timer);
+      await freigeben();
     },
   };
 }
@@ -360,12 +368,11 @@ describe("Wiederherstellen gegen einen echten Collab-Server", () => {
   }, 60_000);
 
   // Quittiert wird erst, wenn der ausgetauschte Stand gespeichert ist.
-  // Hier kann der Collab-Server nicht speichern: die Sperre, die die
-  // HA-Erweiterung vor jedem Speicherlauf nimmt, haelt der Test selbst
-  // (dann ueberlaesst die Erweiterung das Speichern einer anderen
-  // Instanz, die es hier nicht gibt). Eine Quittung schon nach dem
-  // Austausch im Speicher meldete Erfolg fuer einen Stand, den der
-  // naechste Start nicht mehr kennt.
+  // Hier kann der Collab-Server nicht speichern, solange die Action
+  // wartet: die Speichersperre der Seite haelt der Test, wie eine andere
+  // Instanz, die gerade speichert. Eine Quittung schon nach dem Austausch
+  // im Speicher meldete Erfolg fuer einen Stand, den der naechste Start
+  // nicht mehr kennt.
   it("meldet keinen Erfolg, solange der ausgetauschte Stand nicht gespeichert ist", async () => {
     const pageId = await neueSeite("Alpha");
     const a = await verbinde(pageId);
@@ -378,78 +385,60 @@ describe("Wiederherstellen gegen einen echten Collab-Server", () => {
       const versionId = await neueVersion(pageId, "Wiederhergestellt");
       const ziel = await wiederherstellen(versionId);
       expect(ziel).toBe(`/s/${TAG}/p/${pageId}?${RESTORE_STALE_PARAM}=${versionId}`);
+      // Rueckfall der Action: der naechste Start baut aus Page.content.
+      expect(await gespeichert(pageId)).toBeNull();
     } finally {
       await sperre.freigeben();
     }
-    // Rueckfall der Action: der naechste Start baut aus Page.content.
-    expect(await gespeichert(pageId)).toBeNull();
+    // Der Speicherlauf hat auf die Sperre gewartet, statt verworfen zu
+    // werden: danach steht die Wiederherstellung auf derselben Linie in
+    // CollabDocument.
+    await warteBis(
+      async () => (await gespeichert(pageId)) === absatz("Wiederhergestellt"),
+      "Wiederherstellung nach der Sperre gespeichert",
+    );
   }, 60_000);
 
-  // Scheitert der Speicherlauf nach dem Austausch an der Sperre (eine
-  // andere Instanz speichert gerade, oder Redis hakt kurz), entlaedt
-  // Hocuspocus das Dokument ungespeichert. Oeffnet danach jemand die
-  // Seite und tippt, entsteht ein NEUES Dokument derselben Seite aus dem
-  // alten Stand in CollabDocument. Sein Speicherlauf traegt den Austausch
-  // nicht und darf das Warten darauf nicht erfuellen: sonst meldete die
-  // Action Erfolg, und die Wiederherstellung waere still verloren.
-  it("haelt den Speicherlauf eines neu geladenen Dokuments nicht fuer den Austausch", async () => {
+  // Haelt eine andere Instanz gerade die Speichersperre der Seite, wartet
+  // der Speicherlauf nach dem Austausch darauf und speichert dann. Frueher
+  // (Sperre in Redis) wurde er verworfen, und Hocuspocus entlud das
+  // Dokument ungespeichert; ein danach neu geladenes Dokument kannte den
+  // Austausch nicht. Diesen Weg gibt es nicht mehr: das Dokument bleibt,
+  // bis sein Stand gespeichert ist, und die Action meldet Erfolg.
+  it("wartet auf die Speichersperre einer anderen Instanz und quittiert dann", async () => {
     const pageId = await neueSeite("Alpha");
     const a = await verbinde(pageId);
     a.provider.destroy();
     await warteBis(async () => !(await geladen(pageId)), "Dokument entladen");
     expect(await gespeichert(pageId)).toBe(absatz("Alpha"));
     const versionId = await neueVersion(pageId, "Wiederhergestellt");
+    const logAb = collab!.log().length;
 
-    // Kurz gehalten: der erste Speicherlauf nach dem Austausch scheitert,
-    // spaetere gelingen wieder.
     const sperre = await halteSperre(pageId, 1_300);
     let ziel: string;
-    let b: Awaited<ReturnType<typeof verbinde>>;
     try {
-      const action = wiederherstellen(versionId);
-      // Ein Fehler der Action kommt beim await unten an; bricht vorher
-      // das Warten ab, soll er nicht zusaetzlich unbehandelt auftauchen.
-      action.catch(() => undefined);
-      // Der Austausch laedt das Dokument, sein Speicherlauf scheitert an
-      // der Sperre, und Hocuspocus entlaedt es nach dem Trennen wieder.
-      await warteBis(() => geladen(pageId), "Dokument fuer den Austausch geladen", 5_000, 10);
-      await warteBis(
-        async () => !(await geladen(pageId)),
-        "Dokument ungespeichert entladen",
-        5_000,
-        10,
-      );
-      // Jemand oeffnet die Seite neu und tippt, bevor die Action ihre
-      // Quittung hat.
-      b = await verbinde(pageId);
-      tippe(b.doc, "Getippt");
-      ziel = await action;
+      ziel = await wiederherstellen(versionId);
     } finally {
       await sperre.freigeben();
     }
 
-    // Erfolg darf nur melden, wer die Wiederherstellung gespeichert hat.
-    // Ein Hinweis (?neu-laden) ist ebenfalls richtig: die Person weiss
-    // dann, dass sie nachsehen muss.
-    if (!ziel.includes(RESTORE_STALE_PARAM)) {
-      expect(ziel).toBe(`/s/${TAG}/p/${pageId}`);
-      expect(await gespeichert(pageId)).toContain(absatz("Wiederhergestellt"));
-      await warteBis(
-        () => inhalt(b.doc).includes(absatz("Wiederhergestellt")),
-        "Editor zeigt die Wiederherstellung",
-      );
-    } else {
-      expect(ziel).toBe(`/s/${TAG}/p/${pageId}?${RESTORE_STALE_PARAM}=${versionId}`);
-    }
+    expect(ziel).toBe(`/s/${TAG}/p/${pageId}`);
+    expect(await gespeichert(pageId)).toBe(absatz("Wiederhergestellt"));
+    const b = await verbinde(pageId);
+    expect(inhalt(b.doc)).toBe(absatz("Wiederhergestellt"));
+    expect(collab!.log().slice(logAb)).not.toContain(
+      "Dokument entladen, bevor der Stand gespeichert war",
+    );
   }, 60_000);
 
-  // Wie oben, nur hat ein Editor den ersten Austausch gesehen und die
-  // Seite verlassen, bevor gespeichert werden konnte. Seine Kopie im
-  // Browser traegt die Eintraege dieses Austauschs. Die Wiederholung
-  // tauscht in einem neu geladenen Dokument aus; ohne den Stand des
-  // entladenen darin loeschte sie diese Eintraege nicht, und beim
-  // naechsten Oeffnen stuende der wiederhergestellte Absatz doppelt da,
-  // quittiert als Erfolg.
+  // Ein Editor hat den Austausch gesehen und die Seite verlassen, bevor
+  // gespeichert werden konnte. Seine Kopie im Browser traegt die Eintraege
+  // dieses Austauschs. Wurde das Dokument dabei ungespeichert entladen
+  // (frueher, als die Sperre in Redis den Speicherlauf verwarf), tauschte
+  // die Wiederholung in einem neu geladenen Dokument aus und musste den
+  // Stand des entladenen mitnehmen, sonst stuende der wiederhergestellte
+  // Absatz beim naechsten Oeffnen doppelt da. Heute wartet der Lauf auf
+  // die Sperre; verdoppelt werden darf trotzdem nichts.
   it("verdoppelt nichts, wenn ein Editor den ungespeicherten Austausch gesehen hat", async () => {
     const pageId = await neueSeite("Alpha");
     const vorab = await verbinde(pageId);
@@ -472,7 +461,7 @@ describe("Wiederherstellen gegen einen echten Collab-Server", () => {
         5,
       );
       // Wie y-indexeddb: der Stand bleibt im Browser, der Tab geht zu,
-      // solange der Speicherlauf noch an der Sperre scheitert.
+      // solange der Speicherlauf noch auf die Sperre wartet.
       imBrowser = Y.encodeStateAsUpdate(a.doc);
       a.provider.destroy();
       ziel = await action;
@@ -488,9 +477,9 @@ describe("Wiederherstellen gegen einen echten Collab-Server", () => {
     } else {
       expect(ziel).toBe(`/s/${TAG}/p/${pageId}?${RESTORE_STALE_PARAM}=${versionId}`);
     }
-    // Die Lage ist wirklich eingetreten: das Dokument mit dem ersten
-    // Austausch wurde ungespeichert entladen.
-    expect(collab!.log().slice(logAb)).toContain(
+    // Das Dokument mit dem Austausch wurde nicht ungespeichert entladen:
+    // sein Speicherlauf hat auf die Sperre gewartet.
+    expect(collab!.log().slice(logAb)).not.toContain(
       "Dokument entladen, bevor der Stand gespeichert war",
     );
   }, 60_000);
