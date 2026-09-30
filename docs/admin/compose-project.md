@@ -58,6 +58,10 @@ explicitly; the script accepts only a name whose volumes exist:
   with a new secret next to your data. Your data is untouched in the old
   volumes. The script does not report this when `COMPOSE_PROJECT_NAME`
   sets the name explicitly.
+- **Exit code 3:** the script could not ask Docker about the volumes, for
+  example because your user may not use the Docker socket. Run it the way
+  you run `docker compose` (with `sudo` if you use that). `--festschreiben`
+  also stops with exit code 3 and changes nothing.
 
 The way back after a missed step:
 

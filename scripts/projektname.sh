@@ -19,8 +19,9 @@
 #                   aktuellen. Aendert nichts, wenn der Name schon in der
 #                   .env oder in der Umgebung steht.
 #   --name          gibt nur den Namen aus (fuer backup.sh und restore.sh).
-# Exit 3: falscher Aufruf, docker compose config gescheitert oder .env
-# nicht schreibbar.
+# Exit 3: falscher Aufruf, docker compose config gescheitert, Docker
+# nicht erreichbar (eine Abfrage der Volumes scheitert anders als mit "no
+# such volume") oder .env nicht schreibbar. Dann ist nichts geaendert.
 #
 # Warum: docker-compose.yml setzt "name: dokunc". Vorher hiess das Projekt
 # wie das Verzeichnis, und die Volumes tragen diesen Namen. Eine
@@ -75,7 +76,32 @@ bisheriger_name() {
 # Zulaessiger Projektname fuer Compose.
 gueltiger_name() { [[ "$1" =~ ^[a-z0-9][a-z0-9_-]*$ ]]; }
 
-hat_daten() { docker volume inspect "$1_db_data" "$1_app_data" >/dev/null 2>&1; }
+# Jede Abfrage der Volumes scheitert geschlossen: ohne Zugriff auf Docker
+# (ein Benutzer ohne Rechte am Socket, wo docker compose sonst mit sudo
+# laeuft, oder ein gestoppter Dienst) saehe sonst jede Installation wie
+# eine neue aus, und --festschreiben schriebe den falschen Namen fest.
+# docker compose config braucht den Dienst nicht und hilft hier nicht.
+docker_gescheitert() {
+  {
+    echo "✗ $1 gescheitert: ohne Zugriff auf Docker lässt sich nicht prüfen, welche Compose-Projekte Daten haben. Nichts geändert. Läuft docker compose sonst mit sudo, dieses Skript ebenso aufrufen."
+    grep -v '^[[:space:]]*$' "$FEHLER" | sed -n '1,10p' | sed 's/^/  /'
+  } >&2
+  exit 3
+}
+
+# Daten eines Projekts: die Volumes <projekt>_db_data und _app_data. Nur
+# "no such volume" heisst "fehlt"; jeder andere Fehler bricht ab. Nicht
+# in einer Subshell aufrufen, sonst beendet der Abbruch nur diese.
+hat_daten() {
+  local v
+  for v in "$1_db_data" "$1_app_data"; do
+    if ! docker volume inspect "$v" >/dev/null 2>"$FEHLER"; then
+      if grep -qi 'no such volume' "$FEHLER"; then return 1; fi
+      docker_gescheitert "docker volume inspect $v"
+    fi
+  done
+  return 0
+}
 
 # Anlagedatum der Datenbank eines Projekts, wie Docker es meldet (RFC 3339).
 angelegt() { docker volume inspect -f '{{.CreatedAt}}' "$1_db_data" 2>/dev/null | head -n 1; }
@@ -86,25 +112,21 @@ tag() { if [ -n "$1" ]; then printf '%s' "${1:0:10}"; else printf 'unbekannt'; f
 # Sekunden seit 1970 oder leer, wenn das Datum nicht lesbar ist.
 sekunden() { date -d "$1" +%s 2>/dev/null || true; }
 
-# dokunc-Projekte des Hosts: Projekte mit einem Compose-Volume app_data
-# UND db_data. db_data allein haben auch fremde Projekte.
-dokunc_projekte() {
-  local app db
-  app=$(docker volume ls --filter label=com.docker.compose.volume=app_data \
-    --format '{{.Label "com.docker.compose.project"}}' | LC_ALL=C sort -u)
-  db=$(docker volume ls --filter label=com.docker.compose.volume=db_data \
-    --format '{{.Label "com.docker.compose.project"}}' | LC_ALL=C sort -u)
-  LC_ALL=C comm -12 <(printf '%s\n' "$app" | sed '/^$/d') <(printf '%s\n' "$db" | sed '/^$/d')
+# Compose-Projekte mit einem Volume der Art $1 (app_data, db_data),
+# sortiert, eines je Zeile.
+projekte_mit() {
+  docker volume ls --filter "label=com.docker.compose.volume=$1" \
+    --format '{{.Label "com.docker.compose.project"}}' 2>"$FEHLER" | sed '/^$/d' | LC_ALL=C sort -u
 }
 
 # ---- Aktueller Name und seine Quelle ----
 
-CONFIG_FEHLER=$(mktemp)
-trap 'rm -f "$CONFIG_FEHLER"' EXIT
-AKTUELL=$(docker compose config 2>"$CONFIG_FEHLER" | sed -n '1s/^name: //p') || true
+FEHLER=$(mktemp)
+trap 'rm -f "$FEHLER"' EXIT
+AKTUELL=$(docker compose config 2>"$FEHLER" | sed -n '1s/^name: //p') || true
 if [ -z "$AKTUELL" ]; then
   echo "✗ docker compose config gescheitert, der Projektname ist nicht bestimmbar:" >&2
-  sed -n '1,10p' "$CONFIG_FEHLER" | sed 's/^/  /' >&2
+  sed -n '1,10p' "$FEHLER" | sed 's/^/  /' >&2
   exit 3
 fi
 if [ "$MODUS" = name ]; then
@@ -151,6 +173,9 @@ if [ "$MODUS" = festschreiben ]; then
       NAME=$AKTUELL
     fi
   fi
+  # Auch hier vor dem Schreiben fragen: ohne Docker bricht es jetzt ab,
+  # nicht erst nach dem Eintrag.
+  if hat_daten "$NAME"; then NAME_HAT_DATEN=1; else NAME_HAT_DATEN=0; fi
   # In eine Datei neben der .env schreiben und dann ersetzen: bricht der
   # Lauf ab, bleibt die .env, wie sie war. Die Rechte der bestehenden
   # Datei bleiben (cp -p), eine neue entsteht nur fuer den Eigentuemer.
@@ -160,7 +185,7 @@ if [ "$MODUS" = festschreiben ]; then
   ZIEL=.env
   if [ -L .env ]; then ZIEL=$(readlink -f .env); fi
   TEIL="$ZIEL.$$.teil"
-  trap 'rm -f "$CONFIG_FEHLER" "$TEIL"' EXIT
+  trap 'rm -f "$FEHLER" "$TEIL"' EXIT
   if [ -e "$ZIEL" ]; then
     cp -p "$ZIEL" "$TEIL"
     if [ -s "$TEIL" ] && [ -n "$(tail -c 1 "$TEIL")" ]; then printf '\n' >>"$TEIL"; fi
@@ -172,7 +197,7 @@ if [ "$MODUS" = festschreiben ]; then
     echo "COMPOSE_PROJECT_NAME=$NAME"
   } >>"$TEIL"
   mv "$TEIL" "$ZIEL" || { echo "✗ .env nicht schreibbar." >&2; exit 3; }
-  if hat_daten "$NAME"; then
+  if [ "$NAME_HAT_DATEN" -eq 1 ]; then
     echo "✓ COMPOSE_PROJECT_NAME=$NAME in .env eingetragen (Volumes ${NAME}_db_data, ${NAME}_app_data)."
   else
     echo "✓ COMPOSE_PROJECT_NAME=$NAME in .env eingetragen (noch keine Daten)."
@@ -183,10 +208,14 @@ fi
 # ---- Pruefen ----
 
 echo "Compose-Projekt: $AKTUELL ($QUELLE)"
+# dokunc-Projekte des Hosts: Projekte mit einem Compose-Volume app_data
+# UND db_data. db_data allein haben auch fremde Projekte.
+MIT_APP=$(projekte_mit app_data) || docker_gescheitert "docker volume ls"
+MIT_DB=$(projekte_mit db_data) || docker_gescheitert "docker volume ls"
 ANDERE=()
 while IFS= read -r p; do
   [ -n "$p" ] && [ "$p" != "$AKTUELL" ] && ANDERE+=("$p")
-done < <(dokunc_projekte)
+done < <(LC_ALL=C comm -12 <(printf '%s\n' "$MIT_APP") <(printf '%s\n' "$MIT_DB"))
 
 # "wiki (angelegt 2026-05-19)" je anderem Projekt, durch Komma getrennt.
 liste_andere() {

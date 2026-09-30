@@ -408,6 +408,11 @@ jobs:
           volume dokunc app_data
           pruefe 2 'Rückweg: docker compose -p dokunc down (ohne -v)'
           printf 'APP_URL=http://localhost:7891' > "$ALT/.env"
+          # Ohne Zugriff auf Docker: Abbruch, die .env bleibt, wie sie war.
+          code=0
+          (cd "$ALT" && DOCKER_HOST=unix:///nicht-da.sock ./scripts/projektname.sh --festschreiben) || code=$?
+          test "$code" = 3
+          test "$(cat "$ALT/.env")" = 'APP_URL=http://localhost:7891'
           (cd "$ALT" && ./scripts/projektname.sh --festschreiben)
           grep -qx 'APP_URL=http://localhost:7891' "$ALT/.env"
           grep -qx 'COMPOSE_PROJECT_NAME=wikialt' "$ALT/.env"

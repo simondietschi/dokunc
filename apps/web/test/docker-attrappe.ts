@@ -38,6 +38,11 @@ import { fileURLToPath } from "node:url";
  *                     getrennt: "wiki_db_data=2026-05-19T08:00:00Z …". Ein
  *                     Volume <projekt>_<name> traegt die Labels von Compose
  *                     (Projekt und Volume), wie Compose es anlegt.
+ * - FAKE_DOCKER_WEG   ohne Zugriff auf den Docker-Dienst: "alle" laesst
+ *                     jeden Aufruf `volume …` scheitern, "ls" nur
+ *                     `volume ls`, "inspect" nur `volume inspect`, mit der
+ *                     Meldung von Docker bei fehlender Berechtigung.
+ *                     `compose config` braucht den Dienst nicht.
  *
  * Das Ersetzen der Uploads (`tar xzf - -C /app/uploads`) schreibt den
  * Inhalt des Archivs auf stdin als Zeile "UPLOADS <Eintraege>" mit.
@@ -53,6 +58,11 @@ if [[ "$args" == "compose run "* ]]; then
   echo " Container fake-app-run-1 Creating" >&2
   echo " Container fake-app-run-1 Created" >&2
 fi
+case "\${FAKE_DOCKER_WEG:-}:$args" in
+  alle:"volume "*|ls:"volume ls "*|inspect:"volume inspect "*)
+    echo "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock" >&2
+    exit 1 ;;
+esac
 # Volumes aus FAKE_VOLUMES: Name -> Anlagedatum
 declare -A VOLUME
 for v in \${FAKE_VOLUMES:-}; do VOLUME["\${v%%=*}"]="\${v#*=}"; done

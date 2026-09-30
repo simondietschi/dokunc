@@ -270,3 +270,41 @@ describe("scripts/projektname.sh: Festschreiben", () => {
     expect(lesen(join(dir, ".env"))).toBe('COMPOSE_PROJECT_NAME="wiki"\n');
   });
 });
+
+describe("scripts/projektname.sh: ohne Zugriff auf Docker", () => {
+  // docker compose config braucht den Docker-Dienst nicht, die Abfragen
+  // der Volumes schon. Ohne Zugriff (ein Benutzer ohne Rechte am Socket,
+  // wo docker compose sonst mit sudo laeuft) saehe jede Installation wie
+  // eine neue aus, und --festschreiben schriebe den falschen Namen fest.
+  const env = { FAKE_VOLUMES: volumes(["wikialt", ALT]) };
+
+  it.each(["alle", "ls", "inspect"])("bricht die Pruefung ab, statt eine neue Installation zu melden (%s)", (weg) => {
+    const r = run(repoIn("Wiki Alt"), [], { ...env, FAKE_DOCKER_WEG: weg });
+    expect(r.status).toBe(3);
+    expect(r.stdout).toBe("Compose-Projekt: dokunc (aus docker-compose.yml)\n");
+    expect(r.stderr).toMatch(/^✗ docker volume (ls|inspect \S+) gescheitert: ohne Zugriff auf Docker/);
+    expect(r.stderr).toContain("  permission denied while trying to connect to the docker API");
+  });
+
+  it.each([
+    ["alle", "Wiki Alt", []],
+    ["inspect", "Wiki Alt", []],
+    ["alle", "dokunc", []],
+    ["inspect", "dokunc", ["wikialt"]],
+  ])("schreibt nichts fest (%s, Verzeichnis %s, Name %j)", (weg, verzeichnis, name) => {
+    const dir = repoIn(verzeichnis);
+    const datei = join(dir, ".env");
+    writeFileSync(datei, "APP_SECRET=x\n");
+    const r = run(dir, ["--festschreiben", ...name], { ...env, FAKE_DOCKER_WEG: weg });
+    expect(r.status).toBe(3);
+    expect(r.stdout).toBe("");
+    expect(r.stderr).toContain("gescheitert: ohne Zugriff auf Docker");
+    expect(lesen(datei)).toBe("APP_SECRET=x\n");
+  });
+
+  it("nennt den Namen auch ohne Docker (--name)", () => {
+    const r = run(repoIn("Wiki Alt"), ["--name"], { FAKE_DOCKER_WEG: "alle" });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe("dokunc\n");
+  });
+});
