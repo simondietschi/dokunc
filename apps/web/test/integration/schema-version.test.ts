@@ -717,8 +717,8 @@ describe("Veraltete Instanz", () => {
     a.provider.destroy();
 
     // Das Ticket nennt das Schema dieses Servers: abgewiesen wird es nur,
-    // weil die Instanz veraltet ist. (Die Logzeile dazu ist gedrosselt und
-    // deshalb kein Beleg.)
+    // weil die Instanz veraltet ist. (Das Feld instanceOutdated der
+    // Logzeile prueft der Fall zum Start unter einer hoeheren Marke.)
     const b = await versuche(s, pageId);
     expect(b.synced).toBe(false);
     expect(b.gruende[0]).toBe(COLLAB_REJECT_REASON.schemaMismatch);
@@ -870,6 +870,24 @@ describe("Veraltete Instanz", () => {
     const b = await versuche(s, pageId);
     expect(b.synced).toBe(false);
     expect(b.gruende[0]).toBe(COLLAB_REJECT_REASON.schemaMismatch);
+    // Die erste Abweisung eines frischen Servers steht immer im Log (die
+    // Drossel beginnt erst mit ihr). Das Ticket nennt das Schema des
+    // Servers; die Zeile sagt, dass die Instanz veraltet ist.
+    const abgewiesen = () =>
+      s
+        .log()
+        .split("\n")
+        .find(
+          (z) =>
+            z.includes("Collab-Verbindung abgewiesen") &&
+            z.includes('"reason":"schema-mismatch"'),
+        );
+    await warteBis(() => abgewiesen() !== undefined, "Abweisung im Log", {
+      timeoutMs: 5_000,
+      log: s.log,
+    });
+    expect(abgewiesen()).toContain(`"schemaTicket":"${eigen.hash}"`);
+    expect(abgewiesen()).toContain('"instanceOutdated":true');
     b.provider.destroy();
   }, 60_000);
 });
