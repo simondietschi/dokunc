@@ -208,6 +208,40 @@ export async function revokeCollabAccess(
   }
 }
 
+/** Nachrichten je Pipeline-Rundlauf in revokeCollabAccessMany. */
+const ENTZUG_STAPEL = 500;
+
+/**
+ * Wie revokeCollabAccess, für viele Paare Person/Space auf einmal (eine
+ * Gruppe mit allen Mitgliedern in allen ihren Spaces). Je Stapel ein
+ * Rundlauf zu Redis statt einer je Paar: 500 Mitglieder in 20 Spaces
+ * sind 10 000 Nachrichten. Best effort wie die Einzelfassung.
+ */
+export async function revokeCollabAccessMany(
+  paare: readonly AccessRevokedMessage[],
+): Promise<void> {
+  const r = client();
+  if (!r || paare.length === 0) return;
+  for (let i = 0; i < paare.length; i += ENTZUG_STAPEL) {
+    const stapel = paare.slice(i, i + ENTZUG_STAPEL);
+    const pipeline = r.pipeline();
+    for (const m of stapel) {
+      const message: AccessRevokedMessage = { userId: m.userId, spaceId: m.spaceId };
+      pipeline.publish(ACCESS_REVOKED_CHANNEL, JSON.stringify(message));
+    }
+    try {
+      const ergebnisse = await pipeline.exec();
+      const fehler = ergebnisse?.find(([err]) => err)?.[0];
+      if (fehler) throw fehler;
+    } catch (err) {
+      log.warn(
+        { err, count: stapel.length },
+        "Zugriffsentzug konnte nicht gesendet werden",
+      );
+    }
+  }
+}
+
 /**
  * Collab-Server bitten, die offenen Verbindungen zu einer Seite und
  * ihrem Unterbaum neu gegen die Sichtbarkeit zu pruefen.

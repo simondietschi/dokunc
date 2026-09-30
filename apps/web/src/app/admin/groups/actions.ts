@@ -6,7 +6,7 @@ import { prisma, Prisma } from "@dokunc/db";
 import { requireAdmin } from "@/lib/current-user";
 import { str } from "@/lib/form";
 import { audit } from "@/lib/audit";
-import { revokeCollabAccess } from "@/lib/collab-sync";
+import { revokeCollabAccessMany } from "@/lib/collab-sync";
 import { RENAME_REFUSAL_PARAM, type RenameRefusal } from "@/lib/group-rename";
 import { log } from "@/lib/log";
 import { textLength, truncateText } from "@/lib/text-length";
@@ -165,24 +165,75 @@ export async function renameGroupAction(form: FormData) {
   backToGroups();
 }
 
+/**
+ * Spaces, in denen eine Gruppe Zugang verschafft: über eine Space-Rolle
+ * oder über eine Freigabe auf eine geschützte Seite. Das zweite geht
+ * leicht verloren, bleibt aber bestehen, wenn die Space-Rolle der
+ * Gruppe entfernt wird (removeSpaceGroupAction lässt die Freigaben
+ * stehen).
+ */
+async function spacesDerGruppe(
+  db: Pick<Prisma.TransactionClient, "spaceGroup" | "pageGrant">,
+  groupId: string,
+): Promise<string[]> {
+  const rollen = await db.spaceGroup.findMany({
+    where: { groupId },
+    select: { spaceId: true },
+  });
+  const freigaben = await db.pageGrant.findMany({
+    where: { groupId },
+    select: { page: { select: { spaceId: true } } },
+  });
+  return [
+    ...new Set([
+      ...rollen.map((r) => r.spaceId),
+      ...freigaben.map((f) => f.page.spaceId),
+    ]),
+  ];
+}
+
 export async function deleteGroupAction(form: FormData) {
   const admin = await requireAdmin();
   const groupId = str(form, "groupId");
-  const group = await prisma.group.findUnique({
-    where: { id: groupId },
-    select: { id: true, name: true },
-  });
-  if (!group) return;
 
-  // Kaskade räumt Mitgliedschaften, Space-Zuordnungen und Freigaben
-  // auf geschützten Seiten gleich mit.
-  await prisma.group.delete({ where: { id: group.id } });
+  // Vor dem Löschen lesen, wessen Sitzungen wo zu trennen sind: danach
+  // hat die Kaskade Mitgliedschaften, Space-Zuordnungen und Freigaben
+  // auf geschützten Seiten mitgenommen. Lesen und Löschen in einer
+  // Transaktion unter einer Sperre auf der Gruppenzeile: wer gleichzeitig
+  // ein Mitglied, eine Space-Rolle oder eine Freigabe einträgt, prüft
+  // dabei den Fremdschlüssel auf die Gruppe und wartet, bis gelesen ist
+  // (oder die Gruppe weg ist). Sonst verlöre ein Mitglied, das zwischen
+  // Lesen und Löschen dazukommt, den Zugang ohne Trennung und schriebe bis
+  // zur nächsten Runde des Collab-Servers weiter.
+  const geloescht = await prisma.$transaction(async (tx) => {
+    const [group] = await tx.$queryRaw<{ id: string; name: string }[]>`
+      SELECT id, name FROM "Group" WHERE id = ${groupId} FOR UPDATE
+    `;
+    if (!group) return null;
+    const mitglieder = await tx.groupMember.findMany({
+      where: { groupId },
+      select: { userId: true },
+    });
+    const spaceIds = await spacesDerGruppe(tx, groupId);
+    await tx.group.delete({ where: { id: groupId } });
+    return { group, userIds: mitglieder.map((m) => m.userId), spaceIds };
+  });
+  if (!geloescht) return;
+
   await audit({
     action: "group.deleted",
     actorId: admin.id,
-    targetId: group.id,
-    metadata: { name: group.name },
+    targetId: geloescht.group.id,
+    metadata: { name: geloescht.group.name },
   });
+  // Offene Editoren trennen, wie removeGroupMemberAction. Wer den Space
+  // auch direkt oder über eine andere Gruppe erreicht, verbindet sich neu
+  // und behält, was ihm bleibt.
+  await revokeCollabAccessMany(
+    geloescht.userIds.flatMap((userId) =>
+      geloescht.spaceIds.map((spaceId) => ({ userId, spaceId })),
+    ),
+  );
   backToGroups();
 }
 
@@ -231,18 +282,16 @@ export async function removeGroupMemberAction(form: FormData) {
     // verloren hat — bis zur naechsten wiederkehrenden Pruefung, also
     // bis zu einer Minute lang.
     //
-    // Betroffen ist jeder Space, in dem die Gruppe eine Rolle hatte: die
-    // Gruppe war womoeglich der einzige Grund, warum die Person ihn
-    // ueberhaupt sehen durfte. Wer den Space auch direkt oder ueber eine
-    // zweite Gruppe hat, verbindet sich danach neu und behaelt, was ihm
-    // dann noch bleibt — dieselbe Folge wie bei einer Rollenaenderung.
-    const spaces = await prisma.spaceGroup.findMany({
-      where: { groupId },
-      select: { spaceId: true },
-    });
-    for (const s of spaces) {
-      await revokeCollabAccess(userId, s.spaceId);
-    }
+    // Betroffen ist jeder Space, in dem die Gruppe eine Rolle oder eine
+    // Freigabe auf eine geschuetzte Seite hat: die Gruppe war womoeglich
+    // der einzige Grund, warum die Person ihn oder die Seite sehen
+    // durfte. Wer den Space auch direkt oder ueber eine zweite Gruppe
+    // hat, verbindet sich danach neu und behaelt, was ihm dann noch
+    // bleibt — dieselbe Folge wie bei einer Rollenaenderung.
+    const spaceIds = await spacesDerGruppe(prisma, groupId);
+    await revokeCollabAccessMany(
+      spaceIds.map((spaceId) => ({ userId, spaceId })),
+    );
   }
   backToGroups();
 }

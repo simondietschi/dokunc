@@ -1,15 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  ACCESS_REVOKED_CHANNEL,
   DOC_RESET_ACK_PREFIX,
   DOC_RESET_ACK_TIMEOUT_MS,
   DOC_RESET_CHANNEL,
 } from "@dokunc/editor";
 
-const { warn, publish, blpop, disconnect, redisDa } = vi.hoisted(() => ({
+const { warn, publish, blpop, disconnect, pipeline, redisDa } = vi.hoisted(() => ({
   warn: vi.fn(),
   publish: vi.fn(),
   blpop: vi.fn(),
   disconnect: vi.fn(),
+  pipeline: vi.fn(),
   redisDa: { value: true },
 }));
 vi.mock("./log", () => ({ log: { warn } }));
@@ -17,7 +19,7 @@ vi.mock("./log", () => ({ log: { warn } }));
 // Redis. `redisDa` spielt eine Umgebung ohne REDIS_URL nach: dann
 // liefern beide Fabriken null.
 vi.mock("./redis", () => ({
-  sharedRedis: () => () => (redisDa.value ? { publish } : null),
+  sharedRedis: () => () => (redisDa.value ? { publish, pipeline } : null),
   createRedis: () => (redisDa.value ? { blpop, disconnect } : null),
 }));
 
@@ -25,6 +27,7 @@ import {
   readStaleRestore,
   requestDocumentReset,
   revokeCollabAccess,
+  revokeCollabAccessMany,
   revokePageAccess,
 } from "./collab-sync";
 
@@ -33,6 +36,7 @@ afterEach(() => {
   publish.mockReset();
   blpop.mockReset();
   disconnect.mockReset();
+  pipeline.mockReset();
   redisDa.value = true;
   vi.useRealTimers();
 });
@@ -177,6 +181,64 @@ describe("collab-sync", () => {
     await revokePageAccess("p2");
     expect(warn.mock.calls[0][0].err).toBe(fehler);
     expect(warn.mock.calls[0][0].pageId).toBe("p2");
+  });
+});
+
+describe("revokeCollabAccessMany", () => {
+  /** Pipeline-Attrappe: sammelt Nachrichten, exec liefert je Befehl [err, n]. */
+  function pipelines(exec: (n: number) => Promise<[Error | null, unknown][]>) {
+    const gesendet: string[][] = [];
+    pipeline.mockImplementation(() => {
+      const stapel: string[] = [];
+      gesendet.push(stapel);
+      const p = {
+        publish: (kanal: string, text: string) => {
+          stapel.push(`${kanal} ${text}`);
+          return p;
+        },
+        exec: () => exec(stapel.length),
+      };
+      return p;
+    });
+    return gesendet;
+  }
+
+  it("schickt jedes Paar genau einmal, in Stapeln zu 500", async () => {
+    const gesendet = pipelines(async (n) => Array.from({ length: n }, () => [null, 1]));
+    const paare = Array.from({ length: 1200 }, (_, i) => ({
+      userId: `u${i}`,
+      spaceId: "s1",
+    }));
+    await revokeCollabAccessMany(paare);
+    expect(gesendet.map((s) => s.length)).toEqual([500, 500, 200]);
+    expect(gesendet.flat()).toContain(
+      `${ACCESS_REVOKED_CHANNEL} ${JSON.stringify({ userId: "u1199", spaceId: "s1" })}`,
+    );
+    expect(publish).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("ein gescheiterter Stapel wird geloggt, die übrigen gehen trotzdem raus", async () => {
+    const fehler = new Error("Connection is closed.");
+    let lauf = 0;
+    const gesendet = pipelines(async (n) => {
+      lauf += 1;
+      if (lauf === 1) throw fehler;
+      return Array.from({ length: n }, (_, i) => [i === 0 ? fehler : null, 1]);
+    });
+    const paare = Array.from({ length: 700 }, (_, i) => ({ userId: `u${i}`, spaceId: "s" }));
+    await revokeCollabAccessMany(paare);
+    expect(gesendet.map((s) => s.length)).toEqual([500, 200]);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls[0][0]).toEqual({ err: fehler, count: 500 });
+    expect(warn.mock.calls[1][0]).toEqual({ err: fehler, count: 200 });
+  });
+
+  it("ohne Paare oder ohne Redis: nichts", async () => {
+    await revokeCollabAccessMany([]);
+    redisDa.value = false;
+    await revokeCollabAccessMany([{ userId: "u", spaceId: "s" }]);
+    expect(pipeline).not.toHaveBeenCalled();
   });
 });
 

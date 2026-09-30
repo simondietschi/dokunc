@@ -428,6 +428,13 @@ differently on an existing installation, and what to do about it.
   still delivered to readers of the linking page with the page data; it
   is no longer displayed, and new links no longer store it. Shared pages
   no longer contain internal page and user IDs.
+- Deleting a group left its members' open editors connected until the
+  collaboration server's next periodic check, up to a minute, so they
+  could keep reading and writing pages they had lost access to. They are
+  now disconnected at once, in every space where the group had a role or
+  access to a protected page. Removing a member from a group now also
+  disconnects them in spaces where the group only had access to a
+  protected page.
 
 ### Added
 
