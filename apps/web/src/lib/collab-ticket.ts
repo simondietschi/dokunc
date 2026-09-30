@@ -4,7 +4,7 @@ import { SignJWT } from "jose";
 // Die Audience ist ein Protokollwert: der Collab-Server verlangt genau
 // sie beim Pruefen des Tickets. Deshalb kommt sie aus dem gemeinsamen
 // Paket und steht nicht zweimal im Code.
-import { COLLAB_AUDIENCE } from "@dokunc/editor";
+import { COLLAB_AUDIENCE, editorSchema } from "@dokunc/editor";
 import { getAppSecret } from "./secret";
 
 /**
@@ -36,6 +36,13 @@ export async function issueCollabTicket(opts: {
   pageId: string;
   /** Restore-Epoche der Instanz (InstanceState), null ohne Restore. */
   restoreEpoch?: string | null;
+  /**
+   * Schema-Hash des Editors, fuer den das Ticket gilt. Die Route stellt
+   * nur aus, wenn der Tab dasselbe Schema hat wie die Web-App, also passt
+   * die Vorgabe immer; angegeben wird er nur in Tests, die einen Editor
+   * mit anderem Schema nachstellen.
+   */
+  schemaHash?: string;
 }): Promise<string> {
   // sid mitzugeben heisst: wird diese Anmeldung beendet, endet auch die
   // Verbindung zum Collab-Server, nicht erst mit dem nächsten Ticket.
@@ -46,6 +53,10 @@ export async function issueCollabTicket(opts: {
     // ep: die Restore-Epoche, gegen die das Ticket ausgestellt ist. Der
     // Collab-Server nimmt es nur an, solange sie noch gilt.
     ep: opts.restoreEpoch ?? null,
+    // sh: das Editor-Schema, gegen das das Ticket ausgestellt ist. Der
+    // Collab-Server nimmt es nur an, wenn es seinem eigenen gleicht: ein
+    // Editor mit anderem Schema loeschte beim Anzeigen, was er nicht kennt.
+    sh: opts.schemaHash ?? editorSchema().hash,
   })
     .setProtectedHeader({ alg: "HS256" })
     .setSubject(opts.userId)

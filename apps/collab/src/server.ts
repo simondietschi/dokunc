@@ -45,6 +45,7 @@ import {
   chunkForAiIndex,
   readDocSizeLimits,
   encodeDocSizeNotice,
+  editorSchema,
   type DocResetMessage,
 } from "@dokunc/editor";
 import { LOG_REDACT, checkConfigAtStartup, logLevelFrom } from "@dokunc/config";
@@ -103,6 +104,13 @@ const SECRET = new TextEncoder().encode(
   resolveAppSecret(process.env.APP_SECRET, process.env.NODE_ENV),
 );
 const extensions = richExtensions();
+/**
+ * Editor-Schema dieser Fassung (Hash und Version, @dokunc/editor). Ein
+ * Editor mit anderem Schema loescht beim Anzeigen aus dem gemeinsamen
+ * Dokument, was er nicht kennt; verbinden darf nur, wessen Ticket
+ * dasselbe Schema nennt.
+ */
+const eigenesSchema = editorSchema();
 
 /** Mindestabstand zwischen History-Snapshots pro Seite (ms). */
 const VERSION_INTERVAL_MS = 2 * 60 * 1000;
@@ -229,6 +237,11 @@ type Ticket = {
   ttlSec: number;
   /** Restore-Epoche, gegen die das Ticket ausgestellt ist (Claim `ep`). */
   restoreEpoch: string | null;
+  /**
+   * Editor-Schema, gegen das das Ticket ausgestellt ist (Claim `sh`);
+   * null bei Tickets einer Web-App von vor dieser Pruefung.
+   */
+  schemaHash: string | null;
 };
 
 /**
@@ -278,6 +291,7 @@ async function verifyTicket(
     jti: String(payload.jti),
     ttlSec: Number(payload.exp) - Math.floor(Date.now() / 1000),
     restoreEpoch: typeof payload.ep === "string" ? payload.ep : null,
+    schemaHash: typeof payload.sh === "string" ? payload.sh : null,
   };
 }
 
@@ -329,8 +343,8 @@ async function checkTicketAccess(
 }
 
 /**
- * Ablehnung an einer Grenze oder wegen einer veralteten Restore-Epoche,
- * mit Grund fuer den Editor.
+ * Ablehnung an einer Grenze, wegen einer veralteten Restore-Epoche oder
+ * eines anderen Editor-Schemas, mit Grund fuer den Editor.
  *
  * Bewusst kein Error: Hocuspocus schreibt die Meldung jedes geworfenen
  * Errors ungebremst auf stderr, und wer an einer Grenze abprallt,
@@ -543,6 +557,34 @@ function watchMessageLimit(connection: Connection, pageId: string): void {
 let lastFullLogAt = 0;
 let lastAddressFullLogAt = 0;
 
+/**
+ * Abweisungen wegen des Editor-Schemas hoechstens alle zehn Sekunden
+ * melden, mit der Zahl der uebergangenen dazwischen: nach einem Update
+ * versucht es jeder offene Tab mit altem Editor alle 15 Sekunden erneut,
+ * und das Log liefe sonst mit.
+ */
+let lastSchemaLogAt = 0;
+let schemaRejectionsSinceLog = 0;
+function logSchemaRejection(detail: {
+  userId: string;
+  pageId: string;
+  schemaTicket: string | null;
+}): void {
+  schemaRejectionsSinceLog += 1;
+  if (Date.now() - lastSchemaLogAt < 10_000) return;
+  lastSchemaLogAt = Date.now();
+  log.warn(
+    {
+      ...detail,
+      reason: COLLAB_REJECT_REASON.schemaMismatch,
+      schemaServer: eigenesSchema.hash,
+      sinceLast: schemaRejectionsSinceLog - 1,
+    },
+    "Collab-Verbindung abgewiesen",
+  );
+  schemaRejectionsSinceLog = 0;
+}
+
 // HA: mehrere Collab-Instanzen koordinieren Yjs-Dokumente + Awareness
 // über Redis Pub/Sub. Jede Instanz, zu der Verbindungen bestehen, hält
 // das Dokument selbst im Speicher und abonniert dafür den Kanal
@@ -681,6 +723,23 @@ const server = new Server({
   async onAuthenticate(data) {
     const pageId = data.documentName;
     const ticket = await verifyTicket(data.token, pageId);
+
+    // Editor-Schema vor allem anderen: ein Tab mit anderem Editor loeschte
+    // beim Anzeigen, was sein Schema nicht kennt, und die Loeschung ginge
+    // an alle und in die Datenbank. Kein Versuch fuer die Bremse, kein
+    // Platz, keine Datenbankabfrage, das Ticket bleibt unverbraucht: der
+    // Tab kommt wieder, sobald Web-App und Collab-Server dieselbe Fassung
+    // fahren. Den Socket schliesst die Anmeldefrist (limitRejection).
+    // Ein Ticket ohne `sh` stammt von einer Web-App von vor dieser
+    // Pruefung und gilt ebenso als abweichend.
+    if (ticket.schemaHash !== eigenesSchema.hash) {
+      logSchemaRejection({
+        userId: ticket.userId,
+        pageId,
+        schemaTicket: ticket.schemaHash,
+      });
+      throw limitRejection(COLLAB_REJECT_REASON.schemaMismatch);
+    }
 
     const versuch = await attemptConnection(
       `collab-user:${ticket.userId}`,
@@ -1869,6 +1928,21 @@ server
   .listen()
   .then(() => {
     log.info({ port: PORT }, "Hocuspocus läuft");
+    log.info(
+      {
+        schemaVersion: eigenesSchema.version,
+        schemaHash: eigenesSchema.hash,
+      },
+      "Editor-Schema",
+    );
+    if (eigenesSchema.version === 0) {
+      // Nur in der Entwicklung moeglich (ein Unit-Test verhindert, dass
+      // ein nicht eingetragenes Schema ausgeliefert wird).
+      log.error(
+        { schemaHash: eigenesSchema.hash },
+        "Editor-Schema fehlt in EDITOR_SCHEMA_HASHES (packages/editor): Hash dort anhaengen",
+      );
+    }
     log.info(
       {
         dokumentGrenze: sizeLimits.maxDocBytes,

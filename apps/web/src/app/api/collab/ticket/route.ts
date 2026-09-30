@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { currentRestoreEpoch, prisma } from "@dokunc/db";
-import { COLLAB_REJECT_REASON } from "@dokunc/editor";
+import { COLLAB_REJECT_REASON, editorSchema } from "@dokunc/editor";
 import { effectiveRole } from "@/lib/space-access";
 import { canSeePage } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
@@ -26,6 +26,24 @@ function restoredResponse() {
     {
       error: "Die Instanz wurde zurückgespielt",
       code: COLLAB_REJECT_REASON.restoreEpoch,
+    },
+    { status: 409, headers: { "Cache-Control": "no-store" } },
+  );
+}
+
+/**
+ * Antwort, wenn der Tab ein anderes Editor-Schema hat als die Web-App
+ * (Feld `schema`, Hash aus @dokunc/editor). Er laeuft mit einem Editor
+ * von vor dem letzten Update und loeschte beim Abgleich, was er nicht
+ * kennt. Der Editor trennt dann endgueltig und bittet um Neuladen. Ein
+ * fehlendes Feld zaehlt als abweichend: so fallen auch Tabs auf, deren
+ * Code die Pruefung noch nicht kennt. Kein Log: erwartet, je Tab einmal.
+ */
+function staleResponse() {
+  return NextResponse.json(
+    {
+      error: "Neue Version verfügbar",
+      code: COLLAB_REJECT_REASON.staleClient,
     },
     { status: 409, headers: { "Cache-Control": "no-store" } },
   );
@@ -61,11 +79,14 @@ export async function POST(req: Request) {
   const body = (await req.json().catch(() => null)) as {
     pageId?: unknown;
     epoch?: unknown;
+    schema?: unknown;
   } | null;
   /** Neue Editoren schicken das Feld immer (Text oder null); fehlt es, ist
    *  es ein Tab mit Code von vor der Restore-Epoche. */
   const hasEpoch = !!body && typeof body === "object" && "epoch" in body;
   const clientEpoch = typeof body?.epoch === "string" ? body.epoch : null;
+  /** Schema-Hash des Editors im Tab; fehlt er, ist der Code aelter. */
+  const staleSchema = body?.schema !== editorSchema().hash;
 
   const user = await getCurrentUser();
   if (!user) {
@@ -76,6 +97,9 @@ export async function POST(req: Request) {
     if (hasEpoch && clientEpoch !== (await currentRestoreEpoch(prisma))) {
       return restoredResponse();
     }
+    // Ebenso ein Tab mit altem Editor: "neu laden" statt "kein Zugriff".
+    // Ohne Datenbank; der Hash steht ohnehin in jedem ausgelieferten Editor.
+    if (staleSchema) return staleResponse();
     return NextResponse.json({ error: "Nicht angemeldet" }, { status: 401 });
   }
 
@@ -114,6 +138,9 @@ export async function POST(req: Request) {
   // nicht "nicht gefunden". Ein Tab ohne Feld epoch gilt als null.
   const epoch = await currentRestoreEpoch(prisma);
   if (clientEpoch !== epoch) return restoredResponse();
+  // Nach der Epoche: deren Hinweis sagt, dass Text seit der Sicherung
+  // fehlt, und darf hinter "neue Version" nicht verschwinden.
+  if (staleSchema) return staleResponse();
 
   const page = await prisma.page.findFirst({
     where: { id: pageId, deletedAt: null },

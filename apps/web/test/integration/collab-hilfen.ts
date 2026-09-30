@@ -1,6 +1,9 @@
 import { HocuspocusProvider } from "@hocuspocus/provider";
+import { getSchema, type AnyExtension } from "@tiptap/core";
+import { Transform } from "@tiptap/pm/transform";
+import { initProseMirrorDoc, updateYFragment } from "@tiptap/y-tiptap";
 import * as Y from "yjs";
-import { COLLAB_FIELD } from "@dokunc/editor";
+import { COLLAB_FIELD, richExtensions, schemaHash } from "@dokunc/editor";
 
 /**
  * Gemeinsame Hilfen fuer Pruefstaende mit echtem Collab-Server (siehe
@@ -89,4 +92,60 @@ export async function verbinde(opts: {
     }
   }
   return { doc, provider };
+}
+
+/**
+ * Schema eines aelteren Editors: richExtensions() ohne die genannten
+ * Erweiterungen (Namen wie "callout", "highlight", "textAlign"), dazu
+ * sein Hash, wie ihn ein solcher Tab schickte.
+ */
+export function schemaOhne(namen: string[]): {
+  schema: ReturnType<typeof getSchema>;
+  hash: string;
+} {
+  const liste = (richExtensions() as AnyExtension[]).filter(
+    (e) => !namen.includes(e.name),
+  );
+  if (liste.length !== richExtensions().length - namen.length) {
+    throw new Error(`Nicht alle Erweiterungen gefunden: ${namen.join(", ")}`);
+  }
+  const schema = getSchema(liste);
+  return { schema, hash: schemaHash(schema) };
+}
+
+/**
+ * Was ein Editor mit `schema` im Browser mit dem Dokument macht, genau
+ * mit der Bindung des Browsers (@tiptap/y-tiptap):
+ *
+ *  1. Beim Anzeigen baut initProseMirrorDoc den Editorinhalt aus dem
+ *     Yjs-Feld. Elemente, aus denen mit diesem Schema kein Knoten wird,
+ *     loescht die Bindung dabei aus dem Dokument, bei einer unbekannten
+ *     Marke den ganzen Textlauf.
+ *  2. Tippt die Person danach in den Absatz, der `tippeIn` enthaelt,
+ *     gleicht updateYFragment den Absatz ab wie nach jeder Eingabe und
+ *     entfernt dabei Attribute, die das Schema nicht kennt.
+ *
+ * Die Aenderungen landen im Y.Doc; ein verbundener Provider schickt sie
+ * an den Server. Ergebnis: ob es den Absatz zum Tippen gab (ein nie
+ * abgeglichenes Dokument ist leer).
+ */
+export function wieAlterEditor(
+  doc: Y.Doc,
+  schema: ReturnType<typeof getSchema>,
+  tippeIn?: string,
+): boolean {
+  const fragment = doc.getXmlFragment(COLLAB_FIELD);
+  const { doc: pmDoc, meta } = initProseMirrorDoc(fragment, schema);
+  if (!tippeIn) return false;
+  let ende = -1;
+  pmDoc.descendants((node, pos) => {
+    if (ende < 0 && node.isTextblock && node.textContent.includes(tippeIn)) {
+      ende = pos + node.nodeSize - 1;
+    }
+    return ende < 0;
+  });
+  if (ende < 0) return false;
+  const neu = new Transform(pmDoc).insert(ende, schema.text("!")).doc;
+  doc.transact(() => updateYFragment(doc, fragment, neu, meta));
+  return true;
 }

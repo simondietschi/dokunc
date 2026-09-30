@@ -9,7 +9,11 @@ import {
   type Editor,
 } from "@tiptap/react";
 import { HocuspocusProvider } from "@hocuspocus/provider";
-import { parseDocSizeNotice, type DocSizeNotice } from "@dokunc/editor";
+import {
+  editorSchema,
+  parseDocSizeNotice,
+  type DocSizeNotice,
+} from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
@@ -231,8 +235,10 @@ export function CollaborativeEditor({
   // erst eintrifft, und der Text landet an der falschen Stelle.
   const [status, setStatus] = useState<EditorStatus>("connecting");
   // Symbol und Titelbild liegen nicht im Yjs-Dokument. Nach einem Restore
-  // sperrt sie der Tab trotzdem: er zeigt einen Stand von vorher.
-  const metaEditable = editable && status !== "restored";
+  // sperrt sie der Tab trotzdem: er zeigt einen Stand von vorher. Ebenso
+  // mit altem Editor nach einem Update: die Aktionen dieses Bundles
+  // passen nicht mehr zum Server, und die Seite ist ohnehin neu zu laden.
+  const metaEditable = editable && status !== "restored" && status !== "stale";
   // Stufe und Groesse der Seite, wie der Collab-Server sie meldet
   // (Dokumentgrenze). Titel, Symbol und Titelbild liegen nicht im
   // Yjs-Dokument und bleiben bei einer Groessensperre bearbeitbar.
@@ -299,8 +305,9 @@ export function CollaborativeEditor({
     const next = titleRef.current?.value ?? titleValue;
     if (!editable || next === lastSavedTitle.current) return;
     // Nach einem Restore traegt dieser Tab nichts mehr ein, auch nicht
-    // den Titel (er stammt aus dem Stand von vorher).
-    if (status === "restored") return;
+    // den Titel (er stammt aus dem Stand von vorher); mit altem Editor
+    // nach einem Update ebenso wenig.
+    if (status === "restored" || status === "stale") return;
     if (savingTitle.current === next) return; // schon unterwegs
     savingTitle.current = next;
     announceTitle(next);
@@ -439,8 +446,22 @@ export function CollaborativeEditor({
         // Sitzung selbst bleibt im httpOnly-Cookie; ins ausgelieferte
         // HTML gelangt nichts Wiederverwendbares. Die Restore-Epoche geht
         // mit: weicht sie ab, wurde die Instanz inzwischen zurueckgespielt.
+        // Der Schema-Hash ebenso: weicht er ab, laeuft der Tab mit einem
+        // Editor von vor dem letzten Update.
         token: async () => {
-          const result = await requestCollabTicket(pageId, restoreEpoch);
+          const result = await requestCollabTicket(
+            pageId,
+            restoreEpoch,
+            editorSchema().hash,
+          );
+          if (result.kind === "stale") {
+            setStatus("stale");
+            // Endgueltig trennen wie nach einem Restore: dieser Editor
+            // loeschte beim Abgleich, was er nicht kennt. Die lokale Kopie
+            // bleibt liegen.
+            queueMicrotask(() => provider?.disconnect());
+            throw new Error("Neue Version verfügbar");
+          }
           if (result.kind === "restored") {
             setStatus("restored");
             // Endgueltig trennen: jede weitere Verbindung spielte den Stand
@@ -802,10 +823,11 @@ export function CollaborativeEditor({
   // ohne Netz "Offline" statt "Verbinde…", eine Ablehnung bleibt stehen.
   // Der lokale Puffer traegt offline weiter.
   const effectiveStatus = visibleStatus(status, online);
+  // Gelb fuer alles Voruebergehende, das von selbst weitergeht.
   const dot =
     effectiveStatus === "connected"
       ? "bg-emerald-500"
-      : effectiveStatus === "connecting"
+      : effectiveStatus === "connecting" || effectiveStatus === "updating"
         ? "bg-amber-500"
         : "bg-danger";
   const { text: statusText, title: statusTitle } = statusLabel(effectiveStatus);
@@ -936,6 +958,25 @@ export function CollaborativeEditor({
           </button>
         </div>
       )}
+      {status === "stale" && (
+        <div
+          role="alert"
+          className="mx-auto mt-4 max-w-[760px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink"
+        >
+          <p>
+            Eine neue Version ist verfügbar. Dieser Tab verwendet noch die
+            alte Fassung des Editors und überträgt keine Änderungen mehr.
+          </p>
+          <p className="mt-1.5">Lade die Seite neu, um weiterzuarbeiten.</p>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-line-strong px-3 py-1.5 text-[13px] font-medium text-muted transition-colors hover:bg-subtle hover:text-ink"
+          >
+            Neu laden
+          </button>
+        </div>
+      )}
       {status === "too-large" && (
         <div
           role="alert"
@@ -956,9 +997,10 @@ export function CollaborativeEditor({
           </button>
         </div>
       )}
-      {status !== "restored" && status !== "too-large" && editable && (
-        <DocSizeBanner notice={sizeNotice} />
-      )}
+      {status !== "restored" &&
+        status !== "stale" &&
+        status !== "too-large" &&
+        editable && <DocSizeBanner notice={sizeNotice} />}
       {moveOpen && (
         <MovePageDialog
           slug={slug}
@@ -1011,7 +1053,7 @@ export function CollaborativeEditor({
           aria-label="Seitentitel"
           value={titleValue}
           onChange={(e) => setTitleValue(e.target.value)}
-          readOnly={!editable || status === "restored"}
+          readOnly={!editable || status === "restored" || status === "stale"}
           onBlur={() => void saveTitle()}
           onKeyDown={(e) => {
             // Enter/Pfeil nach unten: in den Text springen (wie in Notion).

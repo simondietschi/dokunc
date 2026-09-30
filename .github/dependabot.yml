@@ -62,6 +62,10 @@ updates:
       # Per Override auf genau eine Version gesetzt (eine ProseMirror-Instanz,
       # pnpm-workspace.yaml). Von Hand zusammen mit dem Override heben. Gilt
       # auch fuer Sicherheitsupdates; Luecken melden pnpm audit und Trivy.
+      # Das Muster deckt auch @tiptap/y-tiptap (devDependency der Web-App
+      # fuer den Integrationstest mit reduziertem Schema): von Hand auf die
+      # Version heben, die @tiptap/extension-collaboration aufloest, damit
+      # der Test dieselbe Bindung prueft wie der Browser.
       - dependency-name: "@tiptap/*"
       # Laufzeit ist Node 26 (engines, .nvmrc, Dockerfile, CI)
       - dependency-name: "@types/node"

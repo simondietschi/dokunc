@@ -96,6 +96,18 @@ differently on an existing installation, and what to do about it.
   Open them from the templates page or the template picker. Nothing else
   to do.
 
+- **Open editor tabs:** editor tabs that were opened before this update
+  stop syncing and show "Kein Zugriff"; reload them. From now on, after an
+  update that changes the editor, open tabs show "Neue Version" with a
+  reload button instead and stay read-only until they are reloaded.
+
+- **Collab ticket requests:** `POST /api/collab/ticket` now requires the
+  field `schema` (the editor's schema hash). Requests without it or with
+  a different hash get `409` with `{"code":"stale-client"}`, also without
+  a session, where they used to get `401`. Only monitoring or scripts
+  that call this route need to expect the new answer; otherwise nothing
+  to do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -137,12 +149,23 @@ differently on an existing installation, and what to do about it.
   scanning.
 - CI scans the Git history for committed secrets with gitleaks (pinned
   version and checksum); a finding fails the run.
+- Editor: a tab running an outdated editor shows "Neue Version" with a
+  reload button and stays read-only. While the web app and the
+  collaboration server run different versions, the editor shows
+  "Aktualisierung läuft" and retries by itself.
+- The collaboration server logs the editor schema version and hash at
+  startup ("Editor-Schema").
 
 ### Changed
 
 - The web app, the collaboration server and the Prisma CLI no longer print
   a `dotenv` line ("injected env …") when they load the environment.
 - Search and the list of recently changed pages no longer show templates.
+- Collab tickets carry the editor schema hash (claim `sh`). The
+  collaboration server rejects tickets without it or with a different
+  hash before any other check, with the reason `schema-mismatch` and the
+  log line "Collab-Verbindung abgewiesen" (at most one line per ten
+  seconds, with the number of skipped rejections in `sinceLast`).
 
 ### Removed
 
@@ -162,3 +185,7 @@ differently on an existing installation, and what to do about it.
   it, the send fails right away with an authentication error in the log.
   dokunc logs in with a password only, so the server has to accept PLAIN,
   LOGIN or CRAM-MD5.
+- A browser tab still running an older editor after an update can no
+  longer delete content with newer block types, marks or attributes for
+  everyone: the web app and the collaboration server compare the editor
+  schema before a tab may sync.

@@ -37,12 +37,28 @@ describe("statusAfterRejection()", () => {
       "restored",
     );
   });
+
+  // Web-App und Collab-Server fahren gerade verschiedene Fassungen des
+  // Editors (mitten in einem Update): das geht vorbei, neu anmelden hilft
+  // nicht.
+  it("ein abweichendes Editor-Schema heisst: Aktualisierung laeuft", () => {
+    expect(statusAfterRejection(COLLAB_REJECT_REASON.schemaMismatch)).toBe(
+      "updating",
+    );
+  });
 });
 
 describe("statusAfterDisconnect()", () => {
   it("eine Ablehnung ueberdauert das anschliessende Trennen", () => {
     expect(statusAfterDisconnect("unauthorized")).toBe("unauthorized");
     expect(statusAfterDisconnect("limited")).toBe("limited");
+    expect(statusAfterDisconnect("updating")).toBe("updating");
+  });
+
+  it("endgueltige Status bleiben stehen", () => {
+    for (const s of ["restored", "stale", "too-large"] as const) {
+      expect(statusAfterDisconnect(s)).toBe(s);
+    }
   });
 
   it("sonst heisst Trennen: neu verbinden", () => {
@@ -140,6 +156,40 @@ describe("statusHandlers()", () => {
     expect(z.wert).toBe("restored");
   });
 
+  // Nach dem abgewiesenen Ticket (409 stale-client) setzt der Editor
+  // "stale" selbst und trennt endgueltig. Was der Provider danach noch
+  // meldet, darf den Tab nicht wieder als "Live" oder "Kein Zugriff"
+  // zeigen: er muss neu geladen werden.
+  it("stale bleibt stehen, was der Provider danach auch meldet", () => {
+    const z = statusZustand("stale");
+    z.h.onAuthenticationFailed({
+      reason: "Failed to get token: Error: Neue Version verfügbar",
+    });
+    z.h.onAuthenticationFailed({ reason: COLLAB_REJECT_REASON.schemaMismatch });
+    expect(z.wert).toBe("stale");
+    z.h.onDisconnect();
+    z.h.onStatus({ status: "disconnected" });
+    z.h.onStatus({ status: "connecting" });
+    z.h.onClose({ event: { code: 1009 } });
+    expect(z.wert).toBe("stale");
+    z.h.onSynced();
+    expect(z.wert).toBe("stale");
+  });
+
+  it("Aktualisierung laeuft bleibt bis zum naechsten Abgleich stehen", () => {
+    const z = statusZustand("connected");
+    z.h.onAuthenticationFailed({ reason: COLLAB_REJECT_REASON.schemaMismatch });
+    expect(z.wert).toBe("updating");
+    z.h.onStatus({ status: "disconnected" });
+    z.h.onDisconnect();
+    z.h.onStatus({ status: "connecting" });
+    z.h.onStatus({ status: "connected" });
+    expect(z.wert).toBe("updating");
+    // Der Provider versucht es von selbst erneut; gelingt es, ist er Live.
+    z.h.onSynced();
+    expect(z.wert).toBe("connected");
+  });
+
   it("die Ablehnung restore-epoch des Collab-Servers fuehrt zu restored", () => {
     const z = statusZustand("connected");
     z.h.onAuthenticationFailed({ reason: COLLAB_REJECT_REASON.restoreEpoch });
@@ -185,10 +235,13 @@ describe("statusHandlers() bei einer zu grossen Nachricht", () => {
     expect(z.wert).toBe("connected");
   });
 
-  it("restored hat Vorrang vor too-large", () => {
-    const z = statusZustand("restored");
-    z.h.onClose({ event: { code: 1009 } });
-    expect(z.wert).toBe("restored");
+  it("restored und stale haben Vorrang vor too-large", () => {
+    for (const vorher of ["restored", "stale"] as const) {
+      const trennen = vi.fn();
+      const z = statusZustand(vorher, { onMessageTooLarge: trennen });
+      z.h.onClose({ event: { code: 1009 } });
+      expect(z.wert).toBe(vorher);
+    }
   });
 
   it("ohne Rueckruf setzt 1009 trotzdem too-large", () => {
@@ -243,6 +296,8 @@ describe("visibleStatus()", () => {
     expect(visibleStatus("unauthorized", false)).toBe("unauthorized");
     expect(visibleStatus("limited", false)).toBe("limited");
     expect(visibleStatus("restored", false)).toBe("restored");
+    expect(visibleStatus("stale", false)).toBe("stale");
+    expect(visibleStatus("updating", false)).toBe("updating");
   });
 });
 
@@ -260,6 +315,20 @@ describe("statusLabel()", () => {
     expect(statusLabel("offline").text).toBe("Offline");
     expect(statusLabel("unauthorized").text).toBe("Kein Zugriff");
     expect(statusLabel("unauthorized").title).toMatch(/neu anmelden/);
+  });
+
+  it("bittet bei einer neuen Version um Neuladen, nicht um Anmelden", () => {
+    const { text, title } = statusLabel("stale");
+    expect(text).toBe("Neue Version");
+    expect(title).toMatch(/neu laden/);
+    expect(title).not.toMatch(/anmelden/);
+  });
+
+  it("sagt waehrend eines Updates, dass es von selbst weitergeht", () => {
+    const { text, title } = statusLabel("updating");
+    expect(text).toBe("Aktualisierung läuft");
+    expect(title).toMatch(/von selbst/);
+    expect(title).not.toMatch(/anmelden/);
   });
 
   it("bittet nach einem Restore um Neuladen", () => {

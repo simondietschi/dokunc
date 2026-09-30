@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { decodeJwt, jwtVerify } from "jose";
-import { COLLAB_AUDIENCE } from "@dokunc/editor";
+import { COLLAB_AUDIENCE, editorSchema } from "@dokunc/editor";
 import { COLLAB_TICKET_TTL_SEC, issueCollabTicket } from "./collab-ticket";
 import { getAppSecret } from "./secret";
 
@@ -43,5 +43,16 @@ describe("issueCollabTicket", () => {
     const E = "0123456789abcdef0123456789abcdef";
     const mit = decodeJwt(await issueCollabTicket({ ...OPTS, restoreEpoch: E }));
     expect(mit.ep).toBe(E);
+  });
+
+  // Der Collab-Server vergleicht sh mit seinem eigenen Editor-Schema und
+  // weist ein Ticket ohne sh ab.
+  it("traegt das Editor-Schema als sh, ohne Angabe das der Web-App", async () => {
+    const ohne = decodeJwt(await issueCollabTicket(OPTS));
+    expect(ohne.sh).toBe(editorSchema().hash);
+    const mit = decodeJwt(
+      await issueCollabTicket({ ...OPTS, schemaHash: "0000000000000000" }),
+    );
+    expect(mit.sh).toBe("0000000000000000");
   });
 });

@@ -381,14 +381,24 @@ test("Collab-Ticket nur für eigene Seiten", async ({ page, baseURL }) => {
   await page.locator('a[href^="/s/"]').first().click();
   await page.waitForURL("**/s/**");
   // Space-Startseite ist ein Dashboard: erste Seite aus der Sidebar oeffnen.
+  // Die eigene Ticket-Anfrage des Editors liefert den Schema-Hash, den
+  // die Route verlangt; so belegt der Test auch, dass der Browser ihn
+  // schickt.
+  const editorAnfrage = page.waitForRequest(
+    (r) => r.url().endsWith("/api/collab/ticket") && r.method() === "POST",
+  );
   await page.locator('aside a[href*="/p/"]').first().click();
   await page.waitForURL("**/p/**");
   const pageId = page.url().match(/\/p\/([^/?]+)/)![1];
+  const { schema } = (await editorAnfrage).postDataJSON() as {
+    schema: unknown;
+  };
+  expect(schema).toMatch(/^[0-9a-f]{16}$/);
 
   // Für eine eigene Seite kommt ein kurzlebiges Ticket zurück.
   const ok = await page.request.post("/api/collab/ticket", {
     headers: same,
-    data: { pageId },
+    data: { pageId, schema },
   });
   expect(ok.status()).toBe(200);
   const body = (await ok.json()) as { ticket: string; expiresIn: number };
@@ -397,21 +407,29 @@ test("Collab-Ticket nur für eigene Seiten", async ({ page, baseURL }) => {
 
   const unknown = await page.request.post("/api/collab/ticket", {
     headers: same,
-    data: { pageId: "gibtesnicht" },
+    data: { pageId: "gibtesnicht", schema },
   });
   expect(unknown.status()).toBe(404);
+
+  // Ohne Schema-Hash (Editor von vor einem Update): neu laden.
+  const stale = await page.request.post("/api/collab/ticket", {
+    headers: same,
+    data: { pageId },
+  });
+  expect(stale.status()).toBe(409);
+  expect(((await stale.json()) as { code?: string }).code).toBe("stale-client");
 
   // Fremde Herkunft: die Route gibt gar nichts heraus (CSRF-Schutz).
   const foreign = await page.request.post("/api/collab/ticket", {
     headers: { origin: "https://boese.example" },
-    data: { pageId },
+    data: { pageId, schema },
   });
   expect(foreign.status()).toBe(403);
 
   await page.context().clearCookies();
   const anonymous = await page.request.post("/api/collab/ticket", {
     headers: same,
-    data: { pageId },
+    data: { pageId, schema },
   });
   expect(anonymous.status()).toBe(401);
 });

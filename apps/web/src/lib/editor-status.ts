@@ -13,8 +13,15 @@ import { COLLAB_REJECT_REASON, type DocSizeLevel } from "@dokunc/editor";
  *   nicht mehr (endgültig)
  * - too-large: der Collab-Server hat eine Nachricht als zu gross
  *   abgewiesen; die Verbindung ist endgültig getrennt
+ * - stale: der Tab laeuft mit einem anderen Editor-Schema als die
+ *   Web-App (neue Version ausgeliefert); er verbindet nicht mehr, bis er
+ *   neu geladen ist (endgültig)
+ * - updating: der Collab-Server hat wegen des Editor-Schemas abgewiesen,
+ *   Web-App und Collab-Server laufen gerade in verschiedenen Fassungen;
+ *   der Provider versucht es von selbst erneut
  *
- * Vorrang: restored > too-large > unauthorized/limited > Rest.
+ * Vorrang: restored > stale > too-large > unauthorized/limited/updating >
+ * Rest.
  */
 export type EditorStatus =
   | "connecting"
@@ -22,7 +29,9 @@ export type EditorStatus =
   | "offline"
   | "unauthorized"
   | "limited"
+  | "updating"
   | "restored"
+  | "stale"
   | "too-large";
 
 /**
@@ -37,12 +46,16 @@ export type EditorStatus =
  * "unauthorized": ein normaler Client schickt nie ein verbrauchtes
  * Ticket, er holt vor jedem Versuch ein neues. "restore-epoch" heisst:
  * die Instanz wurde aus einer Sicherung zurueckgespielt, der Tab haelt
- * einen Stand von vorher ("restored", endgueltig).
+ * einen Stand von vorher ("restored", endgueltig). "schema-mismatch"
+ * heisst: Web-App und Collab-Server fahren gerade verschiedene Fassungen
+ * des Editors, etwa mitten in einem Update ("updating"); das geht von
+ * selbst vorbei, neu anmelden hilft nicht.
  */
 export function statusAfterRejection(
   reason: string,
-): "limited" | "unauthorized" | "restored" {
+): "limited" | "unauthorized" | "restored" | "updating" {
   if (reason === COLLAB_REJECT_REASON.restoreEpoch) return "restored";
+  if (reason === COLLAB_REJECT_REASON.schemaMismatch) return "updating";
   return reason === COLLAB_REJECT_REASON.tooManyConnections ||
     reason === COLLAB_REJECT_REASON.rateLimited
     ? "limited"
@@ -53,13 +66,15 @@ export function statusAfterRejection(
  * Status nach einem Trennen oder einem Statuswechsel ausser "verbunden".
  * Nach einer Ablehnung meldet der Provider noch ein Trennen; ohne den
  * Vorrang der Ablehnung stuende gleich wieder "Verbinde…". Erst der
- * naechste gelungene Abgleich (`onSynced`) loest sie ab. "restored"
- * und "too-large" bleiben immer stehen.
+ * naechste gelungene Abgleich (`onSynced`) loest sie ab. "restored",
+ * "stale" und "too-large" bleiben immer stehen.
  */
 export function statusAfterDisconnect(prev: EditorStatus): EditorStatus {
   return prev === "unauthorized" ||
     prev === "limited" ||
+    prev === "updating" ||
     prev === "restored" ||
+    prev === "stale" ||
     prev === "too-large"
     ? prev
     : "connecting";
@@ -67,7 +82,7 @@ export function statusAfterDisconnect(prev: EditorStatus): EditorStatus {
 
 /** Endgueltige Status: kein Rueckruf des Providers verlaesst sie. */
 function isFinal(status: EditorStatus): boolean {
-  return status === "restored" || status === "too-large";
+  return status === "restored" || status === "stale" || status === "too-large";
 }
 
 /**
@@ -96,10 +111,13 @@ export type SetEditorStatus = (
  *   ein Trennen; ohne den Vorrang der Ablehnung (`statusAfterDisconnect`)
  *   stuende gleich wieder "Verbinde…". Ein Statuswechsel auf "connected"
  *   aendert nichts, "Live" setzt nur onSynced.
- * - "restored" verlaesst kein Rueckruf mehr (nur Neuladen): nach dem
- *   abgewiesenen Ticket meldet der Provider noch eine Ablehnung mit
- *   eigenem Grund, und ein spaeter Abgleich darf den Tab nicht wieder
- *   als "Live" zeigen.
+ * - "restored" und "stale" verlaesst kein Rueckruf mehr (nur Neuladen):
+ *   nach dem abgewiesenen Ticket meldet der Provider noch eine Ablehnung
+ *   mit eigenem Grund, und ein spaeter Abgleich darf den Tab nicht
+ *   wieder als "Live" zeigen.
+ * - "updating" (Ablehnung wegen des Editor-Schemas) bleibt wie eine
+ *   Grenze stehen, bis ein Abgleich gelingt; der Provider versucht es
+ *   nach der Anmeldefrist des Servers (15 s) von selbst erneut.
  * - onClose mit Code 1009: der Collab-Server hat eine Nachricht als zu
  *   gross abgewiesen ("too-large"). Der Aufrufer trennt dann endgueltig
  *   (`onMessageTooLarge`): sonst verbaende der Provider nach einer
@@ -107,9 +125,11 @@ export type SetEditorStatus = (
  *   Runde ein Ticket und einen Versuch der Person. "too-large" verlaesst
  *   nur der Vorrang von "restored"; einen Rueckweg ohne Neuladen gibt es
  *   nicht (Rueckgaengig verkleinert den Yjs-Stand nicht, und die Kopie im
- *   Browser haelt die Aenderung schon). Der Provider 4.4 ruft onClose je
- *   Ereignis zweimal auf (am Socket und am Provider registriert); beides
- *   ist wiederholbar, ein zweites Trennen aendert nichts.
+ *   Browser haelt die Aenderung schon). "stale" bleibt ebenso stehen: der
+ *   Tab hat ohnehin endgueltig getrennt und muss neu laden. Der Provider
+ *   4.4 ruft onClose je Ereignis zweimal auf (am Socket und am Provider
+ *   registriert); beides ist wiederholbar, ein zweites Trennen aendert
+ *   nichts.
  */
 export function statusHandlers(
   setStatus: SetEditorStatus,
@@ -128,7 +148,9 @@ export function statusHandlers(
     onDisconnect: () => setStatus(statusAfterDisconnect),
     onClose: ({ event }: { event?: { code?: number } }) => {
       if (event?.code !== 1009) return;
-      setStatus((prev) => (prev === "restored" ? prev : "too-large"));
+      setStatus((prev) =>
+        prev === "restored" || prev === "stale" ? prev : "too-large",
+      );
       opts?.onMessageTooLarge?.();
     },
   };
@@ -137,7 +159,8 @@ export function statusHandlers(
 /**
  * Darf der Editor gerade bearbeitet werden? Rolle, Verbindung (inkl.
  * Erst-Sync) und Groessensperre. `connected` ist `status === "connected"`;
- * damit sperren auch "restored" und "too-large" den Editor.
+ * damit sperren auch "restored", "stale", "updating" und "too-large" den
+ * Editor.
  */
 export function editorEditable(o: {
   editable: boolean;
@@ -161,7 +184,9 @@ export function visibleStatus(
     status === "connected" ||
     status === "unauthorized" ||
     status === "limited" ||
+    status === "updating" ||
     status === "restored" ||
+    status === "stale" ||
     status === "too-large"
   ) {
     return status;
@@ -202,6 +227,18 @@ export function statusLabel(status: EditorStatus): {
         text: "Neu laden nötig",
         title:
           "Die Instanz wurde aus einer Sicherung zurückgespielt. Änderungen aus diesem Tab werden nicht mehr übertragen. Bitte die Seite neu laden.",
+      };
+    case "stale":
+      return {
+        text: "Neue Version",
+        title:
+          "Eine neue Version ist verfügbar. Dieser Tab verwendet noch die alte Fassung des Editors und überträgt keine Änderungen mehr. Bitte die Seite neu laden.",
+      };
+    case "updating":
+      return {
+        text: "Aktualisierung läuft",
+        title:
+          "Der Server wird gerade aktualisiert. Die Verbindung wird von selbst neu versucht; bis dahin werden Änderungen nicht übertragen.",
       };
     case "too-large":
       return {

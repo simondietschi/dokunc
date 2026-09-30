@@ -14,6 +14,31 @@ import { DOC_RESET_CHANNEL } from "@dokunc/editor";
  * Mail-Versand dort nichts anfasst, belegt der Pruefstand dessen Sperre
  * fuer die Dauer des Laufs. Sein KI-Index ist abgeschaltet
  * (AI_INDEX_INTERVAL_S=0), damit er keine Seiten anderer Tests indexiert.
+ *
+ * Belegung der Redis-Datenbanken (eine je Testdatei; liegengebliebene
+ * Schluessel eines abgebrochenen Laufs, etwa Versuchszaehler oder
+ * verbrauchte Tickets, sollen keine fremde Datei treffen):
+ *
+ * | DB     | Nutzer                                                     |
+ * |--------|------------------------------------------------------------|
+ * | 0      | Entwicklung, E2E                                           |
+ * | 1–3    | frei (Reserve)                                             |
+ * | 4      | collab-konfiguration.test.ts                               |
+ * | 5      | collab-ausnahmen.test.ts (reserviert)                      |
+ * | 6      | gruppe-loeschen.test.ts (reserviert, nur Abonnent)         |
+ * | 7      | schema-version.test.ts                                     |
+ * | 8      | collab-json-log.test.ts (reserviert)                       |
+ * | 9      | collab-lesend.test.ts (reserviert)                         |
+ * | 10     | collab-size-limits.test.ts                                 |
+ * | 11     | page-updated-collab.test.ts                                |
+ * | 12     | collab-limits.test.ts                                      |
+ * | 13     | restore-version-collab.test.ts                             |
+ * | 14     | restore-epoch.test.ts                                      |
+ * | 15     | collab-redis-start.test.ts                                 |
+ * | –      | Ausfalltests mit eigenem redis-server                      |
+ *
+ * Pub/Sub gilt ueber alle Datenbanken: wer in einem Test mitliest,
+ * filtert auf die IDs seines eigenen Falls.
  */
 
 const COLLAB_DIR = fileURLToPath(new URL("../../../collab", import.meta.url));
@@ -66,7 +91,9 @@ export async function startePruefserver(opts: {
    * Verlangen, dass sonst kein Collab-Server auf den Reset-Kanal hoert.
    * Pub/Sub gilt in Redis ueber alle Datenbanken hinweg; ein fremder
    * Server bekaeme eine Bitte um Austausch mit und fuehrte sie ebenfalls
-   * aus.
+   * aus. Leert ausserdem vor dem Start die eigene Datenbank (FLUSHDB):
+   * Schluessel eines abgebrochenen frueheren Laufs (Versuchszaehler,
+   * verbrauchte Tickets) sollen diesen Lauf nicht beeinflussen.
    */
   exklusiv?: boolean;
   /**
@@ -86,6 +113,7 @@ export async function startePruefserver(opts: {
         "fremden Collab-Server laufen lassen.",
     );
   }
+  if (opts.exklusiv) await redis.flushdb();
   await redis.set("dokunc:mail-dispatch:lock", "pruefstand", "PX", 300_000);
   const vorher = await resetZuhoerer(redis);
 

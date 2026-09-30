@@ -3,7 +3,7 @@ import type { HocuspocusProvider } from "@hocuspocus/provider";
 import { decodeJwt } from "jose";
 import { randomBytes } from "node:crypto";
 import { currentRestoreEpoch, prisma } from "@dokunc/db";
-import { COLLAB_REJECT_REASON } from "@dokunc/editor";
+import { COLLAB_REJECT_REASON, editorSchema } from "@dokunc/editor";
 import {
   redisUrlMitDb,
   startePruefserver,
@@ -78,10 +78,15 @@ function anfrage(body: Record<string, unknown>): Request {
   });
 }
 
+/**
+ * Anfrage wie vom heutigen Editor: mit seinem Schema-Hash. Ohne ihn
+ * antwortete die Route 409 stale-client, und die Faelle hier prueften
+ * nicht mehr die Epoche (siehe schema-version.test.ts).
+ */
 async function ticketAntwort(
   body: Record<string, unknown>,
 ): Promise<{ status: number; data: { ticket?: string; code?: string } }> {
-  const res = await POST(anfrage(body));
+  const res = await POST(anfrage({ schema: editorSchema().hash, ...body }));
   return {
     status: res.status,
     data: (await res.json()) as { ticket?: string; code?: string },
