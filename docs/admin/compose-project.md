@@ -151,6 +151,23 @@ again:
 The name stays the same, because it does not depend on the directory any
 more (or is pinned in `.env`).
 
+## Going back to a version before the fixed name
+
+Versions from before the fixed name have no `name:` in
+`docker-compose.yml`. After `git checkout` of such a version, Docker
+Compose names the project after the directory again, unless
+`COMPOSE_PROJECT_NAME` is set. For a checkout in a directory called
+`dokunc` that is the same project. Any other checkout that now uses the
+project `dokunc` (for example one moved or cloned again after the update)
+would start a new, empty instance, and `scripts/restore.sh` would restore
+into that one. Pin the name before `git checkout`:
+
+    ./scripts/projektname.sh --festschreiben dokunc
+
+The older version reads `COMPOSE_PROJECT_NAME` from `.env` and keeps
+using the same volumes. If the name is already pinned in `.env`, the
+command changes nothing, and nothing else is needed.
+
 ## Several installations on one host
 
 Give each installation its own name in its `.env`, for example with
@@ -161,8 +178,8 @@ one: after the update, a checkout without a pinned name uses the project
 `dokunc` and takes over the containers and database of the installation
 that already has that name. Without pinned names, the check also judges by
 volume age where containers are missing, and can report an installation
-as a new, empty instance. Each also needs its own
-`APP_PORT` (and `APP_BIND`), because the proxies cannot share a port.
+as a new, empty instance. Each also needs its own `APP_PORT` (and
+`APP_BIND`), because the proxies cannot share a port.
 
 ## Renaming the project
 
