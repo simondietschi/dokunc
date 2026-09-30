@@ -31,8 +31,9 @@ type Workflow = {
 /**
  * Interne Planbezuege: Kennungen aus Arbeitsplaenen und Pruefrunden, die
  * ausserhalb nichts bedeuten ("Punkt 10", Befundnummern, Stufen,
- * Etappen). Geprueft werden Pfad und Zeilen jeder versionierten Datei;
- * `nur` beschraenkt eine Regel auf passende Pfade.
+ * Etappen, Kennungen von Luecken und Entscheidungen). Geprueft werden
+ * Pfad und Zeilen jeder versionierten Datei; `nur` beschraenkt eine
+ * Regel auf passende Pfade.
  */
 const PLANBEZUEGE: { art: string; muster: RegExp; nur?: RegExp }[] = [
   { art: "plan item", muster: /\b(?:Punkte?|Folgepunkte?) (?:\d+|[A-Z])\b/ },
@@ -43,6 +44,24 @@ const PLANBEZUEGE: { art: string; muster: RegExp; nur?: RegExp }[] = [
   // In Fliesstext (Markdown, YAML) auch die blosse Etappe; im Code ist
   // "E1" ein gewoehnlicher Bezeichner (Personen in Tests).
   { art: "plan stage", muster: /\bE(?:[1-9]|1[0-3])\b/, nur: /\.(?:md|ya?ml)$/ },
+  // Kennungen von Luecken, wie man sie zitiert: in Backticks, mit einem
+  // der haeufigen Praefixe. Bei Praefixen, die auch gewoehnliche Woerter
+  // sind (editor, ui, api, ki, int), erst ab zwei Bindestrichen, damit
+  // `editor-content` oder `api-key` nicht anschlagen. Einteilige
+  // Kennungen mit diesen Praefixen und Kennungen ohne gemeinsames Praefix
+  // erkennt das Muster nicht; die bleiben Sache der Durchsicht.
+  {
+    art: "plan id",
+    muster:
+      /`(?:(?:ident|struktur|betr|plat|qa|cmp)-[a-z0-9]+|(?:editor|ui|api|ki|int)-[a-z0-9]+-[a-z0-9]+)(?:-[a-z0-9]+)*`/,
+  },
+  // Entscheidungen ("D" mit Nummer, auch mit Buchstaben) in Klammern,
+  // Backticks oder nach "Entscheidung"/"decision"; frei im Text waere
+  // "FF D8 FF" (JPEG) ein Treffer, ebenso Zellbezuege wie "(D1:D5)".
+  {
+    art: "decision id",
+    muster: /(?:[(`[]|\b(?:Entscheidung|[Dd]ecision) )D(?:[1-9]|[1-9]\d)[a-z]?(?![\w.:])/,
+  },
 ];
 
 /**
@@ -336,11 +355,19 @@ describe("Konventionen", () => {
     expect(planbezuege("a.yml", "  # (Commit 84a44cc, Punkte\n  # 1 bis 6)")).toEqual([
       'a.yml:1-2: plan item "Punkte 1": name it after what it does (CONTRIBUTING.md)',
     ]);
+    // Kennungen von Luecken und Entscheidungen, wie man sie zitiert
+    // (ausgedachte, im Format der echten)
+    expect(planbezuege("CONTRIBUTING.md", "See `qa-muster-luecke`.")).toHaveLength(1);
+    expect(planbezuege("a.ts", "// siehe `editor-muster-kennung-zwei`")).toHaveLength(1);
+    expect(planbezuege("a.mjs", "// Meldungen englisch (D42)")).toHaveLength(1);
+    expect(planbezuege("a.md", "as agreed in decision D17b")).toHaveLength(1);
     // Keine Fehltreffer
     for (const [datei, text] of [
       ["a.ts", "let E1: string; // E2E ohne Punkt, Punkt eins"],
       ["a.ts", "// W3C, B2B, K8s, E2E-Datei, stages, backstage 2"],
       ["a.md", "E2E tests"],
+      ["a.ts", "// JPEG beginnt mit FF D8 FF; =SUMME(D1:D5)"],
+      ["a.md", "`editor-content`, `api-key`, `ui-state`, `deps-dev`, `no-new-privileges`"],
     ]) {
       expect(planbezuege(datei, text), text).toEqual([]);
     }
