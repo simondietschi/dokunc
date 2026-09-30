@@ -124,7 +124,8 @@ const INSTANCE_ID = randomUUID();
 /**
  * Ist diese Instanz veraltet (./schema-marke)? Beim Wechsel trennt sie
  * alle Editoren (trenneVeraltet); danach weist onAuthenticate jede
- * Anmeldung ab und Doc-Resets werden uebergangen.
+ * Anmeldung ab, `connected` trennt, was beim Wechsel noch im Aufbau war,
+ * und Doc-Resets werden uebergangen.
  */
 const schemaWaechter = new SchemaWaechter(eigenesSchema, (marke) =>
   trenneVeraltet(marke),
@@ -951,6 +952,15 @@ const server = new Server({
   // (establishedConnections); die Vormerkung aus onAuthenticate endet.
   async connected(data) {
     userSlots.settle(slotKey(data.socketId, data.documentName));
+    // Eine Verbindung, deren Anmeldung beim Wechsel auf "veraltet" schon
+    // durch war (ihr Dokument wurde noch geladen), stand in keinem
+    // Dokument und entging trenneVeraltet. Hier steht sie im Dokument:
+    // wird die Instanz erst danach veraltet, trennt trenneVeraltet sie,
+    // war sie es schon, trennt sie diese Zeile.
+    if (schemaWaechter.veraltet) {
+      closeConnection(data.connection, "Neuere Editor-Fassung");
+      return;
+    }
     try {
       const { connection } = data;
       // Jede Schreibverbindung bekommt beim Verbinden ihre Stufe, auch "ok":

@@ -750,6 +750,84 @@ describe("Veraltete Instanz", () => {
     b.provider.destroy();
   }, 60_000);
 
+  // Eine Anmeldung, die beim Wechsel schon durch ist, deren Dokument
+  // aber noch laedt, steht in keinem Dokument; trenneVeraltet findet sie
+  // nicht. Ohne weitere Pruefung bliebe sie an der veralteten Instanz.
+  it("trennt auch eine Verbindung, die beim Wechsel noch im Aufbau war", async () => {
+    const s = await starte();
+    const pageId = await neueSeite("veraltet-aufbau");
+
+    // Das Laden anhalten: onLoadDocument liest zuerst CollabDocument.
+    // Die Tabelle bleibt gesperrt, bis der Wechsel durch ist.
+    let freigeben = () => {};
+    const freigabe = new Promise<void>((r) => {
+      freigeben = r;
+    });
+    let gesperrt = () => {};
+    const sperreSteht = new Promise<void>((r) => {
+      gesperrt = r;
+    });
+    const sperre = prisma.$transaction(
+      async (tx) => {
+        await tx.$executeRaw`LOCK TABLE "CollabDocument" IN ACCESS EXCLUSIVE MODE`;
+        gesperrt();
+        await freigabe;
+      },
+      { timeout: 30_000 },
+    );
+    try {
+      await sperreSteht;
+      let geschlossen = false;
+      const a = await verbinde({
+        url: s.url,
+        pageId,
+        ticket: ticket(pageId),
+        warteAufSync: false,
+        onClose: () => {
+          geschlossen = true;
+        },
+      });
+      providers.push(a.provider);
+      // Die Anmeldung ist durch (Ticket, Zugriff, Marke), der Server
+      // wartet beim Laden auf die Sperre.
+      await warteBis(
+        async () => {
+          const [z] = await prisma.$queryRaw<{ n: number }[]>`
+            SELECT count(*)::int AS n FROM pg_locks l
+            JOIN pg_class c ON c.oid = l.relation
+            WHERE c.relname = 'CollabDocument' AND NOT l.granted
+              AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())`;
+          return (z?.n ?? 0) > 0;
+        },
+        "Laden wartet auf die Sperre",
+        { timeoutMs: 10_000, log: s.log },
+      );
+
+      await setzeMarke(NEUER);
+      await s.redis.publish(
+        SCHEMA_ANNOUNCE_CHANNEL,
+        JSON.stringify({ instanceId: `${TAG}-neu`, ...NEUER }),
+      );
+      await warteBis(
+        () => s.log().includes("Neuere Editor-Fassung in der Datenbank"),
+        "Wechsel im Log",
+        { timeoutMs: 5_000, log: s.log },
+      );
+      // Beim Wechsel war noch keine Verbindung eingetragen.
+      expect(s.log()).toContain('"closed":0');
+
+      freigeben();
+      await sperre;
+      await warteBis(() => geschlossen, "Verbindung nach dem Aufbau getrennt", {
+        timeoutMs: 5_000,
+        log: s.log,
+      });
+    } finally {
+      freigeben();
+      await sperre.catch(() => undefined);
+    }
+  }, 60_000);
+
   // Rueckweg ohne Sicherung: die aeltere Fassung startet auf Daten, in
   // denen die neuere schon steht. Sie darf keine einzige Verbindung
   // annehmen, und die Marke bleibt, wo sie ist.
