@@ -1,10 +1,16 @@
 import "server-only";
 import { prisma } from "@dokunc/db";
+import { extractWikiLinkIds } from "@dokunc/editor";
 import { verifyToken } from "./invitations";
+import { LABEL_VERKNUEPFT, resolveLinkLabels } from "./link-labels";
+import { titlesForShare } from "./link-titles";
+import { contentToHtml } from "./page-html";
 
 export type ShareTarget = {
   shareId: string;
   spaceId: string;
+  /** Die freigegebene Seite; `page` ist sie selbst oder eine ihrer Unterseiten. */
+  sharedPageId: string;
   page: {
     id: string;
     title: string;
@@ -121,6 +127,7 @@ export async function resolveShare(
   return {
     shareId: share.id,
     spaceId: share.page.spaceId,
+    sharedPageId: share.pageId,
     page,
     spaceName: share.page.space.name,
     includeChildren: share.includeChildren,
@@ -143,4 +150,28 @@ export function rewriteFileUrls(
     /\/api\/files\/([a-zA-Z0-9._-]+)/g,
     (_match, name: string) => `/api/share/${shareId}/files/${name}${suffix}`,
   );
+}
+
+/**
+ * Inhalt einer geteilten Seite als HTML, für Lesende ohne Konto.
+ *
+ * Wiki-Links werden Text ohne Verweis und ohne Seiten-ID, Erwähnungen
+ * verlieren die Personen-ID: der Link gibt Lesezugriff auf die
+ * freigegebene Seite, nicht auf interne Kennungen. Den aktuellen Titel
+ * trägt ein Link nur, wenn sein Ziel selbst zur Freigabe gehört
+ * (titlesForShare); jedes andere Ziel heisst "Verknüpfte Seite", auch
+ * eine offene Seite desselben Space. Der gespeicherte Titel erscheint nie
+ * (lib/link-labels).
+ */
+export async function sharedContentHtml(
+  share: ShareTarget,
+  token: string,
+): Promise<string> {
+  const ids = extractWikiLinkIds(share.page.content);
+  const titles = ids.length ? await titlesForShare(share, ids) : new Map();
+  const content = resolveLinkLabels(share.page.content, titles, {
+    stripIds: true,
+    ohneTitel: LABEL_VERKNUEPFT,
+  });
+  return rewriteFileUrls(contentToHtml(content), share.shareId, token);
 }

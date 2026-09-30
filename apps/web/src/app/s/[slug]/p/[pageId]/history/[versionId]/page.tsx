@@ -7,6 +7,7 @@ import { can } from "@/lib/permissions";
 import { visiblePageWhere } from "@/lib/page-access";
 import { toMarkdown } from "@/lib/markdown";
 import { contentToHtml } from "@/lib/page-html";
+import { resolveForUser } from "@/lib/link-titles";
 import { diffText } from "@/lib/diff";
 import { cn } from "@/lib/cn";
 import { Avatar } from "@/components/ui/Avatar";
@@ -74,17 +75,27 @@ export default async function VersionComparePage({
     query.against === "previous" && previous ? "previous" : "current";
   const view: View = query.view === "preview" ? "preview" : "diff";
 
-  const versionText = versionMarkdown(version.title, version.content);
+  // Wiki-Links in allen drei Ständen mit dem aktuellen Titel, soweit
+  // diese Person das Ziel öffnen darf, sonst "Seite ohne Zugriff"; nie
+  // der gespeicherte Titel (lib/link-labels). Eine Abfrage für alle drei.
+  // Links auf sichtbare Ziele bleiben: die Ansicht liegt in der App.
+  const [versionContent, previousContent, pageContent] = await resolveForUser(
+    user.id,
+    [version.content, previous?.content ?? null, page.content],
+    { stripIds: false },
+  );
+
+  const versionText = versionMarkdown(version.title, versionContent);
   const oldText =
     against === "previous" && previous
-      ? versionMarkdown(previous.title, previous.content)
+      ? versionMarkdown(previous.title, previousContent)
       : versionText;
   const newText =
     against === "previous"
       ? versionText
-      : versionMarkdown(page.title, page.content);
+      : versionMarkdown(page.title, pageContent);
   const diff = view === "diff" ? diffText(oldText, newText) : null;
-  const previewHtml = view === "preview" ? contentToHtml(version.content) : "";
+  const previewHtml = view === "preview" ? contentToHtml(versionContent) : "";
 
   const base = `/s/${slug}/p/${page.id}/history/${version.id}`;
   const href = (a: Against, v: View) => `${base}?against=${a}&view=${v}`;

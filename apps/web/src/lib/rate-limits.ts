@@ -60,6 +60,13 @@ export const RATE_LIMIT_VORGABEN = {
   search: { versuche: 120, fenster: 60 },
   /** Vorschlaege in der Palette: feuert noch dichter als die Suche. */
   suggest: { versuche: 240, fenster: 60 },
+  /**
+   * Titel der Wiki-Link-Ziele im Editor, je Konto. Eine Seite fragt beim
+   * Oeffnen hoechstens einmal je 100 Links (die meisten kennt sie schon
+   * aus der Vorbelegung); die Grenze trifft nur, wer IDs in Schleife
+   * durchprobiert.
+   */
+  pageTitles: { versuche: 120, fenster: 60 },
 
   /** Upload je Konto: begrenzt, wie schnell die Platte vollaeuft. */
   upload: { versuche: 30, fenster: 60 },

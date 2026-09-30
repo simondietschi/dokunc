@@ -152,6 +152,24 @@ describe("toMarkdown()", () => {
     expect(md).toContain("@Alex");
   });
 
+  it("Wiki-Link ohne Ziel wird reiner Text ohne Verweis", () => {
+    // Export, Druck und Freigabe entfernen die ID vorher (lib/link-labels).
+    const md = toMarkdown(
+      doc([
+        {
+          type: "paragraph",
+          content: [
+            { type: "wikiLink", attrs: { pageId: null, label: "Vertrag 2026" } },
+            { type: "text", text: " und " },
+            { type: "wikiLink", attrs: { pageId: null, label: null } },
+          ],
+        },
+      ]),
+    );
+    expect(md.trim()).toBe("Vertrag 2026 und Seite");
+    expect(md).not.toContain("/p/");
+  });
+
   it("behält Diagramme als Codeblock", () => {
     const md = toMarkdown(
       doc([

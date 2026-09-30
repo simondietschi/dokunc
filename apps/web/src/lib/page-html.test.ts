@@ -53,6 +53,27 @@ describe("contentToHtml()", () => {
     expect(html).toContain("dk-callout");
   });
 
+  it("Wiki-Link ohne Ziel und Erwähnung ohne Person: Text ohne interne IDs", () => {
+    const html = contentToHtml(
+      doc([
+        {
+          type: "paragraph",
+          content: [
+            { type: "wikiLink", attrs: { pageId: null, label: "Vertrag 2026" } },
+            { type: "mention", attrs: { userId: null, name: "Alex" } },
+          ],
+        },
+      ]),
+    );
+    expect(html).toContain("Vertrag 2026");
+    expect(html).toContain("@Alex");
+    expect(html).not.toContain("href");
+    expect(html).not.toContain("/p/");
+    expect(html).not.toContain("data-page-id");
+    expect(html).not.toContain("data-user-id");
+    expect(html).not.toContain("<a");
+  });
+
   it("rendert Diagramm-Previews als img-data-URI (kein Inline-SVG)", () => {
     const svg = "<svg><script>alert(1)</script></svg>";
     const html = contentToHtml(

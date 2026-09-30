@@ -3,6 +3,8 @@
  * Suchtext neuer Seiten (textContent) und Vorlagen-Vorschauen.
  */
 
+import { LABEL_VERKNUEPFT } from "./link-labels";
+
 type JsonNode = {
   type?: string;
   text?: string;
@@ -29,7 +31,10 @@ export function extractText(content: unknown): string {
 function inlineText(n: JsonNode): string {
   if (n.type === "text") return n.text ?? "";
   if (n.type === "hardBreak") return " ";
-  if (n.type === "wikiLink") return String(n.attrs?.label ?? "");
+  // Nie der gespeicherte Titel: die Vorlagen-Vorschau sehen alle, die die
+  // Vorlage nutzen, auch ohne Zugriff auf das Ziel (lib/link-labels). Den
+  // aktuellen Titel aufzulösen lohnt sich für eine Vorschau nicht.
+  if (n.type === "wikiLink") return LABEL_VERKNUEPFT;
   if (n.type === "mention") return `@${String(n.attrs?.name ?? "")}`;
   return (n.content ?? [])
     .map((c) => {

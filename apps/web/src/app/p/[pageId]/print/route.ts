@@ -4,6 +4,7 @@ import { readablePageRole } from "@/lib/page-access";
 import { getCurrentUser } from "@/lib/current-user";
 import { nonceFromHeaders } from "@/lib/csp";
 import { contentToHtml, pageToPrintHtml } from "@/lib/page-html";
+import { resolveForUser } from "@/lib/link-titles";
 
 export const runtime = "nodejs";
 
@@ -39,10 +40,16 @@ export async function GET(
     return new NextResponse("Kein Zugriff", { status: 403 });
   }
 
+  // Wie der Export: aktuelle Titel sichtbarer Ziele, sonst "Seite ohne
+  // Zugriff", und Text statt Verweis — auf Papier und im PDF des
+  // Browsers führt kein Link zurück in die App.
+  const [content] = await resolveForUser(user.id, [page.content], {
+    stripIds: true,
+  });
   const html = pageToPrintHtml({
     title: page.title,
     spaceName: page.space.name,
-    contentHtml: contentToHtml(page.content),
+    contentHtml: contentToHtml(content),
     // Die Antwort traegt die CSP der Middleware; eine Export-CSP sperrte die Bilder aus /api/files.
     target: "print",
     // Ohne die Nonce dieser Anfrage blockiert dieselbe CSP das Druckskript.

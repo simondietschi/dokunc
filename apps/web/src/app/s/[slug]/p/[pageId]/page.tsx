@@ -5,7 +5,9 @@ import { headers } from "next/headers";
 import { after } from "next/server";
 import { Link2 } from "lucide-react";
 import { currentRestoreEpoch, prisma } from "@dokunc/db";
+import { extractWikiLinkIds } from "@dokunc/editor";
 import { loadSpace } from "@/lib/space-context";
+import { titlesForUser } from "@/lib/link-titles";
 import { visiblePageWhere } from "@/lib/page-access";
 import type {
   AccessCandidate,
@@ -109,6 +111,9 @@ export default async function PageView({
       isTemplate: true,
       isRestricted: true,
       accessRootId: true,
+      // Nur für die Ziele der Wiki-Links (Vorbelegung ihrer Titel); den
+      // Inhalt selbst holt der Editor vom Collab-Server.
+      content: true,
       // Wer zuletzt gespeichert hat: Collab-Server, Vorlagen und Import
       // setzen lastEditedById, die Migration hat es fuer den Bestand aus
       // der neuesten Version nachgetragen. Die Versionen selbst werden
@@ -152,6 +157,7 @@ export default async function PageView({
     attachments,
     childCount,
     restoreEpoch,
+    linkTitles,
   ] =
     await Promise.all([
     prisma.pageLink.findMany({
@@ -212,6 +218,10 @@ export default async function PageView({
     // Benennt die lokale Kopie im Browser (lib/local-doc) und geht mit
     // jedem Ticket-Abruf an den Server.
     currentRestoreEpoch(prisma),
+    // Aktuelle Titel der verlinkten Seiten, nur soweit sichtbar. Aus dem
+    // Inhalt statt aus PageLink: der kennt nur Ziele im selben Space.
+    // Links, die erst im Editor dazukommen, fragt er selbst nach.
+    titlesForUser(user.id, extractWikiLinkIds(page.content)),
   ]);
   const ancestors = await ancestorsPromise;
 
@@ -303,6 +313,7 @@ export default async function PageView({
         restoreEpoch={restoreEpoch}
         hasChildren={childCount > 0}
         protectedRootId={page.accessRootId}
+        linkTitles={Object.fromEntries(linkTitles)}
       />
 
       <div className="mx-auto max-w-[760px] px-6 pb-24">

@@ -10,6 +10,22 @@ import { createSuggestionPopup } from "./SuggestionPopup";
 type EntityItem = { id: string; label: string };
 
 /**
+ * Attribute des eingefügten Knotens. Ein Wiki-Link speichert keinen
+ * Titel mehr: der Schnappschuss stünde sonst bei allen, die die
+ * verlinkende Seite lesen, auch nachdem das Ziel geschützt oder
+ * umbenannt wurde. Die Anzeige holt den aktuellen Titel selbst
+ * (WikiLinkView).
+ */
+export function entityAttrs(
+  nodeType: "wikiLink" | "mention",
+  item: EntityItem,
+): Record<string, string | null> {
+  return nodeType === "wikiLink"
+    ? { pageId: item.id, label: null }
+    : { userId: item.id, name: item.label };
+}
+
+/**
  * Popup-Vervollständigung für Entitäten aus der Suggest-API:
  *   char "[["  -> wikiLink-Node (Seiten)
  *   char "@"   -> mention-Node (Mitglieder)
@@ -22,6 +38,8 @@ export function createEntitySuggestion(opts: {
   nodeType: "wikiLink" | "mention";
   icon: LucideIcon;
   subtitle: string;
+  /** Nach dem Einfügen, mit dem gewählten Eintrag (Titel für die Anzeige). */
+  onSelect?: (item: EntityItem) => void;
 }) {
   // Antworten kommen nicht zwingend in Reihenfolge — eine langsamere,
   // ältere Antwort darf die aktuelle Liste nicht überschreiben.
@@ -56,10 +74,10 @@ export function createEntitySuggestion(opts: {
           allowSpaces: true,
           items: ({ query }) => fetchItems(query),
           command: ({ editor, range, props }) => {
-            const attrs =
-              opts.nodeType === "wikiLink"
-                ? { pageId: props.id, label: props.label }
-                : { userId: props.id, name: props.label };
+            // Die Person hat die Seite gerade in der Liste gesehen: ihr
+            // Titel geht an die Anzeige, ohne eigene Abfrage.
+            opts.onSelect?.(props);
+            const attrs = entityAttrs(opts.nodeType, props);
             editor
               .chain()
               .focus()

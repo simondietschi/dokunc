@@ -340,6 +340,26 @@ differently on an existing installation, and what to do about it.
   audit log, with `operation`, `reason` and, when the session ended,
   `sessionEnded`. Nothing to do.
 
+- **Wiki links:** a wiki link now shows the current title of the linked
+  page, and only to readers who can open that page; everyone else sees
+  "Seite ohne Zugriff" without a link, also when the target is in the
+  trash or deleted. While the title loads, the link shows "…", and
+  "Verknüpfte Seite" when the title cannot be loaded. New links no longer
+  store the title of their target. Exports (Markdown, HTML, PDF) and the
+  print view show wiki links as plain text without a link target, also to
+  pages the reader can open, and mentions without the internal user ID.
+  Shared pages show wiki links as plain text as well, with the current
+  title only for pages that belong to the share (the shared page and,
+  when sub-pages are included, its open sub-pages) and "Verknüpfte Seite"
+  for every other target; they no longer contain internal page or user
+  IDs. The version comparison shows current titles, so renaming a linked
+  page no longer shows up there as a change. The template picker shows
+  "Verknüpfte Seite" in its preview instead of link titles. The editor
+  loads titles from `GET /api/pages/titles`; if a proxy in front of the
+  app only passes listed paths, add it, otherwise links that others add
+  while a page is open show "Verknüpfte Seite" there. Nothing else to
+  do.
+
 ### Security
 
 - Docker images no longer include local environment files, Redis dumps,
@@ -400,6 +420,14 @@ differently on an existing installation, and what to do about it.
   and with it the account could be taken over. All four forms now share
   one limit of 10 attempts per 10 minutes per account, the session ends
   after 10 wrong passwords, and every failure is in the audit log.
+- Wiki links revealed the title of the linked page to every reader of the
+  linking page, also after the target was protected or renamed: in the
+  editor, on shared pages, in exports, the print view, the version history
+  and the template preview. They now show the current title only to
+  readers who can open the target. The title stored in existing links is
+  still delivered to readers of the linking page with the page data; it
+  is no longer displayed, and new links no longer store it. Shared pages
+  no longer contain internal page and user IDs.
 
 ### Added
 
@@ -461,6 +489,8 @@ differently on an existing installation, and what to do about it.
   per-address limits; see "Corporate NAT and VPN" in
   `docs/admin/network.md`.
 - Audit event `auth.reauth_failed` ("Passwortbestätigung fehlgeschlagen").
+- `GET /api/pages/titles`: the current titles of pages the signed-in user
+  can open, used by wiki links in the editor.
 
 ### Changed
 

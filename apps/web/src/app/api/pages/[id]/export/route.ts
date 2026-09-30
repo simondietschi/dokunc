@@ -9,6 +9,7 @@ import { htmlToPdf, gotenbergUrl } from "@/lib/pdf";
 import { inlineUploadImages } from "@/lib/inline-images";
 import { uploadLoaderFor } from "@/lib/file-access";
 import { RATE_LIMITS } from "@/lib/rate-limits";
+import { resolveForUser } from "@/lib/link-titles";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -72,8 +73,16 @@ export async function GET(
   const safe =
     page.title.replace(/[^a-zA-Z0-9-_]+/g, "_").slice(0, 60) || "page";
 
+  // Wiki-Links mit dem aktuellen Titel, soweit diese Person das Ziel
+  // öffnen darf, sonst "Seite ohne Zugriff"; nie der gespeicherte Titel.
+  // Ohne interne IDs: die Datei verlässt die App, Verweise auf /p/<id>
+  // führen dort nirgends hin.
+  const [content] = await resolveForUser(user.id, [page.content], {
+    stripIds: true,
+  });
+
   if (format === "md") {
-    const md = `# ${page.title}\n\n${toMarkdown(page.content)}`;
+    const md = `# ${page.title}\n\n${toMarkdown(content)}`;
     return new NextResponse(md, {
       headers: {
         "Content-Type": "text/markdown; charset=utf-8",
@@ -93,7 +102,7 @@ export async function GET(
     // Nur Dateien, die diese Person auch ueber /api/files abrufen
     // duerfte — der Export ist sonst ein zweiter Lesepfad ohne Pruefung.
     contentHtml: await inlineUploadImages(
-      contentToHtml(page.content),
+      contentToHtml(content),
       uploadLoaderFor(user.id),
     ),
   });

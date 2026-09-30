@@ -287,6 +287,12 @@ type WiederFx = { kind: string; wurzel: string };
 type VorlageFx = { quelle: Quelle };
 /** Zug von `seite` unter `ziel` (null = oberste Ebene); `wurzel` = Schutzwurzel im Spiel. */
 type ZugFx = { seite: string; ziel: string | null; wurzel: string | null };
+/** Titel-Route: die Zielseite, ihr früherer Titel und die Antwort des Aufrufs. */
+type TitelFx = {
+  seite: string;
+  alterTitel: string;
+  antwort?: { status: number; titles?: Record<string, string | null> };
+};
 
 /**
  * Prüfung nach "erlaubt". Als Methode deklariert, damit jede Invariante
@@ -366,8 +372,14 @@ export const INVARIANTEN: Record<InvariantenName, Invariante> = {
       "Audit page.protection_changed mit confirmed: false",
     ).toBe(true);
   },
-  async titelAktuell() {
-    throw new Error("Invariante titelAktuell ist noch nicht umgesetzt");
+  async titelAktuell(_w, fx: TitelFx) {
+    const aktuell = await prisma.page.findUnique({
+      where: { id: fx.seite },
+      select: { title: true },
+    });
+    const genannt = fx.antwort?.titles?.[fx.seite];
+    expect(genannt, "der aktuelle Titel").toBe(aktuell?.title);
+    expect(genannt, "nicht der frühere Titel").not.toBe(fx.alterTitel);
   },
 };
 
@@ -430,6 +442,45 @@ function zugTreiber(
     },
     async wirkung(_w, fx) {
       return (await zeile(fx.seite))?.parentId === fx.ziel;
+    },
+  };
+}
+
+/**
+ * Titel-Route: eine Seite, die nach dem Anlegen umbenannt wird (der
+ * frühere Titel steht als Schnappschuss in Links auf sie). Wirkung heisst,
+ * die Antwort nennt einen Titel für sie.
+ */
+function titelTreiber(o: { geschuetzt: boolean }): SzenarioTreiber<TitelFx> {
+  return {
+    async vorbereiten(w) {
+      const q = await seite(w);
+      if (o.geschuetzt) await w.schuetze(q.id);
+      await prisma.page.update({
+        where: { id: q.id },
+        data: { title: `${q.marke}-umbenannt` },
+      });
+      return { seite: q.id, alterTitel: q.marke };
+    },
+    aufrufen: (w, fx, a) =>
+      rufe(w, a, async () => {
+        const { GET } = await import("@/app/api/pages/titles/route");
+        const res = await GET(
+          new Request(`http://localhost/api/pages/titles?ids=${fx.seite}`),
+        );
+        fx.antwort = {
+          status: res.status,
+          titles: res.ok
+            ? ((await res.json()) as { titles: Record<string, string | null> }).titles
+            : undefined,
+        };
+        return fx.antwort;
+      }),
+    async wirkung(_w, fx) {
+      return (
+        fx.antwort?.status === 200 &&
+        typeof fx.antwort.titles?.[fx.seite] === "string"
+      );
     },
   };
 }
@@ -831,5 +882,10 @@ export const TREIBER: Record<string, Record<string, SzenarioTreiber<unknown>>> =
         );
       },
     },
+  },
+
+  "route:app/api/pages/titles/route.ts#GET": {
+    "offene Zielseite": titelTreiber({ geschuetzt: false }),
+    "geschützte Zielseite": titelTreiber({ geschuetzt: true }),
   },
 };

@@ -3,8 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Eye } from "lucide-react";
 import { prisma } from "@dokunc/db";
-import { contentToHtml } from "@/lib/page-html";
-import { resolveShare, rewriteFileUrls } from "@/lib/share";
+import { resolveShare, rewriteFileUrls, sharedContentHtml } from "@/lib/share";
 import { Logo } from "@/components/ui/Logo";
 import { pageTitle } from "@/lib/page-title";
 import type { SearchParams } from "@/lib/search-params";
@@ -55,7 +54,7 @@ export default async function SharedPage({
       })
     : [];
 
-  const html = rewriteFileUrls(contentToHtml(share.page.content), id, token);
+  const html = await sharedContentHtml(share, token);
   const linkTo = (pageId: string) =>
     `/share/${id}?token=${encodeURIComponent(token)}&page=${pageId}`;
 

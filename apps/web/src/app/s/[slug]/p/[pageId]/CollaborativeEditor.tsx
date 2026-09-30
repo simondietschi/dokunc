@@ -54,6 +54,8 @@ import { CodeBlockView } from "@/components/editor/CodeBlockView";
 import { ImageView } from "@/components/editor/ImageView";
 import { MermaidView } from "@/components/editor/MermaidView";
 import { WikiLinkView } from "@/components/editor/WikiLinkView";
+import { WikiLinkTitlesProvider } from "@/components/editor/WikiLinkTitles";
+import { createTitleStore, fetchTitlesFromApi } from "@/lib/wiki-link-titles";
 import { MentionView } from "@/components/editor/MentionView";
 import { ExcalidrawView } from "@/components/editor/ExcalidrawView";
 import { DrawioView } from "@/components/editor/DrawioView";
@@ -186,6 +188,7 @@ export function CollaborativeEditor({
   hasChildren = false,
   restoreEpoch,
   protectedRootId = null,
+  linkTitles = {},
 }: {
   slug: string;
   spaceId: string;
@@ -227,8 +230,21 @@ export function CollaborativeEditor({
   restoreEpoch: string | null;
   /** Wirksame Schutzwurzel der Seite, null = offen ("Als Vorlage speichern"). */
   protectedRootId?: string | null;
+  /**
+   * Aktuelle Titel der Wiki-Link-Ziele im gespeicherten Inhalt, vom
+   * Server nach Sicht geprüft (null = kein Zugriff). Ohne Vorbelegung
+   * blitzte jeder Link beim Laden kurz als "…" auf.
+   */
+  linkTitles?: Record<string, string | null>;
 }) {
   const [moveOpen, setMoveOpen] = useState(false);
+  // Titel der Wiki-Links (components/editor/WikiLinkTitles). Einmal je
+  // Seite angelegt; der Editor wird per key={page.id} neu aufgebaut.
+  const [titelSpeicher] = useState(() => {
+    const speicher = createTitleStore(fetchTitlesFromApi);
+    speicher.prime(linkTitles);
+    return speicher;
+  });
   // "connected" heisst hier: authentifiziert UND erstmalig synchronisiert.
   // Vor dem Sync ist das Yjs-Dokument noch leer bzw. unvollstaendig —
   // wer da schon tippt, schreibt in ein Dokument, dessen Inhalt gleich
@@ -539,8 +555,18 @@ export function CollaborativeEditor({
         nodeType: "wikiLink",
         icon: FileText,
         subtitle: "Seite verlinken",
+        onSelect: (item) => titelSpeicher.seed(item.id, item.label),
       }),
-    [spaceId],
+    [spaceId, titelSpeicher],
+  );
+
+  // Eine Umbenennung in diesem Tab gilt sofort auch für Links auf die Seite.
+  useEffect(
+    () =>
+      onBrowserEvent(EVENT_PAGE_RENAMED, ({ pageId: id, title: neu }) =>
+        titelSpeicher.seed(id, neu),
+      ),
+    [titelSpeicher],
   );
 
   const mentionSuggest = useMemo(
@@ -1087,7 +1113,11 @@ export function CollaborativeEditor({
           waehlt selbst zwischen Panel und Block ueber dem Text. */}
       <div className="mt-6 animate-[fade-in_0.4s_ease]">
         <TableOfContents editor={editor} synced={status === "connected"}>
-          <EditorContent editor={editor} />
+          {/* NodeViews rendern per Portal in EditorContent: der Provider
+              erreicht WikiLinkView von hier aus. */}
+          <WikiLinkTitlesProvider store={titelSpeicher}>
+            <EditorContent editor={editor} />
+          </WikiLinkTitlesProvider>
         </TableOfContents>
       </div>
 

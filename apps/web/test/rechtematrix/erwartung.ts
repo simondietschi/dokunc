@@ -514,6 +514,35 @@ export const ERWARTUNG: Record<string, Eintrag> = {
   "route:app/api/health/route.ts#GET": OFFEN,
   "route:app/api/notifications/stream/route.ts#GET": OFFEN,
   "route:app/api/pages/[id]/export/route.ts#GET": OFFEN,
+  // "erlaubt" heisst: die Antwort nennt den aktuellen Titel des Ziels;
+  // "abgelehnt": 401 oder null statt eines Titels.
+  "route:app/api/pages/titles/route.ts#GET": {
+    stand: "geprueft",
+    szenarien: {
+      "offene Zielseite": {
+        invariante: "titelAktuell",
+        akteure: {
+          ...AUSSEN_ABGELEHNT,
+          VIEWER: "erlaubt",
+          MEMBER: "erlaubt",
+          MEMBER_FREIGABE: "erlaubt",
+          ADMIN: "erlaubt",
+          OWNER: "erlaubt",
+        },
+      },
+      "geschützte Zielseite": {
+        invariante: "titelAktuell",
+        akteure: {
+          ...AUSSEN_ABGELEHNT,
+          VIEWER: "erlaubt",
+          MEMBER: "abgelehnt",
+          MEMBER_FREIGABE: "erlaubt",
+          ADMIN: "erlaubt",
+          OWNER: "erlaubt",
+        },
+      },
+    },
+  },
   "route:app/api/search/route.ts#GET": OFFEN,
   "route:app/api/share/[id]/files/[name]/route.ts#GET": OFFEN,
   "route:app/api/spaces/[id]/import/route.ts#POST": OFFEN,

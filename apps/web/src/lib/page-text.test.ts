@@ -56,8 +56,14 @@ describe("previewLines()", () => {
       "2. Zweites",
       "[x] Erledigt",
       "Option | Aufwand",
-      "Siehe Runbook und @Alex",
+      "Siehe Verknüpfte Seite und @Alex",
     ]);
+  });
+
+  it("zeigt den gespeicherten Titel eines Wiki-Links nie", () => {
+    // Die Vorschau im Vorlagen-Picker sieht jede Person mit Zugriff auf
+    // die Vorlage, auch ohne Zugriff auf das Ziel des Links.
+    expect(previewLines(doc).join("\n")).not.toContain("Runbook");
   });
 
   it("respektiert das Zeilenlimit", () => {
