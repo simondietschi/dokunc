@@ -414,9 +414,20 @@ jobs:
       # Gezaehlt wird der Tokenwert selbst, nicht nur die Meldung: sonst
       # bliebe der Schritt gruen, wenn nur der Pfad im Log stuende. Nach
       # einem Neustart desselben Containers steht er weiter genau einmal
-      # dort (nicht bei jedem Start). Die Logs erst in eine Variable: grep
-      # in einer Pipe liesse `logs` an SIGPIPE sterben, und pipefail
-      # machte daraus einen Fehlschlag.
+      # dort (nicht bei jedem Start), und der neue Start nennt nur die
+      # Datei.
+      # Derselbe Container: `up` ohne --no-recreate hat ihn hier nach dem
+      # Neustart neu angelegt (warum, blieb offen; lokal mit Compose 5.1
+      # nicht nachgestellt). Sein Log begann leer, der Schritt zaehlte 0 und
+      # scheiterte, ohne den Neustart zu pruefen. Jetzt wartet `up` nur auf
+      # den Healthcheck, und gleiche ID und neue Startzeit belegen den
+      # Neustart. Die Meldung zur Datei zaehlt erst ab dieser Startzeit:
+      # beim ersten Start loest sie schon die Anmeldeseite oben aus. Sie
+      # kommt ohne await nach dem Start (instrumentation.ts), darum das
+      # Warten; erst danach wird wieder gezaehlt, sonst entginge ein Token,
+      # das der neue Start noch schreibt.
+      # Die Logs erst in eine Variable: grep in einer Pipe liesse `logs` an
+      # SIGPIPE sterben, und pipefail machte daraus einen Fehlschlag.
       - name: Einrichtungs-Token beim ersten Start
         timeout-minutes: 4
         run: |
@@ -425,12 +436,22 @@ jobs:
           TOKEN=$(docker compose exec -T app cat /app/data/setup_token | tr -d '\r\n')
           test -n "$TOKEN"
           LOGS=$(docker compose logs --no-log-prefix app)
-          test "$(grep -cF "$TOKEN" <<<"$LOGS")" -eq 1
+          test "$(grep -cF "$TOKEN" <<<"$LOGS")" -eq 1 || { echo "Token nicht genau einmal im Log"; exit 1; }
+          ID=$(docker compose ps -q app)
+          VORHER=$(docker inspect -f '{{.State.StartedAt}}' "$ID")
           docker compose restart app
-          docker compose up -d --wait --wait-timeout 180 app
+          docker compose up -d --no-recreate --wait --wait-timeout 180 app
+          test "$(docker compose ps -q app)" = "$ID" || { echo "App-Container neu angelegt statt neu gestartet"; exit 1; }
+          START=$(docker inspect -f '{{.State.StartedAt}}' "$ID")
+          test "$START" != "$VORHER" || { echo "App-Container nicht neu gestartet"; exit 1; }
+          for i in $(seq 1 30); do
+            LOGS=$(docker compose logs --no-log-prefix --since "$START" app)
+            grep -qF 'Einrichtungs-Token liegt in der Datei' <<<"$LOGS" && break
+            sleep 1
+          done
+          grep -qF 'Einrichtungs-Token liegt in der Datei' <<<"$LOGS" || { echo "Der neue Start nennt die Datei nicht"; exit 1; }
           LOGS=$(docker compose logs --no-log-prefix app)
-          test "$(grep -cF "$TOKEN" <<<"$LOGS")" -eq 1
-          grep -qF 'Einrichtungs-Token liegt in der Datei' <<<"$LOGS"
+          test "$(grep -cF "$TOKEN" <<<"$LOGS")" -eq 1 || { echo "Token nach dem Neustart nicht genau einmal im Log"; exit 1; }
 
       # Die Update-Befehle aus dem README ("Update und Rueckweg") ohne
       # git pull, als Kette wie dort. Belegt, dass sie laufen und der Stack
