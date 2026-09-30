@@ -1,3 +1,4 @@
+import { getSchema } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import Highlight from "@tiptap/extension-highlight";
 import TextAlign from "@tiptap/extension-text-align";
@@ -26,6 +27,8 @@ import { Mention } from "./mention";
 import { CommentMark } from "./comment-mark";
 import { Excalidraw } from "./excalidraw";
 import { Drawio } from "./drawio";
+import { schemaHash } from "./schema-hash";
+import { EDITOR_SCHEMA_HASHES } from "./schema-version";
 
 /**
  * NodeView-Fabriken, die der Client (React) optional injiziert.
@@ -121,6 +124,44 @@ export function richExtensions(views: NodeViewFactories = {}) {
   ];
 }
 
+/** Schema-Hash und -Version dieser Fassung des Editors. */
+export type EditorSchema = {
+  /** Hash ueber das Schema von richExtensions() (./schema-hash). */
+  readonly hash: string;
+  /** Stelle in EDITOR_SCHEMA_HASHES plus 1; 0 = dort nicht eingetragen. */
+  readonly version: number;
+};
+
+let eigenesSchema: EditorSchema | null = null;
+
+/**
+ * Schema-Hash und -Version dieser Fassung, einmal je Prozess oder Tab
+ * berechnet (ein getSchema-Aufruf, wenige Millisekunden).
+ *
+ * Browser, Web-App und Collab-Server rufen dieselbe Funktion auf und
+ * kommen bei gleichem Code auf denselben Wert: richExtensions() ohne
+ * NodeViews, und NodeViews aendern das Schema nicht. Version 0 heisst,
+ * der Hash fehlt in EDITOR_SCHEMA_HASHES; ausgeliefert wird das nie
+ * (apps/web/src/lib/schema-hash.test.ts), in der Entwicklung kommt es
+ * vor, solange am Schema gearbeitet wird.
+ *
+ * Das Schema darf nie von Laufzeit-Einstellungen abhaengen: ein neuer
+ * Knoten "hinter einem Schalter" gehoert trotzdem immer in
+ * richExtensions(), geschaltet wird nur die Oberflaeche (Slash-Menue,
+ * Leiste). Sonst haetten Web-App und Collab-Server je nach .env
+ * verschiedene Schemata, und der Hash stuende in keiner Liste.
+ */
+export function editorSchema(): EditorSchema {
+  if (!eigenesSchema) {
+    const hash = schemaHash(getSchema(richExtensions()));
+    eigenesSchema = Object.freeze({
+      hash,
+      version: EDITOR_SCHEMA_HASHES.indexOf(hash) + 1,
+    });
+  }
+  return eigenesSchema;
+}
+
 /**
  * Extrahiert alle Ziel-Seiten-IDs von Wiki-Links aus ProseMirror-JSON.
  */
@@ -185,10 +226,13 @@ export {
   DOC_RESET_ACK_TTL_SEC,
   ACCESS_REVOKED_CHANNEL,
   PAGE_ACCESS_CHANNEL,
+  SCHEMA_ANNOUNCE_CHANNEL,
   isDocResetMessage,
   isDocResetAck,
   isAccessRevokedMessage,
   isPageAccessMessage,
+  isSchemaAnnouncement,
+  isSchemaHash,
   DOC_SIZE_NOTICE,
   encodeDocSizeNotice,
   parseDocSizeNotice,
@@ -200,7 +244,13 @@ export type {
   DocResetOutcome,
   AccessRevokedMessage,
   PageAccessMessage,
+  SchemaAnnouncement,
 } from "./collab-protocol";
+// Schema-Hash und Versionsliste. schemaHash und fnv1a64 gehen fuer Tests
+// und Diagnose mit hinaus: der Test-Alias der Web-App zeigt auf diese
+// Datei, ein Import aus ./schema-hash direkt liefe dort ins Leere.
+export { schemaHash, fnv1a64 } from "./schema-hash";
+export { EDITOR_SCHEMA_HASHES } from "./schema-version";
 export type { CalloutType } from "./callout";
 export { chunkText, chunkForAiIndex, AI_CHUNK_SIZE, headingSlug } from "./text";
 export { readWholeNumber } from "./env-number";

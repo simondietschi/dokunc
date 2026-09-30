@@ -8,21 +8,8 @@ import {
   ReactNodeViewRenderer,
   type Editor,
 } from "@tiptap/react";
-import { Extension } from "@tiptap/core";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
-// @tiptap/extension-placeholder ist seit v3 eine leere Weiterleitung
-// auf @tiptap/extensions und liegt im Tiptap-Repo unter
-// packages-deprecated; direkt aus der Quelle importiert.
-import { Placeholder } from "@tiptap/extensions";
-import Collaboration from "@tiptap/extension-collaboration";
-import CollaborationCaret from "@tiptap/extension-collaboration-caret";
 import { HocuspocusProvider } from "@hocuspocus/provider";
-import {
-  COLLAB_FIELD,
-  parseDocSizeNotice,
-  richExtensions,
-  type DocSizeNotice,
-} from "@dokunc/editor";
+import { parseDocSizeNotice, type DocSizeNotice } from "@dokunc/editor";
 import type { Range } from "@tiptap/core";
 import type { EditorView } from "@tiptap/pm/view";
 import { DOMParser as PMDOMParser } from "@tiptap/pm/model";
@@ -37,6 +24,7 @@ import {
 } from "lucide-react";
 import { ExportMenu } from "@/components/editor/ExportMenu";
 import { TableOfContents } from "@/components/editor/TableOfContents";
+import { editorExtensions } from "@/components/editor/editor-extensions";
 import { EditorToolbar } from "@/components/space/EditorToolbar";
 import { AttachmentView } from "@/components/editor/AttachmentView";
 import { BlockHandle } from "@/components/editor/BlockHandle";
@@ -154,38 +142,6 @@ function pickAndImportMarkdown(
   };
   input.click();
 }
-
-/**
- * Cmd/Ctrl+Klick öffnet einen Link auch im Bearbeitungsmodus (der
- * normale Klick setzt den Cursor, damit man Linktext editieren kann).
- */
-const LinkClick = Extension.create({
-  name: "linkClick",
-  addProseMirrorPlugins() {
-    return [
-      new Plugin({
-        key: new PluginKey("linkClick"),
-        props: {
-          handleClick(view, _pos, event) {
-            if (!(event.metaKey || event.ctrlKey) || event.button !== 0) {
-              return false;
-            }
-            const a = (event.target as HTMLElement | null)?.closest?.(
-              "a[href]",
-            );
-            if (!a || !view.dom.contains(a) || a.classList.contains("dk-wikilink")) {
-              return false;
-            }
-            const href = a.getAttribute("href") ?? "";
-            if (!/^(https?:|mailto:|tel:)/i.test(href)) return false;
-            window.open(href, "_blank", "noopener,noreferrer");
-            return true;
-          },
-        },
-      }),
-    ];
-  },
-});
 
 /**
  * Fuer welche Restore-Epoche dieser Tab die lokalen Kopien schon
@@ -602,8 +558,11 @@ export function CollaborativeEditor({
     // (das Yjs-Dokument ist noch leer), ohne Collaboration-Extensions.
     editable: inhaltBearbeitbar,
     immediatelyRender: false,
-    extensions: [
-      ...richExtensions({
+    // Die ganze Liste steht in components/editor/editor-extensions: dort
+    // prueft ein Test, dass sie dasselbe Schema ergibt wie der
+    // Collab-Server.
+    extensions: editorExtensions({
+      views: {
         attachment: () => ReactNodeViewRenderer(AttachmentView),
         callout: () => ReactNodeViewRenderer(CalloutView),
         toggle: () => ReactNodeViewRenderer(ToggleView),
@@ -614,26 +573,18 @@ export function CollaborativeEditor({
         mention: () => ReactNodeViewRenderer(MentionView),
         excalidraw: () => ReactNodeViewRenderer(ExcalidrawView),
         drawio: () => ReactNodeViewRenderer(DrawioView),
-      }),
-      LinkClick,
-      Placeholder.configure({
-        placeholder:
-          'Schreib etwas — "/" für Befehle, "[[" für Links, "@" für Mentions…',
-        includeChildren: true,
-      }),
-      ...(conn
-        ? [
-            Collaboration.configure({ document: conn.ydoc, field: COLLAB_FIELD }),
-            CollaborationCaret.configure({
-              provider: conn.provider,
-              user: { name: userName, color },
-            }),
-          ]
-        : []),
-      slash,
-      wikiLinkSuggest,
-      mentionSuggest,
-    ],
+      },
+      placeholder:
+        'Schreib etwas — "/" für Befehle, "[[" für Links, "@" für Mentions…',
+      collab: conn
+        ? {
+            ydoc: conn.ydoc,
+            provider: conn.provider,
+            user: { name: userName, color },
+          }
+        : null,
+      vorschlaege: [slash, wikiLinkSuggest, mentionSuggest],
+    }),
     editorProps: {
       attributes: { class: "mx-auto max-w-[760px] px-6 pb-40" },
       // Klick auf eine kommentierte Stelle hebt den zugehörigen Thread

@@ -148,7 +148,42 @@ export const COLLAB_REJECT_REASON = {
    * einen Stand von vorher. Auch Fehlercode der Ticket-Route (409).
    */
   restoreEpoch: "restore-epoch",
+  /**
+   * Das Ticket nennt ein anderes Editor-Schema als der Collab-Server
+   * (Claim `sh`, siehe ./schema-hash), oder auf einer anderen Instanz
+   * laeuft schon ein neueres Schema und diese hier nimmt keine Editoren
+   * mehr an. Voruebergehend: waehrend eines Updates laufen Web-App und
+   * Collab-Server kurz in verschiedenen Fassungen, der Editor versucht
+   * es von selbst erneut.
+   */
+  schemaMismatch: "schema-mismatch",
+  /**
+   * Nur Fehlercode der Ticket-Route (409), kein Grund des Collab-Servers:
+   * der Tab laeuft mit einem anderen Editor-Schema als die Web-App. Er
+   * muss neu geladen werden; bis dahin verbindet er nicht mehr.
+   */
+  staleClient: "stale-client",
 } as const;
+
+/**
+ * Kanal, auf dem eine Collab-Instanz beim Start ihr Editor-Schema
+ * ankuendigt, nachdem sie die Marke in der Datenbank (InstanceState)
+ * gehoben hat. Andere Instanzen lesen daraufhin die Marke und trennen
+ * ihre Editoren sofort, wenn ihr eigenes Schema aelter ist. Ohne den
+ * Kanal merkten sie es erst in ihrer Minutenrunde; entscheidend ist
+ * immer die Marke, nicht die Nachricht.
+ */
+export const SCHEMA_ANNOUNCE_CHANNEL = "dokunc:collab:schema-announce";
+
+/** Nutzlast auf SCHEMA_ANNOUNCE_CHANNEL. */
+export type SchemaAnnouncement = {
+  /** Zufaellige Kennung der Instanz; die eigene Nachricht wird uebergangen. */
+  instanceId: string;
+  /** Stelle des Schemas in EDITOR_SCHEMA_HASHES (ab 1), 0 = nicht eingetragen. */
+  version: number;
+  /** Schema-Hash, 16 Hexziffern. */
+  hash: string;
+};
 
 /**
  * Stateless-Nachricht des Collab-Servers an einen Editor: wie gross das
@@ -324,4 +359,22 @@ export function isAccessRevokedMessage(
 /** Hat `value` die Form einer Nachricht auf PAGE_ACCESS_CHANNEL? */
 export function isPageAccessMessage(value: unknown): value is PageAccessMessage {
   return isRecord(value) && isId(value.pageId);
+}
+
+/** Schema-Hash: genau 16 Hexziffern in Kleinbuchstaben (./schema-hash). */
+export function isSchemaHash(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{16}$/.test(value);
+}
+
+/** Hat `value` die Form einer Nachricht auf SCHEMA_ANNOUNCE_CHANNEL? */
+export function isSchemaAnnouncement(
+  value: unknown,
+): value is SchemaAnnouncement {
+  return (
+    isRecord(value) &&
+    isId(value.instanceId) &&
+    Number.isInteger(value.version) &&
+    (value.version as number) >= 0 &&
+    isSchemaHash(value.hash)
+  );
 }

@@ -11,16 +11,19 @@ import {
   DOC_SIZE_NOTICE,
   NOTIFY_CHANNEL_PREFIX,
   PAGE_ACCESS_CHANNEL,
+  SCHEMA_ANNOUNCE_CHANNEL,
   isAccessRevokedMessage,
   isDocResetAck,
   isDocResetMessage,
   isPageAccessMessage,
+  isSchemaAnnouncement,
   encodeDocSizeNotice,
   parseDocSizeNotice,
   type AccessRevokedMessage,
   type DocResetAck,
   type DocResetMessage,
   type PageAccessMessage,
+  type SchemaAnnouncement,
 } from "@dokunc/editor";
 
 /**
@@ -49,7 +52,10 @@ describe("Collab-Protokoll", () => {
       rateLimited: "rate-limited",
       ticketUsed: "ticket-used",
       restoreEpoch: "restore-epoch",
+      schemaMismatch: "schema-mismatch",
+      staleClient: "stale-client",
     });
+    expect(SCHEMA_ANNOUNCE_CHANNEL).toBe("dokunc:collab:schema-announce");
   });
 
   // Die Web-App wartet so lange auf die Quittung, der Collab-Server
@@ -215,6 +221,40 @@ describe("Pruefer fuer die Collab-Nachrichten", () => {
 
     it.each(keinObjekt)("verwirft %j", (value) => {
       expect(isPageAccessMessage(value)).toBe(false);
+    });
+  });
+
+  describe("isSchemaAnnouncement", () => {
+    const gueltig: SchemaAnnouncement = {
+      instanceId: "i1",
+      version: 2,
+      hash: "0123456789abcdef",
+    };
+
+    it("laesst die gesendete Form durch, auch mit Version 0", () => {
+      expect(isSchemaAnnouncement(wire(gueltig))).toBe(true);
+      expect(isSchemaAnnouncement(wire({ ...gueltig, version: 0 }))).toBe(true);
+    });
+
+    it("laesst zusaetzliche Felder einer neueren Fassung durch", () => {
+      expect(isSchemaAnnouncement(wire({ ...gueltig, start: 1 }))).toBe(true);
+    });
+
+    it.each([
+      ["ohne instanceId", { version: 2, hash: "0123456789abcdef" }],
+      ["mit leerer instanceId", { ...gueltig, instanceId: "" }],
+      ["mit negativer Version", { ...gueltig, version: -1 }],
+      ["mit gebrochener Version", { ...gueltig, version: 1.5 }],
+      ["mit Version als Text", { ...gueltig, version: "2" }],
+      ["mit Hash ausserhalb von Hex", { ...gueltig, hash: "0123456789abcdeg" }],
+      ["mit Hash in Grossbuchstaben", { ...gueltig, hash: "0123456789ABCDEF" }],
+      ["mit zu kurzem Hash", { ...gueltig, hash: "0123456789abcde" }],
+    ])("verwirft eine Ankuendigung %s", (_, message) => {
+      expect(isSchemaAnnouncement(wire(message))).toBe(false);
+    });
+
+    it.each(keinObjekt)("verwirft %j", (value) => {
+      expect(isSchemaAnnouncement(value)).toBe(false);
     });
   });
 
