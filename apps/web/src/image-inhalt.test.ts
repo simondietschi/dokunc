@@ -84,28 +84,43 @@ export function ausgeschlossen(liste: readonly string[], pfad: string): boolean 
 }
 
 /**
+ * Zeilen, eine Fortsetzung (\ am Zeilenende) an die vorige angehaengt.
+ * Mit `ohneKommentare` entfallen Zeilen, die mit # beginnen, auch mitten
+ * in einer Fortsetzung; so liest Docker das Dockerfile.
+ */
+export function logischeZeilen(text: string, ohneKommentare = false): string[] {
+  const zeilen: string[] = [];
+  let offen: string | null = null;
+  for (const roh of text.split("\n")) {
+    const z = roh.trim();
+    if (ohneKommentare && z.startsWith("#")) continue;
+    const weiter = z.endsWith("\\");
+    const teil = weiter ? z.slice(0, -1).trim() : z;
+    offen = offen === null ? teil : `${offen} ${teil}`;
+    if (weiter) continue;
+    zeilen.push(offen);
+    offen = null;
+  }
+  if (offen !== null) zeilen.push(offen);
+  return zeilen;
+}
+
+/**
  * Anweisungen je Stufe des Dockerfile, Fortsetzungszeilen (\) zu einer
  * Anweisung zusammengefuegt, ohne Kommentare und Leerzeilen.
  */
 export function stufenAnweisungen(text: string): Map<string, string[]> {
   const stufen = new Map<string, string[]>();
   let aktuell = "";
-  let offen: string | null = null;
-  for (const roh of text.split("\n")) {
-    const z = roh.trim();
-    if (z.startsWith("#") || (offen === null && z === "")) continue;
-    const weiter = z.endsWith("\\");
-    const teil = weiter ? z.slice(0, -1).trim() : z;
-    offen = offen === null ? teil : `${offen} ${teil}`;
-    if (weiter) continue;
-    const from = /^FROM\s+\S+\s+AS\s+(\S+)/i.exec(offen);
+  for (const a of logischeZeilen(text, true)) {
+    if (a === "") continue;
+    const from = /^FROM\s+\S+\s+AS\s+(\S+)/i.exec(a);
     if (from) {
       aktuell = from[1];
       stufen.set(aktuell, []);
     } else if (aktuell) {
-      stufen.get(aktuell)?.push(offen);
+      stufen.get(aktuell)?.push(a);
     }
-    offen = null;
   }
   return stufen;
 }
@@ -120,6 +135,16 @@ function ohneKommentare(text: string): string {
 
 /** Aufruf von npm, npx oder corepack; pnpm und npmjs.org zaehlen nicht. */
 const NPM = /\b(npm|npx|corepack)\b/;
+
+/**
+ * Befehle, die npm, npx oder corepack im Container app ausfuehren, auch
+ * wenn der Befehl mit \ ueber mehrere Zeilen laeuft.
+ */
+export function npmImAppContainer(text: string): string[] {
+  return logischeZeilen(text).filter(
+    (z) => /\bdocker[ -]compose\b.*\b(exec|run)\b.*\bapp\b/.test(z) && NPM.test(z),
+  );
+}
 
 const dockerignore = muster(lesen(".dockerignore"));
 const stufen = stufenAnweisungen(lesen("Dockerfile"));
@@ -257,10 +282,7 @@ describe("Laufzeit-Image ohne npm", () => {
       .filter((f) => f.endsWith(".md"))
       .map((f) => `docs/${f}`);
     const treffer = ["README.md", ...docs].flatMap((f) =>
-      lesen(f)
-        .split("\n")
-        .filter((z) => /docker compose (exec|run)\b.*\bapp\b/.test(z) && NPM.test(z))
-        .map((z) => `${f}: ${z.trim()}`),
+      npmImAppContainer(lesen(f)).map((z) => `${f}: ${z}`),
     );
     expect(treffer).toEqual([]);
   });
@@ -301,6 +323,20 @@ describe("Hilfen", () => {
     expect(NPM.test("pnpm --filter @dokunc/db migrate:deploy && exec pnpm start")).toBe(false);
     expect(NPM.test("pnpx prisma")).toBe(false);
     expect(NPM.test("fetch('https://registry.npmjs.org/')")).toBe(false);
+  });
+
+  it("findet npm im Container app auch in Befehlen ueber mehrere Zeilen", () => {
+    expect(npmImAppContainer("docker compose exec app \\\n  npx prisma studio")).toEqual([
+      "docker compose exec app npx prisma studio",
+    ]);
+    expect(npmImAppContainer("    docker compose exec -T app npm run migrate")).toHaveLength(1);
+    expect(
+      npmImAppContainer("docker compose -f docker-compose.yml run --rm app \\\n  npm ls"),
+    ).toHaveLength(1);
+    expect(
+      npmImAppContainer("docker compose exec app pnpm --filter @dokunc/db exec prisma migrate status"),
+    ).toEqual([]);
+    expect(npmImAppContainer("docker compose exec app \\\n  pnpm start\nnpm ls")).toEqual([]);
   });
 
   it("liest den markierten Block", () => {
