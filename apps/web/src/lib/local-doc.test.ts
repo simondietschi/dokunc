@@ -358,21 +358,35 @@ describe("removeAllLocalDocs()", () => {
   it("loescht jede dokunc-Kopie jeder Form und das ganze Register", async () => {
     const a = localDocName({ userId: A, epoch: null, pageId: P, schemaVersion: 1 });
     const b = localDocName({ userId: B, epoch: E, pageId: Q, schemaVersion: 9 });
+    // Namen, die parseLocalDocName nicht kennt (etwa aus einer spaeteren
+    // Version): auch sie gehen beim Abmelden, ebenso aus dem Register.
+    const unbekannt = ["dokunc:v2:a:b", `dokunc:v2:${A}:-:${P}:1:mehr`, "dokunc:v3:x:y:z"];
+    for (const n of unbekannt) expect(parseLocalDocName(n)).toBeNull();
     const { factory, deleted } = fakeFactory([
       a,
       b,
       `dokunc:${P}`,
       "dokunc:v3:zukunft",
+      ...unbekannt,
       "firebase:x",
     ]);
     const reg = fakeRegister({
       [`${LOCAL_DOC_REGISTRY_PREFIX}${a}`]: "1",
       [`${LOCAL_DOC_REGISTRY_PREFIX}dokunc:nur-register`]: "1",
+      [`${LOCAL_DOC_REGISTRY_PREFIX}dokunc:v2:nur:register`]: "1",
       theme: "dark",
     });
     const res = await removeAllLocalDocs(factory, reg);
     expect(deleted.sort()).toEqual(
-      [a, b, `dokunc:${P}`, "dokunc:v3:zukunft", "dokunc:nur-register"].sort(),
+      [
+        a,
+        b,
+        `dokunc:${P}`,
+        "dokunc:v3:zukunft",
+        ...unbekannt,
+        "dokunc:nur-register",
+        "dokunc:v2:nur:register",
+      ].sort(),
     );
     expect(res.sort()).toEqual(deleted.sort());
     expect([...reg.daten.keys()]).toEqual(["theme"]);
