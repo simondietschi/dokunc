@@ -401,6 +401,25 @@ describe("scripts/projektname.sh: Pruefen", () => {
     expect(r.stdout).toContain("Compose-Projekt: dokunc (aus .env, COMPOSE_PROJECT_NAME)");
   });
 
+  it.each([
+    ["aus .env", { datei: "COMPOSE_PROJECT_NAME=wikii\n" }],
+    ["aus der Umgebung", { umgebung: "wikii" }],
+  ])("nennt bei einem festen Namen ohne Daten, woher er stammt (%s)", (quelle, fall) => {
+    // Ein Tippfehler im festgeschriebenen Namen: das Projekt wikii hat
+    // keine Daten, altwiki schon.
+    const dir = repoIn("dokunc");
+    if (fall.datei) writeFileSync(join(dir, ".env"), fall.datei);
+    const r = run(dir, [], {
+      FAKE_VOLUMES: volumes(["altwiki", ALT]),
+      ...(fall.umgebung ? { COMPOSE_PROJECT_NAME: fall.umgebung } : {}),
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toBe(
+      "✗ Für das Compose-Projekt wikii gibt es keine Daten, wohl aber für: altwiki (angelegt 2026-05-19). " +
+        `COMPOSE_PROJECT_NAME (${quelle}) nennt wikii: stimmt der Name? (docs/admin/compose-project.md)\n`,
+    );
+  });
+
   it("nennt eine neue Installation und das Projekt mit Daten", () => {
     const neu = run(repoIn("neu"));
     expect(neu.status).toBe(0);

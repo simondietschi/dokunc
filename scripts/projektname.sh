@@ -372,7 +372,7 @@ if [ -z "$EIGENES" ] && [ ${#KANDIDATEN[@]} -gt 0 ]; then
     printf '✗ Für das Compose-Projekt %s gibt es keine Daten, wohl aber für: %s.' "$AKTUELL" \
       "$(aufzaehlen ${KANDIDATEN_LISTE[@]+"${KANDIDATEN_LISTE[@]}"})"
     if [ "$QUELLE" != "aus docker-compose.yml" ]; then
-      printf ' COMPOSE_PROJECT_NAME (%s) nennt %s: stimmt der Name?' "${QUELLE#*, }" "$AKTUELL"
+      printf ' COMPOSE_PROJECT_NAME (%s) nennt %s: stimmt der Name?' "${QUELLE%%,*}" "$AKTUELL"
     elif [ "$BISHER_HAT_DATEN" -eq 1 ]; then
       printf ' Vermutlich hiess das Projekt bisher %s (Name des Verzeichnisses). Festschreiben mit: ./scripts/projektname.sh --festschreiben' "$BISHER"
     else
