@@ -96,7 +96,7 @@ import {
   afterLocalCopy,
   guardLocalCopy,
 } from "@/lib/local-copy";
-import { ticketFolge } from "@/lib/ticket-folge";
+import { ticketFolge, type KopieWegHinweis } from "@/lib/ticket-folge";
 import { reportUnsentChanges, watchUnsentChanges } from "@/lib/unsent-changes";
 import {
   TOO_LARGE_DISCARD_LABEL,
@@ -262,8 +262,9 @@ export function CollaborativeEditor({
   // endgueltigen Ablehnung oder wenn ein anderer Tab sie geloescht hat.
   // Dann liegt Ungesendetes nur im Speicher des Tabs (Tooltip "Offline").
   const [ohneKopie, setOhneKopie] = useState(false);
-  // Die Sitzung endete, waehrend dieser Editor Ungesendetes hatte.
-  const [sitzungsEndeUngesendet, setSitzungsEndeUngesendet] = useState(false);
+  // Die lokale Kopie ist weg (Sitzung beendet, anderes Konto im
+  // Browser), waehrend dieser Editor Ungesendetes hatte: warum.
+  const [kopieWegHinweis, setKopieWegHinweis] = useState<KopieWegHinweis | null>(null);
   // Hat dieser Editor Eingaben, die der Server nicht bestaetigt hat?
   // (Effekt unten, watchUnsentChanges.)
   const ungesendetRef = useRef<() => boolean>(() => false);
@@ -445,7 +446,7 @@ export function CollaborativeEditor({
     const ydoc = new Y.Doc();
     setStatus("connecting");
     setSizeNotice(null);
-    setSitzungsEndeUngesendet(false);
+    setKopieWegHinweis(null);
     /**
      * Lokale Kopie der Seite (IndexedDB). Sie zeigt die Seite schneller
      * an und haelt, was beim Abbruch der Verbindung noch nicht beim Server
@@ -547,11 +548,12 @@ export function CollaborativeEditor({
           const folge = ticketFolge(result, userId);
           if (folge.status) setStatus(folge.status);
           // Endete die Sitzung (Untaetigkeit, "Gerät abmelden" auf einem
-          // anderen Geraet), waehrend dieser Editor Aenderungen hat, die
-          // der Server nicht bestaetigt hat, sagt er es: gleich ist auch
-          // die lokale Kopie weg, und nur der Tab haelt sie noch.
-          if (folge.alleLoeschen) setSitzungsEndeUngesendet(ungesendetRef.current());
-          else if (result.kind === "ticket") setSitzungsEndeUngesendet(false);
+          // anderen Geraet) oder ist im Browser ein anderes Konto
+          // angemeldet, waehrend dieser Editor Aenderungen hat, die der
+          // Server nicht bestaetigt hat, sagt er es: gleich ist auch die
+          // lokale Kopie weg, und nur der Tab haelt sie noch.
+          if (folge.hinweis) setKopieWegHinweis(ungesendetRef.current() ? folge.hinweis : null);
+          else if (folge.aufraeumen) setKopieWegHinweis(null);
           if (folge.kopieLoeschen) verwirfKopie();
           if (folge.alleLoeschen) void removeAllLocalDocs();
           if (folge.endgueltig) queueMicrotask(() => provider?.disconnect());
@@ -1101,14 +1103,15 @@ export function CollaborativeEditor({
           </button>
         </div>
       )}
-      {status === "unauthorized" && sitzungsEndeUngesendet && (
+      {status === "unauthorized" && kopieWegHinweis !== null && (
         <div
           role="alert"
           className="mx-auto mt-4 max-w-[760px] rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-2.5 text-[13px] leading-relaxed text-ink"
         >
           <p>
-            Die Sitzung ist beendet. In diesem Tab gibt es Änderungen, die
-            der Server noch nicht bestätigt hat.
+            {kopieWegHinweis === "anderes-konto"
+              ? "In diesem Browser ist inzwischen ein anderes Konto angemeldet. Dieser Tab überträgt nichts unter dem anderen Konto, und es gibt hier Änderungen, die der Server noch nicht bestätigt hat."
+              : "Die Sitzung ist beendet. In diesem Tab gibt es Änderungen, die der Server noch nicht bestätigt hat."}
           </p>
           <p className="mt-1.5">
             Sie stehen nur noch in diesem Tab und gehen beim Schließen oder

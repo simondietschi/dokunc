@@ -17,7 +17,8 @@ import {
  *   Seite, der Tab bleibt offen.
  * - Meldet sich im selben Browser ein anderes Konto an, bricht ein
  *   offener Tab beim naechsten Verbinden ab: nichts, was dort noch nicht
- *   beim Server war, kommt unter dem anderen Konto an.
+ *   beim Server war, kommt unter dem anderen Konto an, und der Tab sagt,
+ *   dass es nur noch bei ihm steht.
  * - Loescht ein anderer Tab die Kopie eines offenen Editors (Kuerzen,
  *   Abmelden), bleibt dieser verbunden, und was dort getippt wird, kommt an.
  * - Abmelden, eine abgelaufene Sitzung und "Gerät abmelden" loeschen alle
@@ -237,6 +238,16 @@ test("Ein anderes Konto im selben Browser bekommt nichts aus einem offenen Tab",
     .poll(async () => kopienVon(await idbNames(page), a.id, p), { timeout: 15_000 })
     .toEqual([]);
   await expect(page.getByText("Live", { exact: true })).toHaveCount(0);
+  // Die Kopie ist weg: das Ungesendete steht nur noch im Tab, und der Tab
+  // sagt es, statt nur um Neuladen zu bitten, das es verwerfen wuerde.
+  await expect(
+    page.getByRole("alert").filter({ hasText: "anderes Konto angemeldet" }),
+  ).toBeVisible();
+  await expect(page.locator(".ProseMirror")).toContainText("UNGESENDET");
+  await expect(page.getByRole("status").filter({ hasText: "Kein Zugriff" })).toHaveAttribute(
+    "title",
+    /keine lokale Kopie.*Neuladen verloren/,
+  );
 });
 
 // Ein offener Tab merkt das Ende der Sitzung, ohne dass jemand eine Seite
@@ -318,6 +329,10 @@ test("Endet die Sitzung, warnt ein Tab mit ungesendeten Aenderungen", async ({ p
   await expect.poll(() => alleKopien(page), { timeout: 15_000 }).toEqual([]);
   // Das Getippte steht noch im Tab.
   await expect(page.locator(".ProseMirror")).toContainText("UNGESENDET");
+  await expect(page.getByRole("status").filter({ hasText: "Kein Zugriff" })).toHaveAttribute(
+    "title",
+    /keine lokale Kopie.*Neuladen verloren/,
+  );
 });
 
 // Abmelden, "Überall abmelden" und "Gerät abmelden" fuer dieses Geraet

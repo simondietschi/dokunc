@@ -350,8 +350,21 @@ describe("statusLabel()", () => {
     // Verbunden sagt es der Tooltip ebenso; ohne die Angabe bleibt "Live" ohne.
     expect(statusLabel("connected", { ohneKopie: true }).title).toMatch(/keine lokale Kopie/);
     expect(statusLabel("connected")).toEqual({ text: "Live" });
-    // Fuer eine Ablehnung aendert die Angabe nichts.
-    expect(statusLabel("unauthorized", { ohneKopie: true })).toEqual(statusLabel("unauthorized"));
+  });
+
+  // Nach einer endgueltigen Ablehnung der Ticket-Route und bei einem
+  // anderen Konto im Browser ist die Kopie der Seite geloescht. Die Bitte
+  // "neu laden" allein verschwieg, dass genau das Neuladen verwirft, was
+  // der Server noch nicht bestaetigt hat.
+  it("Kein Zugriff ohne lokale Kopie: sagt, dass Neuladen Ungesendetes verwirft", () => {
+    const { text, title } = statusLabel("unauthorized", { ohneKopie: true });
+    expect(text).toBe("Kein Zugriff");
+    expect(title).toMatch(/keine lokale Kopie/);
+    expect(title).toMatch(/geht beim Schließen oder Neuladen verloren/);
+    expect(title).toMatch(/anderes Konto/);
+    // Mit Kopie bleibt der bisherige Text.
+    expect(statusLabel("unauthorized").title).not.toMatch(/keine lokale Kopie/);
+    expect(statusLabel("unauthorized").title).toMatch(/neu anmelden/);
   });
 
   it("bittet nach einem Restore um Neuladen", () => {

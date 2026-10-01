@@ -12,6 +12,10 @@ import type { EditorStatus } from "./editor-status";
  * - endgueltig: den Provider trennen, kein weiterer Versuch;
  * - aufraeumen: Konto und Epoche sind vom Server bestaetigt, fremde
  *   Kopien loeschen und die Grenzen durchsetzen;
+ * - hinweis: hat dieser Editor gerade Aenderungen, die der Server nicht
+ *   bestaetigt hat, sagt dieser Hinweis ueber der Seite, warum sie nur
+ *   noch im Tab stehen; null = keiner. Ein Ticket fuer dieses Konto
+ *   (aufraeumen) nimmt einen stehenden Hinweis zurueck;
  * - fehler: damit wirft `token()`, null = das Ticket verwenden.
  */
 export type TicketFolge = {
@@ -20,8 +24,16 @@ export type TicketFolge = {
   alleLoeschen: boolean;
   endgueltig: boolean;
   aufraeumen: boolean;
+  hinweis: KopieWegHinweis | null;
   fehler: string | null;
 };
+
+/**
+ * Warum die lokale Kopie weg ist, waehrend der Tab Ungesendetes haelt:
+ * die Sitzung ist beendet, oder im Browser ist ein anderes Konto
+ * angemeldet.
+ */
+export type KopieWegHinweis = "sitzung-beendet" | "anderes-konto";
 
 const NICHTS: TicketFolge = {
   status: null,
@@ -29,6 +41,7 @@ const NICHTS: TicketFolge = {
   alleLoeschen: false,
   endgueltig: false,
   aufraeumen: false,
+  hinweis: null,
   fehler: null,
 };
 
@@ -37,7 +50,8 @@ const NICHTS: TicketFolge = {
  *   (der Hinweis ueber der Seite sagt, was zu tun ist).
  * - denied no-session: die Sitzung ist vorbei, keine Kopie gehoert mehr
  *   auf das Geraet. Der Provider versucht es weiter; meldet sich dieselbe
- *   Person wieder an, verbindet er ohne lokale Kopie.
+ *   Person wieder an, verbindet er ohne lokale Kopie. Hinweis bei
+ *   Ungesendetem: Sitzung beendet.
  * - denied no-access, not-found: nur die Kopie dieser Seite verwerfen;
  *   kommt der Zugriff zurueck, verbindet der Provider wieder.
  * - ticket fuer ein anderes Konto: in einem anderen Tab hat sich jemand
@@ -45,7 +59,8 @@ const NICHTS: TicketFolge = {
  *   Endgueltig trennen, bevor ein Abgleich die ungesendeten Aenderungen
  *   dieses Tabs unter dem anderen Konto uebertraegt, und die Kopie
  *   verwerfen. Aufgeraeumt wird hier nichts: das tut der Editor des
- *   anderen Kontos.
+ *   anderen Kontos. Hinweis bei Ungesendetem: anderes Konto; ohne ihn
+ *   bemerkte die Person erst beim Neuladen, dass es weg ist.
  * - ticket sonst: verbinden, dann aufraeumen.
  *
  * Netzfehler, Grenzen und Serverfehler kommen hier nicht an:
@@ -63,6 +78,7 @@ export function ticketFolge(result: TicketResult, erwartetesKonto: string): Tick
         status: "unauthorized",
         kopieLoeschen: true,
         alleLoeschen: result.grund === "no-session",
+        hinweis: result.grund === "no-session" ? "sitzung-beendet" : null,
         fehler: "Kein Zugriff",
       };
     case "ticket":
@@ -72,6 +88,7 @@ export function ticketFolge(result: TicketResult, erwartetesKonto: string): Tick
           status: "unauthorized",
           kopieLoeschen: true,
           endgueltig: true,
+          hinweis: "anderes-konto",
           fehler: "Anderes Konto angemeldet",
         };
       }

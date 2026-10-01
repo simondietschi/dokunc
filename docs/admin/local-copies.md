@@ -30,7 +30,9 @@ The editor opens only its own account's copy of a page.
   their next connection ticket with the new account's session. The ticket
   answer names the account; a tab that sees another account stops syncing,
   shows "Kein Zugriff" and deletes its copy of the page. Changes it had not
-  sent are not sent under the other account.
+  sent are not sent under the other account. They exist only in that tab
+  and are lost when it is closed or reloaded; the tab says so above the
+  page.
 - **Another editor version.** A copy from an older version of the editor is
   merged into the page before the editor connects and is then deleted. A copy
   from a newer version (after a rollback) is neither opened, deleted nor
@@ -120,7 +122,9 @@ only in the open tab until it is closed or reloaded.
 If another tab deletes a copy that is open (limits, another account, signing
 out), the editor stays connected and keeps working without a local copy. Its
 "Live" and "Offline" tooltips then say that changes not yet sent live only in
-the tab and are lost when the tab is closed or reloaded.
+the tab and are lost when the tab is closed or reloaded. The "Kein Zugriff"
+tooltip says the same when the editor deleted its own copy after the server
+refused the page or the session, or after another account signed in.
 
 ## Rolling back
 

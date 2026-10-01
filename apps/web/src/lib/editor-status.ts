@@ -196,9 +196,10 @@ export function visibleStatus(
 
 /**
  * Beschriftung und Erklaerung (Tooltip) eines angezeigten Status.
- * `ohneKopie`: dieser Tab hat keine lokale Kopie (kein IndexedDB, oder
- * ein anderer Tab hat sie geloescht, lib/local-copy guardLocalCopy).
- * Dann liegt Ungesendetes nur im Speicher des Tabs.
+ * `ohneKopie`: dieser Tab hat keine lokale Kopie (kein IndexedDB, ein
+ * anderer Tab hat sie geloescht, lib/local-copy guardLocalCopy, oder der
+ * Editor selbst nach einer Ablehnung). Dann liegt Ungesendetes nur im
+ * Speicher des Tabs.
  */
 export function statusLabel(
   status: EditorStatus,
@@ -217,10 +218,15 @@ export function statusLabel(
           }
         : { text: "Live" };
     case "unauthorized":
+      // Ohne Kopie: nach einer endgueltigen Ablehnung der Ticket-Route
+      // oder bei einem anderen Konto im Browser hat der Editor sie
+      // geloescht (lib/ticket-folge). Dann verwirft gerade das Neuladen,
+      // was der Server noch nicht bestaetigt hat.
       return {
         text: "Kein Zugriff",
-        title:
-          "Der Server hat die Verbindung abgelehnt (Sitzung abgelaufen oder Zugriff entzogen). Bitte neu anmelden und die Seite neu laden — Änderungen werden nicht mehr übertragen.",
+        title: o.ohneKopie
+          ? "Der Server hat die Verbindung abgelehnt (Sitzung beendet, anderes Konto angemeldet oder Zugriff entzogen). Änderungen werden nicht mehr übertragen. Dieser Tab hat keine lokale Kopie der Seite: Was der Server noch nicht bestätigt hat, steht nur in diesem Tab und geht beim Schließen oder Neuladen verloren. Kopiere es vorher, falls du es noch brauchst; dann neu anmelden und die Seite neu laden."
+          : "Der Server hat die Verbindung abgelehnt (Sitzung abgelaufen oder Zugriff entzogen). Bitte neu anmelden und die Seite neu laden — Änderungen werden nicht mehr übertragen.",
       };
     case "limited":
       return {

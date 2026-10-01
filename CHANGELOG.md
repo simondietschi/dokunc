@@ -378,13 +378,14 @@ differently on an existing installation, and what to do about it.
   browser. A network error, a rate limit or a server error deletes
   nothing. If another account signs in in the same browser, open editor
   tabs of the previous account show "Kein Zugriff" at their next
-  connection instead of sending their changes under the other account;
-  reload them after signing in again. A browser keeps at most 50 copies
-  of the signed-in account and none that was unused for 30 days. After a
-  rollback to an earlier version, copies made by this version stay in the
-  browsers until the next update, and the earlier version again keeps
-  copies without an account. See `docs/admin/local-copies.md`. Nothing
-  to do.
+  connection instead of sending their changes under the other account,
+  and delete their copy of the page: changes such a tab had not sent
+  exist only in that tab and are lost when it is closed or reloaded; the
+  tab says so. A browser keeps at most 50 copies of the signed-in account
+  and none that was unused for 30 days. After a rollback to an earlier
+  version, copies made by this version stay in the browsers until the next
+  update, and the earlier version again keeps copies without an account.
+  See `docs/admin/local-copies.md`. Nothing to do.
 
 - **Signing out and ended sessions:** signing out is now a form post to
   `/logout`. After a session ended elsewhere (idle timeout
@@ -638,6 +639,12 @@ differently on an existing installation, and what to do about it.
   the account reach the sign-in page through `/session-ended`.
 - The "Live" status tooltip says when the tab no longer has a local copy
   of the page, for example after another tab deleted it.
+- The "Kein Zugriff" status tooltip says when the tab no longer has a
+  local copy of the page: changes the server has not confirmed are then
+  lost when the tab is closed or reloaded. An editor whose copy was
+  deleted because another account signed in in the same browser says
+  that its unconfirmed changes now exist only in that tab, as after an
+  ended session.
 
 ### Removed
 

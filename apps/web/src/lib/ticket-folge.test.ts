@@ -12,6 +12,7 @@ describe("ticketFolge()", () => {
       alleLoeschen: false,
       endgueltig: false,
       aufraeumen: true,
+      hinweis: null,
       fehler: null,
     });
     // Ohne Konto in der Antwort wird nicht verglichen.
@@ -21,7 +22,8 @@ describe("ticketFolge()", () => {
   // Cookies gelten fuer den ganzen Browser: meldet sich in einem anderen
   // Tab jemand anderes an, holte dieser Tab seine Tickets mit deren
   // Sitzung und glich die ungesendeten Aenderungen der ersten Person
-  // unter dem neuen Konto ab.
+  // unter dem neuen Konto ab. Hat der Tab Ungesendetes, sagt er, dass es
+  // nur noch im Tab steht: seine Kopie ist gleich weg.
   it("Ticket fuer ein anderes Konto: endgueltig trennen, Kopie verwerfen, nie aufraeumen", () => {
     expect(ticketFolge({ kind: "ticket", ticket: "t", userId: ANDERE }, ICH)).toEqual({
       status: "unauthorized",
@@ -29,17 +31,19 @@ describe("ticketFolge()", () => {
       alleLoeschen: false,
       endgueltig: true,
       aufraeumen: false,
+      hinweis: "anderes-konto",
       fehler: "Anderes Konto angemeldet",
     });
   });
 
-  it("keine Sitzung mehr: alle Kopien verwerfen", () => {
+  it("keine Sitzung mehr: alle Kopien verwerfen, Hinweis bei Ungesendetem", () => {
     expect(ticketFolge({ kind: "denied", grund: "no-session" }, ICH)).toEqual({
       status: "unauthorized",
       kopieLoeschen: true,
       alleLoeschen: true,
       endgueltig: false,
       aufraeumen: false,
+      hinweis: "sitzung-beendet",
       fehler: "Kein Zugriff",
     });
   });
@@ -52,6 +56,7 @@ describe("ticketFolge()", () => {
         alleLoeschen: false,
         endgueltig: false,
         aufraeumen: false,
+        hinweis: null,
         fehler: "Kein Zugriff",
       });
     }
@@ -64,6 +69,7 @@ describe("ticketFolge()", () => {
       alleLoeschen: false,
       endgueltig: true,
       aufraeumen: false,
+      hinweis: null,
       fehler: "Instanz wurde zurückgespielt",
     });
     expect(ticketFolge({ kind: "stale" }, ICH)).toEqual({
@@ -72,6 +78,7 @@ describe("ticketFolge()", () => {
       alleLoeschen: false,
       endgueltig: true,
       aufraeumen: false,
+      hinweis: null,
       fehler: "Neue Version verfügbar",
     });
   });
