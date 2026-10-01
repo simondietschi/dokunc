@@ -87,9 +87,14 @@ Graylog, a SIEM):
           logging:
             driver: journald
 
+  If `COMPOSE_FILE` is set (as in the domain setup of the README),
+  Docker Compose does not read `docker-compose.override.yml` by itself;
+  append it to the list, for example
+  `COMPOSE_FILE=docker-compose.yml:docker-compose.domain.yml:docker-compose.override.yml`.
   With a different driver, Compose drops the `json-file` options
   (`max-size`, `max-file`) for that service; with `driver: json-file`,
   the options you set are merged with the defaults. Check afterwards
+  that `docker compose config` shows the new driver for the service,
   that `docker compose logs` still shows the output, and that your
   system rotates or limits the logs itself.
 
