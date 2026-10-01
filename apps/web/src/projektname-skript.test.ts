@@ -401,7 +401,7 @@ describe("scripts/projektname.sh: Pruefen", () => {
     expect(r.stdout).toContain("Compose-Projekt: dokunc (aus .env, COMPOSE_PROJECT_NAME)");
   });
 
-  it.each([
+  it.each<[string, { datei?: string; umgebung?: string }]>([
     ["aus .env", { datei: "COMPOSE_PROJECT_NAME=wikii\n" }],
     ["aus der Umgebung", { umgebung: "wikii" }],
   ])("nennt bei einem festen Namen ohne Daten, woher er stammt (%s)", (quelle, fall) => {
