@@ -164,7 +164,7 @@ describe("scripts/projektname.sh: Pruefen", () => {
       FAKE_CONTAINER: `wikialt=${dir};dokunc=${dir}`,
     });
     expect(r.status).toBe(2);
-    expect(r.stdout).toContain("Daten: vorhanden (dokunc_db_data, angelegt 2026-09-30)");
+    expect(r.stdout).toContain("Daten: vorhanden (dokunc_db_data und dokunc_uploads, angelegt 2026-09-30)");
     expect(r.stdout).toContain("Weitere dokunc-Projekte auf diesem Host: wikialt (angelegt 2026-05-19)\n");
     expect(r.stderr).toBe(
       "✗ Das Compose-Projekt dokunc hat Daten (angelegt 2026-09-30), das dokunc-Projekt wikialt (angelegt 2026-05-19) hat aber ältere. " +
@@ -266,7 +266,7 @@ describe("scripts/projektname.sh: Pruefen", () => {
     expect(existsSync(join(dir, ".env"))).toBe(false);
     const eigen = run(dir, ["--festschreiben"], env);
     expect(eigen.stdout).toBe(
-      "✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (Daten im Volume dokunc_db_data).\n",
+      "✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (Daten in dokunc_db_data und dokunc_uploads).\n",
     );
   });
 
@@ -409,7 +409,7 @@ describe("scripts/projektname.sh: Pruefen", () => {
 
     const bestand = run(repoIn("dokunc"), [], { FAKE_VOLUMES: volumes(["dokunc", ALT]) });
     expect(bestand.status).toBe(0);
-    expect(bestand.stdout).toContain("Daten: vorhanden (dokunc_db_data, angelegt 2026-05-19)");
+    expect(bestand.stdout).toContain("Daten: vorhanden (dokunc_db_data und dokunc_uploads, angelegt 2026-05-19)");
     expect(bestand.stderr).toBe("");
   });
 
@@ -507,11 +507,11 @@ describe("scripts/projektname.sh: Installationen aus der Zeit vor dem Volume app
 
     const fest = run(dir, ["--festschreiben"], env);
     expect(fest.status, fest.stderr).toBe(0);
-    expect(fest.stdout).toBe("✓ COMPOSE_PROJECT_NAME=wiki in .env eingetragen (Daten im Volume wiki_db_data).\n");
+    expect(fest.stdout).toBe("✓ COMPOSE_PROJECT_NAME=wiki in .env eingetragen (Daten in wiki_db_data und wiki_uploads).\n");
     expect(lesen(join(dir, ".env"))).toContain("COMPOSE_PROJECT_NAME=wiki\n");
     const danach = run(dir, [], env);
     expect(danach.status, danach.stderr).toBe(0);
-    expect(danach.stdout).toContain("Daten: vorhanden (wiki_db_data, angelegt 2026-06-01)");
+    expect(danach.stdout).toContain("Daten: vorhanden (wiki_db_data und wiki_uploads, angelegt 2026-06-01)");
   });
 
   it("nimmt den Namen auch von Hand", () => {
@@ -553,6 +553,51 @@ describe("scripts/projektname.sh: Installationen aus der Zeit vor dem Volume app
   });
 });
 
+describe("scripts/projektname.sh: eine andere Anwendung unter dem Namen des Verzeichnisses", () => {
+  // Im Verzeichnis wiki lief bisher eine andere Compose-Anwendung, etwa
+  // Docmost mit den Volumes wiki_db_data, wiki_redis_data und
+  // wiki_docmost. Ohne wiki_uploads sind das nicht die Daten einer
+  // dokunc-Installation: --festschreiben haengte sonst deren Datenbank
+  // hier ein, und nach dem ersten Start hielte jede Pruefung die eigene
+  // Instanz fuer eine neue, leere (backup.sh loeschte nie mehr etwas).
+  const FREMD = "2025-11-02T08:00:00Z";
+  const docmost = `wiki_db_data=${FREMD} wiki_redis_data=${FREMD} wiki_docmost=${FREMD}`;
+
+  it("zaehlt sie vor dem ersten Start nicht als die bisherigen Daten", () => {
+    const dir = repoIn("wiki");
+    const r = run(dir, [], { FAKE_VOLUMES: docmost });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toBe("");
+    expect(r.stdout).toContain("Noch keine Daten (neue Installation).");
+    expect(r.stdout).not.toContain("Weitere");
+
+    const fest = run(dir, ["--festschreiben"], { FAKE_VOLUMES: docmost });
+    expect(fest.status, fest.stderr).toBe(0);
+    expect(fest.stdout).toBe("✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (noch keine Daten).\n");
+    expect(lesen(join(dir, ".env"))).toContain("COMPOSE_PROJECT_NAME=dokunc\n");
+  });
+
+  it("schreibt ihren Namen auch von Hand nicht fest", () => {
+    const dir = repoIn("wiki");
+    const r = run(dir, ["--festschreiben", "wiki"], { FAKE_VOLUMES: docmost });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toBe("✗ Für das Compose-Projekt wiki gibt es keine Daten (fehlt: wiki_uploads). Nichts geändert.\n");
+    expect(existsSync(join(dir, ".env"))).toBe(false);
+  });
+
+  it("meldet nach dem ersten Start nichts", () => {
+    const dir = repoIn("wiki");
+    const r = run(dir, [], {
+      FAKE_VOLUMES: `${docmost} ${volumes(["dokunc", NEU])}`,
+      FAKE_CONTAINER: `dokunc=${dir}`,
+    });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toBe("");
+    expect(r.stdout).toContain("Daten: vorhanden (dokunc_db_data");
+    expect(r.stdout).not.toContain("Weitere");
+  });
+});
+
 describe("scripts/projektname.sh: Festschreiben", () => {
   it("schreibt den bisherigen Namen in eine neue .env, nur fuer den Eigentuemer, und aendert beim zweiten Lauf nichts", () => {
     const dir = repoIn("Wiki Alt");
@@ -560,7 +605,7 @@ describe("scripts/projektname.sh: Festschreiben", () => {
     const r = run(dir, ["--festschreiben"], env);
     expect(r.status, r.stderr).toBe(0);
     expect(r.stdout).toBe(
-      "✓ COMPOSE_PROJECT_NAME=wikialt in .env eingetragen (Daten im Volume wikialt_db_data).\n",
+      "✓ COMPOSE_PROJECT_NAME=wikialt in .env eingetragen (Daten in wikialt_db_data und wikialt_uploads).\n",
     );
     const datei = join(dir, ".env");
     expect(lesen(datei)).toBe(
@@ -685,7 +730,7 @@ describe("scripts/projektname.sh: Festschreiben", () => {
   it("schreibt den aktuellen Namen, wenn es keinen bisherigen mit Daten gibt", () => {
     const bestand = repoIn("dokunc");
     const r = run(bestand, ["--festschreiben"], { FAKE_VOLUMES: volumes(["dokunc", ALT]) });
-    expect(r.stdout).toContain("✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (Daten im Volume dokunc_db_data).");
+    expect(r.stdout).toContain("✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (Daten in dokunc_db_data und dokunc_uploads).");
     const neu = repoIn("Wiki Neu");
     const n = run(neu, ["--festschreiben"]);
     expect(n.stdout).toBe("✓ COMPOSE_PROJECT_NAME=dokunc in .env eingetragen (noch keine Daten).\n");
@@ -696,7 +741,9 @@ describe("scripts/projektname.sh: Festschreiben", () => {
     const env = { FAKE_VOLUMES: volumes(["altwiki", ALT]) };
     const fehlt = run(dir, ["--festschreiben", "altwik"], env);
     expect(fehlt.status).toBe(1);
-    expect(fehlt.stderr).toContain("Für das Compose-Projekt altwik gibt es keine Daten");
+    expect(fehlt.stderr).toBe(
+      "✗ Für das Compose-Projekt altwik gibt es keine Daten (fehlt: altwik_db_data, altwik_uploads). Nichts geändert.\n",
+    );
     const falsch = run(dir, ["--festschreiben", "Alt Wiki"], env);
     expect(falsch.status).toBe(3);
     expect(existsSync(join(dir, ".env"))).toBe(false);

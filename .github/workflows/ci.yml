@@ -373,7 +373,9 @@ jobs:
       # Stacks, solange es keine dokunc_*-Volumes gibt: Volumes mit den
       # Labels, die Compose setzt, sind genau das, was das Skript liest
       # (ein echter alter Stack braeuchte einen zweiten Image-Build).
-      # a) vor dem ersten Start: Exit 1; b) nach einem Start ohne
+      # a) vor dem ersten Start: Exit 1, aber nicht fuer eine andere
+      # Anwendung, die bisher im Verzeichnis lief (db_data und
+      # redis_data ohne uploads); b) nach einem Start ohne
       # Festschreiben (juengere dokunc-Volumes): Exit 2, down nur mit
       # Containern von dokunc aus diesem Verzeichnis, bei Containern aus
       # einem anderen Verzeichnis die Meldung zur anderen Installation;
@@ -415,8 +417,11 @@ jobs:
             test "$code" = "$1" || { echo "Exit $code statt $1"; exit 1; }
             grep -qF "$2" "$RUNNER_TEMP/projektname.err"
           }
+          # Eine andere Anwendung lief bisher in diesem Verzeichnis: ohne
+          # wikialt_uploads sind das nicht die Daten einer Installation.
           volume wikialt db_data
           volume wikialt redis_data
+          (cd "$ALT" && ./scripts/projektname.sh)
           volume wikialt uploads
           volume wikialt app_data
           pruefe 1 'Vermutlich hiess das Projekt bisher wikialt'

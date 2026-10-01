@@ -293,6 +293,17 @@ describe("scripts/backup.sh: Compose-Projekt", () => {
     expect(r.stdout).toContain("Gelöscht (älter als 7 Tage): 20200101-120000 20200102-120000");
   });
 
+  it("haelt die Aufbewahrung nicht wegen einer anderen Anwendung unter dem Namen des Verzeichnisses an", () => {
+    // Im Verzeichnis repo lief vorher eine andere Compose-Anwendung mit
+    // aelteren Volumes repo_db_data und repo_redis_data, ohne repo_uploads.
+    for (const ts of [...ALTE, vorTagen(1), vorTagen(2), vorTagen(3)]) satz(ts);
+    const fremd = `repo_db_data=${ALT} repo_redis_data=${ALT} repo_docmost=${ALT}`;
+    const r = run([], { env: { FAKE_VOLUMES: `${fremd} ${vol("dokunc", NEU)}`, BACKUP_KEEP_DAYS: "7" } });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stderr).toBe("");
+    expect(r.stdout).toContain("Gelöscht (älter als 7 Tage): 20200101-120000 20200102-120000");
+  });
+
   it("nennt das Projekt auch beim Sichern des Secrets und warnt bei einer Abweichung", () => {
     const ziel = join(aussen, "geheim");
     const secret = { FAKE_SECRET: "s".repeat(40), FAKE_SECRET_LAGE: "merkmal abc" };

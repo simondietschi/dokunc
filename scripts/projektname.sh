@@ -4,7 +4,7 @@
 #
 # Nutzung: ./scripts/projektname.sh [--festschreiben [NAME] | --name]
 #   ohne Option     nennt das Compose-Projekt und prueft, ob es Daten hat
-#                   (das Volume der Datenbank, <projekt>_db_data).
+#                   (die Volumes <projekt>_db_data und <projekt>_uploads).
 #                   Ein Projekt, dessen Container aus einem anderen, noch
 #                   vorhandenen Verzeichnis stammen, gehoert einer anderen
 #                   Installation und zaehlt nie als bisherige Daten.
@@ -99,16 +99,29 @@ docker_gescheitert() {
   exit 3
 }
 
-# Daten eines Projekts: das Volume <projekt>_db_data, die Datenbank.
-# Nicht app_data: Installationen aus der Zeit vor diesem Volume bekommen
-# es erst beim ersten Start mit dieser Fassung, und gerade vor diesem
-# Start muss ihr Name erkannt werden. Nur "no such volume" heisst
-# "fehlt"; jeder andere Fehler bricht ab. Nicht in einer Subshell
-# aufrufen, sonst beendet der Abbruch nur diese.
+# Daten eines Projekts: die Volumes <projekt>_db_data (Datenbank) und
+# <projekt>_uploads (Dateien), was backup.sh sichert. Beide hat jede
+# Installation seit dem ersten Tag. db_data allein waere zu allgemein:
+# eine andere Compose-Anwendung, die bisher im selben Verzeichnis lief
+# (etwa Docmost mit wiki_db_data und wiki_redis_data), zaehlte sonst
+# als die bisherigen Daten, und --festschreiben haengte ihre Datenbank
+# hier ein. Nicht app_data: Installationen aus der Zeit vor diesem
+# Volume bekommen es erst beim ersten Start mit dieser Fassung, und
+# gerade vor diesem Start muss ihr Name erkannt werden. Gefragt wird
+# nach dem Namen, nicht nach den Labels von Compose: von Hand angelegte
+# und zurueckgespielte Volumes zaehlen auch. Setzt FEHLT auf die
+# fehlenden Volumes. Nur "no such volume" heisst "fehlt"; jeder andere
+# Fehler bricht ab. Nicht in einer Subshell aufrufen, sonst beendet der
+# Abbruch nur diese.
 hat_daten() {
-  if docker volume inspect "$1_db_data" >/dev/null 2>"$FEHLER"; then return 0; fi
-  if grep -qi 'no such volume' "$FEHLER"; then return 1; fi
-  docker_gescheitert "docker volume inspect $1_db_data"
+  local art
+  FEHLT=""
+  for art in db_data uploads; do
+    if docker volume inspect "$1_$art" >/dev/null 2>"$FEHLER"; then continue; fi
+    grep -qi 'no such volume' "$FEHLER" || docker_gescheitert "docker volume inspect $1_$art"
+    FEHLT="${FEHLT:+$FEHLT, }$1_$art"
+  done
+  [ -z "$FEHLT" ]
 }
 
 # Anlagedatum der Datenbank eines Projekts, wie Docker es meldet (RFC 3339).
@@ -210,7 +223,7 @@ if [ "$MODUS" = festschreiben ]; then
   fi
   if [ -n "$WUNSCH" ]; then
     if ! hat_daten "$WUNSCH"; then
-      echo "✗ Für das Compose-Projekt $WUNSCH gibt es keine Daten (kein Volume ${WUNSCH}_db_data). Nichts geändert." >&2
+      echo "✗ Für das Compose-Projekt $WUNSCH gibt es keine Daten (fehlt: $FEHLT). Nichts geändert." >&2
       exit 1
     fi
     NAME=$WUNSCH
@@ -278,7 +291,7 @@ if [ "$MODUS" = festschreiben ]; then
   } 2>"$FEHLER" >>"$TEIL" || nicht_schreibbar
   mv "$TEIL" "$ZIEL" 2>"$FEHLER" || nicht_schreibbar
   if [ "$NAME_HAT_DATEN" -eq 1 ]; then
-    echo "✓ COMPOSE_PROJECT_NAME=$NAME in .env eingetragen (Daten im Volume ${NAME}_db_data)."
+    echo "✓ COMPOSE_PROJECT_NAME=$NAME in .env eingetragen (Daten in ${NAME}_db_data und ${NAME}_uploads)."
   else
     echo "✓ COMPOSE_PROJECT_NAME=$NAME in .env eingetragen (noch keine Daten)."
   fi
@@ -305,9 +318,10 @@ done < <(LC_ALL=C comm -12 <(printf '%s\n' "$MIT_DB") <(printf '%s\n' "$MIT_REDI
   | LC_ALL=C comm -12 - <(printf '%s\n' "$MIT_UPLOADS"))
 
 # Der Name, den dieses Verzeichnis vor "name: dokunc" hatte, und ob er
-# Daten hat. Zaehlt auch ohne die Labels von Compose (Volumes, die jemand
-# von Hand angelegt und zurueckgespielt hat). Steht der Name fest, spielt
-# der bisherige keine Rolle.
+# Daten hat (hat_daten: db_data und uploads; eine andere Anwendung, die
+# bisher hier lief, zaehlt nicht). Zaehlt auch ohne die Labels von
+# Compose (Volumes, die jemand von Hand angelegt und zurueckgespielt
+# hat). Steht der Name fest, spielt der bisherige keine Rolle.
 BISHER=$(bisheriger_name)
 BISHER_HAT_DATEN=0
 if [ "$QUELLE" = "aus docker-compose.yml" ] && [ -n "$BISHER" ] && [ "$BISHER" != "$AKTUELL" ] \
@@ -344,7 +358,7 @@ aufzaehlen() {
 
 if hat_daten "$AKTUELL"; then
   EIGENES=$(angelegt "$AKTUELL")
-  echo "Daten: vorhanden (${AKTUELL}_db_data, angelegt $(tag "$EIGENES"))"
+  echo "Daten: vorhanden (${AKTUELL}_db_data und ${AKTUELL}_uploads, angelegt $(tag "$EIGENES"))"
 else
   EIGENES=""
   echo "Noch keine Daten (neue Installation)."
