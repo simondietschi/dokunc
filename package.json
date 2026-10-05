@@ -24,12 +24,12 @@
     "@playwright/test": "1.63.0",
     "@types/pg": "8.23.1",
     "dotenv": "17.4.2",
-    "eslint": "^10.11.0",
+    "eslint": "^10.12.0",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "globals": "^17.12.0",
+    "globals": "^17.13.0",
     "ioredis": "6.0.0",
     "pg": "8.23.0",
-    "typescript-eslint": "^8.70.1"
+    "typescript-eslint": "^8.71.0"
   },
   "dependencies": {
     "concurrently": "10.0.5"
