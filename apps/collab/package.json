@@ -17,7 +17,7 @@
     "@hocuspocus/server": "4.7.0",
     "@hocuspocus/transformer": "4.7.0",
     "@tiptap/core": "3.31.3",
-    "dotenv": "17.4.2",
+    "dotenv": "18.0.5",
     "ioredis": "6.0.0",
     "jose": "6.2.12",
     "pino": "10.3.1",
