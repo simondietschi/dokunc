@@ -17,7 +17,7 @@
     "@dokunc/editor": "workspace:*",
     "@dokunc/mail": "workspace:*",
     "@excalidraw/excalidraw": "0.18.1",
-    "@hocuspocus/provider": "4.7.0",
+    "@hocuspocus/provider": "4.7.1",
     "@tiptap/core": "3.31.3",
     "@tiptap/extension-collaboration": "3.31.3",
     "@tiptap/extension-collaboration-caret": "3.31.3",
